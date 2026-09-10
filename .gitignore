@@ -1,0 +1,12 @@
+# Local navigation index; never source or proof authority.
+/.codegraph/
+/.codegraph-*/
+# Local execution state and credentials belong outside the repository.
+/.pm/
+/.env
+/.env.*
+# Generated runtime bundles and connector declarations remain versioned.
+/.proof/
+/dist/
+/coverage/
+*.test

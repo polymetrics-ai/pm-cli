@@ -1,0 +1,12 @@
+{
+  "exclude": [
+    ".codegraph/",
+    "internal/bundle/data/",
+    "website/generated/",
+    "docs/cli/",
+    ".proof/",
+    ".pm/",
+    "dist/",
+    "coverage/"
+  ]
+}
