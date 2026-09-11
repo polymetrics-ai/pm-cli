@@ -1,0 +1,73 @@
+{
+  "schema_version": "pm.setup-check/v1",
+  "required_files": [
+    "AGENTS.md",
+    ".agents/skills/pm-go/SKILL.md",
+    "docs/development/setup.md",
+    "docs/development/skills.md",
+    "docs/decisions/0001-cli-configuration.md",
+    "codegraph.json",
+    ".gitignore",
+    "scripts/dev/doctor.sh",
+    "docs/agents/issue-tracker.md",
+    "ci/workflows/check.yml"
+  ],
+  "instruction_references": [
+    {
+      "from": ".agents/skills/pm-go/SKILL.md",
+      "target": "../../../docs/development/skills.md"
+    }
+  ],
+  "provenance_contract": "docs/development/skill-provenance.json",
+  "required_project_skills": [
+    "pm-go",
+    "pm-connector-contracts",
+    "pm-durable-effects",
+    "pm-release-recovery"
+  ],
+  "activation": "inactive-until-reviewed-qualification-activation",
+  "workflow": "ci/workflows/check.yml",
+  "required_project_references": [
+    "AGENTS.md",
+    "docs/development/skills.md",
+    "docs/agents/issue-tracker.md"
+  ],
+  "required_markdown_documents": [
+    {
+      "path": "docs/agents/issue-tracker.md",
+      "title": "Issue tracker: PM CLI",
+      "sections": [
+        "Read the assigned issue",
+        "Bind review to accepted inputs",
+        "Required review and delivery boundaries"
+      ]
+    }
+  ],
+  "required_document_links": [
+    {
+      "from": "AGENTS.md",
+      "to": "docs/agents/issue-tracker.md"
+    },
+    {
+      "from": "docs/development/skills.md",
+      "to": "docs/agents/issue-tracker.md"
+    },
+    {
+      "from": "docs/development/skill-provenance.md",
+      "to": "docs/agents/issue-tracker.md"
+    },
+    {
+      "from": "docs/agents/issue-tracker.md",
+      "to": "AGENTS.md"
+    },
+    {
+      "from": "docs/agents/issue-tracker.md",
+      "to": "docs/development/skills.md"
+    },
+    {
+      "from": "docs/agents/issue-tracker.md",
+      "to": "docs/development/skill-provenance.md"
+    }
+  ],
+  "workflow_profile": "origin-qualification-r9"
+}

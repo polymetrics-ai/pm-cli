@@ -2,7 +2,7 @@
 
 ## Project status and authority
 
-PM CLI is a new Go CLI for declared connectors and reliable local data movement.
+PM CLI is a remote-first Go client and backend for declared connectors and reliable data movement.
 This repository is at the preimplementation setup stage.
 The architecture below is the current planning direction, not existing code.
 Do not claim a package, command, test, connector, or certification exists before verifying it.
@@ -17,9 +17,18 @@ Other contributors need no Firstmate installation or home directory.
 
 Read [developer setup](docs/development/setup.md) for actual tool availability and commands.
 Read [skill routing](docs/development/skills.md) and load only the task's useful references.
+Read [issue/spec lookup](docs/agents/issue-tracker.md) before retrieving review inputs.
+Use the accepted issue and immutable inputs required by its scope; lookup does not authorize publication or implementation.
 Use the local [PM Go router](.agents/skills/pm-go/SKILL.md) for Go work.
+Use [connector contracts](.agents/skills/pm-connector-contracts/SKILL.md),
+[durable effects](.agents/skills/pm-durable-effects/SKILL.md), or
+[release and recovery](.agents/skills/pm-release-recovery/SKILL.md) for their specific boundaries.
+These domain procedures complement the sole Go router; they do not define another architecture.
 Read [CLI configuration decision](docs/decisions/0001-cli-configuration.md) before CLI/config work.
-Check the current task and relevant design before changing a shared contract.
+Check the current task and accepted specification before changing a shared contract.
+The task must supply any accepted contract that is not yet in this checkout.
+Do not require private home files or silently treat proposals as accepted requirements.
+Unresolved admission, source/projection and context-import decisions remain with their owners.
 Record the behavior to preserve, files owned, and focused validation before production edits.
 Distinguish retained requirements, observed behavior, defects, and proposed changes.
 Do not recreate old planning histories, review ledgers, or operational policy in this repo.
@@ -46,23 +55,26 @@ CodeGraph output cannot certify behavior or prove dependency closure for receipt
 
 ## Architecture and ownership
 
-Keep three thin binary entry points: `cmd/pm`, `cmd/pmgen`, and `cmd/pmproof`.
-The initial production design has eleven internal packages, with these owners:
-`contract`: typed boundary data, schemas, enums, identifiers, and reserved controls.
-`compile`: strict source validation, lowering, deterministic generation, and capability mapping.
-`bundle`: the one embedded execution JSON reader and safe connector metadata listing.
-`cli`: the command tree, typed argument binding, control configuration, help, and output.
-`credentials`: secret ingress, isolated credential storage, leases, and redaction.
-`runtime`: shared HTTP/SQL execution, auth, encoding, pagination, and observations.
-`schema`: account metadata discovery coordination, normalization, snapshots, and effective schemas.
-`warehouse`: owned local tables, WAL, materialization, and local queries.
-`sync`: saved plans, worksets, approval, ETL, reverse ETL, and transport state.
-`proof`: case planning, actual-PM execution, assertions, receipts, and reports.
-`store`: confined paths, locking, durable reads/writes, and atomic publication.
-Use small interfaces at consumers; CLI composes concrete implementations.
-Foundation runtime code must not import CLI, compiler, or proof packages.
-Keep shared authorization and metadata interfaces in `contract` to avoid package cycles.
-Keep provider-name switches and one-Go-adapter-per-connector designs out of the foundations.
+Preserve one remote-first Go/Gin/PostgreSQL/Temporal/shared-object architecture.
+Development, paired distribution and standalone client/backend use the same stack.
+Keep the CLI and future browser thin clients of the same public OpenAPI 3.1 contract.
+Use explicit workspace and connection scope; never a mutable global current workspace.
+Ordinary client calls never auto-start a backend; lifecycle is an explicit operator action.
+Do not add a local queue, PM cron scheduler, product MCP or provider-specific Go wrappers.
+
+Use the accepted file/ownership map when introducing packages; do not infer a fixed count.
+Keep contract values and small consumer-owned ports free of framework dependencies.
+CLI owns Cobra and generated-client composition; httpapi owns Gin and strict HTTP adaptation.
+Shared application preflight owns authorization, admission and actual capability composition.
+PostgreSQL owns PM intent, grants, effect facts, metadata selection and publication manifests.
+Temporal owns orchestration and schedule timing, with explicit outbox/reconciliation boundaries.
+Deterministic workflows orchestrate activities; admitted activities own all provider I/O.
+API inline execution is limited to PM-owned metadata; admin ingress encrypts provider secrets.
+Shared objects hold immutable business bytes; scratch files never establish durable truth.
+Only the restricted query child links DuckDB/native analytics.
+Compiler and proof are authoring/validation owners, never provider runtime or admission gates.
+Keep PM storage separate from the customer PostgreSQL connector.
+Do not pass Gin/Cobra types beyond their adapters; use context.Context and typed values.
 Introduce a package only when ownership or a real dependency boundary requires it.
 
 ## Declaration and runtime boundary
@@ -90,7 +102,8 @@ Use one Cobra command tree for PM namespaces and generated connector commands.
 Use a fresh tree per invocation/test, instance-owned state, `RunE`, and injected I/O.
 Cobra and its flag types stay in `internal/cli`; shared preflight validates every caller.
 Do not reintroduce a second hand-written provider argument parser.
-The bounded selector pass selects local state/connection metadata; final parsing uses the same tree.
+The bounded selector pass selects safe client context; final parsing uses the same tree.
+CLI-side metadata projections aid binding/help; server authorization and schema validation are authoritative.
 Help, completion, bare namespaces, and generated manuals use that executable tree.
 Bare namespaces render useful help and succeed; unknown actions return usage errors.
 Help/version must work offline without secrets, provider access, or valid connection config.
@@ -101,6 +114,8 @@ Track presence separately from zero values; never let an untouched flag default 
 Reject malformed, unknown, duplicate, or wrongly cased configuration keys.
 Allow only explicitly named environment bindings, with documented empty-value behavior.
 Do not read `.env`, search arbitrary working directories, or enable config hot reload.
+Local profiles contain only server identity/URL, PM session handle and display preferences.
+Provider configuration and credentials remain server-owned; workspace is explicit per invocation.
 Pass immutable typed resolved values to foundations; do not read config getters during execution.
 Use one reserved PM-control registry and deterministic aliases for conflicting provider flags.
 Keep provider wire names exact; PM aliases must not rewrite provider semantics.
@@ -112,15 +127,15 @@ Settings must never supply approval, credentials, provider body fields, or certi
 
 Static operation schemas describe the provider contract, not an account's custom fields.
 Discover dynamic fields through declared metadata capabilities, never inferred sample-row guesses.
-Bind a snapshot to connector, connection, account, permissions, resource, and source revision.
-Store immutable snapshots under the connection's owned state directory.
-The connection's `config.json` owns the sole `schema_ref` selection.
-Do not add a second metadata catalog, global CURRENT, or mirrored active selector.
+Bind snapshots to server/principal/workspace/connector/connection/account/permissions/resource/source scope.
+Store immutable snapshot references and the sole selected identity under PostgreSQL authority.
+Client caches are safe projections; do not add a local authoritative selector or global CURRENT.
 Failed or partial discovery cannot replace the last complete valid snapshot.
 Build typed dynamic flags from the selected snapshot and retain provider identifier spelling.
 Requiredness, writability, types, enums, associations, and precision must survive normalization.
 Help can use local snapshots and must explain when metadata is missing or stale.
-Before a write, revalidate the used field constraints through the planned freshness witness.
+Accepted runs pin immutable schema evidence.
+Before new effects, revalidate used field constraints through the accepted freshness witness.
 Changed relevant schema, connection identity, or permissions invalidate the saved plan/approval.
 Do not silently remap fields or replay a write whose effect is unknown.
 
@@ -130,22 +145,31 @@ Direct read returns one page with truthful records, completeness, and navigation
 Pagination derives from the declared strategy and the page size actually sent on the wire.
 Direct write validates source-backed effects through readback when available/required.
 Otherwise use the declared independent observable assertion; exit zero alone is insufficient.
-ETL persists actual rows in an owned warehouse; direct read is not ETL.
-Keep local JSONL WAL appendable and durable; materialize one atomic Parquet table file.
-Namespace warehouse paths structurally by workspace, connector, and connection identity.
-Reject unsafe path components and ambiguous legacy layouts; never normalize collisions away.
-DuckDB is the planned embedded query/Parquet engine; its build requires cgo/C tooling.
+ETL persists actual rows through verified immutable shared objects and PostgreSQL manifests.
+Direct read is not ETL. Publish only complete digest/length/generation-verified object attempts.
+Advance exact acknowledged checkpoint prefixes with their manifests in one PG transaction.
+Host-local WAL, scratch files and rename cannot provide shared durable publication.
+Keep artifact and warehouse scope structural; reject unsafe or colliding identifiers.
+DuckDB is confined to the restricted query child; qualify its cgo/C tooling there.
 Native PostgreSQL is an initial connector, with shared SQL protocol/TLS/value handling.
 Quote qualified identifiers safely, bind values, preserve exact types, and use transactions.
 Do not expose arbitrary SQL write, shell execution, or generic HTTP write as a connector escape hatch.
+Admission commits immutable intent, scoped idempotency, durable grant and outbox before HTTP 202.
+Exact duplicates retain run identity; changed fingerprints conflict. No PG/Temporal atomicity is assumed.
 Reverse ETL follows saved plan, preview, scoped approval, and execution with sealed row cardinality.
 Changes to mappings, worksets, relevant config, or schema invalidate approvals.
 Transport modes retain their actual delivery, deduplication, history, checkpoint, and cursor semantics.
 Binary lanes validate streamed bytes, metadata, and observable upload/download effects.
 Bound buffers and concurrency; propagate cancellation and deadlines; close owned resources.
+Persist dispatch/member intent and outcome capacity before one physical send.
 Retries require declared replay safety; unknown write outcomes stay explicit.
+Neither fencing nor workflow success proves exactly-once provider writes.
+Keep effect/member truth separate from cancel intent and Temporal observations.
+Login-session expiry/logout or a client wait ending does not cancel an accepted durable grant.
+Explicit revocation stops new effects; already-sent effects may require restricted read reconciliation.
 Respect provider rate limits, account scope, permissions, and resource prerequisites.
-Resolve secrets only at the execution boundary from approved secret ingress or references.
+Resolve provider signers only in admitted worker activities after grant checks.
+Separate authenticated administrative secret ingress from ordinary CLI/browser public APIs.
 Never print, commit, inspect for convenience, or copy real secret values into examples or receipts.
 Strip authorization on unsafe redirects and sanitize command, request, response, and error evidence.
 
@@ -159,7 +183,8 @@ Keep seven lane JSON files and seven thin connector scripts using one common run
 No connector-specific Go wrappers that merely repeat shared tests or assert process exit zero.
 Scenario cases belong to connector + operation + lane + behavior, never to a release batch.
 Inventory the full surface, then compile/reuse one PM binary and plan dependent cases.
-Capture actual PM version/hash, sanitized command/request/response, assertions, effects, and timestamps.
+Capture actual PM client/API/worker hashes, query-helper hash if used, source/bundle/schema/handler revisions,
+sanitized command/request/response, assertions, effects, scope and physical execution timestamps.
 Preserve independent case results and cleanup diagnostics when another case fails.
 Write immutable attempt receipts and seven derived reports atomically; avoid global selectors.
 Default reruns select failed, unproven, and actually invalidated cases; support explicit all.
@@ -196,6 +221,8 @@ Do not invent passing counts or run old-repository tests to validate this new im
 
 Prefer the standard library when it meets the actual contract.
 Pin the chosen Go patch, modules, native dependencies, and tools when their files are introduced.
+Qualify paired/standalone compatibility, migrations, complete backups and quarantined restore
+through the release/recovery contract; restoring storage cannot undo provider effects.
 Verify uncertain APIs and versions against official sources; never install floating latest by habit.
 No module, build targets, CI jobs, or app scaffolding is authorized by this setup document alone.
 Use `nbj-write-clearly` for prose when available; preserve technical facts and modality.

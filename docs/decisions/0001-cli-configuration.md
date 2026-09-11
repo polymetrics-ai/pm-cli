@@ -1,10 +1,10 @@
 # 0001: Cobra commands with strict typed configuration
 
-Date: 2026-09-10. Status: selected for setup by the coordinating owner; application implementation is still paused. No Go module or application code was created by this setup. This document refines the clean implementation plan's CLI/configuration contract. It does not approve the whole application plan, revise historical evidence, or count as a completed implementation check.
+Date: 2026-09-10. Status: selected for setup by the coordinating owner; application implementation is still paused. No Go module or application code was created by this setup. This document retains the Cobra/strict-JSON choice while correcting the earlier local-state assumptions for the remote-first plan. It does not approve the whole application plan, revise historical evidence, or count as a completed implementation check.
 
 ## Decision
 
-Use **Cobra for the complete command tree** and a small **typed JSON resolver for PM control settings**. **Do not add Viper initially.** Keep configuration code inside the existing `cli`, `contract`, and `store` ownership boundaries; do not create a twelfth configuration package.
+Use **Cobra for the complete command tree** and a small **typed JSON resolver for PM control settings**. **Do not add Viper initially.** Keep CLI parsing/resolution inside its adapter with pure shared value types and server-owned authoritative state. Use the accepted ownership map; the earlier eleven-package count is obsolete.
 
 | Option | Assessment for PM |
 | --- | --- |
@@ -26,78 +26,36 @@ This is a PM design judgment, not a claim that Viper is unsuitable for CLIs gene
 
 PM controls select execution context and presentation. Provider parameters describe a declared operation. Saved connection configuration describes an endpoint/account/transport and refers to credentials. Account metadata describes dynamic fields. Plans, approval, source declarations, and proof have separate owners and revision rules.
 
-Only PM controls participate in settings precedence. Do not load provider fields, API URLs, auth material, `schema_ref`, approval flags, worksets, or certification status through a generic settings map. Do not search `.env`, merge arbitrary working-directory files, or accept a generic HTTP/body override. Credential environment/stdin ingress remains a distinct resolver, not part of the PM-control environment map.
+Only PM controls participate in settings precedence. Do not load provider fields, API URLs, auth material, `schema_ref`, approval flags, worksets, or certification status through a generic settings map. Do not search `.env`, merge arbitrary working-directory files, or accept a generic HTTP/body override. Provider credentials enter through separate authenticated administrative ingress and resolve only in admitted worker activities. CLI profiles may hold a PM session handle in the OS store, never provider secrets.
 
-The proposed state layout adds one small non-secret settings document:
+The earlier local connection files and `config.json.schema_ref` selection are superseded.
+PostgreSQL owns connection configuration and immutable schema selection. A local client profile contains only server URL/instance identity, PM session handle and display preferences. Workspace and connection scope are explicit for each invocation; a profile cannot establish a global active workspace.
 
-```text
-<pm-state>/settings.json
-<pm-state>/connections/<connection-id>/config.json
-<pm-state>/connections/<connection-id>/schema/snapshots/<snapshot-id>.json
-```
+## Controls and unresolved bindings
 
-The connection's `config.json` remains the sole owner of `schema_ref`. Adding `settings.json` does not introduce a connection catalog, second active-schema selector, or proof authority.
-
-## Exact initial settings contract
-
-These names and commands are **proposed**, not installed PM syntax. Register the PM flags in `internal/contract/flags.go` and use its deterministic provider aliases. Provider wire mappings stay unchanged.
-
-| Control | Explicit flag | Named environment | Settings key | Default and empty rule |
-| --- | --- | --- | --- | --- |
-| State root | `--state-dir` | `PM_STATE_DIR` | Not permitted in settings | New versioned PM state directory; explicit empty is an error |
-| Connection selection | `--connection` | `PM_CONNECTION` | `defaults.connection` | Unset unless selected; explicit empty is an error |
-| Output format | `--output` | `PM_OUTPUT` | `defaults.output` | `text`; only `text`/`json`; explicit empty is an error |
-| Per-request timeout | `--request-timeout` | `PM_REQUEST_TIMEOUT` | `defaults.request_timeout` | `30s`; positive duration at most `10m`; explicit empty is an error |
-
-The timeout is a bounded request policy, not an overall ETL job deadline or permission to retry. Longer provider operations should use their declared asynchronous/polling behavior or a reviewed bound change. Unset connection is valid for offline help and namespaces; operations needing a connection must report a usage/configuration error before provider I/O.
+Cobra and strict typed JSON remain selected. The earlier local `--state-dir`/connection-directory algorithm and synthetic settings schema are historical proposals, not the remote server contract. Exact new settings keys, environment names, wire bindings and defaults must come from their owning accepted specification. This setup does not invent replacements. A client request/wait timeout never becomes a durable run deadline or cancellation request.
 
 `--json` is an existing planned PM convenience flag: bare `--json` or `--json=true` means explicit `output=json`; `--json=false` means explicit `output=text`. An absent `--json` contributes no value. When `--output` is also explicit, require agreement: refuse `--json --output text` and `--json=false --output json`; accept the two agreeing pairs. Explicit false therefore overrides an environment/file JSON preference rather than disappearing as a zero value. Reject repeated scalar controls and invalid boolean spellings. Approval/plan flags remain explicit workflow inputs and have no environment or settings fallback.
 
-Synthetic complete settings example:
-
-```json
-{
-  "schema_version": 1,
-  "defaults": {
-    "connection": "demo-hubspot",
-    "output": "text",
-    "request_timeout": "30s"
-  }
-}
-```
-
-The schema requires `schema_version` and `defaults`; each listed default field is optional. Reject null, unknown keys, duplicate keys, wrong case, wrong JSON types, multiple trailing JSON values, and unsupported schema versions. No coercion from a number or boolean to a string. The connection ID uses the shared safe identifier rules. Duration parsing is an explicit field decoder, not arbitrary coercion.
+For any approved settings schema, reject null where forbidden, unknown or duplicate keys, wrong case/types, trailing JSON values and unsupported versions. Do not coerce numbers or booleans to strings. Decode duration fields explicitly and preserve presence independently of zero values. These strictness requirements apply without activating the superseded local state schema.
 
 ## Resolution algorithm and interfaces
 
-1. Snapshot the explicitly allowed environment variables once through an injected lookup. Perform the bounded PM selector pass over reserved state/connection selectors only. Preserve the original argument list for final validation; reject repeated scalar selectors and respect `--`. This pass does not resolve general controls or provider fields.
-2. For help/version without an execution action, construct the offline tree without loading secrets or requiring a readable connection. Selected local metadata may enrich help if valid, with a truthful missing/stale message otherwise. Execution settings are not a prerequisite for help/version.
-3. For execution, resolve state root from explicit selector, snapshotted named environment, then the platform's new versioned default. Read only that root's `settings.json`; the file cannot redirect the state root. Missing implicit settings means defaults; unreadable or malformed existing settings is an error. Enforce bounded reads, exact keys, duplicate rejection, and types.
-4. Bootstrap **only the connection selection** from explicit selector, snapshotted environment, settings, then default. Load and validate that connection and its local effective metadata. Retain the selected state/connection identity and revisions. No provider or credential I/O occurs.
-5. Build the effective Cobra tree from the bundle and selected local schema. Let Cobra perform the final parse of the original arguments, providing actual `Flag.Changed` presence for PM controls and typed provider bindings. This selector pass is not a second provider parser and does not manufacture changed-flag state.
-6. Now resolve all approved controls by **explicit changed flag > present snapshotted environment > present settings field > default**, enforcing the `--json`/`--output` consistency rules. Presence is separate from value; unrelated variables have no effect. Verify final state/connection selection exactly agrees with bootstrap before any provider I/O. Refuse disagreement instead of reparsing against another account. Freeze the resolved values.
-7. Shared preflight validates the typed call for CLI and non-CLI consumers. Pass immutable value objects to runtime. Relevant connection/config/schema revisions join the saved plan/approval scope; changing only presentation does not change provider input or certification.
+1. Snapshot explicitly allowed environment bindings through injected lookup. Run a bounded selector pass for approved client context only; preserve the original arguments and respect `--`. This is not a second provider parser.
+2. Construct help/version and bare namespaces offline without secrets or execution configuration. Safe cached catalog/schema projections may enrich help with truthful missing/stale qualifications.
+3. Load only the approved non-secret client profile/settings document using confined bounded reads. An absent implicit file may use specified defaults; corrupt existing settings must fail. Do not create a local connection/schema authority.
+4. Build a fresh Cobra tree from generated safe projections and selected context. Final-parse the original arguments with real changed-flag presence and typed provider bindings.
+5. Resolve approved controls by explicit changed flag, named present environment, present settings field, then specified default. Enforce alias consistency and exact agreement with bootstrap context before submission; freeze typed values.
+6. Submit through the generated public API client with explicit workspace/connection scope. Server shared preflight checks permission, current schema and capability before admission. All provider I/O runs in admitted activities.
+7. Bind relevant connection/config/schema evidence to the accepted run and sealed approval on the server. Presentation changes do not alter provider inputs. Request cancellation stops viewing/submission as defined, not an already accepted durable grant.
 
-Proposed symbols:
-
-```text
-contract.ControlSettings / ResolvedControls / ControlOrigin / ContextSelection
-contract.ConnectionConfig / ConnectionRevision
-cli.BootstrapSelection(selectors, settings, envSnapshot) -> ContextSelection, error
-cli.ResolveControls(changedFlags, settings, envSnapshot) -> ResolvedControls, error
-cli.ResolveConnection(selection, connectionStore) -> ConnectionConfig, error
-cli.ParseSelectors(argv) -> Selectors, error
-cli.BuildEffectiveTree(bundle, effectiveSchema, selection) -> command tree, error
-store.ReadJSON(rootRelativePath, maxBytes) -> bounded bytes, error
-```
-
-`ControlOrigin` records only the field's source kind, not secret values or the whole environment. The resolved value object must not retain mutable source maps or a live config getter. Connection snapshot selection is read once and revision-bound; write freshness remains the shared schema/approval contract. Persistence uses `store` atomic publication, never Cobra or a configuration library's convenience writer.
+No proposed local `ResolveConnection` or `store.ReadJSON` symbol creates application ownership here. Future files and signatures follow the owning packet. Provenance fields record safe origin kinds, never environment dumps or secret values.
 
 If Viper is adopted later, keep one invocation-local `viper.New()` strictly inside this resolver, bind the named fields explicitly, validate the raw JSON before Viper sees it, reject case/key collisions, disable weak coercion, define empty handling, and produce the same immutable value object. No global Viper, repeated runtime `Get`, hot reload, or `WriteConfig` shortcut is allowed.
 
 ## Planned causal checks
 
-These tests do not exist or pass yet. Implement them as shared foundation tests when their owning files are created. Existing plan tests should be extended rather than duplicated with provider wrappers.
+These tests do not exist or pass yet. Names below are behavioral proposals, not a new file allocation. Reconcile exact file ownership with the accepted task before implementing shared foundation tests. Existing plan tests should be extended rather than duplicated with provider wrappers.
 
 | Proposed test and file | RED trigger → GREEN observation |
 | --- | --- |
@@ -109,9 +67,9 @@ These tests do not exist or pass yet. Implement them as shared foundation tests 
 | `TestResolvedControlsAreImmutable`, same file | Source map/env mutation changes a running call → resolved values remain stable and invocation instances are isolated |
 | `TestSelectorsAndFinalParseAgree`, `internal/cli/dynamic_test.go` | Repeated/after-`--`/value-shaped selectors select one account but execute another → deterministic refusal or one consistent selected account |
 | `TestOfflineHelpIgnoresExecutionConfig`, `internal/cli/tree_test.go` | Broken connection config or missing secret prevents help → namespace/help/version succeed offline; real execution still fails correctly |
-| `TestConnectionConfigCannotOverrideSchemaScope`, `internal/schema/resolve_test.go` | Settings inject another account's schema selection → connection-owned `schema_ref` and context remain authoritative |
-| `TestApprovalBindsResolvedConnectionRevision`, `internal/sync/approval_test.go` | Saved write executes after relevant connection/config change → approval rejected before provider I/O |
-| `TestConfigReadBoundsAndConfinement`, `internal/store/read_test.go` | Oversized/traversing/symlinked read crosses the owned boundary → bounded refusal without leaking bytes |
+| Shared server schema-scope check, file assigned by the schema owner | A client setting injects another account's snapshot → scoped PG selection and server preflight reject it |
+| Shared approval revision check, file assigned by the effect owner | Saved write executes after relevant connection/config/schema change → server approval rejected before new effects |
+| Client profile read-bounds check, file assigned by the CLI owner | Oversized/traversing/symlinked read crosses the owned boundary → bounded refusal without leaking bytes |
 | Existing `TestHelpNamespaceAndManualShareTree`, `internal/cli/tree_test.go` | Control alias appears in execution but not docs/completion → every surface projects the same tree |
 
 Choose targeted package checks as these files appear. Preserve ordinary build/test caches; use fresh execution only for its stated purpose. No library-wrapper suite, provider-specific Go test file, or mandatory live provider request is needed to settle this configuration decision.

@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - pm-cli-ci
+    - pm-cli-qual-20260911-r8

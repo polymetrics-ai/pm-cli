@@ -1,0 +1,79 @@
+name: PM setup runner qualification
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: Operator-supervised qualification case
+        required: true
+        type: choice
+        default: valid
+        options: [valid, invalid, cancel, timeout]
+permissions:
+  contents: read
+concurrency:
+  group: pm-cli-setup
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+jobs:
+  setup:
+    if: github.repository_id == '1364567929' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, x64, pm-cli-qual-20260911-r8]
+    timeout-minutes: 3
+    steps:
+      - name: Checkout the dispatched revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+          set-safe-directory: false
+      - name: Validate actual setup files
+        run: sh scripts/ci/check-setup.sh .
+      - name: Exercise the selected qualification case
+        env:
+          QUAL_MODE: ${{ inputs.mode }}
+        run: |
+          set -eu
+          case "$QUAL_MODE" in
+            valid)
+              printf '%s\n' valid > /cache/qualification-marker
+              ;;
+            invalid)
+              python3 - <<'PY'
+          import json, pathlib, shutil, subprocess, sys, tempfile
+          source = pathlib.Path.cwd()
+          names = subprocess.check_output(["git", "ls-files", "-z"], text=True).rstrip("\0").split("\0")
+          scratch = pathlib.Path(tempfile.mkdtemp(prefix="pmcli-invalid-", dir="/fixtures"))
+          for name in names:
+              target = scratch / name
+              target.parent.mkdir(parents=True, exist_ok=True)
+              shutil.copyfile(source / name, target)
+          (scratch / "docs/agents/issue-tracker.md").write_text("\n")
+          inventory = scratch / "inventory.json"
+          inventory.write_text(json.dumps(names))
+          p = subprocess.run([sys.executable, str(source / "scripts/ci/check-setup.py"),
+              "--root", str(scratch), "--paths-file", str(inventory),
+              "--policy", str(source / "scripts/ci/setup-policy.json")],
+              text=True, capture_output=True, timeout=60)
+          if p.returncode != 1 or "required document title" not in p.stderr:
+              raise SystemExit("invalid tracker was not refused for the expected reason")
+          print("Invalid tracker refused for the expected reason")
+          PY
+              echo 'Intentional qualification failure after verified invalid-input refusal' >&2
+              exit 1
+              ;;
+            cancel|timeout)
+              printf '%s\n' "$QUAL_MODE" > /cache/qualification-marker
+              echo 'Waiting for the operator cancellation or workflow timeout'
+              sleep 300
+              echo 'Expected interruption did not occur' >&2
+              exit 1
+              ;;
+            *)
+              echo 'Invalid qualification mode' >&2
+              exit 1
+              ;;
+          esac

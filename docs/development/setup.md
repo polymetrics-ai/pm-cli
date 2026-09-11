@@ -14,9 +14,25 @@ It prints tool versions and index status. It does not install dependencies, chan
 
 The setup investigation on 2026-09-10 verified CodeGraph 1.5.0. The private candidate doctor observed Go1.26.5 darwin/arm64 and golangci-lint2.12.2; govulncheck was absent. After installation, the setup owner ran doctor in the actual clone: it completed successfully, but that process's PATH selected **Go1.25.6 darwin/amd64**. An explicit native Go binary on the same machine reports **Go1.26.5 darwin/arm64**. Doctor success therefore does not establish that the intended compiler or architecture is selected.
 
-These observations describe one machine and execution context, not minimum supported versions or the project's eventual toolchain lock. Run doctor in the actual checkout and build context. At M0, explicitly select and pin the native Go executable/toolchain and verify its version, architecture, cgo setting, C compiler, and chosen DuckDB integration together. Record the resolved executable identity as well as the version. Do not upgrade tools or rewrite global PATH merely to make setup appear ready; no version choice is made here. C/DuckDB build readiness remains unverified.
+These observations describe one machine and execution context, not minimum supported versions or the project's eventual toolchain lock. Run doctor in the actual checkout and build context. At M0, explicitly select and pin the Go executable/toolchain and verify its version and architecture. Qualify cgo, the C compiler and DuckDB together for the restricted query child; the client/API/worker must not acquire the analytical engine dependency. Record the resolved executable identity as well as the version. Do not upgrade tools or rewrite global PATH merely to make setup appear ready; no version choice is made here. C/DuckDB build readiness remains unverified.
 
 No `make test`, PM smoke, schema-generation target, or Go-module setup command is advertised as available yet. The new module and pinned toolchain belong to the later implementation task.
+
+## Repository skills and setup evidence
+
+Use [skill routing](skills.md) and the repository's four original skill entrypoints.
+[Skill provenance](skill-provenance.md) explains the nonempty [portable inventory](skill-provenance.json).
+External references are optional except when an authorized review/delivery task explicitly needs its tool.
+Use existing installations by source/name; official fallbacks cover absent optional references.
+Do not install a catalog, rewrite global MCP configuration or require a model login in CI.
+A successful public Context7 query proves documentation access only; use ordinary official sources if unavailable.
+
+This setup does not create the application stack, import private context, or resolve product decisions.
+Future implementation retains PostgreSQL, Temporal and shared objects in development as well as deployment.
+Structural setup checks cover files, hashes, confined links and declared schemas.
+Actual agent discovery, independent Standards/Spec review and delivery-tool qualification are separate observations.
+An empty runner check inventory is not CI success. Runner setup and activation require their owning task.
+The published tracking specification and explicit task authority must precede repository implementation.
 
 ## CodeGraph identity and prerequisites
 

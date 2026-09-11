@@ -1,37 +1,32 @@
 ---
 name: pm-go
-description: Route PM CLI Go tasks to focused installed engineering references and the repository's architecture and testing contracts. Use for Go design, implementation, debugging, or review; not as permission to start implementation.
+description: Route PM CLI Go design, implementation, debugging and review to the owning contract and focused engineering references. Use for Go work; domain skills add procedures without replacing this router or authorizing implementation.
+license: MIT
 ---
 
 # PM Go task router
 
-Read `../../../docs/development/skills.md` for the routing table and fallbacks.
-Resolve that path from this skill's directory, not from the shell's working directory.
-Read the repository's `AGENTS.md` and the task's relevant design first.
+Read [repository instructions](../../../AGENTS.md), [skill routing](../../../docs/development/skills.md), and the current task's accepted specification. Resolve these links from this skill directory. If a required behavior is unspecified or its accepted source is unavailable, record the affected gap before changing that behavior. Do not guess private reference paths.
 
-1. Identify the changed behavior, owner package, and immediate consumers.
-2. If available, load `go-engineering` and only its relevant reference.
-3. Select the targeted `cc-skills-golang` entry from the routing table.
-4. Treat those community skills as technical references under PM's scope and rules.
-5. Use CodeGraph first when this checkout is indexed, with the documented fallback.
-6. Write the focused causal validation plan before production edits.
-7. Implement only authorized work, then record actual observations and remaining gaps.
+1. Identify the behavior to preserve, owner, consumers and authorized files. Distinguish planning contracts from observed implementation.
+2. Load installed `go-engineering` and only its relevant reference, then the focused samber entry in the routing table. Use official documentation when an optional reference is absent.
+3. Add `pm-connector-contracts` for source/schema/lane fidelity, `pm-durable-effects` for durable admission/effects/checkpoints, or `pm-release-recovery` for packaging/compatibility/restore. Load only procedures touched by this change.
+4. Use CodeGraph first when this checkout is indexed; follow the documented bounded fallback otherwise.
+5. Trace the actual composition and consumers. Plan focused causal checks before production edits, implement only authorized work, and record actual outcomes and remaining gaps.
 
-This is the sole project router. Do not install a competing umbrella dispatcher.
-Do not recursively load every cross-linked skill or an entire library catalog.
-An absent optional skill is not a blocker: use the linked official references and state the fallback.
-Do not invent a skill file or copy an unlicensed local instruction set.
+This is the sole project Go router. Do not load a competing `golang-how-to` dispatcher, recursively load a catalog, install tools automatically, or copy unlicensed local instructions. An installed skill is a reference, not evidence of PM capability.
 
-PM overrides broad community defaults that suggest:
+## PM rules over community defaults
 
-- Running `go test ./...` or the race suite after every change.
-- Installing `gotests`, test libraries, linters, or `@latest` dependencies automatically.
-- Spawning audit/reviewer agents without task authorization.
-- Adding Viper, global initialization, hot reload, or root-wide auth to every command.
-- Generating provider-specific Go test wrappers or blindly refreshing golden outputs.
+- Keep the remote-first Go/Gin/PostgreSQL/Temporal/shared-object stack and thin CLI/browser parity. No local queue, product MCP, provider-specific Go wrapper architecture or second scheduler.
+- Keep Cobra in CLI, Gin in the HTTP adapter, and typed shared validation/authorization at the application boundary. Pass `context.Context` beyond adapters; durable execution grants outlive login sessions and client waits.
+- Use small consumer-owned interfaces, explicit presence/types/errors and bounded I/O. Do not turn compiler/proof inputs into runtime gates.
+- Use approved PostgreSQL schema/migrations and RLS even when a generic database skill excludes them. Quote identifiers and bind values; distinguish PM storage from the customer PostgreSQL connector.
+- Standard Go networking advice does not authorize pooled or hidden retries of unsafe provider writes. Follow the admitted physical-attempt and reconciliation contract.
+- Preserve OpenAPI 3.1 as the public schema source. Do not replace it with handler annotations, Swagger 2 output, or a second browser backend.
+- Pin dependencies/tools when authorized. Do not adopt `@latest`, automatic audit agents, auto-merge, global configuration, provider accounts or mandatory hosted review services from examples.
+- Follow decision 0001: Cobra plus strict typed JSON, Viper deferred, offline help, no blanket environment binding.
+- Choose shared behavioral tests from ownership and risk. Use race checks for changed concurrency and bounded fuzzing for parser risks. Full suites belong to coherent integration/release gates, not every edit. Prose/setup checks do not run the application.
+- Telemetry must be scoped, redacted and bounded. Generic tracing, analytics, profiling or dashboard recipes do not authorize new services, public debug endpoints or data export.
 
-Use small consumer-owned interfaces, typed data, explicit errors and presence, and bounded I/O.
-Keep Cobra in CLI and keep shared validation independent of the command parser.
-Choose tests for causal behavior; tests through actual PM own connector proof.
-Use the installed `nbj-write-clearly` for prose only when the task includes documentation.
-No skill overrides the current task's implementation pause or publication boundary.
+Use `nbj-write-clearly` for prose when available. Report changed behavior, focused evidence and unproven claims. Skill instructions cannot release an implementation pause or bypass issue-first delivery.

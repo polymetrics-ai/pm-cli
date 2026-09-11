@@ -1,43 +1,57 @@
 # Focused skill routing
 
-The repository contains one small original router, [pm-go](../../.agents/skills/pm-go/SKILL.md), and uses installed skills on demand. Do not copy a whole skill catalog into the repository. The project's `AGENTS.md` and current task define scope, testing, and architecture; community examples provide technical help within those boundaries.
+Use the repository's original skills and selected installed references on demand. The accepted task and [repository instructions](../../AGENTS.md) define authority. Skill advice does not create product requirements, implementation permission or evidence that a tool/connector works.
 
-## Select by changed behavior
+## Project procedures
 
-| Work | Load when available | Focus |
+| Changed behavior | Entry point |
+| --- | --- |
+| Go design, implementation, debugging or review | [pm-go](../../.agents/skills/pm-go/SKILL.md), the sole project Go router |
+| Connector source/value/schema fidelity, pagination, generated surfaces or seven-lane proof | [pm-connector-contracts](../../.agents/skills/pm-connector-contracts/SKILL.md) |
+| Admission/outbox, Temporal handoff, duplicate delivery, grants, worksets, effects or checkpoints | [pm-durable-effects](../../.agents/skills/pm-durable-effects/SKILL.md) |
+| Paired/standalone packaging, compatibility, migrations, shared-artifact backup or quarantine recovery | [pm-release-recovery](../../.agents/skills/pm-release-recovery/SKILL.md) |
+
+The domain skills are bounded procedures, not additional Go routers. Load only relevant sections and obtain the accepted specification through the current task. Missing private planning files are not implicit prerequisites. Unresolved admission/source/projection/context-import decisions stay explicit until their owner records acceptance.
+
+## Technical references
+
+| Work | Installed reference when available | Official fallback |
 | --- | --- | --- |
-| Any Go design or implementation | `go-engineering`; its relevant reference only | Ownership, small interfaces, explicit types, errors, bounded execution |
-| CLI commands, flags, help, completion | `cc-skills-golang:golang-cli`, `cc-skills-golang:golang-spf13-cobra` | One executable tree, hooks, typed flags, injected I/O, fresh command instances |
-| Foundation tests or fault investigation | `cc-skills-golang:golang-testing` | Causal assertions, isolation, useful fixtures; PM's focused-test policy overrides the umbrella defaults |
-| Error contracts and input boundaries | `cc-skills-golang:golang-error-handling`, `cc-skills-golang:golang-safety` | Error identity, preflight refusal, presence, resource bounds |
-| Secrets, auth, redirects, or transport | `cc-skills-golang:golang-security` | Secret handling and scoped transport safeguards |
-| Cancellation or parallel execution | `cc-skills-golang:golang-context`; `golang-concurrency` only for concurrency changes | Ownership, cancellation, bounded workers, meaningful race checks |
-| SQL, warehouse, or transactions | `cc-skills-golang:golang-database` | Transactions, cancellation, lossless values, qualified identifiers |
-| Dependencies, native build, or release | `cc-skills-golang:golang-dependency-management`; CI skill only for actual CI work | Exact pins and relevant verification |
-| User/developer prose | `nbj-write-clearly` | Result first, active language, stable terms, facts and modality preserved |
-| A future approved Viper adoption | `cc-skills-golang:golang-spf13-viper` | Only after decision 0001's reconsideration criterion is met |
+| Go ownership, values, errors and bounded execution | `go-engineering`; fundamentals, advanced, production or agentic-ETL reference only as needed | [Go documentation](https://go.dev/doc/) |
+| Cobra command tree, flags, help and completion | `cc-skills-golang:golang-spf13-cobra` | [Cobra guide](https://github.com/spf13/cobra/blob/main/site/content/user_guide.md) |
+| Causal tests, fault cases and parser fuzzing | `cc-skills-golang:golang-testing` | [Go tests](https://go.dev/doc/tutorial/add-a-test), [Go fuzzing](https://go.dev/doc/security/fuzz/) |
+| Cancellation and bounded concurrency | `cc-skills-golang:golang-context`; `golang-concurrency` for actual concurrency changes | [context](https://pkg.go.dev/context) |
+| Gin and public API/schema generation | No dedicated Gin skill selected; use official docs | [Gin](https://gin-gonic.com/en/docs/), [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0.html), [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) |
+| PostgreSQL transactions, pools and transport | `cc-skills-golang:golang-database` | [PostgreSQL](https://www.postgresql.org/docs/current/), [pgx](https://pkg.go.dev/github.com/jackc/pgx/v5) |
+| Temporal Go workflow/activity/replay behavior | No dedicated Temporal Go skill selected; use official docs | [Temporal Go](https://docs.temporal.io/develop/go), [testing](https://docs.temporal.io/develop/go/testing-suite) |
+| Authentication, secrets and transport security | `cc-skills-golang:golang-security` | [Go security](https://go.dev/doc/security/) |
+| Safe logs, metrics and traces | `cc-skills-golang:golang-observability` | [OpenTelemetry Go](https://opentelemetry.io/docs/languages/go/) |
+| CI and tool/module pins | `cc-skills-golang:golang-continuous-integration` for authorized CI work | [GitHub Actions security](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions), [Go modules](https://go.dev/ref/mod) |
+| Behavior examples and acceptance mapping | Standard Go tests by default; no BDD framework skill selected | [Example mapping](https://cucumber.io/docs/bdd/example-mapping/) |
+| Reader-facing prose | `nbj-write-clearly` plus its guide | [Google developer style](https://developers.google.com/style) |
+| Authorized independent Standards/Spec review | Exact Matt Pocock AI Hero `code-review` source in provenance | Accepted review specification; source absence cannot produce a claimed review pass |
+| Authorized fixes and delivery validation | Installed `no-mistakes` under the task's delivery policy | Report missing delivery capability honestly; never invent a successful pipeline run |
 
-Resolve a name through the agent's current skill catalog. Open its `SKILL.md`, then only needed relative references; announce first use according to the host's communication rules. Different hosts may display the same community entry as `samber/cc-skills-golang@golang-cli` or without its namespace. Match the source and skill name, not a hard-coded home path. A skill being installed does not mean every task loads it.
+Discover installed names through the current host's catalog; never hard-code a contributor's home path. A community namespace may be displayed differently across hosts: match source and entrypoint. Optional absence uses official documentation without installation. Context7 may retrieve public docs if already available; it does not justify global MCP changes and is not a product MCP integration.
 
-The `go-engineering` fundamentals reference is useful for ordinary work; advanced, production, and agentic-ETL references are conditional. Do not load Temporal, GraphQL, Kubernetes, or dependency-injection frameworks merely because they appear in a catalog.
+## PM overrides
 
-## Conflicting defaults and fallback
+Keep the remote-first Go/Gin/PostgreSQL/Temporal/shared-object stack, thin CLI/browser parity, five connectors, seven lanes and deferred logical CDC. Community examples cannot replace accepted contracts.
 
-PM's local router intentionally replaces a second always-active `golang-how-to` dispatcher. Do not recursively invoke that dispatcher after this one. Its routing knowledge was consulted during setup; its automatic AGENTS configuration mode is not part of PM setup.
+Do not recursively load `golang-how-to`, copy a catalog, auto-install `@latest`, spawn agents without task authority, activate hosted AI-review jobs or auto-merge. Use exact pins and only the owning setup task's runner/check policy. A tool version check or empty CI job inventory is not validation.
 
-The inspected community testing skill suggests automatic `gotests` installation, audit subagents, and broad suite commands. PM does not adopt those defaults. Use the current task's agent policy, standard Go tests where sufficient, causal shared regression checks, and a full suite only at the coherent integration/release gate. No mandatory provider wrappers, blanket fake-and-live pairing, coverage target, or repeated full-suite loop is introduced.
+The generic database skill excludes RLS and schema creation. PM retains explicit application authorization plus scoped RLS and reviewed migrations. The inspected Swagger skill centers handler annotations; it is not selected because PM's public OpenAPI 3.1 is authoritative. Do not infer a second schema from handlers or substitute Temporal Python tests for Go workflow and real-stack evidence.
 
-The inspected Cobra skill uses `@latest` installation examples and suggests configuration pairing with Viper. PM pins dependencies when authorized and follows [decision 0001](../decisions/0001-cli-configuration.md). Do not apply the Viper skill's hot-reload or blanket environment-binding examples. In particular, its warning that atomic editor saves necessarily escape file watching conflicts with the inspected current Viper source, which watches the parent directory to handle renames. Verify uncertain APIs against primary sources instead of treating skill prose as implementation evidence.
+Follow [decision 0001](../decisions/0001-cli-configuration.md): Cobra plus strict typed JSON, Viper deferred, fresh trees and offline help. Preserve typed presence and server-owned schema/configuration. Generic connection pooling/retry examples cannot override PM's physical provider-attempt and uncertain-effect rules.
 
-If an optional skill is unavailable, report that fact and use the local contract plus the relevant official reference: [Go documentation](https://go.dev/doc/), [Go modules](https://go.dev/ref/mod), [Go security](https://go.dev/doc/security/), or [Cobra user guide](https://github.com/spf13/cobra/blob/main/site/content/user_guide.md). For prose, follow the [Google developer style guide](https://developers.google.com/style): put the reader's purpose first, preserve exact code and error text, and label proposed behavior. Skill absence alone is not a reason to stop authorized work.
+Choose focused shared causal tests, relevant race/fuzz checks and coherent integration/release gates. Do not manufacture application tests for reversible setup prose or impose provider wrappers, blanket fake-plus-live pairing or arbitrary coverage targets. Observability recipes do not authorize analytics export or public debug endpoints.
 
-## Provenance and copying policy
+## Issue and specification lookup
 
-| Reference | Setup provenance | Transfer decision |
-| --- | --- | --- |
-| Local `go-engineering` | Installed skill and `references/fundamentals.md` inspected on 2026-09-10; no license file found in its skill root | Use in place when available. Do not redistribute without established permission. |
-| `samber/cc-skills-golang` | Local checkout HEAD `466ea6dfd4aecb5c19caf29e7595e752c66c1a5d`; root MIT license, copyright Samuel Berthe, 2026 | On-demand reference by name. No upstream skill files copied. |
-| `daniel-p-green/nbj-write-clearly` | Installed six-file skill from commit `56e3a27f920bcd772f7b03fa476b5cfb9268332c`, source `.agents/skills/nbj-write-clearly` | Use installed skill. Original material MIT; its NOTICE attributes Google style-guide material under CC BY 4.0. No copy in this repo. |
-| Project `pm-go` router | Authored for this repository's task and architecture | One portable local instruction entry; no third-party source pasted. |
+[PM issue/spec lookup](../agents/issue-tracker.md) supplies the repository-owned integration expected by the selected AI Hero review skill. It identifies the private repository, supported gh-axi reads and the accepted issue and scope-specific immutable input envelope. The authorized early skills/CI setup slice does not require full PM context import. Both independent review axes remain required. This integration adds no triage, issue-write or product-dispatch authority. Runtime discovery and accepted-spec readback still need qualification on the authorized candidate.
 
-If a future contributor needs a portable vendored reference, select the exact skill first, inspect its relative-reference closure, and preserve its license and notices. Record source commit, source path, target path, byte hashes, and modifications. Do not assume a single copied `SKILL.md` carries its referenced files. This setup has **zero third-party COPY operations**; no licenses or source payloads are silently omitted from a copied skill.
+## Provenance and installation
+
+[Provenance policy](skill-provenance.md) and the [machine-readable manifest](skill-provenance.json) record original skill membership/hashes, selected external references and their required closure, licenses/notices, immutable refs or local hashes, PM overrides and fallbacks. No third-party payload is copied. Keep working installations. Any future missing-source installation requires its authorized setup scope and a reviewed exact source/closure; no floating or whole-catalog installation.
+
+Structural CI validates repository membership, hashes, references and manifest shape without external installed files, credentials, model login or network access. Actual fresh-worker discovery and independent review are separate development observations; neither is claimed merely because the files exist.
