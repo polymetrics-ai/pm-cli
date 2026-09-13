@@ -226,15 +226,15 @@
       "target": "docs/architecture/pm-server/instructions/AGENTS.draft.md",
       "source": "data/pm-cli/setup/PMCLI-AGENTS-DRAFT.md",
       "source_sha256": "3089f5cb7ef30716a331b6e022c8c96795bcde6d4c932dd0fd1afa9a86b4d90d",
-      "sha256": "de3706556e564c2bc0c23b5c73c07c8b61ee4182047b6e28c094c3534e4702df",
-      "transformation": "Keep product/dependency/security/navigation sections; consolidate implementation/review policy once and replace archive exception with reviewed manifest/diff"
+      "sha256": "a03256eba1595587673ec4234aead1409d28213d4094e99edbb1eccfcb720128",
+      "transformation": "Keep product/dependency/security/navigation sections; consolidate implementation/review policy once and replace archive intake wording with a pointer to the policy-owned publication/bootstrap distinction"
     },
     {
       "target": "docs/architecture/pm-server/instructions/issue-tracker.draft.md",
       "source": "data/pm-cli/setup/ISSUE-TRACKER-DRAFT.md",
       "source_sha256": "ec3f0cc0e351a270162b39e62dbf5453aceb921f84c8cbbea0ba96315798a955",
-      "sha256": "94a2607e64927e9722ceab37d705c24fd56cdce1393fe52ca373098ea844f35f",
-      "transformation": "Inactive draft; replace prohibited archive intake wording"
+      "sha256": "827c27bca5b9f3c7b87d649756c32fd6a3a105ad18d919547c347ee226fc7f4b",
+      "transformation": "Inactive draft; replace prohibited archive intake wording with a pointer to the policy-owned publication/bootstrap distinction"
     },
     {
       "target": "docs/architecture/pm-server/proposals/admission-binding-gap.md",
@@ -267,14 +267,14 @@
     {
       "target": "docs/architecture/pm-server/README.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "ca2d45a4d8beb92013889a36abece53b250ebfb46fbab1345b8d28356c1cd2da",
-      "transformation": "Original documentation proposal with corrected candidate state and recorded F06 ownership/handoff disclosure; no upstream source payload"
+      "sha256": "dd1cae20dc6ace564e1e45c6bbe90dccc8faf46765c861f3b07a763aa950fd58",
+      "transformation": "Original documentation proposal with manifest-owned candidate state and recorded F06 ownership/handoff disclosure; no upstream source payload"
     },
     {
       "target": "docs/architecture/pm-server/SEMANTIC-AMENDMENTS.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "b73962870c9b204ec802a4fe0f765d4d54267d9690fa97a256f8b81423500502",
-      "transformation": "Original disclosure/policy with recorded F06 ownership/handoff amendment; no upstream source payload"
+      "sha256": "76916ea3d06fc5e22e71cdb517ca082f8d6f42eb0ebf3d4e9283b0cb1af62ce3",
+      "transformation": "Original disclosure/policy with recorded F06 ownership/handoff amendment and a pointer to manifest-owned authority; no upstream source payload"
     },
     {
       "target": "docs/architecture/pm-server/SOURCE-ACCESS.md",
@@ -291,8 +291,8 @@
     {
       "target": "docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "3999699e9636e3d4d87435b80a59decaa38bea8995b243a8f3d90e3d6da088f7",
-      "transformation": "Original documentation proposal; no upstream source payload"
+      "sha256": "7d69226f685a44934168de3caed610a3a9395167fd5d0cd03cd9f1f101959a8f",
+      "transformation": "Original documentation proposal with manifest-owned candidate authority; no upstream source payload"
     }
   ],
   "exclusions": [
@@ -330,5 +330,5 @@
     }
   ],
   "manifest_self": "IMPORT-MANIFEST.json generated from this inventory; its hash is in the outer manifest",
-  "approval": "Ownership/handoff binding recorded; exact final content/diff review and explicit import/publication authorization remain required; no PM checkout write performed."
+  "approval": "Historical preparation record: no PM checkout write had occurred when this inventory was assembled. September 13 authority permits import/publication of the identified package, necessary issue amendments, independent review, commits, push, and PR creation. This manifest identifies the current candidate snapshot; its exact bytes still require the recorded verification and independent review, and separate explicit merge acceptance. It does not claim publication, BOOT completion, or an accepted merged baseline."
 }

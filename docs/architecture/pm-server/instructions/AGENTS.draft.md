@@ -47,4 +47,4 @@ If `.codegraph/` exists, use the existing CodeGraph before searching or reading 
 
 ## Implementation, verification and delivery
 
-Follow the single shared [engineering/review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md). This link resolves from the proposed root AGENTS.md target, not this inactive staging location. The documentation-publication exception uses its reviewed local manifest/diff until a real candidate exists. Dependent implementation requires approved committed context. No archive comments.
+Follow the single shared [engineering/review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md). This link resolves from the proposed root AGENTS.md target, not this inactive staging location. The policy owns the sole documentation-publication exception and bootstrap baseline requirement. No archive comments.

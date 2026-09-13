@@ -1,6 +1,6 @@
 # Shared engineering and review policy
 
-Proposed documentation import; no implementation or publication authorization. This policy consolidates the existing PM instruction draft and REVIEW-DELIVERY-POLICY without activating either. Source digests are in the import manifest.
+Proposed documentation import; this policy neither grants implementation nor publication authority. [IMPORT-MANIFEST](../IMPORT-MANIFEST.json) owns the candidate state, granted import/publication authority, and remaining verification/merge conditions. This policy consolidates the existing PM instruction draft and REVIEW-DELIVERY-POLICY without activating either. Source digests are in the import manifest.
 
 PM has one remote-first Go/Gin/PostgreSQL/Temporal/shared-artifact architecture. The CLI and browser call the same versioned API. Server application services own authorization and durable state; worker activities own provider I/O and credential resolution. Domain code accepts context.Context and typed contracts; framework contexts stay in adapters. Source descriptors and the Foundation Atlas cannot establish executable reachability or provider proof. The five initial connectors and seven lane inventories do not imply complete provider parity.
 
