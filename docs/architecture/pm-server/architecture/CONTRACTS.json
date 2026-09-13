@@ -1,0 +1,532 @@
+{
+  "schema_version": "pm.plan.contracts/v3",
+  "label": "Proposed/Recommended475; synthetic contracts, no implementation or execution",
+  "authority": "Proposed normative design; final schemas implemented later and validated independently",
+  "initial_connectors": [
+    "github",
+    "postgres",
+    "gong",
+    "pylon",
+    "hubspot"
+  ],
+  "lanes": [
+    "direct_read",
+    "direct_write",
+    "etl",
+    "reverse_etl",
+    "binary_download",
+    "binary_upload",
+    "sync_transport"
+  ],
+  "contracts": {
+    "ConnectorSource": {
+      "required": [
+        "schema_version",
+        "connector_id",
+        "source_set",
+        "operations",
+        "semantics_revision"
+      ],
+      "source_set": "immutable raw bytes hashes, official URL/license/date/dialect, recursively captured reference map; build-time only",
+      "operations": "All source operations preserved including blocked/unsupported; no implemented/live flags copied from old repo"
+    },
+    "TypedOperation": {
+      "required": [
+        "operation_id",
+        "source_refs",
+        "transport",
+        "inputs",
+        "responses",
+        "capability_requirements",
+        "lane_eligibility"
+      ],
+      "inputs": "Location+wire-name+stable field ID+JSON pointer+type+presence/nullable/default+style/explode/allowReserved+sensitivity; required list is per request variant",
+      "responses": "Every declared status/media/schema variant, body/record/binary semantics and returned relationship identity; no preferred-only collapse",
+      "eligibility": "Per operation/lane/behavior; independent source strategy/write/deletion/matching/null/cadence/delivery/order/dedup/state/binary dimensions"
+    },
+    "Value": {
+      "presence": [
+        "absent",
+        "null",
+        "value"
+      ],
+      "logical_types": [
+        "string",
+        "bool",
+        "integer",
+        "decimal",
+        "date",
+        "timestamp_instant",
+        "timestamp_local",
+        "array",
+        "object",
+        "union",
+        "binary_ref"
+      ],
+      "precision": "Integer/decimal wire values use canonical exact strings with precision/scale metadata where JSON number cannot remain lossless across Go/browser; no float64 coercion",
+      "temporal": "Instant includes zone/offset normalization; timestamp without zone preserves wall-time semantics, never guessed UTC"
+    },
+    "RunSpec": {
+      "required": [
+        "run_id",
+        "org_id",
+        "workspace_id",
+        "actor",
+        "execution_grant_ref",
+        "origin",
+        "operation_or_plan_ref",
+        "input_refs",
+        "schema_refs",
+        "capability_versions",
+        "budget",
+        "idempotency_fingerprint"
+      ],
+      "immutable": true,
+      "origin": [
+        "api",
+        "schedule",
+        "recovery"
+      ],
+      "execution_grant": "Persisted independent expiry/revocation epochs, not short-lived login-session token",
+      "schedule_origin": "Adopt existing effect-free workflow only after occurrence admission; binding-outbox, no duplicate StartRun"
+    },
+    "DispatchIntent": {
+      "required": [
+        "run_id",
+        "effect_key",
+        "dispatch_id",
+        "ordered_member_ids",
+        "payload_hash",
+        "request_artifact_ref",
+        "operation_revision",
+        "account_witness",
+        "grant_epoch",
+        "capacity_reservation",
+        "attempt_id"
+      ],
+      "effect_identity": "Stable intended action occurrence; entity identity alone insufficient",
+      "send_rule": "Persist exact intent and reserve outcome/readback capacity before one physical send; ambiguous retry uses same proven provider idempotency contract or reconciliation"
+    },
+    "MemberOutcome": {
+      "states": [
+        "unsent",
+        "succeeded",
+        "unchanged",
+        "rejected",
+        "unknown"
+      ],
+      "required": [
+        "member_id",
+        "effect_key",
+        "dispatch_id",
+        "state",
+        "observed_at",
+        "assertion_refs"
+      ],
+      "correlation": "Provider documented key/order with exact cardinality only; unknown missing/extra/unmapped results retained; never aggregate input count as success"
+    },
+    "Checkpoint": {
+      "required": [
+        "workspace_id",
+        "connection_id",
+        "resource_id",
+        "source_generation",
+        "schema_fingerprint",
+        "partition",
+        "continuation",
+        "committed_manifest_id",
+        "revision"
+      ],
+      "continuation": "Tagged kind/presence/opaque bytes, tie-breaker and unread-tail reference as applicable; exact complete identity participates in CAS",
+      "commit": "Only exact acknowledged prefix and verified published object manifest advance together in PG"
+    },
+    "ArtifactRef": {
+      "required": [
+        "org_id",
+        "workspace_id",
+        "artifact_id",
+        "object_attempt_key",
+        "sha256",
+        "byte_length",
+        "media_type",
+        "backend_generation"
+      ],
+      "publication": "Unique immutable object; SHA256 not ETag; complete+verify before PG manifest. No arbitrary URL/path membership",
+      "gc": "Reservations, runs, manifests, accepted plans, proof receipts and backup retention checked before deletion"
+    },
+    "Scenario": {
+      "required": [
+        "scenario_id",
+        "connector_id",
+        "lane",
+        "operation_id",
+        "source_refs",
+        "requirements",
+        "steps",
+        "assertions",
+        "cleanup"
+      ],
+      "steps": "Ordered dependency DAG: setup invokes real commands, captures actual returned IDs, write/readback/cleanup uses those; shared fixtures explicit and bounded",
+      "assertions": "Independent expected fields, effects, byte hashes, stored rows and cursor transitions, never copied from actual response as oracle",
+      "cleanup": "Owned created IDs only, retained even after failure; does not invalidate independent passes"
+    },
+    "Proof": {
+      "required": [
+        "proof_version",
+        "connector_id",
+        "lane",
+        "operation_id",
+        "behavior_id",
+        "case_id",
+        "run_id",
+        "source_hashes",
+        "bundle_hash",
+        "schema_hash",
+        "assertion_hash",
+        "pm_client_hash",
+        "pm_api_hash",
+        "pm_worker_hash",
+        "query_helper_hash_if_used",
+        "handler_versions",
+        "workspace_account_scope_hash",
+        "command",
+        "request",
+        "response",
+        "assertions",
+        "effect",
+        "status",
+        "started_at",
+        "finished_at",
+        "provenance"
+      ],
+      "sanitization": "Sensitive values excluded or hashes/references under scoped access; no token/header/body leakage; actual sanitized request/response and expected-vs-observed assertions retained",
+      "status": [
+        "unproven",
+        "blocked",
+        "failed",
+        "passed_fake",
+        "passed_live"
+      ],
+      "reuse": "Original physical run timestamp/binary/source preserved; new invocation may reuse only current exact independent pass, never present cached as freshly executed"
+    },
+    "FoundationGap": {
+      "required": [
+        "gap_id",
+        "semantic_signature",
+        "source_refs",
+        "field_or_operation_bindings",
+        "required_contract",
+        "affected_cells",
+        "reason",
+        "proposed_owner",
+        "causal_test"
+      ],
+      "dedupe": "Same missing semantic contract deduplicated independent of provider name; compatible handler extension preferred, otherwise versioned foundation. Bounded SQL/native adapter only for actual non-HTTP transport",
+      "authority": "Authoring impact view only; never runtime proof gate or HTTP escape hatch"
+    },
+    "ScheduleRevision": {
+      "required": [
+        "schedule_id",
+        "revision",
+        "flow_or_profile_revision",
+        "timezone",
+        "calendar_spec",
+        "overlap",
+        "catchup_window",
+        "execution_policy_ref"
+      ],
+      "calendar_semantics": "Temporal DOM AND DOW; missing wall time skipped, both repeated UTC instants trigger",
+      "defaults": {
+        "timezone": "UTC",
+        "overlap": "SKIP",
+        "catchup_window": "1h",
+        "jitter": "0"
+      },
+      "update": "PG If-Match/outbox, low-level Temporal Describe conflict token; persistent RequestId per exact mutation dispatch; new rebase gets new linked ID"
+    },
+    "Configuration": {
+      "schema": "schemas/server-config.schema.json",
+      "mode_field": null,
+      "pg": "pm_app only for PM pool; separate temporal, temporal_visibility, pm_objects_meta databases/roles; customer Postgres connector explicitly distinct",
+      "temporal": "private authenticated namespace per deployment; workload task queues, explicit retention/versioning/fairness",
+      "objects": "One qualified S3 contract; bundled Seaweed or managed provisioned backend",
+      "secrets": "Operator KMS/key mount references and PG ciphertext; no plaintext defaults",
+      "limits": "Explicit per-tenant run slots, account requests/cooldowns, bytes, rows, memory, scratch, history, upload, event buffer and backlog caps"
+    },
+    "ServerEvent": {
+      "required": [
+        "org_id",
+        "workspace_id",
+        "run_id",
+        "sequence",
+        "state_revision",
+        "type",
+        "safe_payload",
+        "committed_at"
+      ],
+      "sequence": "Per-run integer allocated while locking that run row in the same PG state/event transaction. No global bigserial commit-order assumption.",
+      "sse_id": "Opaque signed scope/run/sequence cursor; clients dedupe sequence and resnapshot only on explicit retention gap.",
+      "payload": "Safe refs/counts/reason codes only; never raw provider data/secrets."
+    },
+    "Task": {
+      "required": [
+        "task_id",
+        "run_id",
+        "org_id",
+        "workspace_id",
+        "operation_id",
+        "lane",
+        "behavior_id",
+        "input_refs",
+        "schema_refs",
+        "state",
+        "effect_summary",
+        "revision"
+      ],
+      "state": "Known task scheduling state separate from member outcomes and cancel intent; unknown effects remain visible.",
+      "ownership": "PG application state; Temporal activity attempt is execution observation, never task identity."
+    },
+    "CredentialBinding": {
+      "required": [
+        "credential_ref",
+        "workspace_id",
+        "connection_id",
+        "provider_account_witness",
+        "ciphertext_version",
+        "key_ref",
+        "scopes",
+        "auth_epoch"
+      ],
+      "public_projection": "Only opaque reference/version/status when authorized; no value, private locator or raw scope token.",
+      "resolution": "Worker receives signer after run/reconciliation grant check. API admin can encrypt ingress; public clients never resolve."
+    },
+    "PhysicalHTTPAttempt": {
+      "required": [
+        "dispatch_id",
+        "attempt_id",
+        "operation_revision",
+        "permit_ref",
+        "deadline"
+      ],
+      "initial_transport_policy": "Provider HTTP transport uses HTTP/1.1 with DisableKeepAlives=true, ForceAttemptHTTP2=false and a non-nil empty TLSNextProto map; redirects are disabled and separately admitted. No synthesized Idempotency-Key or replayable GetBody for unsafe writes.",
+      "tradeoff": "Fresh connections cost latency/TLS work. Qualification tests verify one physical provider request per durable attempt. HTTP2-only providers remain unsupported until a separately proven single-attempt transport exists. API ingress/browser transports are unaffected.",
+      "retry_owner": "Temporal retries safe logical activities after durable disposition; transport never hides repeated provider sends.",
+      "source": "Pinned Go1.27.1 net/http/transport.go89\u201397 and retry eligibility behavior inspected in473. V28/V74 must fault connection reuse/response loss before enabling pooling or HTTP2."
+    }
+  },
+  "identities": [
+    {
+      "id": "org_id",
+      "purpose": "Tenant/organization authorization and billing boundary",
+      "invariant": "Opaque stable ID; workspace belongs to exactly one org"
+    },
+    {
+      "id": "user_id",
+      "purpose": "Human identity independent of workspace",
+      "invariant": "One human may hold multiple workspace memberships; identity provider subject is issuer-scoped"
+    },
+    {
+      "id": "membership_id",
+      "purpose": "Principal-to-workspace role and resource grants",
+      "invariant": "Versioned policy epoch, expiry/revocation; role alone not permission to every connection"
+    },
+    {
+      "id": "service_account_id",
+      "purpose": "Authorized automation identity",
+      "invariant": "Org-owned, explicit workspace/connection/operation scopes, expiry and separate credential rotation"
+    },
+    {
+      "id": "delegation_id",
+      "purpose": "Optional bounded authorized-agent delegation",
+      "invariant": "At most one explicit delegation hop initially; cannot exceed parent grant; immutable requested_actor/effective_actor attribution"
+    },
+    {
+      "id": "workspace_id",
+      "purpose": "Per-invocation resource boundary",
+      "invariant": "Mandatory in every workspace route and CLI effect invocation; no mutable global current workspace"
+    },
+    {
+      "id": "connection_id",
+      "purpose": "Workspace-owned provider configuration handle",
+      "invariant": "Aliases may share provider account but grants remain separate"
+    },
+    {
+      "id": "provider_account_id",
+      "purpose": "Canonical provider account/instance witness",
+      "invariant": "Shared distributed auth/rate coordination identity; safe nonreversible internal key, never raw credential"
+    },
+    {
+      "id": "credential_ref",
+      "purpose": "Opaque reference to server-owned ciphertext version",
+      "invariant": "No raw value/locator in CLI/UI public schema/history"
+    },
+    {
+      "id": "profile_id",
+      "purpose": "Logical synchronization policy identity",
+      "invariant": "Immutable revisions; stable creation ledger survives nonidentity revisions"
+    },
+    {
+      "id": "plan_id",
+      "purpose": "Sealed intended actions and workset",
+      "invariant": "Exact schema/account/mapping/actions/budgets; If-Match for editable candidates, immutable accepted snapshot"
+    },
+    {
+      "id": "flow_id",
+      "purpose": "Explicit typed DAG identity",
+      "invariant": "Revisioned graph; no inferred dependencies"
+    },
+    {
+      "id": "run_id",
+      "purpose": "PM durable accepted intent",
+      "invariant": "Stable across Temporal retries and ContinueAsNew; source of public run identity"
+    },
+    {
+      "id": "workflow_id",
+      "purpose": "Temporal orchestration identity",
+      "invariant": "API-origin uses pm/run/<opaque UUID>; schedule-origin adopts its actual Temporal execution after effect-free admission. Both map to stable PM run identity; never start a second workflow for admitted schedule origin."
+    },
+    {
+      "id": "temporal_run_id",
+      "purpose": "Temporal execution-chain member",
+      "invariant": "Changes across retries/ContinueAsNew; mapped as orchestration observations"
+    },
+    {
+      "id": "entity_key",
+      "purpose": "Logical provider entity identity",
+      "invariant": "Source/destination account/resource/key + explicit creation generation"
+    },
+    {
+      "id": "effect_key",
+      "purpose": "Intended action occurrence identity",
+      "invariant": "Entity key + explicit logical action occurrence/revision where semantically required; exact retry retains key"
+    },
+    {
+      "id": "dispatch_id",
+      "purpose": "One exact physical request envelope",
+      "invariant": "Ordered member IDs, payload hash/ref, attempt and pre-I/O intent"
+    },
+    {
+      "id": "member_id",
+      "purpose": "Independently attributable input/effect member",
+      "invariant": "Never infer result from aggregate counts or response array position without declared contract"
+    },
+    {
+      "id": "artifact_id",
+      "purpose": "Registered immutable business bytes",
+      "invariant": "Workspace scope, digest/length/media/object version; no arbitrary paths or client storage authority"
+    }
+  ],
+  "session_and_run_grant_policy": "Session validity is checked at API acceptance and control actions only. Accepted jobs use durable execution grants with their own expiry, membership/service/delegation/connection/approval policy epochs and explicit revocation. Ordinary logout or login-session expiry does not cancel accepted work. Explicit principal/run-grant revocation stops future dispatch; already sent effects remain observable under restricted reconciliation-only read authority, which cannot create new mutations.",
+  "state_authority_ids": [
+    "S01",
+    "S02",
+    "S03",
+    "S04",
+    "S05",
+    "S06",
+    "S07",
+    "S08",
+    "S09",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17"
+  ],
+  "synthetic_server_config": {
+    "schema_version": "1",
+    "deployment_id": "synthetic-deployment-475",
+    "public_origin": "https://pm.example.invalid",
+    "postgres": {
+      "ownership": "bundled",
+      "database": "pm_app",
+      "endpoint_ref": "secret://infra/pm-dsn"
+    },
+    "temporal": {
+      "ownership": "bundled",
+      "endpoint": "temporal:7233",
+      "namespace": "pm-production",
+      "client_identity_ref": "secret://infra/temporal-mtls",
+      "retention": "720h",
+      "task_queues": [
+        "pm-control",
+        "pm-read",
+        "pm-effect",
+        "pm-binary-query"
+      ]
+    },
+    "artifacts": {
+      "ownership": "bundled",
+      "driver": "s3",
+      "endpoint": "https://objects.internal.invalid",
+      "bucket": "pm-artifacts",
+      "credential_ref": "secret://infra/object-access",
+      "attempt_key_policy": "unique_immutable"
+    },
+    "identity": {
+      "issuer": "https://identity.example.invalid",
+      "client_id": "pm-server",
+      "client_secret_ref": "secret://infra/oidc"
+    },
+    "encryption": {
+      "wrapping_key_ref": "secret://infra/pm-wrap-v1"
+    },
+    "limits": {
+      "admission_backlog_runs": 1000,
+      "admission_backlog_max_age": "1h",
+      "workspace_active_runs": 4,
+      "workflow_payload_bytes": 65536,
+      "workflow_fanout": 32,
+      "event_buffer": 128,
+      "query_children": 1,
+      "query_child_memory_bytes": 4294967296,
+      "query_child_deadline": "5m",
+      "request_bytes": 1048576,
+      "metadata_deadline": "5s"
+    },
+    "label": "SYNTHETIC proposed config; addresses/references not real credentials or endpoints"
+  },
+  "capability_availability": [
+    "implemented",
+    "unsupported",
+    "not_applicable",
+    "blocked"
+  ],
+  "evidence_readiness": [
+    "planned",
+    "implemented",
+    "locally_verified",
+    "provider_tested",
+    "live_certified"
+  ],
+  "effect_states": [
+    "unsent",
+    "succeeded",
+    "unchanged",
+    "rejected",
+    "unknown"
+  ],
+  "run_states": [
+    "accepted",
+    "queued",
+    "running",
+    "awaiting_approval",
+    "blocked",
+    "reconciling",
+    "succeeded",
+    "partial",
+    "failed",
+    "cancelled"
+  ],
+  "orthogonal_run_fields": [
+    "cancel_requested",
+    "orchestration_condition",
+    "projection_observed_at",
+    "unknown_effect_count"
+  ],
+  "aggregate_rule": "Unknown effects prevent clean failure/cancel/success claim. Orchestration closure is observation only; complete exact effect/member/checkpoint evidence owns terminal business outcome.",
+  "all_examples": "Synthetic proposal, not command availability or actual receipt."
+}

@@ -1,0 +1,226 @@
+{
+  "type": "object",
+  "properties": {
+    "canonical_info_path": {
+      "type": "string"
+    },
+    "canonical_public_schema": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "local_only": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "authority": {
+            "type": "string"
+          },
+          "cli": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "server_endpoint": {
+            "type": "null"
+          },
+          "ui_equivalent": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "cli",
+          "id",
+          "reason",
+          "server_endpoint",
+          "ui_equivalent"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "application_owner": {
+            "type": "string"
+          },
+          "cli": {
+            "type": "string"
+          },
+          "client_validation": {
+            "type": "string"
+          },
+          "endpoint": {
+            "type": "string"
+          },
+          "first_milestone": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "idempotency": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "ordinary_sdk": {
+            "type": "boolean"
+          },
+          "permission": {
+            "type": "string"
+          },
+          "request_contract": {
+            "type": "string"
+          },
+          "response_contract": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "server_validation": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "ui_action": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_owner",
+          "cli",
+          "client_validation",
+          "endpoint",
+          "first_milestone",
+          "id",
+          "idempotency",
+          "method",
+          "ordinary_sdk",
+          "permission",
+          "request_contract",
+          "response_contract",
+          "scope",
+          "server_validation",
+          "status",
+          "test_ids",
+          "ui_action"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.client-parity/v1"
+    },
+    "shared_rules": {
+      "type": "object",
+      "properties": {
+        "admin": {
+          "type": "string"
+        },
+        "browser": {
+          "type": "string"
+        },
+        "cli": {
+          "type": "string"
+        },
+        "errors": {
+          "type": "string"
+        },
+        "events": {
+          "type": "string"
+        },
+        "exit_codes": {
+          "type": "object",
+          "properties": {
+            "0": {
+              "type": "string"
+            },
+            "2": {
+              "type": "string"
+            },
+            "3": {
+              "type": "string"
+            },
+            "4": {
+              "type": "string"
+            },
+            "5": {
+              "type": "string"
+            },
+            "6": {
+              "type": "string"
+            },
+            "7": {
+              "type": "string"
+            },
+            "8": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "0",
+            "2",
+            "3",
+            "4",
+            "5",
+            "6",
+            "7",
+            "8"
+          ],
+          "additionalProperties": false
+        },
+        "pagination": {
+          "type": "string"
+        },
+        "workspace": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "admin",
+        "browser",
+        "cli",
+        "errors",
+        "events",
+        "exit_codes",
+        "pagination",
+        "workspace"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "canonical_info_path",
+    "canonical_public_schema",
+    "label",
+    "local_only",
+    "rows",
+    "schema_version",
+    "shared_rules"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote design:client-parity",
+  "title": "CLIENT-PARITY.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}

@@ -1,0 +1,2473 @@
+{
+  "schema_version": "pm.plan.milestones/v2",
+  "label": "Proposed/Recommended475; fourteen dependency milestones, all UNEXECUTED",
+  "milestones": [
+    {
+      "id": "M0",
+      "title": "Qualify the single stack and build boundary",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Freeze MIT module/dependency/image pins; strict config and explicit operator launcher; qualify Seaweed postgres2 pool/listing and selected PG/Temporal schema image pair before product claims.",
+      "prerequisites": [],
+      "file_group_ids": [
+        "F01",
+        "F02",
+        "F03",
+        "T_V56",
+        "N09",
+        "R01",
+        "R02",
+        "T_R01",
+        "T_R02"
+      ],
+      "files": [
+        ".github/workflows/check.yml",
+        "AGENTS.md",
+        "Makefile",
+        "THIRD-PARTY-NOTICES.md",
+        "build/toolchains.lock.json",
+        "codegraph.json",
+        "deploy/caddy/Caddyfile",
+        "deploy/compose.managed.yaml",
+        "deploy/compose.yaml",
+        "deploy/images.lock.json",
+        "deploy/postgres/bootstrap.sql",
+        "deploy/seaweed/filer.toml.tmpl",
+        "deploy/seaweed/s3.json.tmpl",
+        "deploy/seaweed/security.toml.tmpl",
+        "deploy/server.example.json",
+        "deploy/temporal/config.yaml.tmpl",
+        "deploy/temporal/dynamicconfig.yaml",
+        "deploy/temporal/schema-init.sh",
+        "docs/architecture/decisions.md",
+        "docs/architecture/overview.md",
+        "docs/decisions/0001-cli-configuration.md",
+        "docs/development/release.md",
+        "docs/development/setup.md",
+        "docs/development/testing.md",
+        "go.mod",
+        "go.sum",
+        "internal/config/config.go",
+        "internal/config/validate.go",
+        "packaging/config/server.example.json",
+        "packaging/install-manifest.schema.json",
+        "packaging/release-pair.schema.json",
+        "schemas/server-config.schema.json",
+        "scripts/check-boundaries.sh",
+        "scripts/install.sh",
+        "scripts/pm-stack",
+        "scripts/test-changed.sh",
+        "tests/stack/config_test.go",
+        "tests/stack/storage_qualification_test.go",
+        "tools/dependency_policy_test.go",
+        "tools/go.mod",
+        "tools/go.sum",
+        "tools/versions.json"
+      ],
+      "interfaces": [
+        "TestResolvedDependencyPolicy",
+        "TestSelectedStorageQualification",
+        "TestStrictStackConfiguration",
+        "Validate"
+      ],
+      "schemas_and_migrations": [
+        "deploy/postgres/bootstrap.sql",
+        "packaging/install-manifest.schema.json",
+        "packaging/release-pair.schema.json",
+        "schemas/server-config.schema.json"
+      ],
+      "implementation_sequence": [
+        "Lock application/tools/native/image dependency identities and MIT notices; establish pure CLI/API/worker versus native analytical-child import boundary.",
+        "Implement strict config and operator ownership validation, then Compose dependency topology/private endpoints and explicit schema/init jobs.",
+        "Qualify PostgreSQL16.15/Temporal schema pair and Seaweed postgres2 pool/list/multipart behavior using controlled integration resources.",
+        "Record actual resource/readiness failures and block unsupported target/backend before any application usability claim."
+      ],
+      "validation_ids": [
+        "V56",
+        "R01",
+        "R02"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo -C tools test . -run '^TestResolvedDependencyPolicy$' -count=1 -timeout 5m",
+          "check_id": "V56",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/stack -run '^TestStrictStackConfiguration$' -count=1 -timeout 10m",
+          "check_id": "R01",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/stack -run '^TestSelectedStorageQualification$' -count=1 -timeout 10m",
+          "check_id": "R02",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Freeze MIT module/dependency/image pins; strict config and explicit operator launcher; qualify Seaweed postgres2 pool/listing and selected PG/Temporal schema image pair before product claims.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No provider operations, user data or public usability claim.",
+      "relative_effort_and_unknowns": "Medium; infrastructure/native qualification is the early falsifier.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [],
+      "technology_dependency_ids": [
+        "TD01",
+        "TD02",
+        "TD10",
+        "TD12",
+        "TD14",
+        "TD24",
+        "TD27",
+        "TD28"
+      ]
+    },
+    {
+      "id": "M1",
+      "title": "Define versioned contracts and tenant identity",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Authored OpenAPI3.1, exact values/presence, org/workspace/actor/run/grant contracts, generated strict Gin/Go/browser type shape and seven-lane schemas.",
+      "prerequisites": [
+        "M0"
+      ],
+      "file_group_ids": [
+        "F04",
+        "F05",
+        "F06",
+        "F07",
+        "T_V01",
+        "T_V02",
+        "T_V03",
+        "T_V04",
+        "T_V05",
+        "N01",
+        "R03"
+      ],
+      "files": [
+        "api/controls.json",
+        "api/generated.sha256",
+        "api/oapi-codegen.yaml",
+        "api/pm.openapi.json",
+        "api/pm.openapi.yaml",
+        "internal/api/client.gen.go",
+        "internal/api/controls.gen.go",
+        "internal/api/protocol_test.go",
+        "internal/api/types.gen.go",
+        "internal/contract/approval.go",
+        "internal/contract/capability.go",
+        "internal/contract/command.go",
+        "internal/contract/compatibility.go",
+        "internal/contract/credential.go",
+        "internal/contract/digest.go",
+        "internal/contract/digest_test.go",
+        "internal/contract/dispatch.go",
+        "internal/contract/effect.go",
+        "internal/contract/error.go",
+        "internal/contract/event.go",
+        "internal/contract/field_binding.go",
+        "internal/contract/flow.go",
+        "internal/contract/foundation.go",
+        "internal/contract/identity.go",
+        "internal/contract/object.go",
+        "internal/contract/operation.go",
+        "internal/contract/policy.go",
+        "internal/contract/principal.go",
+        "internal/contract/profile.go",
+        "internal/contract/run.go",
+        "internal/contract/schedule.go",
+        "internal/contract/schema.go",
+        "internal/contract/schema_test.go",
+        "internal/contract/settlement.go",
+        "internal/contract/state_test.go",
+        "internal/contract/task.go",
+        "internal/contract/tenant.go",
+        "internal/contract/value.go",
+        "internal/contract/value_test.go",
+        "internal/contract/workflow.go",
+        "internal/httpapi/server.gen.go",
+        "schemas/atlas.schema.json",
+        "schemas/bundle.schema.json",
+        "schemas/field-binding.schema.json",
+        "schemas/foundation.schema.json",
+        "schemas/identity.schema.json",
+        "schemas/proof.schema.json",
+        "schemas/scenario.schema.json",
+        "schemas/semantics.schema.json",
+        "schemas/source.schema.json",
+        "schemas/workflow-ref.schema.json",
+        "scripts/generate.sh"
+      ],
+      "interfaces": [
+        "Approval",
+        "CanonicalDigest",
+        "CapabilityRequirement",
+        "CredentialRef",
+        "Dispatch",
+        "EffectRecord",
+        "FieldBinding",
+        "FlowSpec",
+        "FoundationContract",
+        "ObjectRef",
+        "Operation",
+        "PresentValue",
+        "Profile",
+        "RunRecord",
+        "RunSpec",
+        "Schedule",
+        "ServerEvent",
+        "Task",
+        "TestAllowedTransitions",
+        "TestPresencePrecisionAndMedia",
+        "TestStableDigestAndIdentity",
+        "TestStrictContractShape",
+        "WorkflowBinding"
+      ],
+      "schemas_and_migrations": [
+        "api/pm.openapi.json",
+        "api/pm.openapi.yaml",
+        "schemas/atlas.schema.json",
+        "schemas/bundle.schema.json",
+        "schemas/field-binding.schema.json",
+        "schemas/foundation.schema.json",
+        "schemas/identity.schema.json",
+        "schemas/proof.schema.json",
+        "schemas/scenario.schema.json",
+        "schemas/semantics.schema.json",
+        "schemas/source.schema.json",
+        "schemas/workflow-ref.schema.json"
+      ],
+      "implementation_sequence": [
+        "Define org/workspace/actor, durable execution grant, operation/value/plan/effect/task/event and workflow/object refs in pure contracts.",
+        "Author one public OpenAPI3.1 and separate admin schema; specify reserved controls and route-specific auth exceptions.",
+        "Generate strict Gin/Go DTO/client and browser type shape; reject duplicate/allOf/null/precision loss with independent schema fixtures.",
+        "Freeze semantic IDs, schema versions, exact-number/presence rules and seven-lane inventory schema before downstream imports."
+      ],
+      "validation_ids": [
+        "V01",
+        "V02",
+        "V03",
+        "V04",
+        "V05"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/contract -run '^TestStrictContractShape$' -count=1 -timeout 5m",
+          "check_id": "V01",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/contract -run '^TestPresencePrecisionAndMedia$' -count=1 -timeout 5m",
+          "check_id": "V02",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/contract -run '^TestStableDigestAndIdentity$' -count=1 -timeout 5m",
+          "check_id": "V03",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/contract -run '^TestAllowedTransitions$' -count=1 -timeout 5m",
+          "check_id": "V04",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/api -run '^TestWireVersionAndEnvelope$' -count=1 -timeout 5m",
+          "check_id": "V05",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Authored OpenAPI3.1, exact values/presence, org/workspace/actor/run/grant contracts, generated strict Gin/Go/browser type shape and seven-lane schemas.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No accepted asynchronous run until durable storage/handoff exist.",
+      "relative_effort_and_unknowns": "Medium; schema fidelity and generated unions require causal fixtures.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [],
+      "technology_dependency_ids": [
+        "TD01",
+        "TD03",
+        "TD04",
+        "TD06",
+        "TD07",
+        "TD25"
+      ]
+    },
+    {
+      "id": "M2",
+      "title": "Build PostgreSQL state, RLS and secret storage",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Scoped non-owner pools, migrations0001/0002, composite identity keys, outbox/budget/receipt/event repositories and encrypted credential metadata.",
+      "prerequisites": [
+        "M1"
+      ],
+      "file_group_ids": [
+        "F08",
+        "F09",
+        "F10",
+        "T_V06",
+        "T_V07",
+        "T_V08",
+        "T_V09",
+        "T_V10",
+        "T_V11",
+        "N07",
+        "R04",
+        "T_R03",
+        "T_R04",
+        "T_R05"
+      ],
+      "files": [
+        "internal/store/account_permits_test.go",
+        "internal/store/admission_test.go",
+        "internal/store/artifact_test.go",
+        "internal/store/artifacts.go",
+        "internal/store/audit.go",
+        "internal/store/budgets.go",
+        "internal/store/checkpoints.go",
+        "internal/store/connections.go",
+        "internal/store/db.go",
+        "internal/store/dispatches.go",
+        "internal/store/event_test.go",
+        "internal/store/events.go",
+        "internal/store/identities.go",
+        "internal/store/lease_test.go",
+        "internal/store/leases.go",
+        "internal/store/manifests.go",
+        "internal/store/memberships.go",
+        "internal/store/migrate.go",
+        "internal/store/migrate_test.go",
+        "internal/store/migrations/postgres/0001_control.sql",
+        "internal/store/migrations/postgres/0002_tenancy_rls.sql",
+        "internal/store/outbox.go",
+        "internal/store/provider_accounts.go",
+        "internal/store/receipts.go",
+        "internal/store/rls_test.go",
+        "internal/store/runs.go",
+        "internal/store/scope.go",
+        "internal/store/scope_test.go",
+        "internal/store/secrets.go",
+        "internal/store/settlements.go",
+        "internal/store/tasks.go",
+        "internal/store/tenant_keys_test.go",
+        "internal/store/transaction.go"
+      ],
+      "interfaces": [
+        "AcknowledgeOutbox",
+        "ClaimOutbox",
+        "ClearScope",
+        "InsertOutbox",
+        "Migrate",
+        "OpenPool",
+        "RegisterArtifact",
+        "TestArtifactCrashWindows",
+        "TestAtomicStateReceiptOutbox",
+        "TestCompositeTenantReferences",
+        "TestDurableAcceptedBefore202",
+        "TestLeaseFenceAndClaimCAS",
+        "TestMigrationRecovery",
+        "TestRLSAndPoolCleanup",
+        "TestSharedAccountPermits",
+        "TestStructuralScopeIsolation",
+        "WithinScope",
+        "WithinTransaction"
+      ],
+      "schemas_and_migrations": [
+        "internal/store/migrations/postgres/0001_control.sql",
+        "internal/store/migrations/postgres/0002_tenancy_rls.sql"
+      ],
+      "implementation_sequence": [
+        "Create PM role separation and migrations0001/0002 with composite tenant keys and RLS USING/WITH CHECK.",
+        "Implement scoped pgx transactions/pool cleanup, identity/connection/credential metadata repositories and safe constraint errors.",
+        "Implement immutable RunSpec/outbox/budget/effect/event repositories and per-account permits; no network calls inside transactions.",
+        "Fault migration/rollback/cancellation/pool reuse and cross-resource writes, then prove atomic acceptance and receipt/event commit primitives."
+      ],
+      "validation_ids": [
+        "V06",
+        "V07",
+        "V10",
+        "V11",
+        "R03",
+        "R04",
+        "R05"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestMigrationRecovery$' -count=1 -timeout 5m",
+          "check_id": "V06",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestStructuralScopeIsolation$' -count=1 -timeout 5m",
+          "check_id": "V07",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestLeaseFenceAndClaimCAS$' -count=1 -timeout 5m",
+          "check_id": "V10",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestAtomicStateReceiptOutbox$' -count=1 -timeout 5m",
+          "check_id": "V11",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestRLSAndPoolCleanup$' -count=1 -timeout 10m",
+          "check_id": "R03",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestCompositeTenantReferences$' -count=1 -timeout 10m",
+          "check_id": "R04",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestSharedAccountPermits$' -count=1 -timeout 10m",
+          "check_id": "R05",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Scoped non-owner pools, migrations0001/0002, composite identity keys, outbox/budget/receipt/event repositories and encrypted credential metadata.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No client DB/Temporal access, no generic customer SQL on PM pool.",
+      "relative_effort_and_unknowns": "Large; tenancy and transaction boundaries precede feature breadth.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [],
+      "technology_dependency_ids": [
+        "TD09",
+        "TD10",
+        "TD11",
+        "TD01",
+        "TD21"
+      ]
+    },
+    {
+      "id": "M3",
+      "title": "Serve authenticated API and administration",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Gin strict validation/error/context/proxy rules; identity/device/browser/service flows, explicit workspace resources and isolated provider-secret administration.",
+      "prerequisites": [
+        "M2"
+      ],
+      "file_group_ids": [
+        "F11",
+        "F12",
+        "F13",
+        "T_V13",
+        "T_V14",
+        "T_V15",
+        "T_V16",
+        "T_V17",
+        "F12g",
+        "N08",
+        "R05",
+        "T_R06",
+        "T_R07",
+        "T_R08",
+        "R20"
+      ],
+      "files": [
+        "api/admin.openapi.yaml",
+        "cmd/pm-server/main.go",
+        "internal/app/connections.go",
+        "internal/app/delegations.go",
+        "internal/app/service_accounts.go",
+        "internal/app/workspaces.go",
+        "internal/auth/authorize.go",
+        "internal/auth/authorize_test.go",
+        "internal/auth/browser.go",
+        "internal/auth/browser_test.go",
+        "internal/auth/device.go",
+        "internal/auth/grants.go",
+        "internal/auth/identity.go",
+        "internal/auth/oidc.go",
+        "internal/auth/revocation.go",
+        "internal/auth/service.go",
+        "internal/auth/service_test.go",
+        "internal/auth/sessions.go",
+        "internal/auth/sessions_test.go",
+        "internal/config/server.go",
+        "internal/config/server_test.go",
+        "internal/credentials/boundary_test.go",
+        "internal/credentials/redact.go",
+        "internal/credentials/refresh.go",
+        "internal/credentials/refresh_test.go",
+        "internal/credentials/resolve.go",
+        "internal/credentials/vault.go",
+        "internal/httpapi/admin.gen.go",
+        "internal/httpapi/admin.go",
+        "internal/httpapi/identity.go",
+        "internal/httpapi/middleware.go",
+        "internal/httpapi/problem.go",
+        "internal/httpapi/routes.go",
+        "internal/httpapi/strict.go",
+        "internal/httpapi/strict_test.go",
+        "internal/httpapi/ui/admin-credentials.html",
+        "internal/httpapi/ui/login.html",
+        "internal/server/health.go",
+        "internal/server/lifecycle.go",
+        "internal/server/server.go"
+      ],
+      "interfaces": [
+        "AuthorizeResource",
+        "BrowserLogin",
+        "BuildMiddleware",
+        "CompleteOIDCLogin",
+        "Drain",
+        "ExchangeDeviceProof",
+        "IssuePMSession",
+        "NewServer",
+        "Readiness",
+        "Redact",
+        "RefreshCAS",
+        "RegisterRoutes",
+        "ResolveForEffect",
+        "RevokeSession",
+        "Serve",
+        "StartDeviceLogin",
+        "StoreEncryptedCredential",
+        "StrictDecode",
+        "TestBundledAndStandaloneInstall",
+        "TestCookieCSRFAndDeviceSessions",
+        "TestDeviceBootstrapProofs",
+        "TestGinStrictBoundary",
+        "TestNegotiatedCompatibility",
+        "TestNoProviderSecretCrossesClientBoundary",
+        "TestPersistentSharedServer",
+        "TestScopeAndInboundPolicy",
+        "TestScopedRefreshLeaseAndRedaction",
+        "TestServiceAndDelegationScope",
+        "TestTypedServerStartup",
+        "TestWireVersionAndEnvelope",
+        "ValidateCSRF",
+        "WriteProblem",
+        "main"
+      ],
+      "schemas_and_migrations": [
+        "api/admin.openapi.yaml"
+      ],
+      "implementation_sequence": [
+        "Compose only available Gin/config/store/auth services; Temporal/provider runtime wiring is explicitly deferred to its later phase.",
+        "Implement OIDC/browser and device/service identity paths with issuer/state/nonce/PKCE/CSRF and one-time exchange rules.",
+        "Implement resource membership/delegation authorization and server-admin encryption ingress under operator wrapping-key refs.",
+        "Override strict decoding/proxy/recovery/problem handling and test zero provider I/O plus no secret leakage on every denial."
+      ],
+      "validation_ids": [
+        "V13",
+        "V14",
+        "V15",
+        "V16",
+        "V17",
+        "R06",
+        "R07",
+        "R08"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/config -run '^TestTypedServerStartup$' -count=1 -timeout 5m",
+          "check_id": "V13",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/auth -run '^TestScopeAndInboundPolicy$' -count=1 -timeout 5m",
+          "check_id": "V14",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/auth -run '^TestDeviceBootstrapProofs$' -count=1 -timeout 5m",
+          "check_id": "V15",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/credentials -run '^TestNoProviderSecretCrossesClientBoundary$' -count=1 -timeout 5m",
+          "check_id": "V16",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/credentials -run '^TestScopedRefreshLeaseAndRedaction$' -count=1 -timeout 5m",
+          "check_id": "V17",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/httpapi -run '^TestGinStrictBoundary$' -count=1 -timeout 10m",
+          "check_id": "R06",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/auth -run '^TestCookieCSRFAndDeviceSessions$' -count=1 -timeout 10m",
+          "check_id": "R07",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/auth -run '^TestServiceAndDelegationScope$' -count=1 -timeout 10m",
+          "check_id": "R08",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Gin strict validation/error/context/proxy rules; identity/device/browser/service flows, explicit workspace resources and isolated provider-secret administration.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No application provider secret surfaces in ordinary SDK; UI product deferred.",
+      "relative_effort_and_unknowns": "Large; IdP/bootstrap and least-privilege grants must be exercised.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "internal/httpapi/server.gen.go"
+      ],
+      "technology_dependency_ids": [
+        "TD02",
+        "TD04",
+        "TD06",
+        "TD15",
+        "TD16",
+        "TD01"
+      ]
+    },
+    {
+      "id": "M4",
+      "title": "Make accepted runs durable across PG and Temporal",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "RunSpec/budget/audit/outbox commit before202, actual workflow/activity registration, command outbox, projection repair, durable events and truthful unknown effects.",
+      "prerequisites": [
+        "M3"
+      ],
+      "file_group_ids": [
+        "F21",
+        "F21b",
+        "F23",
+        "T_V12",
+        "T_V66",
+        "N02",
+        "R06",
+        "R07",
+        "R08",
+        "T_R09",
+        "T_R10",
+        "T_R11",
+        "T_R12",
+        "T_R13",
+        "R14a",
+        "R14b"
+      ],
+      "files": [
+        "cmd/pm-worker/main.go",
+        "internal/activities/admission.go",
+        "internal/activities/effect_crash_test.go",
+        "internal/activities/execute.go",
+        "internal/activities/options.go",
+        "internal/activities/project.go",
+        "internal/activities/reconcile.go",
+        "internal/activities/register.go",
+        "internal/app/account_permits.go",
+        "internal/app/admission.go",
+        "internal/app/cancel.go",
+        "internal/app/capabilities.go",
+        "internal/app/capabilities_test.go",
+        "internal/app/lifecycle_test.go",
+        "internal/app/revocation.go",
+        "internal/app/runs.go",
+        "internal/httpapi/artifacts.go",
+        "internal/httpapi/events.go",
+        "internal/httpapi/runs.go",
+        "internal/store/commands.go",
+        "internal/store/migrations/postgres/0003_workflow_outbox.sql",
+        "internal/store/workflows.go",
+        "internal/temporal/bindings.go",
+        "internal/temporal/client.go",
+        "internal/temporal/commands.go",
+        "internal/temporal/outbox.go",
+        "internal/temporal/outbox_test.go",
+        "internal/temporal/projection.go",
+        "internal/temporal/projection_test.go",
+        "internal/workflows/commands.go",
+        "internal/workflows/continue.go",
+        "internal/workflows/continue_test.go",
+        "internal/workflows/options.go",
+        "internal/workflows/payload_test.go",
+        "internal/workflows/run.go",
+        "internal/workflows/scheduled.go"
+      ],
+      "interfaces": [
+        "AcceptRun",
+        "AcquirePermit",
+        "BuildHandlerManifest",
+        "ContinueSafely",
+        "CoordinateRun",
+        "DownloadArtifact",
+        "EnsureWorkflowBinding",
+        "ExecuteUnit",
+        "FinalizeRunProjection",
+        "PMRunWorkflow",
+        "PMScheduledRunWorkflow",
+        "RecheckRunGrant",
+        "RegisterActivities",
+        "RegisterApply",
+        "RegisterBinary",
+        "RegisterETL",
+        "RegisterHTTP",
+        "RegisterReverse",
+        "RegisterSQL",
+        "RepairProjection",
+        "RequestCancel",
+        "RevokeFutureEffects",
+        "StartOrReconcile",
+        "StreamEvents",
+        "TestAcceptedRunSurvivesClientExit",
+        "TestBothStartHandoffWindows",
+        "TestClosedAbsentProjectionRepair",
+        "TestCommandsAcrossContinueAsNew",
+        "TestHistoryAndPayloadBounds",
+        "TestRegisteredHandlerReachability",
+        "TestReplayGapSnapshotAndTerminalRender",
+        "TestWorkerDeathAfterEffect",
+        "UploadArtifact",
+        "main"
+      ],
+      "schemas_and_migrations": [
+        "internal/store/migrations/postgres/0003_workflow_outbox.sql"
+      ],
+      "implementation_sequence": [
+        "Persist independent run grant, immutable intent/budgets/audit/event/StartRun outbox before202; add migration0003 workflow bindings.",
+        "Register deterministic run/scheduled coordinator shell and actual activity interfaces; provider capabilities remain unavailable until their foundation is wired.",
+        "Implement stable workflow start/binding repair, command outbox, idempotent final projection and retained/absent-history branches.",
+        "Allocate per-run event sequence under run-row lock; prove replay/rollover and both PG/Temporal crash windows using controlled activity fixtures.",
+        "Wire current grant checks/account permits before any later provider activity; do not tie execution to login-session expiry."
+      ],
+      "validation_ids": [
+        "V09",
+        "R09",
+        "R10",
+        "R11",
+        "R12",
+        "R13"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestDurableAcceptedBefore202$' -count=1 -timeout 5m",
+          "check_id": "V09",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/temporal -run '^TestBothStartHandoffWindows$' -count=1 -timeout 10m",
+          "check_id": "R09",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/temporal -run '^TestClosedAbsentProjectionRepair$' -count=1 -timeout 10m",
+          "check_id": "R10",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/workflows -run '^TestCommandsAcrossContinueAsNew$' -count=1 -timeout 10m",
+          "check_id": "R11",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/workflows -run '^TestHistoryAndPayloadBounds$' -count=1 -timeout 10m",
+          "check_id": "R12",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/activities -run '^TestWorkerDeathAfterEffect$' -count=1 -timeout 10m",
+          "check_id": "R13",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; RunSpec/budget/audit/outbox commit before202, actual workflow/activity registration, command outbox, projection repair, durable events and truthful unknown effects.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "Do not advertise asynchronous reliability from a stub activity or descriptor.",
+      "relative_effort_and_unknowns": "Largest early slice; dual-write windows and replay/retention are critical.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "cmd/pm-server/main.go",
+        "internal/httpapi/routes.go",
+        "internal/server/health.go",
+        "internal/server/lifecycle.go",
+        "internal/server/server.go"
+      ],
+      "technology_dependency_ids": [
+        "TD12",
+        "TD09",
+        "TD10",
+        "TD01",
+        "TD18"
+      ]
+    },
+    {
+      "id": "M5",
+      "title": "Deliver thin CLI and browser API parity",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Explicit workspace commands, PM session OS storage, profile negotiation, generated browser wrapper and equivalent use-case harness.",
+      "prerequisites": [
+        "M4"
+      ],
+      "file_group_ids": [
+        "F14",
+        "F15",
+        "F22",
+        "F22b",
+        "T_V18",
+        "T_V19",
+        "T_V30",
+        "T_V53",
+        "T_V79",
+        "R09",
+        "R10",
+        "T_R15",
+        "R21",
+        "R22"
+      ],
+      "files": [
+        "cmd/pm/main.go",
+        "internal/api/client.go",
+        "internal/api/events.go",
+        "internal/api/events_test.go",
+        "internal/api/output.go",
+        "internal/api/profile.go",
+        "internal/api/session.go",
+        "internal/api/session_test.go",
+        "internal/api/version_test.go",
+        "internal/cli/access.go",
+        "internal/cli/artifacts.go",
+        "internal/cli/boundary_test.go",
+        "internal/cli/config.go",
+        "internal/cli/config_test.go",
+        "internal/cli/connections.go",
+        "internal/cli/render.go",
+        "internal/cli/root.go",
+        "internal/cli/runs.go",
+        "internal/cli/selectors.go",
+        "internal/cli/sessions.go",
+        "internal/cli/tasks.go",
+        "internal/cli/workspaces.go",
+        "internal/cli/workspaces_test.go",
+        "sdk/browser/client.ts",
+        "sdk/browser/package-lock.json",
+        "sdk/browser/package.json",
+        "sdk/browser/schema.d.ts",
+        "sdk/browser/tsconfig.json",
+        "tests/client-parity/browser.ts",
+        "tests/client-parity/fixtures.json",
+        "tests/client-parity/index.html",
+        "tests/client-parity/package-lock.json",
+        "tests/client-parity/package.json",
+        "tests/client-parity/parity_test.go",
+        "tests/client-parity/playwright.config.ts"
+      ],
+      "interfaces": [
+        "LoadClientConfig",
+        "LoadServerProfile",
+        "NewAccessCommands",
+        "NewClient",
+        "NewRoot",
+        "NewRunsCommands",
+        "ParseSelectors",
+        "Render",
+        "SessionStore",
+        "TestCLIAndBrowserEquivalentUseCases",
+        "TestConcurrentExplicitWorkspaces",
+        "TestControlsPresenceAndPrecedence",
+        "TestPMTokenOSStorage",
+        "TestThinBinaryDependencyBoundary",
+        "WatchEvents",
+        "main"
+      ],
+      "schemas_and_migrations": [],
+      "implementation_sequence": [
+        "Implement strict PM profile/session settings, OS token storage and explicit workspace/member/service-account commands over generated Go client.",
+        "Implement run/task/event/artifact views and structured exit semantics; close viewing independently from durable run cancellation.",
+        "Generate browser client/types and isolated Playwright harness with actual cookie/origin/CSRF context.",
+        "Submit shared fixtures through CLI and browser to same stack, compare authorization/idempotency/errors/RunSpecs and validate concurrent workspace selection."
+      ],
+      "validation_ids": [
+        "V12",
+        "V18",
+        "V19",
+        "V30",
+        "V53",
+        "V79",
+        "R14",
+        "R15"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestAcceptedRunSurvivesClientExit$' -count=1 -timeout 5m",
+          "check_id": "V12",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/api -run '^TestPMTokenOSStorage$' -count=1 -timeout 5m",
+          "check_id": "V18",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/cli -run '^TestControlsPresenceAndPrecedence$' -count=1 -timeout 5m",
+          "check_id": "V19",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/api -run '^TestReplayGapSnapshotAndTerminalRender$' -count=1 -timeout 5m",
+          "check_id": "V30",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/cli -run '^TestThinBinaryDependencyBoundary$' -count=1 -timeout 5m",
+          "check_id": "V53",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/api -run '^TestNegotiatedCompatibility$' -count=1 -timeout 5m",
+          "check_id": "V79",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/client-parity -run '^TestCLIAndBrowserEquivalentUseCases$' -count=1 -timeout 10m",
+          "check_id": "R14",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/cli -run '^TestConcurrentExplicitWorkspaces$' -count=1 -timeout 10m",
+          "check_id": "R15",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Explicit workspace commands, PM session OS storage, profile negotiation, generated browser wrapper and equivalent use-case harness.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No full UI design/build; harness proves shared application behavior.",
+      "relative_effort_and_unknowns": "Medium; strict flag presence and cache scope are frequent regression seams.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [],
+      "technology_dependency_ids": [
+        "TD08",
+        "TD03",
+        "TD04",
+        "TD17",
+        "TD25",
+        "TD26"
+      ]
+    },
+    {
+      "id": "M6",
+      "title": "Compile sources and prove the first GitHub read",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Source capture/ref/dialect/fidelity compiler, safe command catalog, HTTP typed transport and one-page reads through real remote API/worker; seven inventories and common proof runner.",
+      "prerequisites": [
+        "M5"
+      ],
+      "file_group_ids": [
+        "F16",
+        "F17",
+        "F18a",
+        "F18b",
+        "F18c",
+        "F19",
+        "F20",
+        "F24",
+        "F25",
+        "C_github",
+        "B_github",
+        "S_github",
+        "T_V20",
+        "T_V21",
+        "T_V22",
+        "T_V23",
+        "T_V24",
+        "T_V26",
+        "T_V27",
+        "T_V28",
+        "T_V29",
+        "T_V32",
+        "T_V33",
+        "T_V55",
+        "T_V65",
+        "T_V67",
+        "T_V74",
+        "T_V80",
+        "T_V84",
+        "N03",
+        "N04",
+        "N11"
+      ],
+      "files": [
+        "cmd/pmgen/main.go",
+        "cmd/pmproof/main.go",
+        "connectors/github/NOTICE",
+        "connectors/github/lanes/binary_download.json",
+        "connectors/github/lanes/binary_upload.json",
+        "connectors/github/lanes/direct_read.json",
+        "connectors/github/lanes/direct_write.json",
+        "connectors/github/lanes/etl.json",
+        "connectors/github/lanes/reverse_etl.json",
+        "connectors/github/lanes/sync_transport.json",
+        "connectors/github/scenarios/lifecycle.json",
+        "connectors/github/scripts/binary_download.sh",
+        "connectors/github/scripts/binary_upload.sh",
+        "connectors/github/scripts/direct_read.sh",
+        "connectors/github/scripts/direct_write.sh",
+        "connectors/github/scripts/etl.sh",
+        "connectors/github/scripts/reverse_etl.sh",
+        "connectors/github/scripts/sync_transport.sh",
+        "connectors/github/semantics.json",
+        "connectors/github/source.lock.json",
+        "docs/foundations/README.md",
+        "docs/foundations/atlas.json",
+        "docs/foundations/requirements.json",
+        "docs/foundations/traceability.schema.json",
+        "internal/api/catalog.go",
+        "internal/app/catalog.go",
+        "internal/cli/dynamic.go",
+        "internal/cli/dynamic_test.go",
+        "internal/cli/help.go",
+        "internal/cli/tree_test.go",
+        "internal/compile/amendment.go",
+        "internal/compile/amendment_test.go",
+        "internal/compile/bundle_test.go",
+        "internal/compile/commands.go",
+        "internal/compile/compatibility.go",
+        "internal/compile/dialect_test.go",
+        "internal/compile/dialects.go",
+        "internal/compile/emit.go",
+        "internal/compile/fidelity.go",
+        "internal/compile/fidelity_test.go",
+        "internal/compile/normalize.go",
+        "internal/compile/refs.go",
+        "internal/compile/requirements.go",
+        "internal/compile/semantics.go",
+        "internal/compile/sensitivity.go",
+        "internal/compile/sensitivity_test.go",
+        "internal/compile/source.go",
+        "internal/connectors/bundle.go",
+        "internal/connectors/catalog.go",
+        "internal/connectors/data/github.bundle.json",
+        "internal/connectors/registry.go",
+        "internal/connectors/revision_test.go",
+        "internal/proof/currentness.go",
+        "internal/proof/currentness_test.go",
+        "internal/proof/inventory.go",
+        "internal/proof/oracle.go",
+        "internal/proof/oracle_test.go",
+        "internal/proof/receipt.go",
+        "internal/proof/runner.go",
+        "internal/runtime/admission.go",
+        "internal/runtime/admission_test.go",
+        "internal/runtime/egress.go",
+        "internal/runtime/egress_test.go",
+        "internal/runtime/http.go",
+        "internal/runtime/http_test.go",
+        "internal/runtime/inputs.go",
+        "internal/runtime/limits.go",
+        "internal/runtime/limits_test.go",
+        "internal/runtime/pagination.go",
+        "internal/runtime/pagination_test.go",
+        "internal/runtime/response.go",
+        "internal/runtime/retry.go",
+        "internal/runtime/retry_test.go",
+        "internal/sync/direct.go",
+        "scripts/prove.sh",
+        "tools/atlas/main.go",
+        "tools/traceability_test.go"
+      ],
+      "interfaces": [
+        "BuildCommandTree",
+        "CheckRequirements",
+        "DecodeResponse",
+        "DirectRead",
+        "EmitBundle",
+        "EncodeInputs",
+        "ExecuteCase",
+        "ExecuteHTTP",
+        "Inventory",
+        "LoadBundle",
+        "LoadCatalog",
+        "Normalize",
+        "RenderHelp",
+        "ResolveRefs",
+        "ServeCatalog",
+        "TestAllPhysicalCallsAdmitted",
+        "TestAtomicRevisionAndCacheScope",
+        "TestDestinationDNSRedirectAuthAudience",
+        "TestDeterministicCompleteInventory",
+        "TestDialectAndReferenceBoundary",
+        "TestFalseSuccessAndIndependentCases",
+        "TestFieldSourceFidelity",
+        "TestNoSecretOrPolicyOverlayEscape",
+        "TestNoStaleProofResurrection",
+        "TestRecordLimitIsNotPageSize",
+        "TestRetryRequiresKnownReplaySafety",
+        "TestReturnedCountsAndCompleteness",
+        "TestSecretOperationsNeverProjectToCLI",
+        "TestSelectorTreeAndOfflineHelp",
+        "TestStableNamesFlagsHelp",
+        "TestTraceabilityClosure",
+        "TestTypedRequestAndResponseVariants",
+        "ValidateDirectResult",
+        "main"
+      ],
+      "schemas_and_migrations": [
+        "docs/foundations/traceability.schema.json"
+      ],
+      "implementation_sequence": [
+        "Implement pinned capture/ref/dialect normalization, exact field/response fidelity and bounded sparse semantic amendments.",
+        "Emit stable operation IDs, deterministic PM/provider flag aliases, runtime bundle and seven lane inventories; add real catalog/CLI wiring now.",
+        "Register shared HTTP/pagination and physical-attempt admission with controlled transport retry/redirect behavior.",
+        "Run actual GitHub direct-read case through client/API/Temporal/worker, then create common proof runner/oracle/currentness and generated lane wrappers."
+      ],
+      "validation_ids": [
+        "V20",
+        "V21",
+        "V22",
+        "V23",
+        "V24",
+        "V26",
+        "V27",
+        "V28",
+        "V29",
+        "V32",
+        "V33",
+        "P_direct_read",
+        "V55",
+        "V65",
+        "V67",
+        "V80",
+        "V84"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/cli -run '^TestSelectorTreeAndOfflineHelp$' -count=1 -timeout 5m",
+          "check_id": "V20",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/compile -run '^TestDialectAndReferenceBoundary$' -count=1 -timeout 5m",
+          "check_id": "V21",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/compile -run '^TestDeterministicCompleteInventory$' -count=1 -timeout 5m",
+          "check_id": "V22",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/cli -run '^TestStableNamesFlagsHelp$' -count=1 -timeout 5m",
+          "check_id": "V23",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/connectors -run '^TestAtomicRevisionAndCacheScope$' -count=1 -timeout 5m",
+          "check_id": "V24",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestTypedRequestAndResponseVariants$' -count=1 -timeout 5m",
+          "check_id": "V26",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestDestinationDNSRedirectAuthAudience$' -count=1 -timeout 5m",
+          "check_id": "V27",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestRetryRequiresKnownReplaySafety$' -count=1 -timeout 5m",
+          "check_id": "V28",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestReturnedCountsAndCompleteness$' -count=1 -timeout 5m",
+          "check_id": "V29",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/proof -run '^TestFalseSuccessAndIndependentCases$' -count=1 -timeout 5m",
+          "check_id": "V32",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/proof -run '^TestNoStaleProofResurrection$' -count=1 -timeout 5m",
+          "check_id": "V33",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane direct_read --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_direct_read",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/compile -run '^TestSecretOperationsNeverProjectToCLI$' -count=1 -timeout 5m",
+          "check_id": "V55",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/compile -run '^TestFieldSourceFidelity$' -count=1 -timeout 5m",
+          "check_id": "V65",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestRecordLimitIsNotPageSize$' -count=1 -timeout 5m",
+          "check_id": "V67",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo -C tools test . -run '^TestTraceabilityClosure$' -count=1 -timeout 5m",
+          "check_id": "V80",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/compile -run '^TestNoSecretOrPolicyOverlayEscape$' -count=1 -timeout 5m",
+          "check_id": "V84",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Source capture/ref/dialect/fidelity compiler, safe command catalog, HTTP typed transport and one-page reads through real remote API/worker; seven inventories and common proof runner.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No blanket GitHub certification or undocumented POST/write inference.",
+      "relative_effort_and_unknowns": "Large; source support is exact-operation scoped.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "internal/activities/register.go",
+        "internal/app/admission.go",
+        "internal/app/cancel.go",
+        "internal/app/capabilities.go",
+        "internal/app/capabilities_test.go",
+        "internal/app/connections.go",
+        "internal/app/delegations.go",
+        "internal/app/lifecycle_test.go",
+        "internal/app/runs.go",
+        "internal/app/service_accounts.go",
+        "internal/app/workspaces.go",
+        "internal/httpapi/routes.go",
+        "internal/server/server.go"
+      ],
+      "technology_dependency_ids": [
+        "TD05",
+        "TD06",
+        "TD07",
+        "TD08",
+        "TD01",
+        "TD12"
+      ]
+    },
+    {
+      "id": "M7",
+      "title": "Publish shared data and admit PostgreSQL transport",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Unique S3 objects, PG manifest/checkpoint TX, immutable Parquet and restricted query child; typed PostgreSQL metadata/TLS/read and initial dynamic schema contracts.",
+      "prerequisites": [
+        "M6"
+      ],
+      "file_group_ids": [
+        "F26",
+        "F27",
+        "F28",
+        "F28b",
+        "F29",
+        "F29b",
+        "C_postgres",
+        "B_postgres",
+        "S_postgres",
+        "T_V25",
+        "T_V34",
+        "T_V35",
+        "T_V36",
+        "T_V37",
+        "T_V38",
+        "T_V39",
+        "T_V57",
+        "T_V73",
+        "T_V83",
+        "N05",
+        "R11",
+        "R12",
+        "T_R16",
+        "T_R17",
+        "T_R18",
+        "R17",
+        "R18"
+      ],
+      "files": [
+        "cmd/pm-query/main.go",
+        "connectors/postgres/NOTICE",
+        "connectors/postgres/lanes/binary_download.json",
+        "connectors/postgres/lanes/binary_upload.json",
+        "connectors/postgres/lanes/direct_read.json",
+        "connectors/postgres/lanes/direct_write.json",
+        "connectors/postgres/lanes/etl.json",
+        "connectors/postgres/lanes/reverse_etl.json",
+        "connectors/postgres/lanes/sync_transport.json",
+        "connectors/postgres/scenarios/lifecycle.json",
+        "connectors/postgres/scripts/binary_download.sh",
+        "connectors/postgres/scripts/binary_upload.sh",
+        "connectors/postgres/scripts/direct_read.sh",
+        "connectors/postgres/scripts/direct_write.sh",
+        "connectors/postgres/scripts/etl.sh",
+        "connectors/postgres/scripts/reverse_etl.sh",
+        "connectors/postgres/scripts/sync_transport.sh",
+        "connectors/postgres/semantics.json",
+        "connectors/postgres/source.lock.json",
+        "internal/analytics/engine.go",
+        "internal/analytics/limits.go",
+        "internal/analytics/parquet.go",
+        "internal/analytics/values.go",
+        "internal/cli/schema.go",
+        "internal/cli/warehouse.go",
+        "internal/connectors/data/postgres.bundle.json",
+        "internal/httpapi/schema.go",
+        "internal/httpapi/warehouse.go",
+        "internal/objects/gc.go",
+        "internal/objects/publication_test.go",
+        "internal/objects/reservations.go",
+        "internal/objects/s3.go",
+        "internal/objects/scope_gc_test.go",
+        "internal/objects/store.go",
+        "internal/objects/verify.go",
+        "internal/runtime/postgres.go",
+        "internal/runtime/sqltls.go",
+        "internal/runtime/sqltls_test.go",
+        "internal/runtime/sqltypes.go",
+        "internal/runtime/sqltypes_test.go",
+        "internal/schema/completeness.go",
+        "internal/schema/discover.go",
+        "internal/schema/drift.go",
+        "internal/schema/drift_test.go",
+        "internal/schema/effective.go",
+        "internal/schema/predicates.go",
+        "internal/schema/predicates_test.go",
+        "internal/schema/snapshot.go",
+        "internal/schema/snapshot_test.go",
+        "internal/store/checkpoint_identity_test.go",
+        "internal/store/migrations/postgres/0004_warehouse_schema.sql",
+        "internal/sync/ack_test.go",
+        "internal/sync/checkpoint.go",
+        "internal/sync/etl.go",
+        "internal/warehouse/child.go",
+        "internal/warehouse/child_test.go",
+        "internal/warehouse/compaction.go",
+        "internal/warehouse/manifest.go",
+        "internal/warehouse/object_layout.go",
+        "internal/warehouse/parquet.go",
+        "internal/warehouse/publish_test.go",
+        "internal/warehouse/query.go",
+        "internal/warehouse/query_protocol.go",
+        "internal/warehouse/query_test.go",
+        "internal/warehouse/scratch.go",
+        "internal/warehouse/segments_test.go",
+        "packaging/Dockerfile.query"
+      ],
+      "interfaces": [
+        "AbortMultipart",
+        "BoundAnalytics",
+        "BoundScratch",
+        "BuildEffectiveSchema",
+        "CheckPredicates",
+        "DecodeAnalyticValue",
+        "DeleteUnreferenced",
+        "Discover",
+        "EncodeAnalyticValue",
+        "ExecuteQueryChild",
+        "GetSchema",
+        "InspectSchema",
+        "MaterializeParquet",
+        "OpenRange",
+        "PublishManifest",
+        "PutAttempt",
+        "QuerySnapshot",
+        "RunAnalyticRequest",
+        "Stat",
+        "TestBoundedSegmentsManifestAndGC",
+        "TestCompleteCheckpointIdentity",
+        "TestDynamicFieldDriftBeforeWrite",
+        "TestLosslessParameterizedSQL",
+        "TestPartialAckContiguousCursor",
+        "TestQueryProcessIsolation",
+        "TestQueryReturnsRowsAndRejectsWrites",
+        "TestRowsBeforeCheckpoint",
+        "TestScopedArtifactRetention",
+        "TestScopedCompleteSchema",
+        "TestStrictSQLTLS",
+        "TestTypedRequirementsAndAtlasGaps",
+        "TestUniqueAttemptPublication",
+        "WriteSegment",
+        "main"
+      ],
+      "schemas_and_migrations": [
+        "internal/store/migrations/postgres/0004_warehouse_schema.sql"
+      ],
+      "implementation_sequence": [
+        "Add migration0004 warehouse/schema state and typed native PostgreSQL metadata/TLS/read adapter with separate customer identity.",
+        "Implement S3 reservations/unique attempt upload/integrity verification, then PG manifest/checkpoint publication and reference-aware GC.",
+        "Implement restricted pm-query child protocol and analytics-only DuckDB import; preserve exact values/presence in Parquet/query results.",
+        "Wire ETL page/ack/continuation semantics and account-scoped complete metadata snapshots; prove cross-host rows and every publication crash window."
+      ],
+      "validation_ids": [
+        "V08",
+        "V25",
+        "V34",
+        "V35",
+        "V36",
+        "V37",
+        "V38",
+        "V39",
+        "P_etl",
+        "V57",
+        "V66",
+        "V73",
+        "V83",
+        "R16",
+        "R17",
+        "R18"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestArtifactCrashWindows$' -count=1 -timeout 5m",
+          "check_id": "V08",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/schema -run '^TestTypedRequirementsAndAtlasGaps$' -count=1 -timeout 5m",
+          "check_id": "V25",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestLosslessParameterizedSQL$' -count=1 -timeout 5m",
+          "check_id": "V34",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestStrictSQLTLS$' -count=1 -timeout 5m",
+          "check_id": "V35",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/schema -run '^TestDynamicFieldDriftBeforeWrite$' -count=1 -timeout 5m",
+          "check_id": "V36",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/warehouse -run '^TestQueryReturnsRowsAndRejectsWrites$' -count=1 -timeout 5m",
+          "check_id": "V37",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/warehouse -run '^TestRowsBeforeCheckpoint$' -count=1 -timeout 5m",
+          "check_id": "V38",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestPartialAckContiguousCursor$' -count=1 -timeout 5m",
+          "check_id": "V39",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane etl --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_etl",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/warehouse -run '^TestBoundedSegmentsManifestAndGC$' -count=1 -timeout 5m",
+          "check_id": "V57",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestRegisteredHandlerReachability$' -count=1 -timeout 5m",
+          "check_id": "V66",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/schema -run '^TestScopedCompleteSchema$' -count=1 -timeout 5m",
+          "check_id": "V73",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/store -run '^TestCompleteCheckpointIdentity$' -count=1 -timeout 5m",
+          "check_id": "V83",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/objects -run '^TestUniqueAttemptPublication$' -count=1 -timeout 10m",
+          "check_id": "R16",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/objects -run '^TestScopedArtifactRetention$' -count=1 -timeout 10m",
+          "check_id": "R17",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/warehouse -run '^TestQueryProcessIsolation$' -count=1 -timeout 10m",
+          "check_id": "R18",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Unique S3 objects, PG manifest/checkpoint TX, immutable Parquet and restricted query child; typed PostgreSQL metadata/TLS/read and initial dynamic schema contracts.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "PostgreSQL is customer connector separate from infrastructure pools; CDC deferred.",
+      "relative_effort_and_unknowns": "Large; native field fidelity, multipart failures and object/PG crash windows dominate.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "internal/activities/register.go",
+        "internal/app/capabilities.go",
+        "internal/httpapi/routes.go",
+        "internal/server/server.go",
+        "internal/sync/direct.go"
+      ],
+      "technology_dependency_ids": [
+        "TD09",
+        "TD10",
+        "TD13",
+        "TD14",
+        "TD27",
+        "TD12"
+      ]
+    },
+    {
+      "id": "M8",
+      "title": "Implement approved direct and reverse effects",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Sealed worksets/mappings, full action approval, exact entity/effect/dispatch/member identities, capacity reservation, readback and ambiguity recovery through real activities.",
+      "prerequisites": [
+        "M7"
+      ],
+      "file_group_ids": [
+        "F30",
+        "F31",
+        "F32",
+        "F33",
+        "F33b",
+        "T_V40",
+        "T_V41",
+        "T_V42",
+        "T_V43",
+        "T_V68",
+        "T_V69",
+        "T_V70",
+        "T_V71",
+        "T_V72",
+        "T_V81",
+        "N06"
+      ],
+      "files": [
+        "internal/app/action_approval_test.go",
+        "internal/app/approvals.go",
+        "internal/app/reconcile.go",
+        "internal/app/reconcile_test.go",
+        "internal/app/resume.go",
+        "internal/cli/plans.go",
+        "internal/cli/profiles.go",
+        "internal/httpapi/approvals.go",
+        "internal/httpapi/plans.go",
+        "internal/httpapi/profiles.go",
+        "internal/store/approvals.go",
+        "internal/store/identity_ledger.go",
+        "internal/store/migrations/postgres/0005_profiles_approvals.sql",
+        "internal/store/profiles.go",
+        "internal/sync/absence_test.go",
+        "internal/sync/approval_test.go",
+        "internal/sync/capacity.go",
+        "internal/sync/capacity_test.go",
+        "internal/sync/dispatch.go",
+        "internal/sync/dispatch_test.go",
+        "internal/sync/identity_test.go",
+        "internal/sync/readback.go",
+        "internal/sync/readback_test.go",
+        "internal/sync/result_retention_test.go",
+        "internal/sync/reverse.go",
+        "internal/sync/settlement.go",
+        "internal/sync/settlement_test.go",
+        "internal/sync/workset.go",
+        "internal/sync/write.go"
+      ],
+      "interfaces": [
+        "PlanWrite",
+        "ReadBack",
+        "ReconcileEffects",
+        "ReserveOutcomeCapacity",
+        "ResumeGeneration",
+        "SealDispatch",
+        "SealWorkset",
+        "TestAlreadyAbsentAndEmptyPublication",
+        "TestCompleteActionApproval",
+        "TestCrashAfterRemoteAccept",
+        "TestEffectAndEntityIdentity",
+        "TestExactRowsAndReadback",
+        "TestMemberSettlement",
+        "TestPostEffectResultRetention",
+        "TestPreDispatchCapacity",
+        "TestSealedWorksetAndRecurringCaps",
+        "TestStableCreateMappingAcrossRevisions",
+        "WriteRows"
+      ],
+      "schemas_and_migrations": [
+        "internal/store/migrations/postgres/0005_profiles_approvals.sql"
+      ],
+      "implementation_sequence": [
+        "Add migration0005 profile/approval/entity/effect state and immutable workset/mapping revisions.",
+        "Implement preview and complete primary/secondary action approval hashes with request/result/readback capacity reservation.",
+        "Register direct/apply/reverse handlers, persist exact dispatch/member intent before physical calls and settle independently correlated outcomes.",
+        "Prove returned-ID field readback,28-member partial/unknown responses, empty replacement/already-absent behavior and worker death after remote acceptance."
+      ],
+      "validation_ids": [
+        "V40",
+        "V41",
+        "V42",
+        "V43",
+        "P_direct_write",
+        "P_reverse_etl",
+        "V68",
+        "V69",
+        "V70",
+        "V71",
+        "V72",
+        "V81"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestSealedWorksetAndRecurringCaps$' -count=1 -timeout 5m",
+          "check_id": "V40",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestStableCreateMappingAcrossRevisions$' -count=1 -timeout 5m",
+          "check_id": "V41",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestExactRowsAndReadback$' -count=1 -timeout 5m",
+          "check_id": "V42",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestCrashAfterRemoteAccept$' -count=1 -timeout 5m",
+          "check_id": "V43",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane direct_write --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_direct_write",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane reverse_etl --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_reverse_etl",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestMemberSettlement$' -count=1 -timeout 5m",
+          "check_id": "V68",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestEffectAndEntityIdentity$' -count=1 -timeout 5m",
+          "check_id": "V69",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestPreDispatchCapacity$' -count=1 -timeout 5m",
+          "check_id": "V70",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestCompleteActionApproval$' -count=1 -timeout 5m",
+          "check_id": "V71",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestAlreadyAbsentAndEmptyPublication$' -count=1 -timeout 5m",
+          "check_id": "V72",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestPostEffectResultRetention$' -count=1 -timeout 5m",
+          "check_id": "V81",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Sealed worksets/mappings, full action approval, exact entity/effect/dispatch/member identities, capacity reservation, readback and ambiguity recovery through real activities.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No generic SQL/HTTP write escape; no approval flag as authority.",
+      "relative_effort_and_unknowns": "Largest semantic slice; provider replay/readback horizons may block individual cells.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "internal/activities/register.go",
+        "internal/app/capabilities.go",
+        "internal/httpapi/routes.go",
+        "internal/server/server.go"
+      ],
+      "technology_dependency_ids": [
+        "TD09",
+        "TD10",
+        "TD12",
+        "TD06",
+        "TD14"
+      ]
+    },
+    {
+      "id": "M9",
+      "title": "Add Temporal schedules, controlled recovery and fairness",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Typed DAGs, desired/applied schedule revision CAS, occurrence adoption, explicit timezone/misfire semantics, durable controls, worker versions and distributed account permits.",
+      "prerequisites": [
+        "M8"
+      ],
+      "file_group_ids": [
+        "F34",
+        "F35",
+        "F36",
+        "F36b",
+        "T_V44",
+        "T_V45",
+        "T_V46",
+        "T_V47",
+        "R13",
+        "R14",
+        "T_R19",
+        "T_R20",
+        "T_R21",
+        "T_R22",
+        "T_R23"
+      ],
+      "files": [
+        "internal/app/admission_limits.go",
+        "internal/app/admission_limits_test.go",
+        "internal/app/cancel_test.go",
+        "internal/app/flows.go",
+        "internal/app/flows_test.go",
+        "internal/app/revocation_test.go",
+        "internal/app/schedules.go",
+        "internal/cli/flows.go",
+        "internal/cli/schedules.go",
+        "internal/httpapi/flows.go",
+        "internal/httpapi/schedules.go",
+        "internal/store/flows.go",
+        "internal/store/migrations/postgres/0006_schedules_flows.sql",
+        "internal/store/occurrences.go",
+        "internal/store/schedule_mutations.go",
+        "internal/store/schedules.go",
+        "internal/temporal/deployment.go",
+        "internal/temporal/occurrence_test.go",
+        "internal/temporal/replay_test.go",
+        "internal/temporal/schedule_cas_test.go",
+        "internal/temporal/schedule_test.go",
+        "internal/temporal/schedules.go",
+        "internal/workflows/replay.go",
+        "tests/stack/fairness_test.go"
+      ],
+      "interfaces": [
+        "ApplyScheduleCAS",
+        "ConfigureDeployment",
+        "ReplayHistories",
+        "TestAccountFairnessAndBackpressure",
+        "TestCancelGracefulDrainTruth",
+        "TestDeploymentReplayAndRetirement",
+        "TestExplicitDAGAndIndependentFailures",
+        "TestReplicaFairnessAndCooldown",
+        "TestScheduleMutationCAS",
+        "TestScheduledAdmissionAndOverlap",
+        "TestSessionExpiryVersusRunRevocation",
+        "TestUniqueOccurrenceDSTMisfire"
+      ],
+      "schemas_and_migrations": [
+        "internal/store/migrations/postgres/0006_schedules_flows.sql"
+      ],
+      "implementation_sequence": [
+        "Add migration0006 typed flows/schedules/occurrence and mutation outbox; expose CRUD/revisions/control routes.",
+        "Implement low-level Temporal schedule conflict-token CAS with persistent exact-payload RequestId and stale tombstone defense.",
+        "Admit automatic occurrences in their effect-free existing workflow and preserve overlap across full execution; test calendar AND/gap/both folds/catchup.",
+        "Enable and test worker deployment versioning/replay/ContinueAsNew commands, explicit grant revocation and measured account fairness across replicas."
+      ],
+      "validation_ids": [
+        "V44",
+        "V45",
+        "V46",
+        "V47",
+        "R19",
+        "R20",
+        "R21",
+        "R22",
+        "R23"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestExplicitDAGAndIndependentFailures$' -count=1 -timeout 5m",
+          "check_id": "V44",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/temporal -run '^TestUniqueOccurrenceDSTMisfire$' -count=1 -timeout 5m",
+          "check_id": "V45",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestAccountFairnessAndBackpressure$' -count=1 -timeout 5m",
+          "check_id": "V46",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestCancelGracefulDrainTruth$' -count=1 -timeout 5m",
+          "check_id": "V47",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/temporal -run '^TestScheduleMutationCAS$' -count=1 -timeout 10m",
+          "check_id": "R19",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/temporal -run '^TestScheduledAdmissionAndOverlap$' -count=1 -timeout 10m",
+          "check_id": "R20",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/temporal -run '^TestDeploymentReplayAndRetirement$' -count=1 -timeout 10m",
+          "check_id": "R21",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/stack -run '^TestReplicaFairnessAndCooldown$' -count=1 -timeout 10m",
+          "check_id": "R22",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/app -run '^TestSessionExpiryVersusRunRevocation$' -count=1 -timeout 10m",
+          "check_id": "R23",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Typed DAGs, desired/applied schedule revision CAS, occurrence adoption, explicit timezone/misfire semantics, durable controls, worker versions and distributed account permits.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No PM cron scheduler, queue-per-user security claim or per-process global rate claim.",
+      "relative_effort_and_unknowns": "Large; schedule overlap/retention/replay and revocation semantics need separate faults.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "internal/activities/register.go",
+        "internal/app/account_permits.go",
+        "internal/app/capabilities.go",
+        "internal/app/revocation.go",
+        "internal/httpapi/routes.go",
+        "internal/server/server.go"
+      ],
+      "technology_dependency_ids": [
+        "TD12",
+        "TD09",
+        "TD10",
+        "TD18",
+        "TD19"
+      ]
+    },
+    {
+      "id": "M10",
+      "title": "Activate account-specific schema refresh and property forms",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Complete scoped metadata refresh, drift dependency analysis and immutable accepted bindings; HubSpot/Pylon field shapes and Gong safe form projection.",
+      "prerequisites": [
+        "M9"
+      ],
+      "file_group_ids": [
+        "R19"
+      ],
+      "files": [
+        "internal/schema/property_forms.go",
+        "internal/schema/refresh.go",
+        "internal/store/migrations/postgres/0007_dynamic_schema.sql"
+      ],
+      "interfaces": [
+        "RefreshCompleteSnapshot"
+      ],
+      "schemas_and_migrations": [
+        "internal/store/migrations/postgres/0007_dynamic_schema.sql"
+      ],
+      "implementation_sequence": [
+        "Add migration0007 account metadata refresh bookkeeping and dynamic property form projection.",
+        "Run bounded complete provider discovery through admitted activities; retain partial candidates without active-snapshot replacement.",
+        "Compute content/field dependency drift and preserve immutable accepted plan bindings while rechecking current safety predicates.",
+        "Resolve or explicitly block Pylon nullability conflict, Gong POST/read form and HubSpot logical/read-only/unique field cases without provider Go branches."
+      ],
+      "validation_ids": [],
+      "focused_commands": [],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Complete scoped metadata refresh, drift dependency analysis and immutable accepted bindings; HubSpot/Pylon field shapes and Gong safe form projection.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "Do not coerce unproven nullability or replace a complete catalog with a partial candidate.",
+      "relative_effort_and_unknowns": "Medium to large; account-tier metadata and Pylon source contradiction remain visible.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "internal/activities/register.go",
+        "internal/app/capabilities.go",
+        "internal/httpapi/routes.go",
+        "internal/server/server.go"
+      ],
+      "technology_dependency_ids": [
+        "TD05",
+        "TD06",
+        "TD07",
+        "TD12"
+      ]
+    },
+    {
+      "id": "M11",
+      "title": "Activate all five connectors and seven real lane inventories",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "GitHub/PostgreSQL/Gong/Pylon/HubSpot declarations and minimal scenarios; binary and sync transport active only with exact shared semantics and actual proof; four warehouse composition paths.",
+      "prerequisites": [
+        "M10"
+      ],
+      "file_group_ids": [
+        "F37",
+        "F38",
+        "C_pylon",
+        "B_pylon",
+        "S_pylon",
+        "C_hubspot",
+        "B_hubspot",
+        "S_hubspot",
+        "C_gong",
+        "B_gong",
+        "S_gong",
+        "F42",
+        "T_V31",
+        "T_V49",
+        "N13"
+      ],
+      "files": [
+        "connectors/github/scenarios/composition.json",
+        "connectors/gong/NOTICE",
+        "connectors/gong/lanes/binary_download.json",
+        "connectors/gong/lanes/binary_upload.json",
+        "connectors/gong/lanes/direct_read.json",
+        "connectors/gong/lanes/direct_write.json",
+        "connectors/gong/lanes/etl.json",
+        "connectors/gong/lanes/reverse_etl.json",
+        "connectors/gong/lanes/sync_transport.json",
+        "connectors/gong/scenarios/lifecycle.json",
+        "connectors/gong/scripts/binary_download.sh",
+        "connectors/gong/scripts/binary_upload.sh",
+        "connectors/gong/scripts/direct_read.sh",
+        "connectors/gong/scripts/direct_write.sh",
+        "connectors/gong/scripts/etl.sh",
+        "connectors/gong/scripts/reverse_etl.sh",
+        "connectors/gong/scripts/sync_transport.sh",
+        "connectors/gong/semantics.json",
+        "connectors/gong/source.lock.json",
+        "connectors/hubspot/NOTICE",
+        "connectors/hubspot/lanes/binary_download.json",
+        "connectors/hubspot/lanes/binary_upload.json",
+        "connectors/hubspot/lanes/direct_read.json",
+        "connectors/hubspot/lanes/direct_write.json",
+        "connectors/hubspot/lanes/etl.json",
+        "connectors/hubspot/lanes/reverse_etl.json",
+        "connectors/hubspot/lanes/sync_transport.json",
+        "connectors/hubspot/scenarios/lifecycle.json",
+        "connectors/hubspot/scripts/binary_download.sh",
+        "connectors/hubspot/scripts/binary_upload.sh",
+        "connectors/hubspot/scripts/direct_read.sh",
+        "connectors/hubspot/scripts/direct_write.sh",
+        "connectors/hubspot/scripts/etl.sh",
+        "connectors/hubspot/scripts/reverse_etl.sh",
+        "connectors/hubspot/scripts/sync_transport.sh",
+        "connectors/hubspot/semantics.json",
+        "connectors/hubspot/source.lock.json",
+        "connectors/postgres/scenarios/composition.json",
+        "connectors/pylon/NOTICE",
+        "connectors/pylon/lanes/binary_download.json",
+        "connectors/pylon/lanes/binary_upload.json",
+        "connectors/pylon/lanes/direct_read.json",
+        "connectors/pylon/lanes/direct_write.json",
+        "connectors/pylon/lanes/etl.json",
+        "connectors/pylon/lanes/reverse_etl.json",
+        "connectors/pylon/lanes/sync_transport.json",
+        "connectors/pylon/scenarios/lifecycle.json",
+        "connectors/pylon/scripts/binary_download.sh",
+        "connectors/pylon/scripts/binary_upload.sh",
+        "connectors/pylon/scripts/direct_read.sh",
+        "connectors/pylon/scripts/direct_write.sh",
+        "connectors/pylon/scripts/etl.sh",
+        "connectors/pylon/scripts/reverse_etl.sh",
+        "connectors/pylon/scripts/sync_transport.sh",
+        "connectors/pylon/semantics.json",
+        "connectors/pylon/source.lock.json",
+        "docs/cli/commands.json",
+        "docs/cli/manual.md",
+        "internal/connectors/data/gong.bundle.json",
+        "internal/connectors/data/hubspot.bundle.json",
+        "internal/connectors/data/pylon.bundle.json",
+        "internal/runtime/binary.go",
+        "internal/runtime/binary_test.go",
+        "internal/sync/binary.go",
+        "internal/sync/modes.go",
+        "internal/sync/modes_test.go",
+        "internal/sync/transport.go"
+      ],
+      "interfaces": [
+        "ReadBinary",
+        "TestIndependentSemanticAxes",
+        "TestStreamIntegrityAndBounds",
+        "WriteBinary"
+      ],
+      "schemas_and_migrations": [],
+      "implementation_sequence": [
+        "Capture/attribute and compile complete five-connector sources; generate every operation into seven exact lane inventories.",
+        "Wire shared binary and sync_transport handlers only for supported shapes, with real bytes/delivery/ack/checkpoint semantics.",
+        "Add minimal source-linked lifecycle/composition scenarios and prove HTTP declaration-only extension where foundations suffice.",
+        "Run selected connector/lane scripts independently in retry/all/unimplemented modes; retain live/fake/blocked distinctions and all four warehouse composition paths."
+      ],
+      "validation_ids": [
+        "V31",
+        "V49",
+        "P_binary_download",
+        "P_binary_upload",
+        "P_sync_transport",
+        "V74",
+        "P_direct_read",
+        "P_direct_write",
+        "P_etl",
+        "P_reverse_etl"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestStreamIntegrityAndBounds$' -count=1 -timeout 5m",
+          "check_id": "V31",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/sync -run '^TestIndependentSemanticAxes$' -count=1 -timeout 5m",
+          "check_id": "V49",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane binary_download --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_binary_download",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane binary_upload --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_binary_upload",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector postgres --lane sync_transport --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_sync_transport",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./internal/runtime -run '^TestAllPhysicalCallsAdmitted$' -count=1 -timeout 5m",
+          "check_id": "V74",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane direct_read --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_direct_read",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane direct_write --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_direct_write",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane etl --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_etl",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane reverse_etl --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
+          "check_id": "P_reverse_etl",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; GitHub/PostgreSQL/Gong/Pylon/HubSpot declarations and minimal scenarios; binary and sync transport active only with exact shared semantics and actual proof; four warehouse composition paths.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "An unsupported/not-applicable/blocked cell stays explicit; no inherited certification counts.",
+      "relative_effort_and_unknowns": "Large and account dependent; no universal parity or deadline promise.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [
+        "internal/activities/register.go",
+        "internal/app/capabilities.go",
+        "internal/httpapi/routes.go",
+        "internal/server/server.go"
+      ],
+      "technology_dependency_ids": [
+        "TD05",
+        "TD06",
+        "TD12",
+        "TD14"
+      ]
+    },
+    {
+      "id": "M12",
+      "title": "Package, upgrade and rehearse recovery",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Full/client-only/backend-only packages, immutable image pair, native query helper targets, operator backups/restores, managed ownership, offline installation and uninstall retention.",
+      "prerequisites": [
+        "M11"
+      ],
+      "file_group_ids": [
+        "F39",
+        "F40",
+        "T_V50",
+        "T_V51",
+        "T_V75",
+        "T_V76",
+        "T_V77",
+        "T_V78",
+        "T_V82",
+        "N10",
+        "N12",
+        "R15",
+        "T_R25",
+        "T_R26"
+      ],
+      "files": [
+        ".github/workflows/release.yml",
+        "LICENSE",
+        "deploy/backup.schema.json",
+        "docs/server/artifacts.md",
+        "docs/server/backup.md",
+        "docs/server/install.md",
+        "docs/server/operations.md",
+        "docs/server/pairing.md",
+        "docs/server/restore.md",
+        "docs/server/security.md",
+        "docs/server/standalone.md",
+        "docs/server/temporal.md",
+        "docs/server/tenancy.md",
+        "docs/server/uninstall.md",
+        "docs/server/upgrade.md",
+        "internal/server/observability.go",
+        "internal/server/observability_test.go",
+        "packaging/Dockerfile.server",
+        "packaging/Dockerfile.worker",
+        "scripts/backup-stack.sh",
+        "scripts/release.sh",
+        "scripts/restore-stack.sh",
+        "scripts/uninstall.sh",
+        "scripts/upgrade.sh",
+        "scripts/verify-release.sh",
+        "tests/install/backup_test.go",
+        "tests/install/install_test.go",
+        "tests/install/managed_test.go",
+        "tests/install/native_images_test.go",
+        "tests/install/ownership_test.go",
+        "tests/install/release_test.go",
+        "tests/install/uninstall_test.go",
+        "tests/install/upgrade_test.go",
+        "tools/release/main.go"
+      ],
+      "interfaces": [
+        "TestCoordinatedBackupContract",
+        "TestManagedProvisioningOwnership",
+        "TestPinnedNativeImagesAndSchemas",
+        "TestReleasePairAndOfflineInstall",
+        "TestSafeAuditAndMetricCardinality",
+        "TestUninstallPreservesData",
+        "TestUpgradeAndRestore"
+      ],
+      "schemas_and_migrations": [
+        "deploy/backup.schema.json"
+      ],
+      "implementation_sequence": [
+        "Build paired API/worker/query OCI components and client/full/backend archives from immutable locks; verify native target linkage and SBOM/signatures.",
+        "Implement explicit offline/managed install and owner-aware drain/upgrade/uninstall retention commands.",
+        "Use owner-supported coordinated PM/Temporal/filer/object/key backup at named cutoff and quarantined restore with new epoch.",
+        "Replay active-version histories and interrupt migration/upgrade/restore; measure initial24h/4h recovery targets on declared hardware."
+      ],
+      "validation_ids": [
+        "V50",
+        "V51",
+        "V75",
+        "V76",
+        "V77",
+        "V78",
+        "V82",
+        "R24",
+        "R25",
+        "R26"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./internal/server -run '^TestSafeAuditAndMetricCardinality$' -count=1 -timeout 5m",
+          "check_id": "V50",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestConsistentBackupRestore$' -count=1 -timeout 5m",
+          "check_id": "V51",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestBundledAndStandaloneInstall$' -count=1 -timeout 5m",
+          "check_id": "V75",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestPersistentSharedServer$' -count=1 -timeout 5m",
+          "check_id": "V76",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestUpgradeAndRestore$' -count=1 -timeout 5m",
+          "check_id": "V77",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestUninstallPreservesData$' -count=1 -timeout 5m",
+          "check_id": "V78",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestReleasePairAndOfflineInstall$' -count=1 -timeout 5m",
+          "check_id": "V82",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestCoordinatedBackupContract$' -count=1 -timeout 10m",
+          "check_id": "R24",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestPinnedNativeImagesAndSchemas$' -count=1 -timeout 10m",
+          "check_id": "R25",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestManagedProvisioningOwnership$' -count=1 -timeout 10m",
+          "check_id": "R26",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Full/client-only/backend-only packages, immutable image pair, native query helper targets, operator backups/restores, managed ownership, offline installation and uninstall retention.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No HA guarantee from Compose and no automatic purge or schema downgrade.",
+      "relative_effort_and_unknowns": "Large; initial RPO24h/RTO4h targets require measured drills.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [],
+      "technology_dependency_ids": [
+        "TD24",
+        "TD27",
+        "TD28",
+        "TD01",
+        "TD11",
+        "TD12"
+      ]
+    },
+    {
+      "id": "M13",
+      "title": "Prove replicas, bounded load and release readiness",
+      "label": "Proposed/Recommended; UNEXECUTED",
+      "objective": "Two hosts without shared filesystem, tenant/provider-account limits, outages, historical replay, restored external-effect quarantine and coherent release suite.",
+      "prerequisites": [
+        "M12"
+      ],
+      "file_group_ids": [
+        "F41",
+        "T_V52",
+        "T_V54",
+        "R16"
+      ],
+      "files": [
+        "docs/architecture/scale-triggers.md",
+        "docs/server/remote.md",
+        "tests/install/deployment_test.go",
+        "tests/install/restore_epoch_test.go",
+        "tests/stack/load_test.go",
+        "tests/stack/outages_test.go",
+        "tests/stack/replicas_test.go",
+        "tests/stack/restore_effects_test.go"
+      ],
+      "interfaces": [
+        "TestBoundedLoad",
+        "TestDependencyOutages",
+        "TestOneStackDeploymentParity",
+        "TestReplicaScope",
+        "TestRestoreEffectQuarantine",
+        "TestRestoreEpochFencesOldWorkers"
+      ],
+      "schemas_and_migrations": [],
+      "implementation_sequence": [
+        "Run two API/worker hosts with no shared filesystem and scope/permit/replay fault fixtures.",
+        "Measure declared noisy-neighbor load envelope, query/process/object/PG/history bounds and dependency-outage backlog behavior.",
+        "Restore an interval with externally successful but locally missing effect; prove quarantine and no blind duplicate mutation.",
+        "Run coherent required suite plus current five-connector proof/status and native packaging gates; publish only measured outcomes and explicit blocked cells."
+      ],
+      "validation_ids": [
+        "V52",
+        "V54",
+        "R27",
+        "R28",
+        "R29",
+        "R30"
+      ],
+      "focused_commands": [
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestRestoreEpochFencesOldWorkers$' -count=1 -timeout 5m",
+          "check_id": "V52",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/install -run '^TestOneStackDeploymentParity$' -count=1 -timeout 5m",
+          "check_id": "V54",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/stack -run '^TestReplicaScope$' -count=1 -timeout 10m",
+          "check_id": "R27",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/stack -run '^TestBoundedLoad$' -count=1 -timeout 10m",
+          "check_id": "R28",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/stack -run '^TestRestoreEffectQuarantine$' -count=1 -timeout 10m",
+          "check_id": "R29",
+          "status": "UNEXECUTED"
+        },
+        {
+          "command": "set -eu\ngo test ./tests/stack -run '^TestDependencyOutages$' -count=1 -timeout 10m",
+          "check_id": "R30",
+          "status": "UNEXECUTED"
+        }
+      ],
+      "acceptance": "All listed gates show actual causal observations for exact scope; Two hosts without shared filesystem, tenant/provider-account limits, outages, historical replay, restored external-effect quarantine and coherent release suite.",
+      "evidence_required": [
+        "Clean/dirty source baseline and actual PM component hashes",
+        "Actual RED/fault and GREEN observations with command, exit and timestamp",
+        "Schema/source/handler/policy/account scope and stored artifact/receipt hashes",
+        "Separate exact live provider proof where claimed; no cache-as-new-proof"
+      ],
+      "non_goals": "No fixed throughput/time savings or strict operational tier claimed without measurements.",
+      "relative_effort_and_unknowns": "Large; load envelope is measured here, not promised beforehand.",
+      "recovery": "Before deploy, keep changes isolated in new repository; after state exists use expand-compatible migrations, retained component images and quarantined restore. Never erase unknown effects or edit old repo.",
+      "future_agent_ownership": "One named milestone owner serializes shared contract/schema edits. After those stabilize, disjoint file groups may be assigned to implementation workers; no two owners edit the same group. This plan spawns no implementation agents.",
+      "gate": "Coherent code review plus automated evidence validation at milestone boundary, not one speculative review per provider operation.",
+      "update_existing_files": [],
+      "technology_dependency_ids": [
+        "TD12",
+        "TD14",
+        "TD20",
+        "TD21",
+        "TD22",
+        "TD23",
+        "TD26",
+        "TD28"
+      ]
+    }
+  ],
+  "prior_phase_crosswalk": {
+    "M0": "M0",
+    "M1": "M1",
+    "M2": "M2",
+    "M3": "M3 and M5",
+    "M4": "M6",
+    "M5": "M4 and M6",
+    "M6": "M7",
+    "M7": "M8",
+    "M8": "M9",
+    "M9": "M10 and M11",
+    "M10": "M12",
+    "M11": "M13 (replicas; remote already initial)"
+  },
+  "deferred_extensions": [
+    {
+      "id": "D1",
+      "title": "PostgreSQL log-based CDC",
+      "required_for_initial_release": false,
+      "prerequisites": [
+        "M7",
+        "M11"
+      ],
+      "validation_ids": [
+        "V48"
+      ],
+      "file_group_ids": [
+        "F37d",
+        "T_V48"
+      ],
+      "reason": "Replication slot/snapshot/LSN/retention and delete semantics need explicit provider/native contract; polling remains polling."
+    }
+  ]
+}

@@ -1,0 +1,108 @@
+{
+  "type": "object",
+  "properties": {
+    "approval_scope": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "considered_options": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "context": {
+            "type": "string"
+          },
+          "decision": {
+            "type": "string"
+          },
+          "evidence_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "falsifier": {
+            "type": "string"
+          },
+          "first_milestone": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "revisit_trigger": {
+            "type": "string"
+          },
+          "source_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string"
+          },
+          "subject": {
+            "type": "string"
+          },
+          "supersedes": {
+            "type": "string"
+          },
+          "tradeoffs_and_consequences": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "considered_options",
+          "context",
+          "decision",
+          "evidence_ids",
+          "falsifier",
+          "first_milestone",
+          "id",
+          "revisit_trigger",
+          "source_refs",
+          "status",
+          "subject",
+          "supersedes",
+          "tradeoffs_and_consequences"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.delta/v2"
+    },
+    "settled": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "approval_scope",
+    "label",
+    "rows",
+    "schema_version",
+    "settled"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote design:architecture-delta",
+  "title": "ARCHITECTURE-DELTA.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}

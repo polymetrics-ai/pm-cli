@@ -1,0 +1,10 @@
+{
+  "status": "INACTIVE; no application instruction activation",
+  "targets": {
+    "AGENTS.draft.md": "AGENTS.md",
+    "pm-go.draft.md": ".agents/skills/pm-go/SKILL.md",
+    "skills.draft.md": "docs/development/skills.md",
+    "configuration-adr.draft.md": "docs/decisions/0001-cli-configuration.md",
+    "issue-tracker.draft.md": "docs/agents/issue-tracker.md"
+  }
+}

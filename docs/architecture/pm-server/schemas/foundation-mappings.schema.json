@@ -1,0 +1,373 @@
+{
+  "type": "object",
+  "properties": {
+    "label": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "requirements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "admission": {
+            "type": "string"
+          },
+          "admission_scope": {
+            "type": "string"
+          },
+          "connector": {
+            "type": "string"
+          },
+          "domains": {
+            "type": "object",
+            "properties": {
+              "1_evidence": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "2_typed_source": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "3_behavior": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "4_foundation": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "5_ownership": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "6_admission": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "7_durability": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "8_acceptance": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "1_evidence",
+              "2_typed_source",
+              "3_behavior",
+              "4_foundation",
+              "5_ownership",
+              "6_admission",
+              "7_durability",
+              "8_acceptance"
+            ],
+            "additionalProperties": false
+          },
+          "durability_security_failure": {
+            "type": "object",
+            "properties": {
+              "common": {
+                "type": "string"
+              },
+              "remote_contract": {
+                "type": "string"
+              },
+              "specific": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "common"
+            ],
+            "additionalProperties": false
+          },
+          "evidence_scope": {
+            "type": "string"
+          },
+          "existing_evidence": {
+            "type": "string"
+          },
+          "field_bindings": {
+            "type": "string"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "first_slice": {
+            "type": "string"
+          },
+          "foundation_refs": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "id": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "id",
+                "version"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "historical_aliases": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "lane_contracts": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "applicability": {
+                  "type": "string"
+                },
+                "eligibility": {
+                  "type": "string"
+                },
+                "foundation_refs": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "id": {
+                        "type": "string"
+                      },
+                      "version": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "id",
+                      "version"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "lane": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "eligibility",
+                "foundation_refs",
+                "lane",
+                "scope"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "lane_scope": {
+            "type": "string"
+          },
+          "lanes": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "milestone": {
+            "type": "string"
+          },
+          "missing_proof": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "ownership": {
+            "type": "object",
+            "properties": {
+              "client": {
+                "type": "string"
+              },
+              "configuration": {
+                "type": "string"
+              },
+              "declaration": {
+                "type": "string"
+              },
+              "generated_artifacts": {
+                "type": "string"
+              },
+              "implementation": {
+                "type": "string"
+              },
+              "native_adapter": {
+                "type": "string"
+              },
+              "registration": {
+                "type": "string"
+              },
+              "runtime_state": {
+                "type": "string"
+              },
+              "server_configuration": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "client",
+              "registration",
+              "runtime_state"
+            ],
+            "additionalProperties": false
+          },
+          "registration": {
+            "type": "string"
+          },
+          "required_behavior": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "scope_kind": {
+            "type": "string"
+          },
+          "source": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "pointer": {
+                "type": "string"
+              },
+              "sha256": {
+                "type": "string"
+              },
+              "source_id": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string"
+              },
+              "url": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "pointer",
+              "sha256",
+              "source_id",
+              "status"
+            ],
+            "additionalProperties": false
+          },
+          "state_owner_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "status": {
+            "type": "string"
+          },
+          "superseding_source_refs": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "sync_dimensions": {
+            "type": "string"
+          },
+          "test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "transport_encoding": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "admission",
+          "admission_scope",
+          "connector",
+          "domains",
+          "durability_security_failure",
+          "evidence_scope",
+          "field_bindings",
+          "files",
+          "foundation_refs",
+          "historical_aliases",
+          "id",
+          "lane_contracts",
+          "lanes",
+          "milestone",
+          "missing_proof",
+          "operation",
+          "ownership",
+          "registration",
+          "required_behavior",
+          "scope_kind",
+          "source",
+          "state_owner_ids",
+          "sync_dimensions",
+          "test_ids",
+          "transport_encoding"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.mappings/v2"
+    }
+  },
+  "required": [
+    "label",
+    "limitations",
+    "requirements",
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote design:foundation-mappings",
+  "title": "FOUNDATION-MAPPINGS.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}
