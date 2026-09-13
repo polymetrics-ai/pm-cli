@@ -102,7 +102,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pm:remote design:architecture-delta",
+  "$id": "urn:pm:remote%20design:architecture-delta",
   "title": "ARCHITECTURE-DELTA.json private planning record",
   "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
 }

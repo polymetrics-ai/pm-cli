@@ -367,7 +367,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pm:remote design:foundation-mappings",
+  "$id": "urn:pm:remote%20design:foundation-mappings",
   "title": "FOUNDATION-MAPPINGS.json private planning record",
   "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
 }

@@ -93,78 +93,78 @@
       "target": "docs/architecture/pm-server/schemas/architecture-delta.schema.json",
       "source": "data/pm-cli/schemas/architecture-delta.schema.json",
       "source_sha256": "e54f8bff2586bb8e79897cbe45a3d365e351f26c1f8d5f4ce69d353b0efbee58",
-      "sha256": "e54f8bff2586bb8e79897cbe45a3d365e351f26c1f8d5f4ce69d353b0efbee58",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "64e1e7876ae717ac984f84ad704cf75b2e70e4cc1b068576403b5e7e4802378a",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/client-parity.schema.json",
       "source": "data/pm-cli/schemas/client-parity.schema.json",
       "source_sha256": "260c542dca9cbac18897de6b1d96328c5cf63ae04226eebc1161b0bc710f08f1",
-      "sha256": "260c542dca9cbac18897de6b1d96328c5cf63ae04226eebc1161b0bc710f08f1",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "5fda6d580c8ff0900d52c61011a31c976ba01ba3fc01544d4803e78973273d23",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/contracts.schema.json",
       "source": "data/pm-cli/schemas/contracts.schema.json",
       "source_sha256": "ce6bb57646bbb41bf351611cf13826d72cc312151049c7b98fbf8cbb043ff6fd",
-      "sha256": "ce6bb57646bbb41bf351611cf13826d72cc312151049c7b98fbf8cbb043ff6fd",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "00ba1e08ca9eb6ee13cde3f1a06a3eebda8660606e4754fe46022f442782dac8",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/file-ownership.schema.json",
       "source": "data/pm-cli/schemas/file-ownership.schema.json",
       "source_sha256": "35058378e6a6753b5dbe5a2f5dcfd42dce549020872c55f794e8e93985c0975c",
-      "sha256": "35058378e6a6753b5dbe5a2f5dcfd42dce549020872c55f794e8e93985c0975c",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "5d41c732fd97ef5570ebdd3e5baf1d2f4776e8026d6b2846f160971518130cb9",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/foundation-mappings.schema.json",
       "source": "data/pm-cli/schemas/foundation-mappings.schema.json",
       "source_sha256": "6602e80e9227e0365fee7bb072b77d7e3d743fed430dad4124ffe621313e6665",
-      "sha256": "6602e80e9227e0365fee7bb072b77d7e3d743fed430dad4124ffe621313e6665",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "5c91aaefec63875ab7e1b0f554e3627dd29ca05bfb9b0cf9e72db256f8610b3b",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/foundations.schema.json",
       "source": "data/pm-cli/schemas/foundations.schema.json",
       "source_sha256": "3822fe7e8b8fe6efcf8d271710ce8fcbb3c7222568fec60cc212b0082012ea75",
-      "sha256": "3822fe7e8b8fe6efcf8d271710ce8fcbb3c7222568fec60cc212b0082012ea75",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "e9a2209e8683f74a9fc5bcf2c36db2aeaf8b9c07234b730efba2ee05352ae468",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/milestones.schema.json",
       "source": "data/pm-cli/schemas/milestones.schema.json",
       "source_sha256": "86751cb8dc0853aa44599c0c2172d1fc4153bf2fd46cbc41c20a4fe97070810c",
-      "sha256": "86751cb8dc0853aa44599c0c2172d1fc4153bf2fd46cbc41c20a4fe97070810c",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "84ca037b3409b43e3fb739c85738b0b21622125915631c840c5421bd45dbe5ad",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/source-ledger.schema.json",
       "source": "data/pm-cli/schemas/source-ledger.schema.json",
       "source_sha256": "b478dfc1dc21531b822c46cdfa7c4d886215e5af78f8a584a5960927f04bd4f4",
-      "sha256": "b0b4e3c1e4630d260032331e0eabd188aaa83f542c5afaa442227a0e88a17def",
-      "transformation": "Retained historical schema with an explicit non-applicability disclosure for the sanitized pm.context.sources/v1 reference projection; validation constraints preserved"
+      "sha256": "063b96a737973631a5db754c59d0ecb26dc0d595bb0e05bb45b44f81c16fa55b",
+      "transformation": "Retained historical schema with an explicit non-applicability disclosure for the sanitized pm.context.sources/v1 reference projection; original source provenance retained; URI literal-space identifier percent-encoded as %20; validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/state-ownership.schema.json",
       "source": "data/pm-cli/schemas/state-ownership.schema.json",
       "source_sha256": "44b5f841c7b145c322696b262cbb5da91090436830bd05d2a4d715ae522bd74f",
-      "sha256": "44b5f841c7b145c322696b262cbb5da91090436830bd05d2a4d715ae522bd74f",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "9a6cc576b4fbdaee2511ec9661fb1fb13930162c2cb07e5048b9f8d135465124",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/technology.schema.json",
       "source": "data/pm-cli/schemas/technology.schema.json",
       "source_sha256": "89b04ce80f350157162e52d1e2dd05ace24e8eb7982c6baea06b725fd8852c92",
-      "sha256": "89b04ce80f350157162e52d1e2dd05ace24e8eb7982c6baea06b725fd8852c92",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "27cd06d373b32eaa10f24ce62abe9c472cf524ad43f18e62064b3c00a5312d8a",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/validation-matrix.schema.json",
       "source": "data/pm-cli/schemas/validation-matrix.schema.json",
       "source_sha256": "00ca1fe878f6268900aa6ab3df03b1fe424666e682bfeff4256a2b6993182e0c",
-      "sha256": "00ca1fe878f6268900aa6ab3df03b1fe424666e682bfeff4256a2b6993182e0c",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "98567821839b29481cac94cf66f2520b1b25d92baf5ef3aecc9a5129ed66a7d7",
+      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/reference/remote-design/tech/FRAMEWORK.md",

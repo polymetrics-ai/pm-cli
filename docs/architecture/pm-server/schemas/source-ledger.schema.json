@@ -288,7 +288,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pm:remote design:source-ledger",
+  "$id": "urn:pm:remote%20design:source-ledger",
   "title": "Historical pm.plan.source-ledger/v2 private planning record",
   "description": "Structural schema retained for the historical private pm.plan.source-ledger/v2 planning artifact. It does not apply to reference/SOURCE-LEDGER.json, the sanitized pm.context.sources/v1 projection that intentionally omits historical/private fields. It is not a runtime/provider schema or implementation proof."
 }

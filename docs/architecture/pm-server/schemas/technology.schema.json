@@ -84,7 +84,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pm:remote design:technology",
+  "$id": "urn:pm:remote%20design:technology",
   "title": "TECHNOLOGY.json private planning record",
   "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
 }

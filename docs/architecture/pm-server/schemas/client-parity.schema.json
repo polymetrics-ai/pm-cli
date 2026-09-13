@@ -220,7 +220,7 @@
   ],
   "additionalProperties": false,
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "urn:pm:remote design:client-parity",
+  "$id": "urn:pm:remote%20design:client-parity",
   "title": "CLIENT-PARITY.json private planning record",
   "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
 }

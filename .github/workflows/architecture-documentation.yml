@@ -1,0 +1,58 @@
+# Early CI setup associated with issue #3; it does not complete the build/Bazel pilot.
+name: Architecture documentation
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: architecture-documentation-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: architecture-documentation
+    # The PMCLI runner executes only same-repository trusted workflow code.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    # R9's temporary qualification label limits this supervised job to the
+    # dedicated PMCLI runner until normal routing is separately authorized.
+    runs-on: [self-hosted, linux, x64, pm-cli-qual-20260911-r8]
+    timeout-minutes: 10
+    steps:
+      - name: Check out the pull request revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+      - name: Install pinned job-scoped test dependencies
+        env:
+          PIP_NO_CACHE_DIR: "1"
+        run: |
+          set -eu
+          python3 -m pip install \
+            --disable-pip-version-check \
+            --no-compile \
+            --only-binary=:all: \
+            --require-hashes \
+            --requirement requirements-docs.lock \
+            --target "$RUNNER_TEMP/architecture-docs-deps"
+      - name: Verify pinned documentation test dependency
+        run: |
+          set -eu
+          PYTHONPATH="$RUNNER_TEMP/architecture-docs-deps" python3 - <<'PY'
+          from importlib.metadata import version
+          assert version("jsonschema") == "4.25.1"
+          PY
+      - name: Run architecture documentation contracts
+        run: |
+          set -eu
+          export PYTHONPATH="$RUNNER_TEMP/architecture-docs-deps"
+          python3 scripts/test_validate_architecture_docs.py
+          python3 scripts/validate_architecture_docs.py --pr-event "$GITHUB_EVENT_PATH"
