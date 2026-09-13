@@ -21,7 +21,7 @@ SCHEMA_ID = re.compile(r"urn:pm:remote%20design:[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 LOCAL_ISSUE_REFERENCE = re.compile(r"(?<![A-Za-z0-9_])#46(?![A-Za-z0-9_])")
 PMCLI_ISSUE_URL = re.compile(
-    r"https://github\.com/polymetrics-ai/pm-cli/issues/46(?=$|[/?#])"
+    r"""https://github\.com/polymetrics-ai/pm-cli/issues/46(?=$|[\s/?#.,;:!?)\]}>\"'])"""
 )
 
 # source-ledger.schema.json is historical and deliberately does not validate

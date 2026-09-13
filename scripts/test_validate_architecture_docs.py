@@ -82,6 +82,14 @@ class ArchitectureDocumentationValidatorTests(unittest.TestCase):
             "Tracks https://github.com/polymetrics-ai/pm-cli/issues/46?state=open."
         )
 
+    def test_accepts_pmcli_issue_url_prose_and_markdown_boundaries(self) -> None:
+        for body in (
+            "Tracks https://github.com/polymetrics-ai/pm-cli/issues/46 for this work.",
+            "[Architecture issue](https://github.com/polymetrics-ai/pm-cli/issues/46)",
+        ):
+            with self.subTest(body=body):
+                validate_pr_issue_link(body)
+
     def test_rejects_wrong_issue_numbers(self) -> None:
         for body in (
             "References #460 for architecture publication.",
