@@ -142,8 +142,8 @@
       "target": "docs/architecture/pm-server/schemas/source-ledger.schema.json",
       "source": "data/pm-cli/schemas/source-ledger.schema.json",
       "source_sha256": "b478dfc1dc21531b822c46cdfa7c4d886215e5af78f8a584a5960927f04bd4f4",
-      "sha256": "b478dfc1dc21531b822c46cdfa7c4d886215e5af78f8a584a5960927f04bd4f4",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "b0b4e3c1e4630d260032331e0eabd188aaa83f542c5afaa442227a0e88a17def",
+      "transformation": "Retained historical schema with an explicit non-applicability disclosure for the sanitized pm.context.sources/v1 reference projection; validation constraints preserved"
     },
     {
       "target": "docs/architecture/pm-server/schemas/state-ownership.schema.json",
