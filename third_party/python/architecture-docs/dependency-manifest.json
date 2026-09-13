@@ -1,0 +1,71 @@
+{
+  "license_record": "NOTICE.md",
+  "lock_source": "requirements-docs.lock",
+  "prohibited": [
+    "global or root tooling install",
+    "job-time network package resolution",
+    "application runtime use"
+  ],
+  "schema_version": "pm.documentation-ci.dependencies/v1",
+  "target": {
+    "installation": "job-owned disposable directory only",
+    "platform": "linux-x64",
+    "python": "3.12"
+  },
+  "wheels": [
+    {
+      "filename": "attrs-25.4.0-py3-none-any.whl",
+      "license": "MIT",
+      "package": "attrs",
+      "purpose": "jsonschema object model dependency",
+      "sha256": "adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373",
+      "source": "https://pypi.org/project/attrs/25.4.0/",
+      "version": "25.4.0"
+    },
+    {
+      "filename": "jsonschema-4.25.1-py3-none-any.whl",
+      "license": "MIT",
+      "package": "jsonschema",
+      "purpose": "Draft 2020-12 architecture schema validation",
+      "sha256": "3fba0169e345c7175110351d456342c364814cfcf3b964ba4587f22915230a63",
+      "source": "https://pypi.org/project/jsonschema/4.25.1/",
+      "version": "4.25.1"
+    },
+    {
+      "filename": "jsonschema_specifications-2025.9.1-py3-none-any.whl",
+      "license": "MIT",
+      "package": "jsonschema-specifications",
+      "purpose": "Draft 2020-12 metaschema registry",
+      "sha256": "98802fee3a11ee76ecaca44429fda8a41bff98b00a0f2838151b113f210cc6fe",
+      "source": "https://pypi.org/project/jsonschema-specifications/2025.9.1/",
+      "version": "2025.9.1"
+    },
+    {
+      "filename": "referencing-0.37.0-py3-none-any.whl",
+      "license": "MIT",
+      "package": "referencing",
+      "purpose": "JSON Schema reference resolution",
+      "sha256": "381329a9f99628c9069361716891d34ad94af76e461dcb0335825aecc7692231",
+      "source": "https://pypi.org/project/referencing/0.37.0/",
+      "version": "0.37.0"
+    },
+    {
+      "filename": "rpds_py-0.30.0-cp312-cp312-manylinux_2_17_x86_64.manylinux2014_x86_64.whl",
+      "license": "MIT",
+      "package": "rpds-py",
+      "purpose": "referencing persistent data structures",
+      "sha256": "47f236970bccb2233267d89173d3ad2703cd36a0e2a6e92d0560d333871a3d23",
+      "source": "https://pypi.org/project/rpds-py/0.30.0/",
+      "version": "0.30.0"
+    },
+    {
+      "filename": "typing_extensions-4.15.0-py3-none-any.whl",
+      "license": "PSF-2.0",
+      "package": "typing-extensions",
+      "purpose": "Python 3.12 conditional dependency of referencing",
+      "sha256": "f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548",
+      "source": "https://pypi.org/project/typing-extensions/4.15.0/",
+      "version": "4.15.0"
+    }
+  ]
+}
