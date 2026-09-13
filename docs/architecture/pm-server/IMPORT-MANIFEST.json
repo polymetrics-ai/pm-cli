@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.context.import/v1",
-  "status": "PROPOSED_UNCOMMITTED_UNPUBLISHED",
+  "status": "PROPOSED_COMMITTED_UNPUBLISHED",
   "target_repository": "polymetrics-ai/pm-cli",
   "observed_target_head": "563adfd28b80101737ad41298aaa3af839eeacf6",
   "target_prefix": "docs/architecture/pm-server/",
@@ -267,8 +267,8 @@
     {
       "target": "docs/architecture/pm-server/README.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "745770ed93b4a846ea7bb58d86004387a6b9eb368e1bc5eb1bde435e87d9dcbd",
-      "transformation": "Original documentation proposal with recorded F06 ownership/handoff disclosure; no upstream source payload"
+      "sha256": "ca2d45a4d8beb92013889a36abece53b250ebfb46fbab1345b8d28356c1cd2da",
+      "transformation": "Original documentation proposal with corrected candidate state and recorded F06 ownership/handoff disclosure; no upstream source payload"
     },
     {
       "target": "docs/architecture/pm-server/SEMANTIC-AMENDMENTS.md",

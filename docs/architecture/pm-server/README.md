@@ -1,6 +1,6 @@
 # PM server architecture and implementation context
 
-This is a proposed documentation import, staged locally and uncommitted. It is not accessible at an invented GitHub commit. Original design labels and unexecuted validation status remain intact. The import itself requires review and explicit approval.
+This is a proposed, locally committed, unpublished documentation import. It is not accessible at an invented GitHub commit. Original design labels and unexecuted validation status remain intact. The import itself requires review and explicit approval.
 
 Start with [PLAN](architecture/PLAN.md) and [ADRS](architecture/ADRS.md). Use [CONTRACTS](architecture/CONTRACTS.json), [FOUNDATIONS](architecture/FOUNDATIONS.json), [FOUNDATION-MAPPINGS](architecture/FOUNDATION-MAPPINGS.json), [STATE-OWNERSHIP](architecture/STATE-OWNERSHIP.json) and [CLIENT-PARITY](architecture/CLIENT-PARITY.json) for normative obligations. [TECHNOLOGY](architecture/TECHNOLOGY.json) and [ARCHITECTURE-DELTA](architecture/ARCHITECTURE-DELTA.json) preserve selected pins and decision qualifications.
 
