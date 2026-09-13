@@ -19,6 +19,10 @@ MANIFEST_NAME = "IMPORT-MANIFEST.json"
 # lexical check is separate from jsonschema's optional format validation.
 SCHEMA_ID = re.compile(r"urn:pm:remote%20design:[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
+LOCAL_ISSUE_REFERENCE = re.compile(r"(?<![A-Za-z0-9_])#46(?![A-Za-z0-9_])")
+PMCLI_ISSUE_URL = re.compile(
+    r"https://github\.com/polymetrics-ai/pm-cli/issues/46(?=$|[/?#])"
+)
 
 # source-ledger.schema.json is historical and deliberately does not validate
 # reference/SOURCE-LEDGER.json, the sanitized pm.context.sources/v1 projection.
@@ -103,6 +107,8 @@ def validate_manifest(repository: Path) -> None:
         path = target_path(repository, target)
         require(path.is_file() and not path.is_symlink(), f"missing regular payload: {target}")
         require(digest(path) == expected_hash, f"payload digest mismatch: {target}")
+        if target.endswith(".json"):
+            load_json(path)
         if source_hash is not None and source_hash != expected_hash and target.endswith(".schema.json"):
             require("URI" in transformation and "%20" in transformation,
                     f"changed schema transformation omits URI escaping disclosure: {target}")
@@ -174,7 +180,7 @@ def validate_readme_links(repository: Path) -> None:
 
 
 def validate_pr_issue_link(body: str) -> None:
-    require("#46" in body or "/issues/46" in body,
+    require(LOCAL_ISSUE_REFERENCE.search(body) is not None or PMCLI_ISSUE_URL.search(body) is not None,
             "pull request body lacks architecture-publication issue linkage to #46")
 
 

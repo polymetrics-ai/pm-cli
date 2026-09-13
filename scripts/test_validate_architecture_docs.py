@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import shutil
 import tempfile
 import unittest
@@ -53,12 +54,52 @@ class ArchitectureDocumentationValidatorTests(unittest.TestCase):
         with self.assertRaisesRegex(ValidationError, "payload digest mismatch"):
             validate_manifest(root)
 
+    def test_rejects_malformed_inventoried_json_after_digest_refresh(self) -> None:
+        temporary, root = self.copy_repository()
+        self.addCleanup(temporary.cleanup)
+        payload = root / CONTEXT / "implementation/PACKET-CONTRACTS.json"
+        payload.write_text("{ malformed JSON\\n")
+        manifest_path = root / CONTEXT / "IMPORT-MANIFEST.json"
+        manifest = json.loads(manifest_path.read_text())
+        for row in manifest["files"]:
+            if row["target"].endswith("source-ledger.schema.json"):
+                row["transformation"] += "; URI %20 disclosure fixture"
+            if row["target"].endswith("implementation/PACKET-CONTRACTS.json"):
+                row["sha256"] = hashlib.sha256(payload.read_bytes()).hexdigest()
+        manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
+        with self.assertRaisesRegex(ValidationError, "invalid JSON"):
+            validate_manifest(root)
+
     def test_rejects_missing_issue_linkage(self) -> None:
         with self.assertRaisesRegex(ValidationError, "issue linkage"):
             validate_pr_issue_link("Documentation-only update")
 
     def test_accepts_issue_linkage(self) -> None:
         validate_pr_issue_link("References #46 for architecture publication.")
+
+    def test_accepts_exact_pmcli_issue_url(self) -> None:
+        validate_pr_issue_link(
+            "Tracks https://github.com/polymetrics-ai/pm-cli/issues/46?state=open."
+        )
+
+    def test_rejects_wrong_issue_numbers(self) -> None:
+        for body in (
+            "References #460 for architecture publication.",
+            "References #146 for architecture publication.",
+            "Tracks https://github.com/polymetrics-ai/pm-cli/issues/460.",
+        ):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(ValidationError, "issue linkage"):
+                    validate_pr_issue_link(body)
+
+    def test_rejects_foreign_issue_urls(self) -> None:
+        for body in (
+            "Tracks https://github.com/other/project/issues/46.",
+            "Tracks https://github.com/polymetrics-ai/other/issues/46.",
+        ):
+            with self.subTest(body=body):
+                with self.assertRaisesRegex(ValidationError, "issue linkage"):
+                    validate_pr_issue_link(body)
 
     def test_pull_request_event_requires_issue_linkage(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
