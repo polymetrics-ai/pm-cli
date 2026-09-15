@@ -524,5 +524,59 @@ class BootstrapBoundaryTest(unittest.TestCase):
                 verify_native_environment(root, profile)
 
 
+    def test_added_cached_tool_requires_archive_bytes(self) -> None:
+        # These synthetic members qualify cache admission, not native execution.
+        prefix = "LLVM-21.1.8-Linux-X64"
+        members = {
+            f"{prefix}/bin/{name}": (b"locked " + name.encode(), 0o555)
+            for name in ("clang", "clang++", "ld.lld", "llvm-ar")
+        }
+        for name in ("libclang_rt.builtins.a", "clang_rt.crtbegin.o", "clang_rt.crtend.o"):
+            members[f"{prefix}/lib/clang/21/lib/x86_64-unknown-linux-gnu/{name}"] = (
+                b"locked runtime", 0o444
+            )
+        payload = BytesIO()
+        with tarfile.open(fileobj=payload, mode="w:xz") as archive:
+            for name, (data, mode) in members.items():
+                entry = tarfile.TarInfo(name)
+                entry.size, entry.mode = len(data), mode
+                archive.addfile(entry, BytesIO(data))
+        archive_bytes = payload.getvalue()
+        asset = {
+            "id": "clang", "version": "21.1.8", "platform": NATIVE_PLATFORM,
+            "sha256": hashlib.sha256(archive_bytes).hexdigest(),
+            "kind": "tar.xz", "executable": f"{prefix}/bin/clang",
+            "url": "https://example.invalid/locked-clang.tar.xz",
+        }
+        with tempfile.TemporaryDirectory() as temporary:
+            cache = Path(temporary)
+            downloads = cache / "downloads"
+            downloads.mkdir()
+            (downloads / f"{asset['sha256']}.blob").write_bytes(archive_bytes)
+            install = bootstrap["_install_asset"]
+            lock = {"assets": [asset]}
+            install(lock, "clang", NATIVE_PLATFORM, cache)
+            root = bootstrap["_asset_install_root"](asset, cache)
+            archiver = root / prefix / "bin/llvm-ar"
+            original_identity = (archiver.stat().st_dev, archiver.stat().st_ino)
+            marker_path = root / ".pm-bootstrap.json"
+            marker = json.loads(marker_path.read_text())
+            marker["executables"].pop(f"{prefix}/bin/llvm-ar", None)
+            predecessor = json.dumps(marker).encode()
+            marker_path.chmod(0o600)
+            marker_path.write_bytes(predecessor)
+            install(lock, "clang", NATIVE_PLATFORM, cache)
+            self.assertEqual(
+                (archiver.stat().st_dev, archiver.stat().st_ino), original_identity
+            )
+            marker_path.chmod(0o600)
+            marker_path.write_bytes(predecessor)
+            archiver.chmod(0o700)
+            archiver.write_bytes(b"untrusted cached archiver")
+            with self.assertRaises(BootstrapError):
+                install(lock, "clang", NATIVE_PLATFORM, cache)
+            self.assertEqual(marker_path.read_bytes(), predecessor)
+
+
 if __name__ == "__main__":
     unittest.main()

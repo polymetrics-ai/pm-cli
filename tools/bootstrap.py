@@ -1457,6 +1457,7 @@ def _executable_relatives(asset: Mapping[str, object]) -> list[PurePosixPath]:
         paths.append(executable.with_name("clang++"))
         if str(asset["platform"]) in LINUX_NATIVE_PLATFORMS:
             paths.append(_clang_linker_relative(asset))
+            paths.append(executable.with_name("llvm-ar"))
     return paths
 
 
@@ -1492,9 +1493,15 @@ def _verify_cached_members(
     return result
 
 
-def _verify_install(root: Path, asset: Mapping[str, object]) -> dict[PurePosixPath, Path]:
+def _verify_install(
+    root: Path,
+    asset: Mapping[str, object],
+    *,
+    marker: dict[str, object] | None = None,
+) -> dict[PurePosixPath, Path]:
     marker_path = root / ".pm-bootstrap.json"
-    marker = _require_object(_read_json(marker_path), "bootstrap cache marker")
+    if marker is None:
+        marker = _require_object(_read_json(marker_path), "bootstrap cache marker")
     runtime_relatives = _compiler_runtime_relatives(asset)
     _require_keys(
         marker,
@@ -1541,6 +1548,50 @@ def _verify_install(root: Path, asset: Mapping[str, object]) -> dict[PurePosixPa
     return result
 
 
+def _admit_cached_executables(
+    root: Path, asset: Mapping[str, object], download: Path
+) -> dict[PurePosixPath, Path]:
+    """Admit added tool roles from the verified archive, not cached tool bytes."""
+    marker = _require_object(
+        _read_json(root / ".pm-bootstrap.json"), "bootstrap cache marker"
+    )
+    hashes = _require_object(marker.get("executables"), "cache marker executables")
+    expected = {str(path) for path in _executable_relatives(asset)}
+    if not set(hashes).issubset(expected):
+        raise BootstrapError(f"cached executable set mismatch: {root}")
+    missing = expected.difference(hashes)
+    if not missing:
+        return _verify_install(root, asset, marker=marker)
+    if asset["id"] != "clang" or asset["platform"] not in LINUX_NATIVE_PLATFORMS:
+        raise BootstrapError(f"cached executable set mismatch: {root}")
+    if asset["kind"] != "tar.xz":
+        raise BootstrapError("native Clang tools require the locked tar.xz source")
+    try:
+        with tarfile.open(download, mode="r:xz", errorlevel=2) as archive:
+            for relative in sorted(missing):
+                source = archive.extractfile(relative)
+                if source is None:
+                    raise BootstrapError(f"tool is not a readable archive member: {relative}")
+                digest = hashlib.sha256()
+                total = 0
+                with source:
+                    while chunk := source.read(CHUNK_BYTES):
+                        total += len(chunk)
+                        if total > MAX_NATIVE_FILE_BYTES:
+                            raise BootstrapError(f"native tool exceeds the byte limit: {relative}")
+                        digest.update(chunk)
+                hashes[relative] = digest.hexdigest()
+    except (KeyError, OSError, tarfile.TarError) as exc:
+        raise BootstrapError(f"cannot authenticate added native tools: {exc}") from exc
+    verified = _verify_install(root, asset, marker=marker)
+    _atomic_write(
+        root / ".pm-bootstrap.json",
+        (json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n").encode(),
+        0o444,
+    )
+    return verified
+
+
 def _asset_install_root(asset: Mapping[str, object], cache: Path) -> Path:
     root = (
         cache
@@ -1569,7 +1620,7 @@ def _install_asset(
         if install_root.exists():
             if not install_root.is_dir() or install_root.is_symlink():
                 raise BootstrapError(f"cached install is not a directory: {install_root}")
-            return asset, _verify_install(install_root, asset)
+            return asset, _admit_cached_executables(install_root, asset, download)
 
         install_root.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         staging = Path(tempfile.mkdtemp(prefix=".install-", dir=install_root.parent))
@@ -2034,6 +2085,7 @@ def _native_selection(
         "CC": str(cc),
         "CXX": str(cxx),
         "LD": str(linker),
+        "AR": str(cc.with_name("llvm-ar")),
         "GOENV": "off",
         "GOOS": target_goos,
         "GOARCH": target_goarch,
@@ -2049,6 +2101,7 @@ def _native_selection(
         "compiler_runtime_files": [str(path) for path in compiler_runtimes],
         "compiler": str(cc),
         "linker": str(linker),
+        "archiver": str(cc.with_name("llvm-ar")),
         "derived_linker_inputs": linker_input_identity,
         "cleared_environment": sorted(LINUX_NATIVE_AMBIENT_OVERRIDES),
     }
@@ -2250,6 +2303,7 @@ def _print_environment(
         "CC": str(native.cc),
         "CXX": str(native.cxx),
         "LD": str(native.linker) if native.linker is not None else None,
+        "AR": native.environment.get("AR"),
         "BAZELISK": str(bazelisk),
         "SYFT": str(syft),
         "ASSET_ROOTS": [source["path"] for source in asset_sources],
