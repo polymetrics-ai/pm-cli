@@ -1,0 +1,51 @@
+startup --batch
+startup --host_jvm_args=-Xms128m
+startup --host_jvm_args=-Xmx1024m
+startup --host_jvm_args=-XX:ActiveProcessorCount=2
+
+common --experimental_isolated_extension_usages
+common --enable_platform_specific_config
+
+build --jobs=2
+build --loading_phase_threads=2
+build --experimental_fsvc_threads=2
+# Bazel 9.2 Skymeld creates a fixed 200-thread symlink pool, independent of jobs.
+# Keep analysis and execution separate within the runner's 256-task budget.
+build --noexperimental_merged_skyframe_analysis_execution
+build --local_resources=cpu=2
+build --local_resources=memory=2048
+build --spawn_strategy=processwrapper-sandbox
+build --repo_env=CC
+build --repo_env=CXX
+build --action_env=CC
+build --action_env=CXX
+build --repo_env=LD
+build --action_env=LD
+build --repo_env=AR
+build --action_env=AR
+build --repo_env=GOENV
+build --action_env=GOENV
+build --repo_env=GOOS
+build --action_env=GOOS
+build --repo_env=GOARCH
+build --action_env=GOARCH
+build --repo_env=CGO_CFLAGS
+build --action_env=CGO_CFLAGS
+build --repo_env=CGO_CPPFLAGS
+build --action_env=CGO_CPPFLAGS
+build --repo_env=CGO_CXXFLAGS
+build --action_env=CGO_CXXFLAGS
+build --repo_env=CGO_LDFLAGS
+build --action_env=CGO_LDFLAGS
+build --repo_env=SDKROOT
+build --action_env=SDKROOT
+build --repo_env=MACOSX_DEPLOYMENT_TARGET
+build --action_env=MACOSX_DEPLOYMENT_TARGET
+
+# Preserve native debug symbols with the Apple linker.
+build:macos --copt=-gdwarf-4
+build:macos --host_copt=-gdwarf-4
+
+test --test_env=PM_GO
+test --test_env=PM_REPO_ROOT
+test --test_env=GOWORK=off

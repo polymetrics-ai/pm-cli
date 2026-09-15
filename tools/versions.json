@@ -1,0 +1,221 @@
+{
+  "schema_version": "pm.dependencies/v1",
+  "go_version": "1.27.1",
+  "modules": {
+    "application": [
+      {
+        "path": "github.com/aws/aws-sdk-go-v2",
+        "version": "v1.47.0",
+        "license": "Apache-2.0",
+        "source_url": "https://proxy.golang.org/github.com/aws/aws-sdk-go-v2/@v/v1.47.0.info"
+      },
+      {
+        "path": "github.com/aws/aws-sdk-go-v2/service/s3",
+        "version": "v1.113.0",
+        "license": "Apache-2.0",
+        "source_url": "https://proxy.golang.org/github.com/aws/aws-sdk-go-v2/service/s3/@v/v1.113.0.info"
+      },
+      {
+        "path": "github.com/aws/smithy-go",
+        "version": "v1.28.1",
+        "license": "Apache-2.0",
+        "source_url": "https://proxy.golang.org/github.com/aws/smithy-go/@v/v1.28.1.info"
+      },
+      {
+        "path": "github.com/coreos/go-oidc/v3",
+        "version": "v3.21.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/coreos/go-oidc/tree/c914bd380327a5a3a81403774d1a5d5b73772ce7"
+      },
+      {
+        "path": "github.com/duckdb/duckdb-go/v2",
+        "version": "v2.10505.0",
+        "license": "MIT",
+        "source_url": "https://github.com/duckdb/duckdb-go/tree/36040984c722e0f174b880eb7d77e238b3d8bc61"
+      },
+      {
+        "path": "github.com/duckdb/duckdb-go-bindings",
+        "version": "v0.10505.0",
+        "license": "MIT",
+        "source_url": "https://github.com/duckdb/duckdb-go-bindings/tree/5f98009483427ea94061fdd5e39515d129d11b00"
+      },
+      {
+        "path": "github.com/getkin/kin-openapi",
+        "version": "v0.149.0",
+        "license": "MIT",
+        "source_url": "https://github.com/getkin/kin-openapi/tree/1a812b4b73ede7fa295c63a5c89d1ca7250dcc07"
+      },
+      {
+        "path": "github.com/gin-gonic/gin",
+        "version": "v1.12.0",
+        "license": "MIT",
+        "source_url": "https://github.com/gin-gonic/gin/tree/73726dc606796a025971fe451f0aa6f1b9b847f6"
+      },
+      {
+        "path": "github.com/jackc/pgx/v5",
+        "version": "v5.11.0",
+        "license": "MIT",
+        "source_url": "https://github.com/jackc/pgx/tree/5e583fa7aabfa88b796292f849fc9d7d75ac159d"
+      },
+      {
+        "path": "github.com/oapi-codegen/runtime",
+        "version": "v1.7.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/oapi-codegen/runtime/tree/25e2d353ccbf722e1d991ff71beb9502a421d665"
+      },
+      {
+        "path": "github.com/pressly/goose/v3",
+        "version": "v3.28.0",
+        "license": "MIT",
+        "source_url": "https://github.com/pressly/goose/tree/43d2d9c819ed6c9ba2b67a86bdf9fc08562495b7"
+      },
+      {
+        "path": "github.com/santhosh-tekuri/jsonschema/v6",
+        "version": "v6.0.3",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/santhosh-tekuri/jsonschema/tree/b0fc661f4939578bc429f408c18202573dbafcc4"
+      },
+      {
+        "path": "github.com/spf13/cobra",
+        "version": "v1.10.2",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/spf13/cobra/tree/88b30ab89da2d0d0abb153818746c5a2d30eccec"
+      },
+      {
+        "path": "github.com/testcontainers/testcontainers-go",
+        "version": "v0.44.0",
+        "license": "MIT",
+        "source_url": "https://github.com/testcontainers/testcontainers-go/tree/007bd6b1407fe3f2ab9487479e8bd841e16a1c97"
+      },
+      {
+        "path": "github.com/zalando/go-keyring",
+        "version": "v0.2.8",
+        "license": "MIT",
+        "source_url": "https://github.com/zalando/go-keyring/tree/a8cdfe320cc8bc0534c895a648dc9214715a9da5"
+      },
+      {
+        "path": "go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp",
+        "version": "v0.71.0",
+        "license": "Apache-2.0",
+        "source_url": "https://proxy.golang.org/go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp/@v/v0.71.0.info"
+      },
+      {
+        "path": "go.opentelemetry.io/otel",
+        "version": "v1.46.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/open-telemetry/opentelemetry-go/tree/58db4c898f5b5594f8ba78f156475bf48486e2f2"
+      },
+      {
+        "path": "go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp",
+        "version": "v1.46.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/open-telemetry/opentelemetry-go/tree/58db4c898f5b5594f8ba78f156475bf48486e2f2"
+      },
+      {
+        "path": "go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp",
+        "version": "v1.46.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/open-telemetry/opentelemetry-go/tree/58db4c898f5b5594f8ba78f156475bf48486e2f2"
+      },
+      {
+        "path": "go.opentelemetry.io/otel/metric",
+        "version": "v1.46.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/open-telemetry/opentelemetry-go/tree/58db4c898f5b5594f8ba78f156475bf48486e2f2"
+      },
+      {
+        "path": "go.opentelemetry.io/otel/sdk",
+        "version": "v1.46.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/open-telemetry/opentelemetry-go/tree/58db4c898f5b5594f8ba78f156475bf48486e2f2"
+      },
+      {
+        "path": "go.opentelemetry.io/otel/sdk/metric",
+        "version": "v1.46.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/open-telemetry/opentelemetry-go/tree/58db4c898f5b5594f8ba78f156475bf48486e2f2"
+      },
+      {
+        "path": "go.opentelemetry.io/otel/trace",
+        "version": "v1.46.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/open-telemetry/opentelemetry-go/tree/58db4c898f5b5594f8ba78f156475bf48486e2f2"
+      },
+      {
+        "path": "go.temporal.io/api",
+        "version": "v1.63.4",
+        "license": "MIT",
+        "source_url": "https://github.com/temporalio/api-go/tree/60e39586a91fbf101a8763293ad55dae4fbb9f49"
+      },
+      {
+        "path": "go.temporal.io/sdk",
+        "version": "v1.48.0",
+        "license": "MIT",
+        "source_url": "https://github.com/temporalio/sdk-go/tree/b7c242c6894df088a57a85b33d0586e908da8b93"
+      },
+      {
+        "path": "go.yaml.in/yaml/v3",
+        "version": "v3.0.5",
+        "license": "MIT/Apache-2.0 file-specific",
+        "source_url": "https://github.com/yaml/go-yaml/tree/e16c7af9361b241fa02d91582fb59ce4954d8afc"
+      },
+      {
+        "path": "golang.org/x/oauth2",
+        "version": "v0.37.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/oauth2/+/c624b89dadc3221560b7345c090bbe69e90808ee"
+      },
+      {
+        "path": "golang.org/x/sync",
+        "version": "v0.23.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/sync/+/f75267d8412fc1dfd12b343644a7ea46e4d9c85d"
+      },
+      {
+        "path": "golang.org/x/time",
+        "version": "v0.16.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/time/+/fb013b3d305a26f5ef5350a6eaffc7c87a200383"
+      }
+    ],
+    "tools": [
+      {
+        "path": "github.com/getkin/kin-openapi",
+        "version": "v0.149.0",
+        "license": "MIT",
+        "source_url": "https://github.com/getkin/kin-openapi/tree/1a812b4b73ede7fa295c63a5c89d1ca7250dcc07"
+      },
+      {
+        "path": "github.com/oapi-codegen/oapi-codegen/v2",
+        "version": "v2.8.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/oapi-codegen/oapi-codegen/tree/de2d8b2b0afb287198554eb305bb0d2687d26a85"
+      },
+      {
+        "path": "go.yaml.in/yaml/v3",
+        "version": "v3.0.5",
+        "license": "MIT/Apache-2.0 file-specific",
+        "source_url": "https://github.com/yaml/go-yaml/tree/e16c7af9361b241fa02d91582fb59ce4954d8afc"
+      },
+      {
+        "path": "golang.org/x/vuln",
+        "version": "v1.8.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/vuln/+/709015412431dd2b5b28a53c06c70bc02d49074c"
+      },
+      {
+        "path": "honnef.co/go/tools",
+        "version": "v0.8.1",
+        "license": "MIT",
+        "source_url": "https://github.com/dominikh/go-tools/tree/1285a6a5ec1e0ebb658f49e82b6c566a878cc3cb"
+      }
+    ]
+  },
+  "forbidden": [
+    {
+      "path": "github.com/goreleaser/goreleaser/v2",
+      "version": "v2.18.1",
+      "reason": "V56 names this exact rejected packaging-tool identity; no broader GoReleaser family restriction is authorized."
+    }
+  ]
+}

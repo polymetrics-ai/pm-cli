@@ -15,6 +15,7 @@ from validate_architecture_docs import (
     validate_manifest,
     validate_pr_issue_links,
     validate_pull_request_event,
+    validate_readme_links,
     validate_schema_identifier,
     validate_tree,
 )
@@ -75,6 +76,45 @@ class ArchitectureDocumentationValidatorTests(unittest.TestCase):
         manifest_path.write_text(json.dumps(manifest, indent=2) + "\n")
         with self.assertRaisesRegex(ValidationError, "invalid JSON"):
             validate_manifest(root)
+
+    def test_readme_accepts_repository_local_instruction_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            context = root / CONTEXT
+            context.mkdir(parents=True)
+            (root / "AGENTS.md").write_text("Active application instructions\n")
+            (root / "docs/setup.md").write_text("Developer setup\n")
+            (context / "README.md").write_text(
+                "[Instructions](../../../AGENTS.md)\n[Setup](../../setup.md)\n"
+            )
+            validate_readme_links(root)
+
+    def test_readme_rejects_absolute_and_outside_repository_links(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "repository"
+            context = root / CONTEXT
+            context.mkdir(parents=True)
+            (root / "AGENTS.md").write_text("Active application instructions\n")
+            (Path(temporary) / "outside.md").write_text("Outside the repository\n")
+            for target in (str(root / "AGENTS.md"), "../../../../outside.md"):
+                with self.subTest(target=target):
+                    (context / "README.md").write_text(f"[Unsafe]({target})\n")
+                    with self.assertRaises(ValidationError):
+                        validate_readme_links(root)
+
+    def test_readme_rejects_symlink_targets_and_ancestors(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            context = root / CONTEXT
+            context.mkdir(parents=True)
+            (root / "AGENTS.md").write_text("Active application instructions\n")
+            (root / "alias.md").symlink_to(root / "AGENTS.md")
+            (root / "alias-directory").symlink_to(root, target_is_directory=True)
+            for target in ("../../../alias.md", "../../../alias-directory/AGENTS.md"):
+                with self.subTest(target=target):
+                    (context / "README.md").write_text(f"[Symlink]({target})\n")
+                    with self.assertRaises(ValidationError):
+                        validate_readme_links(root)
 
     def test_publication_pull_request_accepts_issue_46(self) -> None:
         for body in (

@@ -10,3 +10,7 @@
 /dist/
 /coverage/
 *.test
+# Project-local tool/bootstrap and Bazel outputs; source BUILD files stay tracked.
+/.cache/
+/bazel-*
+/tools/bazel-*

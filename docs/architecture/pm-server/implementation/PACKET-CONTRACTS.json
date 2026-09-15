@@ -273,7 +273,7 @@
         },
         {
           "id": "BOOT-4",
-          "assertion": "Actual worker and review/gate discovery see PM standards and accepted issue intent; approved code-review invokes independent Standards and Spec subagents without edits.",
+          "assertion": "Actual worker and review discovery see PM standards and accepted issue intent; actual operator-assigned route evidence is recorded without credentials; each coherent completed PR candidate receives one independent read-only AI Hero Standards review and one independent read-only Spec review.",
           "command": "set -eu\ngit diff --check",
           "environment": [
             "isolated bootstrap checkout",
@@ -281,9 +281,9 @@
           ],
           "status": "UNEXECUTED",
           "manual_checklist": [
-            "Record actual worker and independent Standards/Spec reviewer launch/discovery, effective Astra/xhigh, applicable PM instructions and accepted issue/spec digest.",
-            "The read-only review reports cite separate standards/spec findings against the actual nonempty candidate diff; missing capability remains a blocking prerequisite, not a passing review.",
-            "Qualify no-mistakes only under later explicit bootstrap authority; it owns fixes/push/CI, and no supervisor instructions leak into gate agents."
+            "Record actual worker and independent Standards/Spec reviewer launch/discovery, actual operator-assigned route metadata, applicable PM instructions, accepted issue/spec digest, and candidate base/merge-base/head; application policy must not hard-code a worker or reviewer model.",
+            "The separate read-only reports cover the actual nonempty coherent candidate diff once per completed PR candidate, not per todo; missing capability remains a blocking prerequisite, not a passing review.",
+            "OMP is the sole coordinator and integration owner, with one writing owner serializing shared changes. No Firstmate/no-mistakes initialization, custody, fixing, promotion, push, or CI gate remains. After material fixes, run affected checks and targeted review of the changed diff; genuine CI on the actual final candidate and separate merge approval remain required."
           ]
         },
         {
@@ -305,7 +305,7 @@
       "requirements": [],
       "parity_ids": [],
       "state_ownership_ids": [],
-      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
+      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership. OMP is the sole coordinator and integration owner; one writing owner serializes shared mutations. Full bootstrap remains dependent on an approved landed Issue #46 baseline, and this bounded early instruction cleanup does not satisfy BOOT-1 through BOOT-5. Run focused causal or documentation-appropriate structural checks before integration; review each coherent completed candidate once with independent read-only Standards/Spec, then run affected checks and targeted changed-diff review after material fixes. Genuine CI on the actual final candidate and separate merge approval remain required; there is no controller promotion, per-todo review, or heuristic hard gate.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
       "non_goals": [
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
@@ -637,7 +637,7 @@
       "parity_ids": [],
       "state_ownership_ids": [],
       "stage_contract": "Initial acceptance covers only the named pure contract/generation/prelaunch boundary. Actual CLI/API/worker and provider I/O integration belongs to named later owners; a fixture or schema pass is not that integration.",
-      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
+      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership. OMP is the sole coordinator and integration owner; one writing owner serializes shared mutations. This issue may be integrated in dependency-coherent group A (#2 through #10), with dependencies ordering implementation inside the candidate rather than forcing per-issue merges; first-owner/later-update rights and explicit handoffs remain. Review the coherent completed candidate once with independent read-only Standards/Spec, run affected checks and targeted changed-diff review after material fixes, require genuine CI on the actual final candidate, and obtain separate merge approval. V56, TOOLCHAIN-QUAL, approved workflow activation, native readiness, private-runner security, and real runner-job evidence remain separate mandatory gates; there is no controller promotion, per-todo review, or heuristic hard gate.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
       "non_goals": [
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",

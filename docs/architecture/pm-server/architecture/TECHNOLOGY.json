@@ -358,7 +358,7 @@
       "purpose": "C compiler baseline for qualified pm-query Linux targets.",
       "primary_source": "https://github.com/llvm/llvm-project/releases/tag/llvmorg-21.1.8",
       "license": "Apache-2.0 with LLVM exceptions",
-      "constraints": "Pin target sysroot/linker/native archive/build image digest; no native cross-build assumption.",
+      "constraints": "For development CI, pin and verify the actual compiler/linker, target sysroot headers/libraries, native archive and host OS/architecture through a reviewed immutable manifest; refuse identity drift before execution. An immutable build-image digest remains mandatory before image-based or release-native builds. This binds the existing native host environment, not a hermetic build image; no native cross-build assumption. Accepted issue #3 amendment: https://github.com/polymetrics-ai/pm-cli/issues/3#issuecomment-5687998290.",
       "prior_id": "T21",
       "status": "selected proposal; combined build/integration UNEXECUTED"
     },

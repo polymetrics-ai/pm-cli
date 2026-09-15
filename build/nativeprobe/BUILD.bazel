@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "nativeprobe_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/build/nativeprobe",
+    visibility = ["//visibility:private"],
+    deps = [
+        "@com_github_duckdb_duckdb_go_bindings//:duckdb-go-bindings",
+        "@com_github_duckdb_duckdb_go_v2//:duckdb-go",
+    ],
+)
+
+go_binary(
+    name = "nativeprobe",
+    embed = [":nativeprobe_lib"],
+    pure = "off",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "nativeprobe_test",
+    size = "large",
+    srcs = ["native_test.go"],
+    embed = [":nativeprobe_lib"],
+    pure = "off",
+)

@@ -1,0 +1,63 @@
+{
+  "files": [
+    {
+      "byte_count": 76,
+      "path": "/etc/os-release",
+      "sha256": "8636ecf230b66872d72057470e1f6822ce9ae44f38ac3beefd028ca0cf98fea1"
+    },
+    {
+      "byte_count": 236616,
+      "path": "/lib64/ld-linux-x86-64.so.2",
+      "sha256": "938a7d8dbcba04bc4d501c5b393aa7e75cb17b7873b4cc84387b5bb8303a7974"
+    },
+    {
+      "byte_count": 123215144,
+      "path": "/usr/lib/llvm-18/lib/libLLVM.so.1",
+      "sha256": "7dfb344cc8c0b98092928cb9ec43b823d5315b97c31393a633345f68eed14edf"
+    },
+    {
+      "byte_count": 64796088,
+      "path": "/usr/lib/llvm-18/lib/libclang-cpp.so.18.1",
+      "sha256": "5f1cbbb6c1bed90786d32bf693c40cf82e23865abe6006c4ea6a1fbd0f671a94"
+    },
+    {
+      "byte_count": 400,
+      "path": "/usr/lib/os-release",
+      "sha256": "c2b3fa3c0375dc18d7f15ffde0073a90f50e5f229fb9266c0c03d7114a553b22"
+    },
+    {
+      "byte_count": 183024,
+      "path": "/usr/lib/x86_64-linux-gnu/libgcc_s.so.1",
+      "sha256": "ed2088afc7c61ca60aa17a00fd383ce6f24f59fc7c9229ecbfe357d1f6818166"
+    },
+    {
+      "byte_count": 2592224,
+      "path": "/usr/lib/x86_64-linux-gnu/libstdc++.so.6",
+      "sha256": "d1188bfaa29cf6225973b9eb6ccf930c30071a729c0bb2c37e701a6427ae5f84"
+    }
+  ],
+  "gcc_install_dir": null,
+  "linker": {
+    "asset_id": "clang",
+    "executable": "LLVM-21.1.8-Linux-X64/bin/ld.lld",
+    "source_sha256": "b3b7f2801d15d50736acea3c73982994d025b01c2f035b91ae3b49d1b575732b"
+  },
+  "platform": "linux-amd64",
+  "qualification_scope": "bound-development-host-not-immutable-image-or-release",
+  "schema_version": "pm.native-environment/v1",
+  "sysroot": "/",
+  "trees": [
+    {
+      "entry_count": 1566,
+      "path": "/usr/include",
+      "sha256": "136b3519f3704bc1970d9daeba101331bdbd50b77c7b5cf8b98581fe272fc419",
+      "total_bytes": 9029756
+    },
+    {
+      "entry_count": 2632,
+      "path": "/usr/lib/x86_64-linux-gnu",
+      "sha256": "919983b551640957e1effca786a2c1bb3f91240d95bda6c6a09ded17ac38b406",
+      "total_bytes": 269723582
+    }
+  ]
+}

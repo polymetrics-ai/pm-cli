@@ -1,0 +1,21 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -20,1 +20,2 @@
+     cgo = True,
++    cdeps = ["//include:duckdb_headers"],
+diff --git a/include/BUILD.bazel b/include/BUILD.bazel
+--- a/include/BUILD.bazel
++++ b/include/BUILD.bazel
+@@ -1,1 +1,11 @@
+ load("@io_bazel_rules_go//go:def.bzl", "go_library")
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++cc_library(
++    name = "duckdb_headers",
++    hdrs = [
++        "duckdb.h",
++        "duckdb_go_bindings.h",
++    ],
++    visibility = ["//visibility:public"],
++)

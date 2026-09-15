@@ -1,0 +1,10 @@
+# gazelle:prefix github.com/polymetrics-ai/pm-cli
+
+load("@gazelle//:def.bzl", "gazelle")
+
+exports_files([
+    "go.mod",
+    "go.sum",
+])
+
+gazelle(name = "gazelle")

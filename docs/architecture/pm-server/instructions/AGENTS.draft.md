@@ -1,50 +1,61 @@
-# Inactive application-instruction proposal
+# Synchronized inactive projection: AGENTS.md
 
-Intended target: AGENTS.md, only after separate activation approval. Relative project links in the proposed body are resolved at that target.
+This file mirrors the current target `AGENTS.md` below for provenance and comparison. It is not an active instruction entrypoint, is not fresh-worker intake, and does not establish current-candidate checks, review, CI, merge, application behavior, or full BOOT. Relative links in the projected body resolve from the target path named in `INSTRUCTION-TARGETS.json`.
 
-<!-- firstmate:maintained-by-project -->
-# PM application instructions
+# AGENTS.md
 
-## Scope and status
+## Authority and status
 
-PM means Polymetrics. This repository owns the `pm` client, PM Server and worker implementation. It does not own an agent fleet. Implement the assigned, explicitly authorized issue in its isolated checkout; ordinary contributors do not need FirstMate or Herdr.
+PM (Polymetrics) is a remote-first Go application for declared connectors and reliable data movement. The `pm` CLI and future browser are thin clients of PM Server; they are not alternate execution engines.
 
-The remote-server design is **proposed until the context-publication issue records its approved digest and immutable revision**. The inspected baseline contains setup only. Do not describe planned files or tests as implemented. The canonical design is `docs/architecture/pm-server/architecture/PLAN.md`, with ADRS.md, CONTRACTS.json and the implementation records alongside it. The bootstrap issue must make these links real before dependent work is Ready.
+The accepted PM Server context published through PR #47 is landed on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`. BOOT-1 readback authenticated the approved original staging and the exact reviewed tree that landed; see the [context index](docs/architecture/pm-server/README.md) for its evidence boundary. [Developer setup](docs/development/setup.md) records bounded local Darwin foundation checks and fresh-worker discovery. Independent candidate review, genuine final-head CI, and required merge authorization remain separate obligations; local observations alone cannot establish full BOOT or a merge.
 
-Maintain this file as a concise application entry point when conventions change. Keep detailed policy in the linked authoritative documents. A same-repository CLAUDE.md, if needed, is only an `@AGENTS.md` pointer.
+Only behavior present in source and actually exercised may be reported. A bounded build/toolchain foundation does not implement PM application services, client commands, generated bundles, connectors, provider effects, packaging, or certification.
 
-## Product boundary
+Implement only the explicitly authorized issue in its owned files. Preserve other work, first ownership, later integration rights, issue/case identities, and unresolved obligations. OMP is the sole project coordinator and integration owner. Agent model/account routing is operator-owned outside application documentation; do not encode a route here or make another delivery controller, private runbook, or host setup a worker prerequisite.
 
-- PMCLI and the future UI call the same authorized, versioned server use cases. Clients parse/project commands and schemas, submit requests and render results/events. They do not execute providers, ETL, reverse ETL or schedules.
-- The server owns identity validation, session issuance/revocation, workspace/connection authorization, provider configuration and secrets, refresh, execution, durable state, schemas, runs and schedules. A client may retain a scoped PM session via a server-owned browser/device flow; it must never collect, persist, forward or print raw provider credentials.
-- One remote-first Go/Gin/PostgreSQL/Temporal application model serves development and production. PostgreSQL application tables, Temporal-managed databases and a customer's PostgreSQL connector have separate identities and owners. PM does not write Temporal's internal tables.
-- PM workers execute provider I/O in activities. Temporal workflow code is deterministic and carries scoped references, not secrets or bulk data. PostgreSQL intent/outbox commit precedes durable acceptance; reconciliation handles non-atomic handoff and unknown external effects.
-- Shared immutable artifact bytes belong to approved object storage. DuckDB runs behind the bounded analytical child boundary. Worker-local files are disposable scratch, not shared truth.
-- The full PM distribution includes compatible CLI and server components; server-only installation remains supported. Stack provisioning is deliberate operator work. A remote-client invocation never starts another backend.
-- PM does not implement or depend on MCP. Explicitly approved development tools such as Context7 are outside the product dependency graph. PM's own code is MIT; retain required third-party notices.
+## Start with authoritative context
 
-## Dependency direction and foundations
+1. Read [issue/spec lookup](docs/agents/issue-tracker.md), the complete assigned issue and accepted comments, and every accepted grouped-issue input supplied by the task.
+2. Read the short [architecture overview](docs/architecture/overview.md), [decision index](docs/architecture/decisions.md), and [domain glossary](docs/agents/domain.md), then the relevant canonical records under `docs/architecture/pm-server/`, especially `architecture/PLAN.md` and `implementation/FILE-OWNERSHIP.json`.
+3. Read [developer setup](docs/development/setup.md), [testing](docs/development/testing.md), [release](docs/development/release.md), [skill routing](docs/development/skills.md), and [skill provenance](docs/development/skill-provenance.md).
+4. For Go work, start with the sole local [PM Go router](.agents/skills/pm-go/SKILL.md). Add only the bounded procedure the behavior needs: [connector contracts](.agents/skills/pm-connector-contracts/SKILL.md), [durable effects](.agents/skills/pm-durable-effects/SKILL.md), or [release and recovery](.agents/skills/pm-release-recovery/SKILL.md).
+5. Follow the single [engineering and review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md) for validation, review, and delivery.
 
-Composition roots wire dependencies; framework request contexts never enter domain/workflow contracts. `internal/cli` depends on public contracts/client transport and presentation. `internal/httpapi` adapts Gin to server application services. Application admission and activities use registered foundations; CLI code cannot import execution, credentials, store or analytics. Workflows cannot perform HTTP/SQL I/O. Native analytical imports stay in their qualified child/module boundary. Follow FILE-OWNERSHIP.json and the assigned issue; serialize shared contract or migration changes.
+Files under `docs/architecture/pm-server/instructions/` are synchronized, inactive projections of their mapped actual entrypoints. Do not load them as a second instruction tree. Historical issue drafts, private setup runbooks, controller records, transcripts, and operator paths are evidence, not fresh-worker instruction intake. Do not require them or copy them into the repository.
 
-Connector definitions carry pinned source facts and source-linked semantic amendments. The compiler normalizes them, checks typed requirements against the actual registered runtime implementations, and generates operation/command/case descriptors. Do not add connector-name branches, provider flags, routes, fallback policy or schema coercion to shared code. A native SQL/metadata adapter requires an explicit bounded contract and evidence. Foundation Atlas tables are generated design/impact views, not a second runtime or proof registry.
+## Client, server, and worker boundary
 
-Preserve field location, encoding, requiredness, exact numbers, declared unions, arrays, keys, timestamps/time zones and absent/null/empty/default distinctions. Trace disagreements to retained source facts before adding runtime behavior. Reject or explicitly approve lossy mappings. Dynamic schemas are workspace/connection/account-scoped, content-fingerprinted, complete-or-explicitly-incomplete snapshots pinned into plans/runs. Drift invalidates affected bindings.
+- CLI and browser project the same versioned public API, submit explicitly scoped requests, and render catalog, result, and event data. They do not execute provider calls, ETL, reverse ETL, schedules, or durable jobs.
+- PM Server owns identity and authentication, PM sessions, authorization, workspace and connection configuration, provider credentials and refresh, admission, durable execution grants, schemas, runs, schedules, audit, and authoritative state.
+- Clients may retain only a scoped PM session through the qualified client mechanism. Raw provider credentials never enter client arguments, profiles, caches, browser storage, output, or logs.
+- PostgreSQL owns application intent, authorization, idempotency, effect facts, metadata selection, artifact manifests, and checkpoints. PM application tables, Temporal persistence, object-store metadata, and a customer's PostgreSQL connector have distinct owners and identities.
+- Temporal owns durable orchestration and schedule timing. Workflow code is deterministic and carries bounded references, not secrets or bulk data. All provider HTTP, SQL, binary, and metadata I/O runs in admitted worker activities.
+- PostgreSQL acceptance/outbox state precedes durable handoff. Reconciliation handles the non-atomic PostgreSQL/Temporal boundary; neither a workflow retry nor a lease proves exactly-once provider effects.
+- Immutable shared business bytes belong in the approved object-store contract and are committed through PostgreSQL manifests. Worker-local files are disposable scratch. DuckDB/native analytics remain confined to the bounded query child.
+- Operator stack lifecycle is explicit. A client invocation never starts, substitutes, or owns a local backend. Development and deployment use the same server-first architecture.
+- PM neither implements nor depends on MCP. Approved developer navigation or documentation tools are outside the product dependency graph.
 
-Initial connectors: GitHub, PostgreSQL, Gong, Pylon and HubSpot. Canonical lanes: `direct_read`, `direct_write`, `etl`, `reverse_etl`, `binary_download`, `binary_upload`, `sync_transport`. A source HTTP operation is not automatically a sync profile, idempotent write, complete snapshot, CDC feed or binary transfer. Preserve independent sync dimensions and explicit unsupported/unknown/conditional reasons.
+## Contracts and fidelity
 
-## Security and durable correctness
+Use the accepted file and package ownership map; do not infer a fixed package count. Keep Cobra in the CLI adapter and Gin in the HTTP adapter. Framework contexts and types do not enter domain or workflow contracts. Server application services own authoritative validation, authorization, admission, and capability composition. Missing wiring is unavailable, never an in-memory or local-engine fallback.
 
-Authorize tenant/workspace/connection scope on every API, activity, query, cache, artifact, event and proof path. Agents use scoped identities; an explicit workspace selector is not authorization. Avoid mutable global client workspace selection for concurrent invocations. Use revisions for edits and immutable accepted specifications. Recheck relevant grants before new effect units; preserve accepted-run audit attribution and revocation semantics.
+Pinned source captures and source references own provider facts. The compiler must preserve operation identity, field location and encoding, requiredness, unions, arrays, timestamps/time zones, exact identifiers and numbers, and absent/null/false/zero/empty distinctions. Generated bundles and client/catalog projections derive from admitted source; do not hand-edit execution facts, add provider-name branches, or turn Atlas/proof/review records into runtime gates.
 
-Keep secrets out of command arguments, public descriptors, workflow histories, logs and receipts. Resolve/refresh only in the server execution boundary. Enforce SSRF/redirect/origin policy, SQL/file/code restrictions and resource limits. Use scoped idempotency keys, durable member outcomes, safe retry classes, provider effect reconciliation and fencing. Workflow retries or local leases do not prove exactly-once effects. Preserve unknown outcomes rather than replay unsafe writes.
+The initial connectors remain GitHub, PostgreSQL, Gong, Pylon, and HubSpot, each inventoried across `direct_read`, `direct_write`, `etl`, `reverse_etl`, `binary_download`, `binary_upload`, and `sync_transport`. Inventory is not implementation or certification. Preserve the authorized product sequence through issues #29–#34 and only issue #41's narrow `pg-wh-pg` composition after #28–#34; broader #41 and later connector scope remain open.
 
-Publish artifact bytes durably before committing their manifest/cursor. Advance an ETL checkpoint only after durable publication. Reverse ETL records exact workset identities and per-member success/rejection/unknown outcomes, with action-specific readback when required. Cancellation, watch interruption and server shutdown have distinct meanings. Apply expand-compatible migrations, explicit rollback limits, backup and restore gates from the issue.
+## Authorization and durable effects
 
-## Source navigation and skills
+Authorize tenant, workspace, connection, operation, run, artifact, event, and proof scope at every boundary. An explicit selector is not authorization. Recheck current grants before new physical effects and retain immutable accepted intent, actor attribution, revisions, budgets, and idempotency identity.
 
-If `.codegraph/` exists, use the existing CodeGraph before searching or reading implementation code. Do not create an index without approval. A missing graph result is not a negative test result. Follow `.agents/skills/pm-go/SKILL.md` and `docs/development/skills.md` for on-demand Go skills, with official documentation fallbacks when unavailable. Do not import unrelated global configuration.
+Keep secrets out of command arguments, public descriptors, workflow history, artifacts, logs, errors, and receipts. Resolve provider signers only inside an admitted worker activity after current grant checks. Enforce bounded I/O, cancellation, deadlines, redirect/origin policy, SQL/file restrictions, and resource limits.
 
-## Implementation, verification and delivery
+Persist dispatch and member intent before sending. Retry only when the declared operation and observed attempt state make replay safe. Preserve an ambiguous or possibly committed outcome as unknown until a declared sound occurrence witness identifies that exact intent; desired-row readback alone is not such a witness. Never blind-retry an uncertain write. PostgreSQL mapped upsert must use a verified stable key, bind typed values, update only changed approved writable columns, make no assignment when unchanged, preserve unmapped fields, and expose no delete, DDL, shell, generic HTTP write, or unrestricted SQL escape.
 
-Follow the single shared [engineering/review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md). This link resolves from the proposed root AGENTS.md target, not this inactive staging location. The policy owns the sole documentation-publication exception and bootstrap baseline requirement. No archive comments.
+## Navigation, implementation, and claims
+
+If this checkout has `.codegraph/`, use the existing CodeGraph with this checkout's explicit path before broad source search. Inspect the returned source and callers; synchronize only when the task authorizes changing the local index. Do not create an index, install tools, change global MCP configuration, or start a watcher as a workaround. If the graph is absent or incomplete, use bounded repository search and direct reads. Graph reachability does not select or waive tests.
+
+Before production edits, identify the behavior, owner, consumers, and focused causal validation. Use the task's authorized checks and record actual results. All PM command lines, package paths, test names, deployment actions, and validation counts in planning documents are future until the owning implementation creates and runs them. Missing tools, skipped checks, local documentation success, an AI review, or a generated descriptor is not application proof.
+
+Review coherent dependency-ordered candidates rather than each todo. The issue tracker supplies the accepted base, complete grouped issue/comment inputs, and candidate identity; the shared policy owns independent review and delivery. Distinguish the landed PR #47 baseline and its CI from evidence for the current candidate. Report exact changes, executed evidence, and remaining unproven scope without claiming current-candidate CI, merge, full BOOT, provider execution, or certification that did not occur.

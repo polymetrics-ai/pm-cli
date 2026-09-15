@@ -1,7 +1,7 @@
 #!/bin/sh
 # Read-only availability report. Missing optional tools are reported, not installed.
 set -eu
-repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
+repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 printf '%s\n' 'PM CLI developer setup'
 if [ -f "$repo_root/go.mod" ]; then
   printf '%s\n' 'Go module: present; this doctor does not build or test it.'

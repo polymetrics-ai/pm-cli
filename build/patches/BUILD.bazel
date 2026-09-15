@@ -1,0 +1,4 @@
+exports_files([
+    "duckdb-go-bindings.patch",
+    "duckdb-go-bindings-static.patch",
+])

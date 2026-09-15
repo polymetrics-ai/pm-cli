@@ -1,0 +1,44 @@
+diff --git a/BUILD.bazel b/BUILD.bazel
+--- a/BUILD.bazel
++++ b/BUILD.bazel
+@@ -1,1 +1,37 @@
+ load("@io_bazel_rules_go//go:def.bzl", "go_library")
++load("@rules_cc//cc:defs.bzl", "cc_library")
++
++cc_library(
++    name = "duckdb_prebuilt_inputs",
++    additional_linker_inputs = [
++        "libduckdb_static.a",
++        "libduckdb_generated_extension_loader.a",
++        "libautocomplete_extension.a",
++        "libcore_functions_extension.a",
++        "libicu_extension.a",
++        "libjson_extension.a",
++        "libparquet_extension.a",
++        "libtpcds_extension.a",
++        "libtpch_extension.a",
++        "libduckdb_fastpforlib.a",
++        "libduckdb_fmt.a",
++        "libduckdb_fsst.a",
++        "libduckdb_hyperloglog.a",
++        "libduckdb_mbedtls.a",
++        "libduckdb_miniz.a",
++        "libduckdb_pg_query.a",
++        "libduckdb_re2.a",
++        "libduckdb_skiplistlib.a",
++        "libduckdb_utf8proc.a",
++        "libduckdb_yyjson.a",
++        "libduckdb_zstd.a",
++    ],
++    hdrs = ["duckdb.h"],
++    # rules_go strips C++ driver flags without C++ sources; these prebuilt
++    # archives still require the platform C++ runtime at the linker boundary.
++    linkopts = select({
++        "@platforms//os:macos": ["-Wl,-lc++"],
++        "//conditions:default": ["-Wl,-lstdc++"],
++    }),
++    visibility = ["//visibility:public"],
++)
+@@ -10,1 +46,2 @@
+     cgo = True,
++    cdeps = [":duckdb_prebuilt_inputs"],
