@@ -1,6 +1,6 @@
 # Developer setup
 
-This repository is being prepared before application implementation. Go packages, the PM binary, build targets, and connector proof are still planned. Installing navigation tools or creating an index does not implement them.
+This checkout contains accepted planning documents and active candidate instructions, but application implementation is still absent. The `pm` client, PM Server, workers, Go packages, build targets, generated bundles, and connector proof remain planned. Installing navigation tools or creating an index does not implement them.
 
 ## What is available now
 
@@ -14,9 +14,17 @@ It prints tool versions and index status. It does not install dependencies, chan
 
 The setup investigation on 2026-09-10 verified CodeGraph 1.5.0. The private candidate doctor observed Go1.26.5 darwin/arm64 and golangci-lint2.12.2; govulncheck was absent. After installation, the setup owner ran doctor in the actual clone: it completed successfully, but that process's PATH selected **Go1.25.6 darwin/amd64**. An explicit native Go binary on the same machine reports **Go1.26.5 darwin/arm64**. Doctor success therefore does not establish that the intended compiler or architecture is selected.
 
-These observations describe one machine and execution context, not minimum supported versions or the project's eventual toolchain lock. Run doctor in the actual checkout and build context. At M0, explicitly select and pin the native Go executable/toolchain and verify its version, architecture, cgo setting, C compiler, and chosen DuckDB integration together. Record the resolved executable identity as well as the version. Do not upgrade tools or rewrite global PATH merely to make setup appear ready; no version choice is made here. C/DuckDB build readiness remains unverified.
+These observations describe one machine and execution context, not minimum supported versions or the project's eventual toolchain lock. Run doctor in the actual checkout and build context. At M0, explicitly select and pin the native Go executable/toolchain and verify its version and architecture. Qualify cgo, the C compiler, and DuckDB only for the restricted query child; the CLI, API, and ordinary workers must not acquire that native analytical dependency. Record the resolved executable identity as well as the version. Do not upgrade tools or rewrite global PATH merely to make setup appear ready; no version choice is made here. C/DuckDB build readiness remains unverified.
 
 No `make test`, PM smoke, schema-generation target, or Go-module setup command is advertised as available yet. The new module and pinned toolchain belong to the later implementation task.
+
+## Active instructions and workflow
+
+Fresh workers start with the root [AGENTS.md](../../AGENTS.md), [issue/spec lookup](../agents/issue-tracker.md), [skill routing](skills.md), the active [configuration ADR](../decisions/0001-cli-configuration.md), and the assigned accepted PM Server contracts. Files under `docs/architecture/pm-server/instructions/` are synchronized inactive projections, not a second instruction tree. Historical issue drafts, private setup/controller runbooks, transition evidence, and operator configuration are excluded from fresh-worker intake.
+
+OMP is the sole coordinator and integration owner. The single [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md) owns validation, independent review, and delivery. Agent model/account routing is supplied separately by the operator and is not application documentation. No controller installation, private home path, model login, or host qualification is a general application prerequisite.
+
+The doctor command above and the CodeGraph commands below are real developer-tool commands for this checkout. They do not activate application work. Every `pm`, server, worker, stack, generation, proof, build, and application-test command described in planning documents remains future until its owning issue creates and exercises it.
 
 ## CodeGraph identity and prerequisites
 
@@ -63,7 +71,7 @@ The MCP server can watch and synchronize files while a supported agent session i
 
 The authoritative [configuration documentation](https://github.com/colbymchenry/codegraph#configuration) identifies root `codegraph.json` and `.gitignore` as exclusion controls. In version 1.5.0, `exclude` also excludes tracked files; `.gitignore` alone is not sufficient for tracked generated content. Treat a malformed config warning as incomplete setup because the tool can continue after ignoring that file.
 
-## CLI versus MCP
+## CodeGraph CLI versus development MCP
 
 The setup owner already has `codegraph_explore` exposed through MCP. No global reinstall is required. Use its explicit project path argument for this checkout. For another agent installation, this read-only command prints the installed tool's configuration snippet:
 
@@ -72,6 +80,8 @@ CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph install --print-config c
 ```
 
 It reports `command = "codegraph"` with `args = ["serve", "--mcp"]`. A developer can review and add the snippet through their agent's own MCP configuration process. The agent starts the MCP server; do not manually launch or manage a second service. The investigation tested snippet generation, not a new MCP session or global configuration changes.
+
+This optional agent-side MCP exposure is navigation tooling only. PM itself neither implements nor depends on MCP, and application code must not acquire an MCP product path.
 
 ## Observed Go indexing limits
 

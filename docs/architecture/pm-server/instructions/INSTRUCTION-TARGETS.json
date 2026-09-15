@@ -1,5 +1,7 @@
 {
-  "status": "INACTIVE; no application instruction activation",
+  "status": "SYNCHRONIZED_INACTIVE_PROJECTIONS",
+  "authority": "Within this candidate, each target path is the actual authoritative instruction entrypoint. Files in this directory are synchronized projections for provenance and comparison only; they are not fresh-worker intake and do not establish a landed BOOT baseline.",
+  "intake_exclusion": "Do not load this directory, historical issue drafts, private setup/controller runbooks, transition evidence, or operator configuration as application instructions.",
   "targets": {
     "AGENTS.draft.md": "AGENTS.md",
     "pm-go.draft.md": ".agents/skills/pm-go/SKILL.md",

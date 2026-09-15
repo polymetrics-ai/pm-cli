@@ -166,6 +166,7 @@ def validate_schema_documents(repository: Path) -> None:
 
 
 def validate_readme_links(repository: Path) -> None:
+    repository = repository.resolve()
     root = context_root(repository)
     readme = (root / "README.md").read_text()
     for raw_target in MARKDOWN_LINK.findall(readme):
@@ -176,10 +177,15 @@ def validate_readme_links(repository: Path) -> None:
         if not path_part:
             continue
         relative = PurePosixPath(path_part)
-        require(not relative.is_absolute() and ".." not in relative.parts,
-                f"README link escapes context: {target}")
+        require(not relative.is_absolute(), f"absolute README-local link: {target}")
         candidate = root.joinpath(*relative.parts)
-        require(candidate.is_file() and not candidate.is_symlink(), f"broken README-local link: {target}")
+        for component in (candidate, *candidate.parents):
+            if component == repository:
+                break
+            require(not component.is_symlink(), f"symlink in README-local link: {target}")
+        require(candidate.resolve().is_relative_to(repository),
+                f"README link escapes repository: {target}")
+        require(candidate.is_file(), f"broken README-local link: {target}")
 
 
 def _pr_issue_references(body: str) -> set[int]:

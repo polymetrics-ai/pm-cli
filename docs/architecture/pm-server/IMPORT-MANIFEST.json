@@ -2,19 +2,24 @@
   "schema_version": "pm.context.import/v1",
   "status": "PROPOSED_COMMITTED_UNPUBLISHED",
   "target_repository": "polymetrics-ai/pm-cli",
-  "observed_target_head": "81d5795c850f3ba330ee7dbc7458dc10c7533335",
+  "observed_target_head": "3516a84aef9eb9a880408e6b5ab56ab911276429",
   "publication_state": {
     "branch": "fm/pmcli-architecture-publication",
-    "local_committed_candidate": "81d5795c850f3ba330ee7dbc7458dc10c7533335",
-    "local_candidate_state": "COMMITTED_ACCEPTED_CONTRACT_AMENDMENTS_UNPUBLISHED",
+    "local_committed_candidate": "3516a84aef9eb9a880408e6b5ab56ab911276429",
+    "local_candidate_state": "COMMITTED_PUBLICATION_CORRECTIONS_UNPUBLISHED",
     "pull_request": 47,
     "pull_request_base": "main",
     "pull_request_state": "OPEN_UNMERGED",
     "last_observed_remote_head": "fb80b101a28d573194cf13c293e7ba86e381cdaa",
-    "remote_relationship": "Earlier partial publication; the current accepted-contract local candidate and these correction changes have not been pushed.",
+    "remote_relationship": "Earlier partial publication; the recorded committed publication correction candidate has not been pushed. Bounded issue #2 instruction cleanup is a separate candidate on that base.",
     "publication_authority": "The September 13 grant permits import/publication of the identified package, necessary issue amendments, independent review, commits, push and PR creation; merge requires separate explicit acceptance.",
     "delivery_owner": "OMP_ONLY_UNDER_SEPTEMBER_15_SUPERSESSION",
     "retired_controller_custody": "USER_OWNED_NO_CONTROLLER_OPERATION_PERMITTED"
+  },
+  "instruction_cleanup_state": {
+    "branch": "omp/pmcli-bootstrap-cleanup",
+    "comparison_base": "3516a84aef9eb9a880408e6b5ab56ab911276429",
+    "scope": "Bounded issue #2 instruction activation and approved workflow amendments associated with #3 and #46; no full BOOT, application implementation, CI, push or merge completion."
   },
   "target_prefix": "docs/architecture/pm-server/",
   "files": [
@@ -204,8 +209,8 @@
       "target": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
       "source": "baseline ISSUE-RECORDS.json",
       "source_sha256": "9ecc107c39976504d43b892a6c8f1e351c6a5adea1128bfc1cb0ca1c27eb20a9",
-      "sha256": "2409352e6bacd8dec8c723ff68e1e68d50dc0ca8ff1a2832c01da0df0c0e69ee",
-      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41."
+      "sha256": "8b68ad2043477519d45faf80baffbe8720c6a399d100bb022b4c0334134b6e5b",
+      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41; reconciled only #2/#3 integration policy and BOOT-4 workflow under September 15 OMP ownership, retaining every case and technical gate."
     },
     {
       "target": "docs/architecture/pm-server/reference/SOURCE-LEDGER.json",
@@ -219,36 +224,36 @@
       "target": "docs/architecture/pm-server/instructions/pm-go.draft.md",
       "source": "data/pm-cli/setup/.agents__skills__pm-go__SKILL.md.draft",
       "source_sha256": "b6c6ebb0969da193291830f216490dcc1125eaffa6947f86e730607cf9ed2b10",
-      "sha256": "43734b3b944d352b549576e3bb3d8d644c9edd9ea2fd506aa21fa6c9660b1743",
-      "transformation": "Wrap existing proposal as an inactive draft; preserve body"
+      "sha256": "40ae07d6fe3c23d153d6b7cc9d92cf145ced4e108731953356ddb7ff15b04450",
+      "transformation": "Reconciled the existing router with accepted server-first contracts and synchronized its inactive projection to the authorized issue #2 target; no third-party skill payload was copied."
     },
     {
       "target": "docs/architecture/pm-server/instructions/skills.draft.md",
       "source": "data/pm-cli/setup/docs__development__skills.md.draft",
       "source_sha256": "188261257cba103ac7810d542e53a68211acfe417cf2d633d8580d2d7418fab3",
-      "sha256": "085e0f760ffcc37d7aa7ffea89701ff7d662603a9b932aea4e210b95a0f92f6a",
-      "transformation": "Wrap existing proposal as an inactive draft; preserve body"
+      "sha256": "a0935fd3268c0948acb99f671d5736055e5befda3af8fc1997188dc4f2912300",
+      "transformation": "Reconciled focused routing with current accepted contracts and synchronized its inactive projection; retained upstream skill license observations without copying payloads."
     },
     {
       "target": "docs/architecture/pm-server/instructions/configuration-adr.draft.md",
       "source": "data/pm-cli/setup/docs__decisions__0001-cli-configuration.md.draft",
       "source_sha256": "5bff8fde8ffbd5f9830deac5686f4e944b25f964db10ec55e1db9628b1390dc8",
-      "sha256": "fb3868acb2e1850f2035532ac7bcda3eb0b77fa0917b8c452f91c1204e8ca091",
-      "transformation": "Wrap existing proposal as an inactive draft; preserve body"
+      "sha256": "88df17bb949dbda03b2eb47d5cef767d30db1c894b804829dac5960aa3e5f8fd",
+      "transformation": "Reconciled client/server configuration boundaries with accepted contracts and synchronized the inactive projection to the authorized issue #2 ADR target."
     },
     {
       "target": "docs/architecture/pm-server/instructions/AGENTS.draft.md",
       "source": "data/pm-cli/setup/PMCLI-AGENTS-DRAFT.md",
       "source_sha256": "3089f5cb7ef30716a331b6e022c8c96795bcde6d4c932dd0fd1afa9a86b4d90d",
-      "sha256": "a03256eba1595587673ec4234aead1409d28213d4094e99edbb1eccfcb720128",
-      "transformation": "Keep product/dependency/security/navigation sections; consolidate implementation/review policy once and replace archive intake wording with a pointer to the policy-owned publication/bootstrap distinction"
+      "sha256": "73cafb46d11bf7ddd3c2fc09c070aa997bb0eb0f95943907209d76ea9b8cd6ab",
+      "transformation": "Reconciled server-first product, fidelity, security and navigation requirements with accepted contracts; synchronized this inactive projection to the active root instructions and linked the single engineering policy."
     },
     {
       "target": "docs/architecture/pm-server/instructions/issue-tracker.draft.md",
       "source": "data/pm-cli/setup/ISSUE-TRACKER-DRAFT.md",
       "source_sha256": "ec3f0cc0e351a270162b39e62dbf5453aceb921f84c8cbbea0ba96315798a955",
-      "sha256": "827c27bca5b9f3c7b87d649756c32fd6a3a105ad18d919547c347ee226fc7f4b",
-      "transformation": "Inactive draft; replace prohibited archive intake wording with a pointer to the policy-owned publication/bootstrap distinction"
+      "sha256": "26a4007c997e58654c6598296e8cab4f1ac0d9dc7e0d00c475521a7066f04097",
+      "transformation": "Synchronized the inactive projection to the authorized issue #2 tracker, covering complete accepted issue recovery, exact review inputs, grouped and stacked linkage, and truthful BOOT boundaries."
     },
     {
       "target": "docs/architecture/pm-server/proposals/admission-binding-gap.md",
@@ -281,8 +286,8 @@
     {
       "target": "docs/architecture/pm-server/README.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "993f16d9a943b5dac381f419f73008cf6b152437c33546fd697011ff61d725e0",
-      "transformation": "Projected the accepted contracts and disclosed the retained local committed candidate, earlier remote PR head, granted publication authority, OMP delivery custody and remaining CI/merge/BOOT/proof gates."
+      "sha256": "e907b66d7a1e316d6c95925c9d8963a204cdc675180373700064e8a463af1c69",
+      "transformation": "Linked actual worker entrypoints, distinguished synchronized inactive projections, and recorded the committed publication correction base separately from bounded issue #2 cleanup and all remaining CI/merge/BOOT/proof gates."
     },
     {
       "target": "docs/architecture/pm-server/SEMANTIC-AMENDMENTS.md",
@@ -294,19 +299,19 @@
       "target": "docs/architecture/pm-server/SOURCE-ACCESS.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
       "sha256": "95a60058a424fe0822665ea4c761457d77c5db1758ace291df061d69620b4af7",
-      "transformation": "Distinguished the immutable original ledger source digest, exact sanitized predecessor digest and manifest-owned current transformed output digest while retaining public-source authority and future capture/attribution rules."
+      "transformation": "Distinguished immutable original, sanitized predecessor and manifest-owned transformed output digests; clarified that files[] has no per-file byte-count field; retained public-source authority and future capture/attribution rules."
     },
     {
       "target": "docs/architecture/pm-server/instructions/INSTRUCTION-TARGETS.json",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "78b30eb029961a7c38b65f990b1ddb0b9228222f8f7c673222ba4cfca1344d20",
-      "transformation": "Original documentation proposal; no upstream source payload"
+      "sha256": "8b239e5800e03373a62dc34ab5b08bce6a7d7ae97c7499a8148273fe80845936",
+      "transformation": "Mapped synchronized inactive projections to existing authorized issue #2 target entrypoints without claiming full BOOT completion."
     },
     {
       "target": "docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "7d69226f685a44934168de3caed610a3a9395167fd5d0cd03cd9f1f101959a8f",
-      "transformation": "Original documentation proposal with manifest-owned candidate authority; no upstream source payload"
+      "sha256": "14e0f343195f606e468a216eef222f6ccd5fd4ecf2700ab81bb53e0027a114e4",
+      "transformation": "Activated the single model-neutral engineering policy under OMP-only ownership, coherent grouped candidates and independent Standards/Spec review; preserved real CI, security, dependency and separate merge gates."
     }
   ],
   "exclusions": [
@@ -344,5 +349,5 @@
     }
   ],
   "manifest_self": "Self-describing inventory; excluded from files[] hashes to avoid a recursive digest. Package file count includes IMPORT-MANIFEST.json.",
-  "approval": "Accepted public product decisions are projected as canonical documentation under the already granted import/publication authority. The retained committed local candidate is absent from the last observed remote PR head and remains unpublished. Focused verification, targeted independent review, actual candidate CI, push and separate explicit merge acceptance remain; BOOT-1 through BOOT-5 remain unexecuted under issue #2. No successor commit, passing CI, merge, BOOT completion, application implementation, generated connector artifact, provider execution or live-effect proof is claimed."
+  "approval": "Accepted public product decisions remain canonical documentation under the existing import/publication authority. The recorded committed publication correction candidate remains absent from the last observed remote PR head. This separate bounded issue #2 candidate activates instruction targets and the accepted workflow amendments without closing #2, #3 or #46. Full BOOT still requires approved landed #46 context and the remaining BOOT-1 through BOOT-5 observations. Actual final-candidate CI, authorized publication and separate explicit merge acceptance remain. No application implementation, generated connector artifact, provider execution or live-effect proof is claimed."
 }
