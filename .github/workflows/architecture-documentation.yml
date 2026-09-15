@@ -6,6 +6,12 @@ on:
     branches: [main]
     types: [opened, synchronize, reopened, edited]
 
+# This gate runs on default-branch PRs: use a separate `Closes #N` for every
+# fully completed issue and `Refs #N` for partial work. Grouped PRs list each
+# applicable issue. Stacked PRs must track each issue explicitly through the
+# final default-branch integration; an intermediate merge does not complete it.
+# Publication PR #47 uniquely requires issue #46.
+
 permissions:
   contents: read
 

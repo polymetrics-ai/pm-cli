@@ -1,6 +1,7 @@
 {
   "schema_version": "pm.context.sources/v2",
   "source_sha256": "6ef2d5fa29226558d4767ceedbe2b2784179f9b9e075560031769744c361417f",
+  "sanitized_predecessor_sha256": "30f24137b90767ecfceaed14aebad461ad7d7b8fcd4486ca4127f00f61b1b211",
   "entries": [
     {
       "id": "OC01",
@@ -2621,7 +2622,9 @@
     "Live provider/account/effect scope and every application validation remain future owned gates."
   ],
   "scope": "Source metadata only; no raw source checkout. Original 204 identities remain intact. Accepted public decision and immutable GitHub source/license identities are appended; transformed projection bytes are owned by IMPORT-MANIFEST, not source_sha256.",
-  "source_identity_scope": "source_sha256 is the immutable identity of the original 204-entry sanitized ledger input, not the hash of this accepted transformed projection.",
+  "source_identity_scope": "source_sha256 is the immutable digest of the original 204-entry ledger source before publication sanitization; it is neither the sanitized predecessor digest nor the digest of this 214-entry transformed projection.",
+  "sanitized_predecessor_scope": "sanitized_predecessor_sha256 is the exact output digest of the 204-entry sanitized predecessor committed at a084d1af8204c1713939380686558e08f015d3b6; it is not an original source identity and does not cover the 10 accepted additions.",
+  "current_output_digest_scope": "The exact digest of this current 214-entry transformed projection is owned by the files[].sha256 record for docs/architecture/pm-server/reference/SOURCE-LEDGER.json in IMPORT-MANIFEST.json; it changes with the projected bytes and is not duplicated here.",
   "entry_counts": {
     "original": 204,
     "accepted_additions": 10,

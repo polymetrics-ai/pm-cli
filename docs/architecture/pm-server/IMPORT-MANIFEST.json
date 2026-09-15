@@ -1,15 +1,28 @@
 {
   "schema_version": "pm.context.import/v1",
-  "status": "ACCEPTED_PRODUCT_CONTRACT_PROJECTION_UNCOMMITTED",
+  "status": "PROPOSED_COMMITTED_UNPUBLISHED",
   "target_repository": "polymetrics-ai/pm-cli",
-  "observed_target_head": "a084d1af8204c1713939380686558e08f015d3b6",
+  "observed_target_head": "81d5795c850f3ba330ee7dbc7458dc10c7533335",
+  "publication_state": {
+    "branch": "fm/pmcli-architecture-publication",
+    "local_committed_candidate": "81d5795c850f3ba330ee7dbc7458dc10c7533335",
+    "local_candidate_state": "COMMITTED_ACCEPTED_CONTRACT_AMENDMENTS_UNPUBLISHED",
+    "pull_request": 47,
+    "pull_request_base": "main",
+    "pull_request_state": "OPEN_UNMERGED",
+    "last_observed_remote_head": "fb80b101a28d573194cf13c293e7ba86e381cdaa",
+    "remote_relationship": "Earlier partial publication; the current accepted-contract local candidate and these correction changes have not been pushed.",
+    "publication_authority": "The September 13 grant permits import/publication of the identified package, necessary issue amendments, independent review, commits, push and PR creation; merge requires separate explicit acceptance.",
+    "delivery_owner": "OMP_ONLY_UNDER_SEPTEMBER_15_SUPERSESSION",
+    "retired_controller_custody": "USER_OWNED_NO_CONTROLLER_OPERATION_PERMITTED"
+  },
   "target_prefix": "docs/architecture/pm-server/",
   "files": [
     {
       "target": "docs/architecture/pm-server/architecture/PLAN.md",
       "source": "data/pm-cli/architecture/PLAN.md",
       "source_sha256": "6d153d808841269207a7a4c840551ebbfce8649a118b92a7b8eb0d4b353925e3",
-      "sha256": "40591de8c04a6ff2e6bdba210f6cf86dc5d81795c452b7aa56e4aa300c9830a3",
+      "sha256": "86f97b2b8357303736b1dcf8b37d08e14c64fc1517570e439dbd92b8e8812417",
       "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; implementation remains unexecuted."
     },
     {
@@ -79,7 +92,7 @@
       "target": "docs/architecture/pm-server/implementation/MILESTONES.json",
       "source": "data/pm-cli/implementation/MILESTONES.json",
       "source_sha256": "99286dffffbd2d7930dfcda31833ba6b4e36d0392a44499a8d5fe1c9807eba45",
-      "sha256": "7f98c66f8bd991c565f88c3dd269f4d228f5cd9f7e1c1e9038229d1119d1af86",
+      "sha256": "647d774a2c625c20f928b69de94b706c8ed21fb37b60caa0823835e97a1071a5",
       "transformation": "Projected accepted boundaries into M1/M3/M4/M6/M7/M8/M11 and moved saved ETL route ownership to M8/F33."
     },
     {
@@ -198,8 +211,9 @@
       "target": "docs/architecture/pm-server/reference/SOURCE-LEDGER.json",
       "source": "data/pm-cli/reference/SOURCE-LEDGER.json",
       "source_sha256": "6ef2d5fa29226558d4767ceedbe2b2784179f9b9e075560031769744c361417f",
-      "sha256": "d64c0c66ff25b133e6e51e0def6a24c5e0725f802aa4dd758ab475dc17f69ff4",
-      "transformation": "Preserved 204 original evidence identities and appended 10 accepted public decision/issue identities; no private operator paths."
+      "sanitized_predecessor_sha256": "30f24137b90767ecfceaed14aebad461ad7d7b8fcd4486ca4127f00f61b1b211",
+      "sha256": "bf8a4e61390e29a4bdc1c9dcd9c37d83b028f37a9db74aefea28e4a4a39be5b2",
+      "transformation": "Preserved all 204 original evidence identities and appended 10 accepted public decision/source identities with no private operator paths. source_sha256 is the original ledger-source digest; sanitized_predecessor_sha256 is the exact 204-entry sanitized output at a084d1af8204c1713939380686558e08f015d3b6; sha256 is the current 214-entry transformed output digest."
     },
     {
       "target": "docs/architecture/pm-server/instructions/pm-go.draft.md",
@@ -267,8 +281,8 @@
     {
       "target": "docs/architecture/pm-server/README.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "bc0c0c19b575f0ca270166fa8c65a13083e466702dc9dc12a8543a9f7d8deae5",
-      "transformation": "Reframed the package as the canonical accepted-contract projection with public decision links and future implementation/proof boundary."
+      "sha256": "6a17d291d01cd2cb2ab8363442bbeca3efd5b4023c85467a7ef16b5cb0c52133",
+      "transformation": "Projected the accepted contracts and disclosed the retained local committed candidate, earlier remote PR head, granted publication authority, OMP delivery custody and remaining CI/merge/BOOT/proof gates."
     },
     {
       "target": "docs/architecture/pm-server/SEMANTIC-AMENDMENTS.md",
@@ -279,8 +293,8 @@
     {
       "target": "docs/architecture/pm-server/SOURCE-ACCESS.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "e6f58365ba84e0850d6e35060d45e151e53791460d461603214aa462bb8677dd",
-      "transformation": "Replaced preparation-machine provenance with public-source authority and future capture/attribution rules."
+      "sha256": "10f027fb865693a1745cbb8f7d38ee7dadae2fceed2ca7fffc8f7504a61896f9",
+      "transformation": "Distinguished the immutable original ledger source digest, exact sanitized predecessor digest and manifest-owned current transformed output digest while retaining public-source authority and future capture/attribution rules."
     },
     {
       "target": "docs/architecture/pm-server/instructions/INSTRUCTION-TARGETS.json",
@@ -330,5 +344,5 @@
     }
   ],
   "manifest_self": "Self-describing inventory; excluded from files[] hashes to avoid a recursive digest. Package file count includes IMPORT-MANIFEST.json.",
-  "approval": "Accepted public product decisions are projected as canonical documentation. Application implementation, generated connector artifacts, provider proof, publication, merge and release validation remain outside this artifact; coherent-slice review replaces per-checklist approval gates."
+  "approval": "Accepted public product decisions are projected as canonical documentation under the already granted import/publication authority. The retained committed local candidate is absent from the last observed remote PR head and remains unpublished. Focused verification, targeted independent review, actual candidate CI, push and separate explicit merge acceptance remain; BOOT-1 through BOOT-5 remain unexecuted under issue #2. No successor commit, passing CI, merge, BOOT completion, application implementation, generated connector artifact, provider execution or live-effect proof is claimed."
 }

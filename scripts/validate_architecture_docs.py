@@ -9,6 +9,7 @@ import json
 import re
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urlsplit
 
 from jsonschema import Draft202012Validator
 
@@ -19,10 +20,12 @@ MANIFEST_NAME = "IMPORT-MANIFEST.json"
 # lexical check is separate from jsonschema's optional format validation.
 SCHEMA_ID = re.compile(r"urn:pm:remote%20design:[A-Za-z0-9][A-Za-z0-9._-]*\Z")
 MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
-LOCAL_ISSUE_REFERENCE = re.compile(r"(?<![A-Za-z0-9_])#46(?![A-Za-z0-9_])")
-PMCLI_ISSUE_URL = re.compile(
-    r"""https://github\.com/polymetrics-ai/pm-cli/issues/46(?=$|[\s/?#.,;:!?)\]}>\"'])"""
-)
+WEB_URL = re.compile(r"""(?<![A-Za-z0-9_])https?://[^\s<>()\[\]{}"']+""")
+LOCAL_ISSUE_REFERENCE = re.compile(r"(?<![A-Za-z0-9_/#])#([1-9][0-9]*)(?![A-Za-z0-9_])")
+PMCLI_ISSUE_PATH = re.compile(r"/polymetrics-ai/pm-cli/issues/([1-9][0-9]*)/?\Z")
+PUBLICATION_PULL_REQUEST = 47
+PUBLICATION_ISSUE = 46
+URL_TRAILING_PUNCTUATION = ".,;:!?"
 
 # source-ledger.schema.json is historical and deliberately does not validate
 # reference/SOURCE-LEDGER.json, the sanitized pm.context.sources/v1 projection.
@@ -179,18 +182,55 @@ def validate_readme_links(repository: Path) -> None:
         require(candidate.is_file() and not candidate.is_symlink(), f"broken README-local link: {target}")
 
 
-def validate_pr_issue_link(body: str) -> None:
-    require(LOCAL_ISSUE_REFERENCE.search(body) is not None or PMCLI_ISSUE_URL.search(body) is not None,
-            "pull request body lacks architecture-publication issue linkage to #46")
+def _pr_issue_references(body: str) -> set[int]:
+    references: set[int] = set()
+    for match in WEB_URL.finditer(body):
+        candidate = match.group(0).rstrip(URL_TRAILING_PUNCTUATION)
+        try:
+            parsed = urlsplit(candidate)
+        except ValueError:
+            continue
+        if parsed.scheme != "https" or parsed.netloc != "github.com":
+            continue
+        issue_path = PMCLI_ISSUE_PATH.fullmatch(parsed.path)
+        if issue_path is not None:
+            references.add(int(issue_path.group(1)))
+
+    body_without_urls = WEB_URL.sub(" ", body)
+    references.update(
+        int(match.group(1))
+        for match in LOCAL_ISSUE_REFERENCE.finditer(body_without_urls)
+    )
+    return references
+
+
+def validate_pr_issue_links(pull_request_number: int, body: str) -> None:
+    require(type(pull_request_number) is int and pull_request_number > 0,
+            "pull request number is invalid")
+    require(isinstance(body, str), "pull request body is unavailable")
+    references = _pr_issue_references(body)
+    require(bool(references), "pull request body lacks a valid PMCLI issue reference")
+    if pull_request_number == PUBLICATION_PULL_REQUEST:
+        require(PUBLICATION_ISSUE in references,
+                "publication pull request #47 must reference PMCLI issue #46")
 
 
 def validate_pull_request_event(event_path: Path) -> None:
     event = load_json(event_path)
-    pull_request = event.get("pull_request") if isinstance(event, dict) else None
+    require(isinstance(event, dict), "workflow event is not an object")
+    pull_request = event.get("pull_request")
     require(isinstance(pull_request, dict), "workflow event is not a pull request")
+    event_number = event.get("number")
+    pull_request_number = pull_request.get("number")
+    require(type(event_number) is int and event_number > 0,
+            "workflow event pull request number is invalid")
+    require(type(pull_request_number) is int and pull_request_number > 0,
+            "pull request identity number is invalid")
+    require(event_number == pull_request_number,
+            "workflow event and pull request identity numbers differ")
     body = pull_request.get("body")
     require(isinstance(body, str), "pull request body is unavailable")
-    validate_pr_issue_link(body)
+    validate_pr_issue_links(pull_request_number, body)
 
 
 def validate_tree(repository: Path) -> None:
