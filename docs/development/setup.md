@@ -52,6 +52,8 @@ These Make targets are source-present:
 | `make bazel-build` | Runs `bazelisk --batch build //...` through the bootstrap |
 | `make bazel-test` | Runs `bazelisk --batch test //...` with test-result caching disabled |
 
+Bazel uses two action jobs, two loading/analysis threads, two filesystem-checking threads, and a JVM processor count of two. Analysis and execution run separately: Bazel 9.2's Skymeld mode creates a fixed 200-thread symlink pool independent of `--jobs`, which exceeds the available headroom under the existing runner's 256-task limit.
+
 The bounded Bazel timing probe is also source-present:
 
 ```sh
