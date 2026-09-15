@@ -15,10 +15,10 @@ Consult current `gh-axi` help, then use read-only lookup against the exact repos
 ```sh
 gh-axi issue view --help
 gh-axi issue view <actual-issue-number> -R polymetrics-ai/pm-cli --full --comments
-gh-axi api GET /repos/polymetrics-ai/pm-cli/issues/<actual-issue-number> --jq '{number,id,html_url,title,state,updated_at,pull_request}'
+gh-axi api GET /repos/polymetrics-ai/pm-cli/issues/<actual-issue-number> --jq '{number,id,html_url,title,state,updated_at,is_pull_request:has("pull_request")}'
 ```
 
-Verify repository identity, privacy/default branch, issue number, database ID, URL, title, stable task/case identity, state, and `updated_at`. GitHub shares issue and pull-request numbering; reject a result with a `pull_request` member when an issue specification is required. If the task supplies only a stable identity, search every relevant paginated issue page and require one unique exact match. A title, milestone position, branch name, old draft, or remembered number is not identity.
+Verify repository identity, privacy/default branch, issue number, database ID, URL, title, stable task/case identity, state, and `updated_at`. GitHub shares issue and pull-request numbering; reject `is_pull_request: true` when an issue specification is required. The projection derives this boolean from the source object's `pull_request` member, preserving the distinction between a real PR and an ordinary issue. If the task supplies only a stable identity, search every relevant paginated issue page and require one unique exact match. A title, milestone position, branch name, old draft, or remembered number is not identity.
 
 Read the complete issue body and every comment or amendment included by the accepted task. Preserve comment IDs, authorship, creation/update order, and explicit acceptance provenance. Later unrelated comments do not silently expand scope. Read merged dependency issues or accepted decision comments when the issue or task incorporates them.
 

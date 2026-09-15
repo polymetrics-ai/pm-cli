@@ -252,7 +252,7 @@
       "target": "docs/architecture/pm-server/instructions/issue-tracker.draft.md",
       "source": "data/pm-cli/setup/ISSUE-TRACKER-DRAFT.md",
       "source_sha256": "ec3f0cc0e351a270162b39e62dbf5453aceb921f84c8cbbea0ba96315798a955",
-      "sha256": "26a4007c997e58654c6598296e8cab4f1ac0d9dc7e0d00c475521a7066f04097",
+      "sha256": "dad115a2c960899d2901ef45d6ec13b05e7ad975cb579d940bf06b1591d8bfa4",
       "transformation": "Synchronized the inactive projection to the authorized issue #2 tracker, covering complete accepted issue recovery, exact review inputs, grouped and stacked linkage, and truthful BOOT boundaries."
     },
     {
