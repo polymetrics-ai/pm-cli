@@ -2246,6 +2246,12 @@ def _bazelisk_environment(
     bazelisk_home = _prepare_bazelisk_cache(
         bazel, bazel_digest, selected_platform, cache
     )
+    # rules_cc reads AR but does not declare it in cc_autoconf.environ.
+    # Bind every selected value through its tracked toolchain identity so a
+    # previously configured repository cannot retain an older tool selection.
+    native_environment_digest = hashlib.sha256(
+        json.dumps(native.environment, sort_keys=True).encode("utf-8")
+    ).hexdigest()
     environment = {
         "BAZELISK_BASE_URL": BAZEL_BASE_URL,
         "BAZELISK_HOME": str(bazelisk_home),
@@ -2258,6 +2264,7 @@ def _bazelisk_environment(
         "GOWORK": "off",
         "PM_GO": str(go),
         "PM_REPO_ROOT": str(ROOT),
+        "CC_TOOLCHAIN_NAME": f"pm-{native_environment_digest}",
         **native.environment,
     }
     if selected_platform.startswith("darwin-"):
