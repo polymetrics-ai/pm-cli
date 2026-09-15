@@ -65,6 +65,10 @@ The expanded full-inventory command passed in 17.07 seconds, including the polic
 
 These counts describe what the scanner recognized and hashed in those exact installs. They do not claim that recognized-package discovery is complete. Unversioned records are not dropped to obtain a pass, and an unversioned component matching a forbidden identity is rejected conservatively.
 
+A focused review correction also inventoried the two locked Bazel module source trees selected by the current output base. Gazelle 0.54.0 yielded **159 recognized packages and 1,997 SHA-256-inventoried files**; rules_go 0.63.0 yielded **43 recognized packages and 1,064 SHA-256-inventoried files**. The corrected policy CLI passed with those two inventories and the five unchanged retained install inventories above, followed by a fresh `TestResolvedDependencyPolicy` pass. The pre-fix CLI accepted the five-install set without either Bazel module inventory; the corrected CLI refused that same omission. Source-tree inventories include source fixtures and release tooling, not a claim that every discovered component executed.
+
+The same focused regression run loaded the Linux amd64 and arm64 native imports with `go list -mod=readonly -deps`. Both failed before their explicit native leaf requirements were added and passed afterward. This proves readonly import closure, not Linux compilation or execution.
+
 The benchmark completed one cold-output/action-cache build in **47.086722667 seconds** and one warm build using the same output base in **5.195518208 seconds**. Tool and repository-download caches were already warm. This is one sample of each state, not a statistical speedup claim.
 
 ### Still unqualified

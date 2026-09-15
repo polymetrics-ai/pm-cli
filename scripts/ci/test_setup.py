@@ -85,9 +85,9 @@ class SetupContracts(unittest.TestCase):
             (root / path).write_text(json.dumps(value))
 
         def section(content, empty=False):
-            before, rest = content.split("## Resolve the exact issue", 1)
+            before, rest = content.split("## Read the assigned issue", 1)
             _, after = rest.split("\n## ", 1)
-            return before + ("## Resolve the exact issue\n\n" if empty else "") + "## " + after
+            return before + ("## Read the assigned issue\n\n" if empty else "") + "## " + after
 
         def broken_tracker_link(root, _):
             text(root, TRACKER, lambda value: value + "\n[broken](missing-required-context.md)\n")
@@ -107,14 +107,14 @@ class SetupContracts(unittest.TestCase):
                         lambda value: value["project_skills"][0]["references"].remove(TRACKER))
 
         cases = {
-            "blank tracker": lambda r, _: (r / TRACKER).write_text(""),
-            "wrong document kind": lambda r, _: text(r, TRACKER, lambda s: s.replace(
-                "# Issue and specification tracker", "# Unrelated document", 1)),
-            "missing required section": lambda r, _: text(r, TRACKER, section),
-            "empty required section": lambda r, _: text(r, TRACKER, lambda s: section(s, True)),
-            "missing routing edge": lambda r, _: text(r, "AGENTS.md", lambda s: s.replace(
+            "blank document": lambda r, _: (r / TRACKER).write_text(""),
+            "wrong tracker title": lambda r, _: text(r, TRACKER, lambda s: s.replace(
+                "# Issue tracker: PM CLI", "# Unrelated document", 1)),
+            "missing section": lambda r, _: text(r, TRACKER, section),
+            "empty section": lambda r, _: text(r, TRACKER, lambda s: section(s, True)),
+            "missing routing link": lambda r, _: text(r, "AGENTS.md", lambda s: s.replace(
                 "[issue/spec lookup](docs/agents/issue-tracker.md)", "issue/spec lookup")),
-            "missing provenance reference": missing_provenance,
+            "missing provenance membership": missing_provenance,
             "broken tracker link": broken_tracker_link,
             "missing disk file": lambda r, _: (r / TRACKER).unlink(),
             "missing tracked membership": missing_membership,

@@ -30,7 +30,7 @@ const (
 	maxJSONBytes          = 64 << 20
 	maxCommandOutput      = 32 << 20
 	maxCommandError       = 1 << 20
-	externalEvidenceScope = "resolved-module-graphs-and-current-platform-external-tool-inventories"
+	externalEvidenceScope = "resolved-module-graphs-and-current-platform-assets-and-selected-bazel-module-inventories"
 
 	// Inventory scopes report observed records, not package-discovery completeness.
 	// In particular, installed-files does not assert recognized-package coverage.
@@ -144,6 +144,18 @@ type AssetResult struct {
 	InventoriedFileSHA256s int    `json:"inventoried_file_sha256s"`
 }
 
+type BazelModuleResult struct {
+	Name                   string `json:"name"`
+	Version                string `json:"version"`
+	SourceURL              string `json:"source_url"`
+	SourceIntegrity        string `json:"source_integrity"`
+	SBOMDocumentSHA256     string `json:"sbom_document_sha256"`
+	InventoryScope         string `json:"inventory_scope"`
+	RecognizedPackages     int    `json:"recognized_packages"`
+	InventoriedFiles       int    `json:"inventoried_files"`
+	InventoriedFileSHA256s int    `json:"inventoried_file_sha256s"`
+}
+
 type CheckResult struct {
 	SchemaVersion string              `json:"schema_version"`
 	Status        string              `json:"status"`
@@ -151,6 +163,7 @@ type CheckResult struct {
 	GoVersion     string              `json:"go_version"`
 	Platform      string              `json:"platform"`
 	ModuleGraphs  []ModuleGraphResult `json:"module_graphs"`
+	BazelModules  []BazelModuleResult `json:"bazel_modules"`
 	ExternalSBOMs []SBOMResult        `json:"external_sboms"`
 	Assets        []AssetResult       `json:"assets"`
 }
@@ -222,7 +235,7 @@ func CheckDependencies(ctx context.Context, opts CheckOptions) (CheckResult, err
 		}
 		documents = append(documents, document)
 	}
-	assetResults, sbomResults, err := checkSBOMCoverage(toolchains, documents)
+	assetResults, moduleResults, sbomResults, err := checkSBOMCoverage(toolchains, documents)
 	if err != nil {
 		return result, err
 	}
@@ -278,6 +291,7 @@ func CheckDependencies(ctx context.Context, opts CheckOptions) (CheckResult, err
 		GoVersion:     actualGoVersion,
 		Platform:      canonicalPlatform(runtime.GOOS + "-" + runtime.GOARCH),
 		ModuleGraphs:  graphResults,
+		BazelModules:  moduleResults,
 		ExternalSBOMs: sbomResults,
 		Assets:        assetResults,
 	}
@@ -1348,7 +1362,7 @@ func checkSBOMForbidden(document sbomDocument, forbidden []ForbiddenModule) erro
 						Scope:    document.format + " SBOM " + document.documentSHA256,
 						Identity: selected,
 						Reason:   rule.Reason,
-						Chain:    []string{"external SBOM", selected},
+						Chain:    []string{"external SBOM " + document.subjectName + "@" + document.subjectVersion, selected},
 					}
 				}
 			}
@@ -1357,29 +1371,29 @@ func checkSBOMForbidden(document sbomDocument, forbidden []ForbiddenModule) erro
 	return nil
 }
 
-func checkSBOMCoverage(toolchains ToolchainsManifest, documents []sbomDocument) ([]AssetResult, []SBOMResult, error) {
+func checkSBOMCoverage(toolchains ToolchainsManifest, documents []sbomDocument) ([]AssetResult, []BazelModuleResult, []SBOMResult, error) {
 	currentPlatform := canonicalPlatform(runtime.GOOS + "-" + runtime.GOARCH)
-	required := make([]ToolchainAsset, 0)
+	requiredAssets := make([]ToolchainAsset, 0)
 	for _, asset := range toolchains.Assets {
 		platform := canonicalPlatform(asset.Platform)
 		if platform == currentPlatform || platform == "all" || platform == "any" || platform == "portable" {
-			required = append(required, asset)
+			requiredAssets = append(requiredAssets, asset)
 		}
 	}
-	if len(required) == 0 {
-		return nil, nil, fmt.Errorf("toolchain lock contains no assets for current platform %s", currentPlatform)
+	if len(requiredAssets) == 0 {
+		return nil, nil, nil, fmt.Errorf("toolchain lock contains no assets for current platform %s", currentPlatform)
 	}
-	sort.Slice(required, func(left, right int) bool {
-		if required[left].ID != required[right].ID {
-			return required[left].ID < required[right].ID
+	sort.Slice(requiredAssets, func(left, right int) bool {
+		if requiredAssets[left].ID != requiredAssets[right].ID {
+			return requiredAssets[left].ID < requiredAssets[right].ID
 		}
-		if required[left].Version != required[right].Version {
-			return required[left].Version < required[right].Version
+		if requiredAssets[left].Version != requiredAssets[right].Version {
+			return requiredAssets[left].Version < requiredAssets[right].Version
 		}
-		return required[left].Platform < required[right].Platform
+		return requiredAssets[left].Platform < requiredAssets[right].Platform
 	})
-	assetResults := make([]AssetResult, 0, len(required))
-	for _, asset := range required {
+	assetResults := make([]AssetResult, 0, len(requiredAssets))
+	for _, asset := range requiredAssets {
 		covered := false
 		observedVersions := make([]string, 0)
 		identity := asset.ID + "@" + asset.Version + "/" + canonicalPlatform(asset.Platform)
@@ -1414,14 +1428,66 @@ func checkSBOMCoverage(toolchains ToolchainsManifest, documents []sbomDocument) 
 		}
 		if len(observedVersions) > 0 {
 			sort.Strings(observedVersions)
-			return nil, nil, fmt.Errorf("external SBOM subject version mismatch for locked asset %s: observed %v", identity, observedVersions)
+			return nil, nil, nil, fmt.Errorf("external SBOM subject version mismatch for locked asset %s: observed %v", identity, observedVersions)
 		}
-		return nil, nil, fmt.Errorf("external SBOM evidence is missing scanned-tool subject %s", identity)
+		return nil, nil, nil, fmt.Errorf("external SBOM evidence is missing scanned-tool subject %s", identity)
 	}
+
+	requiredModules := append([]ToolchainModule(nil), toolchains.Modules...)
+	sort.Slice(requiredModules, func(left, right int) bool {
+		if requiredModules[left].Name != requiredModules[right].Name {
+			return requiredModules[left].Name < requiredModules[right].Name
+		}
+		return requiredModules[left].Version < requiredModules[right].Version
+	})
+	moduleResults := make([]BazelModuleResult, 0, len(requiredModules))
+	for _, module := range requiredModules {
+		covered := false
+		observedVersions := make([]string, 0)
+		identity := module.Name + "@" + module.Version
+		for documentIndex := range documents {
+			document := &documents[documentIndex]
+			if document.subjectName != module.Name {
+				continue
+			}
+			observedVersions = append(observedVersions, document.subjectVersion)
+			if document.subjectVersion != module.Version {
+				continue
+			}
+			if document.recognizedPackages == 0 {
+				return nil, nil, nil, fmt.Errorf("external %s SBOM %s for selected Bazel module %s has %s inventory only; recognized-package coverage is required", document.format, document.documentSHA256, identity, document.inventoryScope())
+			}
+			document.locked = append(document.locked, "bazel-module:"+identity)
+			if covered {
+				continue
+			}
+			moduleResults = append(moduleResults, BazelModuleResult{
+				Name:                   module.Name,
+				Version:                module.Version,
+				SourceURL:              module.URL,
+				SourceIntegrity:        module.Integrity,
+				SBOMDocumentSHA256:     document.documentSHA256,
+				InventoryScope:         document.inventoryScope(),
+				RecognizedPackages:     document.recognizedPackages,
+				InventoriedFiles:       document.inventoriedFiles,
+				InventoriedFileSHA256s: document.inventoriedFileSHA256s,
+			})
+			covered = true
+		}
+		if covered {
+			continue
+		}
+		if len(observedVersions) > 0 {
+			sort.Strings(observedVersions)
+			return nil, nil, nil, fmt.Errorf("external SBOM subject version mismatch for selected Bazel module %s: observed %v", identity, observedVersions)
+		}
+		return nil, nil, nil, fmt.Errorf("external SBOM evidence is missing selected Bazel module subject %s", identity)
+	}
+
 	sbomResults := make([]SBOMResult, 0, len(documents))
 	for _, document := range documents {
 		if len(document.locked) == 0 {
-			return nil, nil, fmt.Errorf("external %s SBOM %s subject %s@%s is not a current-platform locked asset", document.format, document.documentSHA256, document.subjectName, document.subjectVersion)
+			return nil, nil, nil, fmt.Errorf("external %s SBOM %s subject %s@%s is not a current-platform locked asset or selected Bazel module", document.format, document.documentSHA256, document.subjectName, document.subjectVersion)
 		}
 		sort.Strings(document.locked)
 		sbomResults = append(sbomResults, SBOMResult{
@@ -1437,7 +1503,7 @@ func checkSBOMCoverage(toolchains ToolchainsManifest, documents []sbomDocument) 
 			LockedIdentities:       document.locked,
 		})
 	}
-	return assetResults, sbomResults, nil
+	return assetResults, moduleResults, sbomResults, nil
 }
 
 func matchesVersion(actual, policy string) bool {

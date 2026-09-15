@@ -41,8 +41,8 @@ func run(arguments []string, stdout, stderr io.Writer) int {
 	flags.SetOutput(stderr)
 	flags.Usage = func() {
 		fmt.Fprintln(stderr, "Usage: pm-dependency-check --root ROOT --versions FILE --toolchains FILE --sbom FILE [--sbom FILE ...]")
-		fmt.Fprintln(stderr, "Resolve both Go module graphs with GOWORK=off and check locked external-tool SBOM inventories.")
-		fmt.Fprintln(stderr, "Each SBOM subject must use the scanned lock asset's exact id/version; source-archive SHA-256 remains separate from installed-file SHA-256.")
+		fmt.Fprintln(stderr, "Resolve both Go module graphs with GOWORK=off and check current-platform assets plus selected Bazel-module SBOM inventories.")
+		fmt.Fprintln(stderr, "Each SBOM subject must use its locked asset id or Bazel-module name and exact version; archive source integrity remains separate from installed-file SHA-256.")
 		fmt.Fprintln(stderr, "Recognized packages and hashed installed files are reported separately; file inventory does not assert recognized-package dependency coverage.")
 		flags.PrintDefaults()
 	}

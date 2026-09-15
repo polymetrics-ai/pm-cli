@@ -27,8 +27,8 @@
       "target": "docs/architecture/pm-server/architecture/PLAN.md",
       "source": "data/pm-cli/architecture/PLAN.md",
       "source_sha256": "6d153d808841269207a7a4c840551ebbfce8649a118b92a7b8eb0d4b353925e3",
-      "sha256": "86f97b2b8357303736b1dcf8b37d08e14c64fc1517570e439dbd92b8e8812417",
-      "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; implementation remains unexecuted."
+      "sha256": "80e4e115714531c5e38d00c9940d54b965a46871f10e21beee055344ceeb66cc",
+      "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; implementation remains unexecuted. Applied accepted issue #3 TD27 development-native host-identity amendment (issuecomment-5687998290); immutable build-image qualification remains required before image-based or release-native builds."
     },
     {
       "target": "docs/architecture/pm-server/architecture/ADRS.md",
@@ -83,8 +83,8 @@
       "target": "docs/architecture/pm-server/architecture/TECHNOLOGY.json",
       "source": "data/pm-cli/architecture/TECHNOLOGY.json",
       "source_sha256": "d820b6e36ab2767e2cafabd997ac0a50209afb737a6b6f87c594511a75a20b5b",
-      "sha256": "d820b6e36ab2767e2cafabd997ac0a50209afb737a6b6f87c594511a75a20b5b",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "1a6bc3e9f90b307f80326ccdb65483ca820e581508552f95a0e6d02d01593557",
+      "transformation": "Applied accepted issue #3 TD27 development-native host-identity amendment (issuecomment-5687998290); immutable build-image qualification remains required before image-based or release-native builds. All other selected technology facts unchanged."
     },
     {
       "target": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
@@ -252,7 +252,7 @@
       "target": "docs/architecture/pm-server/instructions/issue-tracker.draft.md",
       "source": "data/pm-cli/setup/ISSUE-TRACKER-DRAFT.md",
       "source_sha256": "ec3f0cc0e351a270162b39e62dbf5453aceb921f84c8cbbea0ba96315798a955",
-      "sha256": "f39723a53e55ce5be05bc628563c7b067a33be64a94f225758322233d37e524d",
+      "sha256": "7027d8e6229be733b56f49f450c35bb2fbfd80d19d47bb14b34debe15f708775",
       "transformation": "Synchronized the inactive projection to the accepted issue #2 tracker, preserving its title and sections while updating landed-baseline, BOOT-1, review-input and active-navigation facts."
     },
     {

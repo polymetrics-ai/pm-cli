@@ -36,6 +36,8 @@ require (
 
 require (
 	github.com/duckdb/duckdb-go-bindings/lib/darwin-arm64 v0.10505.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-amd64 v0.10505.0 // indirect
+	github.com/duckdb/duckdb-go-bindings/lib/linux-arm64 v0.10505.0 // indirect
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 )

@@ -2,13 +2,15 @@
 
 This file mirrors the current target `docs/agents/issue-tracker.md` below for provenance and comparison. It is not an active instruction entrypoint, is not fresh-worker intake, and does not establish current-candidate checks, review, CI, merge, application behavior, or full BOOT. Relative links in the projected body resolve from the target path named in `INSTRUCTION-TARGETS.json`.
 
-# Issue and specification tracker
+# Issue tracker: PM CLI
 
 PM tracks accepted work in the private GitHub repository [`polymetrics-ai/pm-cli`](https://github.com/polymetrics-ai/pm-cli). Use the actual issue identity supplied by the authorized task. This guide defines read-only intake and traceability; it does not authorize triage, issue mutation, publication, implementation, push, merge, or provider/host access.
 
 The single [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md) owns validation, independent review, and delivery. Repository instructions and the accepted issue set own product scope. OMP is the sole coordinator and integration owner; model/account routing is supplied separately by the operator and is not issue content.
 
-## Resolve the exact issue
+## Read the assigned issue
+
+### Resolve the exact issue
 
 Consult current `gh-axi` help, then use read-only lookup against the exact repository and number. These are current issue-intake command templates, not PM application commands:
 
@@ -22,7 +24,7 @@ Verify repository identity, privacy/default branch, issue number, database ID, U
 
 Read the complete issue body and every comment or amendment included by the accepted task. Preserve comment IDs, authorship, creation/update order, and explicit acceptance provenance. Later unrelated comments do not silently expand scope. Read merged dependency issues or accepted decision comments when the issue or task incorporates them.
 
-## Prove content completeness
+### Prove content completeness
 
 `gh-axi issue view <N> --full --comments` is an intake aid, not proof that a long body or comment is complete. On 2026-09-15, long issue output still clamped, and a direct API body projection exposed `truncated: true` with `original_length`. Always inspect wrapper/API truncation metadata and expected length before hashing or reviewing.
 
@@ -39,7 +41,7 @@ For each required issue/comment, record outside product runtime state:
 
 If complete accepted bytes or an approved digest cannot be obtained, report the exact gap. Do not replace the specification with a local task summary, private archive, historical issue draft, or prior chat.
 
-## Bind a candidate to accepted review inputs
+## Bind review to accepted inputs
 
 Before independent review begins, the coordinator must supply one complete review envelope so reviewers do not need to ask for routine context:
 
@@ -54,7 +56,9 @@ The Spec reviewer receives all originating grouped issues and accepted amendment
 
 A local candidate, task brief, worker report, review result, successful documentation check, or retrievable unmerged commit is not an approved landed baseline. Dependent application work requires the accepted default-branch context revision identified by its task.
 
-## Issue linkage and stacked changes
+## Required review and delivery boundaries
+
+### Issue linkage and stacked changes
 
 For a pull request targeting the default branch, use separate linkage lines for each issue:
 
@@ -69,7 +73,7 @@ A stacked pull request that targets another feature branch must use `Refs #N`, r
 
 PR #47's reviewed publication tree at `3516a84aef9eb9a880408e6b5ab56ab911276429` landed normally on `main` in merge commit `d8e84e1fc78561173feac8abfd64ce669f09f373`. BOOT-1 readback authenticated the approved original staging and verified that exact reviewed tree in the landed baseline. The historical outer manifest is not the digest of later transformed target bytes. Bounded Darwin foundation checks and fresh-worker discovery for the combined issue #2/#3 candidate are recorded in [developer setup](../development/setup.md); independent Standards/Spec review and genuine final-head CI remain separate completion obligations. Source presence or those local observations alone cannot close either issue or establish application, provider, or backend release qualification.
 
-## Fresh-worker intake boundary
+### Fresh-worker intake boundary
 
 Fresh workers use the active [root instructions](../../AGENTS.md), this tracker, [skill routing](../development/skills.md), [skill provenance](../development/skill-provenance.md), [developer setup](../development/setup.md), the sole [PM Go router](../../.agents/skills/pm-go/SKILL.md), the active [configuration ADR](../decisions/0001-cli-configuration.md), the [architecture overview](../architecture/overview.md), and the canonical PM Server contracts. Files under `docs/architecture/pm-server/instructions/` are synchronized inactive projections only. Historical issue drafts, private setup/controller runbooks, transition evidence, transcripts, and operator configuration are excluded from instruction intake without deleting their retained evidence bytes.
 

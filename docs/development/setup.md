@@ -29,6 +29,12 @@ On macOS, cgo-enabled Go, Clang, and Bazel execution require an Apple macOS SDK 
 
 Select Xcode or the Xcode Command Line Tools so that command returns an available absolute SDK directory. The bootstrap refuses native execution when it cannot resolve that prerequisite; it passes the resulting SDK and deployment target only to the child process.
 
+Linux development-native execution additionally requires the reviewed [`build/native-environment.json`](../../build/native-environment.json) profile. The current profile captures the existing Linux amd64 CI sysroot, including OS identity, headers, GNU runtime libraries and loader. Its fingerprints bind logical paths, entry types, symlink chains and file bytes; they are not raw-file payload checksums. Capture alone does not qualify native execution.
+
+Bootstrap verifies that profile before native execution, selects the locked Clang/`ld.lld` source, requires its compiler-rt startup/builtin objects when no GCC installation is selected, and derives local linker scripts for the admitted GNU runtime SONAMEs. It installs nothing into the host sysroot. The profile digest participates in compile and link options so a newly reviewed sysroot identity cannot reuse stale C objects. DuckDB application archives remain pinned separately by `go.sum` and the generated Bazel dependency repositories.
+
+Unadmitted native flag overrides and mismatched native `GOOS`/`GOARCH` requests fail rather than falling back. A missing or changed profile requires a deliberate new capture and review; CI never refreshes it automatically. Linux targets without an admitted matching profile remain unqualified. This is bound-host development evidence, not a hermetic build or release qualification; immutable build-image digests remain mandatory before image-based or release-native builds under the [accepted TD27 amendment](https://github.com/polymetrics-ai/pm-cli/issues/3#issuecomment-5687998290).
+
 ### Build and test entry points
 
 These Make targets are source-present:
@@ -56,15 +62,15 @@ Run the isolated native qualification, including its negative controls, with:
 python3 scripts/ci/check-native.py
 ```
 
-It first builds and runs the native probe in an owned temporary directory under `.cache`, then reuses the resolved modules with network lookup disabled and requires normal build refusal for cgo disabled and for an incompatible 32-bit C target.
+It first builds and runs the native probe in an owned temporary directory under `.cache`, then reuses the resolved modules with network lookup disabled and requires normal build-path refusal for cgo disabled and for an incompatible 32-bit native target. On Linux, the latter requests an unqualified Go target and must fail host-profile preflight; it does not claim that a cross-target compiler ran. The macOS control retains its explicit incompatible C target.
 
-Run the full current-platform external-tool inventory and both Go graph checks with a disposable, uncommitted evidence directory:
+Run the current-platform external-tool and selected Bazel-module inventories with both Go graph checks using a disposable, uncommitted evidence directory:
 
 ```sh
 python3 scripts/ci/check-dependencies.py --evidence-dir .cache/foundation-sboms
 ```
 
-That orchestrator resolves the five selected tool installs, expands Bazel to its actual install base, creates package and per-file SHA-256 CycloneDX inventories, invokes the dependency-policy CLI, and reruns `TestResolvedDependencyPolicy` against those SBOMs. File inventory is evidence about installed bytes, not a claim that a package catalog recognized every dependency.
+That orchestrator resolves the five selected tool installs, expands Bazel to its actual install base, and resolves the two locked Gazelle/rules_go source repositories through Bazel's canonical repository metadata. It checks their exact archive URL/integrity pins, scans only those selected source targets rather than a whole historical cache, creates package and per-file SHA-256 CycloneDX inventories, invokes the dependency-policy CLI, and reruns `TestResolvedDependencyPolicy` against those SBOMs. Each selected Bazel module requires recognized-package coverage; file-only evidence is insufficient. File inventory describes installed bytes, not proof that a package catalog recognized every dependency or that every source component executed.
 
 The optional availability report remains:
 

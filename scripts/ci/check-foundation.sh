@@ -46,3 +46,12 @@ make bazel-build bazel-test
 python3 scripts/ci/check-dependencies.py --evidence-dir "$RUNNER_TEMP/foundation-sboms"
 python3 scripts/ci/check-image-pins.py
 python3 scripts/ci/benchmark.py
+
+# Re-open and re-hash the admitted native inputs after every foundation action.
+python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/foundation-toolchain-after.json"
+if ! cmp -s \
+  "$RUNNER_TEMP/foundation-toolchain.json" \
+  "$RUNNER_TEMP/foundation-toolchain-after.json"; then
+  printf '%s\n' 'foundation native/tool identity drifted during execution' >&2
+  exit 1
+fi

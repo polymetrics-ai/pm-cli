@@ -57,13 +57,11 @@
   "required_markdown_documents": [
     {
       "path": "docs/agents/issue-tracker.md",
-      "title": "Issue and specification tracker",
+      "title": "Issue tracker: PM CLI",
       "sections": [
-        "Resolve the exact issue",
-        "Prove content completeness",
-        "Bind a candidate to accepted review inputs",
-        "Issue linkage and stacked changes",
-        "Fresh-worker intake boundary"
+        "Read the assigned issue",
+        "Bind review to accepted inputs",
+        "Required review and delivery boundaries"
       ]
     }
   ],

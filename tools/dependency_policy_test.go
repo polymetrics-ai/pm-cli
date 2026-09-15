@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	syntheticDigestA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	syntheticDigestB = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	syntheticDigestA    = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	syntheticDigestB    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	syntheticIntegrityA = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 )
 
 func TestResolvedDependencyPolicy(t *testing.T) {
@@ -63,6 +64,33 @@ func TestResolvedDependencyPolicy(t *testing.T) {
 			if err := checkGraphForbidden(check.name, graph, manifest.Forbidden); err != nil {
 				t.Fatalf("check %s forbidden identities: %v", check.name, err)
 			}
+		}
+	})
+
+	t.Run("readonly Linux native import closure loads both supported architecture modules", func(t *testing.T) {
+		// This loads target-specific imports only. It does not execute or qualify
+		// native code on either Linux architecture.
+		for _, arch := range []string{"amd64", "arm64"} {
+			t.Run(arch, func(t *testing.T) {
+				t.Setenv("GOOS", "linux")
+				t.Setenv("GOARCH", arch)
+				t.Setenv("CGO_ENABLED", "1")
+				output, err := runGo(ctx, goCommand, repoRoot, "list", "-mod=readonly", "-deps", "./build/nativeprobe")
+				if err != nil {
+					t.Fatalf("load readonly linux/%s native imports: %v", arch, err)
+				}
+				want := "github.com/duckdb/duckdb-go-bindings/lib/linux-" + arch
+				found := false
+				for _, imported := range strings.Fields(string(output)) {
+					if imported == want {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Fatalf("linux/%s import closure omitted selected native binding %s", arch, want)
+				}
+			})
 		}
 	})
 
@@ -184,30 +212,37 @@ func TestResolvedDependencyPolicy(t *testing.T) {
 			}
 			documents = append(documents, document)
 		}
-		locks := ToolchainsManifest{Assets: []ToolchainAsset{
-			{ID: "example-tool-a", Version: "1.2.3", Platform: platform, SHA256: syntheticDigestA},
-			{ID: "example-tool-b", Version: "4.5.6", Platform: platform, SHA256: syntheticDigestB},
-		}}
-		assets, reports, err := checkSBOMCoverage(locks, documents)
+		locks := ToolchainsManifest{
+			Assets: []ToolchainAsset{{
+				ID: "example-tool-a", Version: "1.2.3", Platform: platform, SHA256: syntheticDigestA,
+			}},
+			Modules: []ToolchainModule{{
+				Name: "example-tool-b", Version: "4.5.6", Integrity: syntheticIntegrityA,
+				URL: "https://example.invalid/example-tool-b",
+			}},
+		}
+		assets, modules, reports, err := checkSBOMCoverage(locks, documents)
 		if err != nil {
-			t.Fatalf("check repeated SBOM coverage: %v", err)
+			t.Fatalf("check asset and Bazel module SBOM coverage: %v", err)
 		}
-		wantAssets := []AssetResult{
-			{
-				ID: "example-tool-a", Version: "1.2.3", Platform: platform,
-				SourceSHA256: syntheticDigestA, SBOMDocumentSHA256: documents[0].documentSHA256,
-				InventoryScope:     inventoryScopeRecognizedPackagesAndInstalledFiles,
-				RecognizedPackages: 1, InventoriedFiles: 1, InventoriedFileSHA256s: 1,
-			},
-			{
-				ID: "example-tool-b", Version: "4.5.6", Platform: platform,
-				SourceSHA256: syntheticDigestB, SBOMDocumentSHA256: documents[1].documentSHA256,
-				InventoryScope:     inventoryScopeRecognizedPackages,
-				RecognizedPackages: 1,
-			},
-		}
+		wantAssets := []AssetResult{{
+			ID: "example-tool-a", Version: "1.2.3", Platform: platform,
+			SourceSHA256: syntheticDigestA, SBOMDocumentSHA256: documents[0].documentSHA256,
+			InventoryScope:     inventoryScopeRecognizedPackagesAndInstalledFiles,
+			RecognizedPackages: 1, InventoriedFiles: 1, InventoriedFileSHA256s: 1,
+		}}
 		if !reflect.DeepEqual(assets, wantAssets) {
 			t.Fatalf("covered assets = %#v; want %#v", assets, wantAssets)
+		}
+		wantModules := []BazelModuleResult{{
+			Name: "example-tool-b", Version: "4.5.6",
+			SourceURL: "https://example.invalid/example-tool-b", SourceIntegrity: syntheticIntegrityA,
+			SBOMDocumentSHA256: documents[1].documentSHA256,
+			InventoryScope:     inventoryScopeRecognizedPackages,
+			RecognizedPackages: 1,
+		}}
+		if !reflect.DeepEqual(modules, wantModules) {
+			t.Fatalf("covered Bazel modules = %#v; want %#v", modules, wantModules)
 		}
 		if len(reports) != 2 ||
 			reports[0].Format != "cyclonedx" ||
@@ -221,8 +256,9 @@ func TestResolvedDependencyPolicy(t *testing.T) {
 			reports[1].InventoryScope != inventoryScopeRecognizedPackages ||
 			reports[1].RecognizedPackages != 1 ||
 			reports[1].InventoriedFiles != 0 ||
-			reports[1].InventoriedFileSHA256s != 0 {
-			t.Fatalf("SBOM reports = %#v; want explicit package/file inventory scopes", reports)
+			reports[1].InventoriedFileSHA256s != 0 ||
+			!reflect.DeepEqual(reports[1].LockedIdentities, []string{"bazel-module:example-tool-b@4.5.6"}) {
+			t.Fatalf("SBOM reports = %#v; want explicit asset/module and package/file inventory scopes", reports)
 		}
 	})
 
@@ -295,7 +331,7 @@ func TestResolvedDependencyPolicy(t *testing.T) {
 			t.Fatalf("file-only inventory = %#v; want one hashed installed file without recognized-package coverage", document)
 		}
 		platform := canonicalPlatform(runtime.GOOS + "-" + runtime.GOARCH)
-		assets, reports, err := checkSBOMCoverage(
+		assets, _, reports, err := checkSBOMCoverage(
 			ToolchainsManifest{Assets: []ToolchainAsset{{
 				ID: "example-tool", Version: "1.0.0", Platform: platform, SHA256: syntheticDigestB,
 			}}},
@@ -358,8 +394,116 @@ func TestResolvedDependencyPolicy(t *testing.T) {
 		locks := ToolchainsManifest{Assets: []ToolchainAsset{{
 			ID: "example-tool", Version: "1.0.0", Platform: platform, SHA256: syntheticDigestA,
 		}}}
-		if _, _, err := checkSBOMCoverage(locks, []sbomDocument{document}); err == nil || !strings.Contains(err.Error(), "missing scanned-tool subject") {
+		if _, _, _, err := checkSBOMCoverage(locks, []sbomDocument{document}); err == nil || !strings.Contains(err.Error(), "missing scanned-tool subject") {
 			t.Fatalf("wrong selected asset error = %v; want scanned-tool subject refusal", err)
+		}
+	})
+
+	t.Run("selected Bazel module inventory cannot be omitted through CheckDependencies", func(t *testing.T) {
+		toolchains, err := loadStrictJSON[ToolchainsManifest](filepath.Join(repoRoot, "build", "toolchains.lock.json"))
+		if err != nil {
+			t.Fatalf("load toolchain locks: %v", err)
+		}
+		platform := canonicalPlatform(runtime.GOOS + "-" + runtime.GOARCH)
+		sboms := make([]string, 0)
+		for _, asset := range toolchains.Assets {
+			selectedPlatform := canonicalPlatform(asset.Platform)
+			if selectedPlatform != platform && selectedPlatform != "all" && selectedPlatform != "any" && selectedPlatform != "portable" {
+				continue
+			}
+			sboms = append(sboms, writeCycloneDXSBOM(t, asset.ID, asset.Version, []map[string]any{{
+				"type": "file",
+				"name": "selected/" + asset.ID,
+				"hashes": []map[string]any{{
+					"alg": "SHA-256", "content": syntheticDigestA,
+				}},
+			}}))
+		}
+		if len(sboms) == 0 || len(toolchains.Modules) == 0 {
+			t.Fatal("real toolchain fixture has no selected assets or Bazel modules")
+		}
+		_, err = CheckDependencies(ctx, CheckOptions{
+			Root:           repoRoot,
+			VersionsPath:   "tools/versions.json",
+			ToolchainsPath: "build/toolchains.lock.json",
+			SBOMPaths:      sboms,
+			GoCommand:      goCommand,
+		})
+		want := toolchains.Modules[0].Name + "@" + toolchains.Modules[0].Version
+		if err == nil || !strings.Contains(err.Error(), "missing selected Bazel module subject "+want) {
+			t.Fatalf("missing selected Bazel module error = %v; want omission refusal for %s", err, want)
+		}
+		fileOnlyModule := writeCycloneDXSBOM(
+			t,
+			toolchains.Modules[0].Name,
+			toolchains.Modules[0].Version,
+			[]map[string]any{{
+				"type": "file",
+				"name": "selected/" + toolchains.Modules[0].Name,
+				"hashes": []map[string]any{{
+					"alg": "SHA-256", "content": syntheticDigestB,
+				}},
+			}},
+		)
+		_, err = CheckDependencies(ctx, CheckOptions{
+			Root:           repoRoot,
+			VersionsPath:   "tools/versions.json",
+			ToolchainsPath: "build/toolchains.lock.json",
+			SBOMPaths:      append(sboms, fileOnlyModule),
+			GoCommand:      goCommand,
+		})
+		if err == nil || !strings.Contains(err.Error(), "recognized-package coverage is required") {
+			t.Fatalf("file-only selected Bazel module error = %v; want explicit package-coverage refusal", err)
+		}
+	})
+
+	t.Run("forbidden transitive selected Bazel build-tool component is rejected through CheckDependencies", func(t *testing.T) {
+		toolchains, err := loadStrictJSON[ToolchainsManifest](filepath.Join(repoRoot, "build", "toolchains.lock.json"))
+		if err != nil {
+			t.Fatalf("load toolchain locks: %v", err)
+		}
+		versions, err := loadStrictJSON[VersionsManifest](filepath.Join(repoRoot, "tools", "versions.json"))
+		if err != nil {
+			t.Fatalf("load dependency policy: %v", err)
+		}
+		if len(toolchains.Modules) == 0 {
+			t.Fatal("real toolchain fixture has no selected Bazel modules")
+		}
+		var forbidden ForbiddenModule
+		for _, rule := range versions.Forbidden {
+			if rule.Path == "github.com/goreleaser/goreleaser/v2" && rule.Version == "v2.18.1" {
+				forbidden = rule
+				break
+			}
+		}
+		if forbidden.Path == "" {
+			t.Fatal("real dependency policy omitted the exact GoReleaser refusal")
+		}
+		module := toolchains.Modules[0]
+		sbom := writeCycloneDXSBOM(t, module.Name, module.Version, []map[string]any{{
+			"type": "library", "name": "selected-build-tool-parent", "version": "1.0.0",
+			"components": []map[string]any{{
+				"type": "application", "name": "goreleaser", "version": forbidden.Version,
+				"purl": "pkg:golang/" + forbidden.Path + "@" + forbidden.Version,
+			}},
+		}})
+		_, err = CheckDependencies(ctx, CheckOptions{
+			Root:           repoRoot,
+			VersionsPath:   "tools/versions.json",
+			ToolchainsPath: "build/toolchains.lock.json",
+			SBOMPaths:      []string{sbom},
+			GoCommand:      goCommand,
+		})
+		var violation *PolicyViolationError
+		if !errors.As(err, &violation) {
+			t.Fatalf("forbidden selected Bazel module component error = %v; want PolicyViolationError", err)
+		}
+		wantChain := []string{
+			"external SBOM " + module.Name + "@" + module.Version,
+			forbidden.Path + "@" + forbidden.Version,
+		}
+		if !reflect.DeepEqual(violation.Chain, wantChain) {
+			t.Fatalf("forbidden selected Bazel module chain = %v; want %v", violation.Chain, wantChain)
 		}
 	})
 
@@ -400,7 +544,7 @@ func TestResolvedDependencyPolicy(t *testing.T) {
 		if err := checkSBOMForbidden(document, []ForbiddenModule{rule}); err != nil {
 			t.Fatalf("unrelated source-root inventory: %v", err)
 		}
-		_, reports, err := checkSBOMCoverage(ToolchainsManifest{Assets: []ToolchainAsset{{
+		_, _, reports, err := checkSBOMCoverage(ToolchainsManifest{Assets: []ToolchainAsset{{
 			ID: "example-tool", Version: "1.0.0", Platform: canonicalPlatform(runtime.GOOS + "-" + runtime.GOARCH), SHA256: syntheticDigestA,
 		}}}, []sbomDocument{document})
 		if err != nil {
@@ -485,9 +629,32 @@ func TestResolvedDependencyPolicy(t *testing.T) {
 			if result.Status != "pass" || result.EvidenceScope != externalEvidenceScope {
 				t.Fatalf("result scope = %#v; want explicit passing full-input inventory scope", result)
 			}
+			toolchains, err := loadStrictJSON[ToolchainsManifest](filepath.Join(repoRoot, "build", "toolchains.lock.json"))
+			if err != nil {
+				t.Fatalf("reload toolchain locks for result comparison: %v", err)
+			}
+			if len(result.BazelModules) != len(toolchains.Modules) {
+				t.Fatalf("reported Bazel modules = %#v; want all %d selected modules", result.BazelModules, len(toolchains.Modules))
+			}
+			reported := make(map[string]BazelModuleResult, len(result.BazelModules))
+			for _, module := range result.BazelModules {
+				reported[module.Name+"@"+module.Version] = module
+			}
+			for _, locked := range toolchains.Modules {
+				module, ok := reported[locked.Name+"@"+locked.Version]
+				if !ok {
+					t.Fatalf("result omitted selected Bazel module %s@%s", locked.Name, locked.Version)
+				}
+				if module.SourceURL != locked.URL ||
+					module.SourceIntegrity != locked.Integrity ||
+					module.RecognizedPackages == 0 ||
+					module.InventoryScope == inventoryScopeInstalledFiles {
+					t.Fatalf("reported Bazel module %s@%s = %#v; want exact source metadata and recognized-package scope", locked.Name, locked.Version, module)
+				}
+			}
 		})
 	} else {
-		t.Log("PM_SBOMS was not supplied: selected graphs and fail-closed SBOM controls ran, but this test result is not external-tool SBOM qualification")
+		t.Log("PM_SBOMS was not supplied: selected graphs and fail-closed SBOM controls ran, but this test result is not external-tool and Bazel-module SBOM qualification")
 	}
 }
 
@@ -553,4 +720,26 @@ func writeFile(t *testing.T, path, content string) {
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
 		t.Fatalf("write %s: %v", path, err)
 	}
+}
+
+func writeCycloneDXSBOM(t *testing.T, name, version string, components []map[string]any) string {
+	t.Helper()
+	document := map[string]any{
+		"bomFormat":   "CycloneDX",
+		"specVersion": "1.6",
+		"version":     1,
+		"metadata": map[string]any{
+			"component": map[string]any{
+				"type": "application", "name": name, "version": version,
+			},
+		},
+		"components": components,
+	}
+	data, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("marshal synthetic CycloneDX inventory: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "inventory.cdx.json")
+	writeFile(t, path, string(data))
+	return path
 }

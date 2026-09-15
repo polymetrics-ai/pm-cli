@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+from dataclasses import dataclass
 try:
     import fcntl
 except ImportError:  # pragma: no cover - reached only on a refused non-POSIX host
@@ -15,6 +16,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform as host_platform
 import re
+import shlex
 import shutil
 import stat
 import subprocess
@@ -63,6 +65,77 @@ EXPECTED_MODULE_VERSIONS = {
 HEX_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_ID = re.compile(r"[a-z][a-z0-9-]*\Z")
 SAFE_VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*\Z")
+NATIVE_ENVIRONMENT_PATH = ROOT / "build" / "native-environment.json"
+NATIVE_ENVIRONMENT_SCHEMA = "pm.native-environment/v1"
+NATIVE_QUALIFICATION_SCOPE = "bound-development-host-not-immutable-image-or-release"
+LINUX_NATIVE_PLATFORMS = {"linux-amd64", "linux-arm64"}
+MAX_NATIVE_PROFILE_BYTES = 1024 * 1024
+MAX_NATIVE_TREES = 32
+MAX_NATIVE_FILES = 128
+MAX_NATIVE_TREE_ENTRIES = 1_000_000
+MAX_NATIVE_TREE_BYTES = 32_000_000_000
+MAX_NATIVE_FILE_BYTES = 4_000_000_000
+MAX_NATIVE_SYMLINK_TRAVERSALS = 64
+MAX_NATIVE_SYMLINK_BYTES = 4096
+NATIVE_OS_IDENTITY_PATHS = {"/etc/os-release", "/usr/lib/os-release"}
+# Application archives remain pinned by go.sum and the derived Bazel go_deps
+# repositories. They are not host sysroot files and must not be required here.
+NATIVE_REQUIRED_FILE_NAMES = {
+    "libgcc_s.so.1",
+    "libstdc++.so.6",
+}
+LINUX_NATIVE_GO_TARGETS = {
+    "linux-amd64": ("linux", "amd64", "x86_64-unknown-linux-gnu"),
+    "linux-arm64": ("linux", "arm64", "aarch64-unknown-linux-gnu"),
+}
+LINUX_NATIVE_CGO_OVERRIDES = {
+    "CGO_CFLAGS",
+    "CGO_CFLAGS_ALLOW",
+    "CGO_CFLAGS_DISALLOW",
+    "CGO_CPPFLAGS",
+    "CGO_CXXFLAGS",
+    "CGO_FFLAGS",
+    "CGO_LDFLAGS",
+    "CGO_LDFLAGS_ALLOW",
+    "CGO_LDFLAGS_DISALLOW",
+}
+LINUX_NATIVE_AMBIENT_OVERRIDES = {
+    "CCC_OVERRIDE_OPTIONS",
+    "CC_FOR_TARGET",
+    "C_INCLUDE_PATH",
+    "CFLAGS",
+    "COMPILER_PATH",
+    "CPATH",
+    "CPLUS_INCLUDE_PATH",
+    "CPPFLAGS",
+    "CXXFLAGS",
+    "CXX_FOR_TARGET",
+    "GCC_EXEC_PREFIX",
+    "LD",
+    "LDFLAGS",
+    "LD_LIBRARY_PATH",
+    "LIBRARY_PATH",
+    "OBJC_INCLUDE_PATH",
+    "PKG_CONFIG_LIBDIR",
+    "GOARCH",
+    "GOENV",
+    "GOOS",
+    "PKG_CONFIG_PATH",
+    "PKG_CONFIG_SYSROOT_DIR",
+    "SDKROOT",
+    "SYSROOT",
+    "CC",
+    "CXX",
+    "CGO_CFLAGS_ALLOW",
+    "CGO_CFLAGS_DISALLOW",
+    "CGO_CFLAGS",
+    "CGO_CPPFLAGS",
+    "CGO_FFLAGS",
+    "CGO_CXXFLAGS",
+    "CGO_LDFLAGS",
+    "CGO_LDFLAGS_ALLOW",
+    "CGO_LDFLAGS_DISALLOW",
+}
 
 
 class BootstrapError(RuntimeError):
@@ -346,6 +419,671 @@ def _inside(root: Path, candidate: Path) -> bool:
         return True
     except ValueError:
         return False
+
+
+def _require_bounded_integer(value: object, context: str, maximum: int) -> int:
+    if type(value) is not int or value < 0 or value > maximum:
+        raise BootstrapError(f"{context} must be an integer from 0 through {maximum}")
+    return value
+
+
+def _native_path(
+    value: object, context: str, *, allow_root: bool = False
+) -> PurePosixPath:
+    text = _require_string(value, context)
+    if "\x00" in text or "\\" in text or not text.startswith("/"):
+        raise BootstrapError(f"{context} must be an absolute POSIX path")
+    if text != "/" and (
+        text.endswith("/")
+        or any(part in {"", ".", ".."} for part in text.split("/")[1:])
+    ):
+        raise BootstrapError(f"{context} must be a canonical absolute POSIX path")
+    path = PurePosixPath(text)
+    if str(path) != text or (path == PurePosixPath("/") and not allow_root):
+        raise BootstrapError(f"{context} must be a canonical absolute POSIX path")
+    return path
+
+
+@contextlib.contextmanager
+def _native_root(root: Path) -> Iterator[Path]:
+    if not hasattr(os, "O_DIRECTORY"):
+        raise BootstrapError("safe native root opening is unavailable on this host")
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(root, flags)
+    except OSError as exc:
+        raise BootstrapError(f"cannot open native environment root {root}: {exc}") from exc
+    try:
+        status = os.fstat(descriptor)
+        if not stat.S_ISDIR(status.st_mode):
+            raise BootstrapError(f"native environment root is not a directory: {root}")
+        proc_descriptor = Path(f"/proc/self/fd/{descriptor}")
+        opened = (
+            proc_descriptor
+            if proc_descriptor.exists()
+            else root.expanduser().absolute()
+        )
+        yield opened
+        try:
+            final_status = os.stat(root)
+        except OSError as exc:
+            raise BootstrapError(
+                f"cannot re-open native environment root {root}: {exc}"
+            ) from exc
+        if (
+            final_status.st_dev != status.st_dev
+            or final_status.st_ino != status.st_ino
+        ):
+            raise BootstrapError(
+                f"native environment root changed during capture: {root}"
+            )
+    finally:
+        os.close(descriptor)
+
+
+def _native_link_target_parts(
+    parent: Sequence[str], target: str, context: str
+) -> list[str]:
+    if not target or "\x00" in target:
+        raise BootstrapError(f"{context} has an empty or invalid symlink target")
+    encoded = os.fsencode(target)
+    if len(encoded) > MAX_NATIVE_SYMLINK_BYTES:
+        raise BootstrapError(f"{context} symlink target exceeds the safety limit")
+    parts = [] if target.startswith("/") else list(parent)
+    for part in target.split("/"):
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            if not parts:
+                raise BootstrapError(f"{context} symlink target escapes the supplied root")
+            parts.pop()
+        else:
+            parts.append(part)
+    return parts
+
+
+def _resolve_native_path(
+    root: Path, path: PurePosixPath, context: str
+) -> tuple[Path, os.stat_result, list[tuple[str, str]]]:
+    remaining = list(path.parts[1:])
+    resolved_parts: list[str] = []
+    links: list[tuple[str, str]] = []
+    while remaining:
+        part = remaining.pop(0)
+        candidate = root.joinpath(*resolved_parts, part)
+        try:
+            status = os.lstat(candidate)
+        except OSError as exc:
+            raise BootstrapError(f"cannot inspect {context} {path}: {exc}") from exc
+        if stat.S_ISLNK(status.st_mode):
+            if len(links) >= MAX_NATIVE_SYMLINK_TRAVERSALS:
+                raise BootstrapError(f"{context} {path} exceeds the symlink traversal limit")
+            try:
+                target = os.readlink(candidate)
+            except OSError as exc:
+                raise BootstrapError(f"cannot read {context} symlink {candidate}: {exc}") from exc
+            location = "/" + "/".join((*resolved_parts, part))
+            links.append((location, target))
+            remaining = (
+                _native_link_target_parts(
+                    resolved_parts, target, f"{context} {location}"
+                )
+                + remaining
+            )
+            resolved_parts = []
+            continue
+        if remaining and not stat.S_ISDIR(status.st_mode):
+            raise BootstrapError(f"{context} path component is not a directory: {candidate}")
+        resolved_parts.append(part)
+
+    resolved = root.joinpath(*resolved_parts)
+    try:
+        status = os.lstat(resolved)
+    except OSError as exc:
+        raise BootstrapError(f"cannot inspect {context} {path}: {exc}") from exc
+    if stat.S_ISLNK(status.st_mode):
+        raise BootstrapError(f"unresolved symlink in {context}: {path}")
+    return resolved, status, links
+
+
+def _fingerprint_field(digest: object, value: bytes) -> None:
+    if len(value) >= 1 << 64:
+        raise BootstrapError("native fingerprint field exceeds the safety limit")
+    digest.update(len(value).to_bytes(8, "big"))  # type: ignore[attr-defined]
+    digest.update(value)  # type: ignore[attr-defined]
+
+
+def _fingerprint_links(
+    digest: object, links: Sequence[tuple[str, str]]
+) -> None:
+    for location, target in links:
+        _fingerprint_field(digest, b"L")
+        _fingerprint_field(digest, os.fsencode(location))
+        _fingerprint_field(digest, os.fsencode(target))
+
+
+def _hash_native_regular_file(
+    path: Path,
+    expected_status: os.stat_result,
+    digest: object,
+    *,
+    limit: int,
+    context: str,
+) -> int:
+    if not stat.S_ISREG(expected_status.st_mode):
+        raise BootstrapError(f"{context} is not a regular file: {path}")
+    if expected_status.st_size < 0 or expected_status.st_size > limit:
+        raise BootstrapError(f"{context} exceeds the {limit}-byte safety limit: {path}")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise BootstrapError("safe native file opening is unavailable on this host")
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise BootstrapError(f"cannot open {context} {path}: {exc}") from exc
+    try:
+        opened_status = os.fstat(descriptor)
+        expected_identity = (
+            expected_status.st_dev,
+            expected_status.st_ino,
+            expected_status.st_size,
+        )
+        opened_identity = (
+            opened_status.st_dev,
+            opened_status.st_ino,
+            opened_status.st_size,
+        )
+        if not stat.S_ISREG(opened_status.st_mode) or opened_identity != expected_identity:
+            raise BootstrapError(f"{context} changed before it could be opened: {path}")
+        _fingerprint_field(digest, opened_status.st_size.to_bytes(8, "big"))
+        total = 0
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            while True:
+                chunk = stream.read(CHUNK_BYTES)
+                if not chunk:
+                    break
+                total += len(chunk)
+                if total > limit:
+                    raise BootstrapError(f"{context} exceeds the safety limit: {path}")
+                digest.update(chunk)  # type: ignore[attr-defined]
+        final_status = os.fstat(descriptor)
+        final_identity = (
+            final_status.st_dev,
+            final_status.st_ino,
+            final_status.st_size,
+            final_status.st_mtime_ns,
+        )
+        initial_identity = (
+            opened_status.st_dev,
+            opened_status.st_ino,
+            opened_status.st_size,
+            opened_status.st_mtime_ns,
+        )
+        if total != opened_status.st_size or final_identity != initial_identity:
+            raise BootstrapError(f"{context} changed while it was being read: {path}")
+        return total
+    except OSError as exc:
+        raise BootstrapError(f"cannot hash {context} {path}: {exc}") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _scan_native_directory(
+    path: Path, expected_status: os.stat_result, context: str
+) -> list[tuple[str, os.stat_result, str | None]]:
+    if not stat.S_ISDIR(expected_status.st_mode):
+        raise BootstrapError(f"{context} is not a directory: {path}")
+    if not hasattr(os, "O_DIRECTORY") or not hasattr(os, "O_NOFOLLOW"):
+        raise BootstrapError("safe native directory traversal is unavailable on this host")
+    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise BootstrapError(f"cannot open {context} {path}: {exc}") from exc
+    try:
+        opened_status = os.fstat(descriptor)
+        if (
+            not stat.S_ISDIR(opened_status.st_mode)
+            or opened_status.st_dev != expected_status.st_dev
+            or opened_status.st_ino != expected_status.st_ino
+        ):
+            raise BootstrapError(f"{context} changed before traversal: {path}")
+        entries: list[tuple[str, os.stat_result, str | None]] = []
+        with os.scandir(descriptor) as iterator:
+            for entry in iterator:
+                if len(entries) >= MAX_NATIVE_TREE_ENTRIES:
+                    raise BootstrapError(f"{context} contains too many entries")
+                status = entry.stat(follow_symlinks=False)
+                target = (
+                    os.readlink(entry.name, dir_fd=descriptor)
+                    if stat.S_ISLNK(status.st_mode)
+                    else None
+                )
+                entries.append((entry.name, status, target))
+        entries.sort(key=lambda entry: os.fsencode(entry[0]))
+        return entries
+    except OSError as exc:
+        raise BootstrapError(f"cannot traverse {context} {path}: {exc}") from exc
+    finally:
+        os.close(descriptor)
+
+
+def _fingerprint_native_file(root: Path, path: PurePosixPath) -> dict[str, object]:
+    resolved, status, links = _resolve_native_path(root, path, "native file")
+    digest = hashlib.sha256()
+    digest.update(b"pm.native-file/v1\0")
+    _fingerprint_field(digest, os.fsencode(str(path)))
+    _fingerprint_links(digest, links)
+    _fingerprint_field(digest, b"F")
+    byte_count = _hash_native_regular_file(
+        resolved,
+        status,
+        digest,
+        limit=MAX_NATIVE_FILE_BYTES,
+        context=f"native file {path}",
+    )
+    final_resolved, final_status, final_links = _resolve_native_path(
+        root, path, "native file"
+    )
+    if (
+        final_resolved != resolved
+        or final_links != links
+        or final_status.st_dev != status.st_dev
+        or final_status.st_ino != status.st_ino
+    ):
+        raise BootstrapError(f"native file changed during capture: {path}")
+    return {"path": str(path), "sha256": digest.hexdigest(), "byte_count": byte_count}
+
+
+def _fingerprint_native_tree(root: Path, path: PurePosixPath) -> dict[str, object]:
+    resolved, status, root_links = _resolve_native_path(root, path, "native tree")
+    if not stat.S_ISDIR(status.st_mode):
+        raise BootstrapError(f"native tree is not a directory: {path}")
+    digest = hashlib.sha256()
+    digest.update(b"pm.native-tree/v1\0")
+    _fingerprint_field(digest, os.fsencode(str(path)))
+    _fingerprint_links(digest, root_links)
+    entry_count = 0
+    total_bytes = 0
+    symlink_traversals = len(root_links)
+    pending: list[tuple[Path, tuple[str, ...], os.stat_result]] = [
+        (resolved, (), status)
+    ]
+    while pending:
+        directory, relative_parent, directory_status = pending.pop()
+        children: list[tuple[Path, tuple[str, ...], os.stat_result]] = []
+        for name, child_status, target in _scan_native_directory(
+            directory, directory_status, f"native tree {path}"
+        ):
+            entry_count += 1
+            if entry_count > MAX_NATIVE_TREE_ENTRIES:
+                raise BootstrapError(f"native tree has too many entries: {path}")
+            relative_parts = (*relative_parent, name)
+            relative = b"/".join(os.fsencode(part) for part in relative_parts)
+            child = directory / name
+            if stat.S_ISDIR(child_status.st_mode):
+                _fingerprint_field(digest, b"D")
+                _fingerprint_field(digest, relative)
+                children.append((child, relative_parts, child_status))
+            elif stat.S_ISREG(child_status.st_mode):
+                _fingerprint_field(digest, b"F")
+                _fingerprint_field(digest, relative)
+                remaining = MAX_NATIVE_TREE_BYTES - total_bytes
+                size = _hash_native_regular_file(
+                    child,
+                    child_status,
+                    digest,
+                    limit=remaining,
+                    context=f"native tree file {path}/{os.fsdecode(relative)}",
+                )
+                total_bytes += size
+            elif stat.S_ISLNK(child_status.st_mode):
+                if target is None:
+                    raise BootstrapError(f"cannot read native tree symlink: {child}")
+                _fingerprint_field(digest, b"L")
+                _fingerprint_field(digest, relative)
+                _fingerprint_field(digest, os.fsencode(target))
+                logical = PurePosixPath(str(path), *relative_parts)
+                _, target_status, traversed = _resolve_native_path(
+                    root, logical, "native tree symlink"
+                )
+                symlink_traversals += len(traversed)
+                if symlink_traversals > MAX_NATIVE_TREE_ENTRIES:
+                    raise BootstrapError(
+                        f"native tree exceeds the symlink traversal limit: {path}"
+                    )
+                if not (
+                    stat.S_ISREG(target_status.st_mode)
+                    or stat.S_ISDIR(target_status.st_mode)
+                ):
+                    raise BootstrapError(
+                        f"native tree symlink targets a special file: {logical}"
+                    )
+            else:
+                raise BootstrapError(f"native tree contains a special file: {child}")
+        pending.extend(reversed(children))
+    final_resolved, final_status, final_links = _resolve_native_path(
+        root, path, "native tree"
+    )
+    if (
+        final_resolved != resolved
+        or final_links != root_links
+        or final_status.st_dev != status.st_dev
+        or final_status.st_ino != status.st_ino
+    ):
+        raise BootstrapError(f"native tree changed during capture: {path}")
+    return {
+        "path": str(path),
+        "sha256": digest.hexdigest(),
+        "entry_count": entry_count,
+        "total_bytes": total_bytes,
+    }
+
+
+def _validate_native_linker(
+    linker: object,
+    platform: str | None = None,
+    *,
+    toolchain_lock: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    record = _require_object(linker, "native environment linker")
+    _require_keys(
+        record,
+        {"asset_id", "executable", "source_sha256"},
+        set(),
+        "native environment linker",
+    )
+    asset_id = _require_string(record["asset_id"], "native environment linker.asset_id")
+    executable_text = _require_string(
+        record["executable"], "native environment linker.executable"
+    )
+    source_sha256 = _require_string(
+        record["source_sha256"], "native environment linker.source_sha256"
+    )
+    executable = _safe_archive_path(
+        executable_text, "native environment linker executable"
+    )
+    if asset_id != "clang":
+        raise BootstrapError("native environment linker asset_id must be clang")
+    if executable.name != "ld.lld" or executable.parent.name != "bin":
+        raise BootstrapError(
+            "native environment linker must be the selected Clang archive's bin/ld.lld"
+        )
+    if not HEX_SHA256.fullmatch(source_sha256):
+        raise BootstrapError(
+            "native environment linker.source_sha256 must be lowercase hexadecimal SHA-256"
+        )
+    normalized = {
+        "asset_id": asset_id,
+        "executable": executable_text,
+        "source_sha256": source_sha256,
+    }
+    if platform is not None:
+        lock = (
+            _load_lock()
+            if toolchain_lock is None
+            else _validate_lock(dict(toolchain_lock))
+        )
+        asset = _find_asset(lock, "clang", platform)
+        expected = {
+            "asset_id": "clang",
+            "executable": str(_clang_linker_relative(asset)),
+            "source_sha256": asset["sha256"],
+        }
+        if normalized != expected:
+            raise BootstrapError(
+                "native environment linker does not match the locked Clang source"
+            )
+    return normalized
+
+
+def _validate_native_environment_profile(
+    profile: object,
+    *,
+    toolchain_lock: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    value = _require_object(profile, "native environment profile")
+    _require_keys(
+        value,
+        {
+            "schema_version",
+            "qualification_scope",
+            "platform",
+            "sysroot",
+            "gcc_install_dir",
+            "trees",
+            "files",
+            "linker",
+        },
+        set(),
+        "native environment profile",
+    )
+    if value["schema_version"] != NATIVE_ENVIRONMENT_SCHEMA:
+        raise BootstrapError("unsupported native environment profile schema")
+    if value["qualification_scope"] != NATIVE_QUALIFICATION_SCOPE:
+        raise BootstrapError("unsupported native environment qualification scope")
+    platform = _require_string(value["platform"], "native environment platform")
+    if platform not in LINUX_NATIVE_PLATFORMS:
+        raise BootstrapError(f"unsupported native environment platform: {platform}")
+    if value["sysroot"] != "/":
+        raise BootstrapError("native environment sysroot must be /")
+    raw_gcc = value["gcc_install_dir"]
+    gcc_install_dir: str | None
+    if raw_gcc is None:
+        gcc_install_dir = None
+    else:
+        gcc_install_dir = str(
+            _native_path(raw_gcc, "native environment gcc_install_dir")
+        )
+
+    raw_trees = value["trees"]
+    if not isinstance(raw_trees, list) or not 1 <= len(raw_trees) <= MAX_NATIVE_TREES:
+        raise BootstrapError(
+            f"native environment trees must contain 1 through {MAX_NATIVE_TREES} records"
+        )
+    trees: list[dict[str, object]] = []
+    for index, item in enumerate(raw_trees):
+        context = f"native environment trees[{index}]"
+        record = _require_object(item, context)
+        _require_keys(
+            record,
+            {"path", "sha256", "entry_count", "total_bytes"},
+            set(),
+            context,
+        )
+        tree_path = str(_native_path(record["path"], f"{context}.path"))
+        digest = _require_string(record["sha256"], f"{context}.sha256")
+        if not HEX_SHA256.fullmatch(digest):
+            raise BootstrapError(f"{context}.sha256 must be lowercase hexadecimal SHA-256")
+        entry_count = _require_bounded_integer(
+            record["entry_count"], f"{context}.entry_count", MAX_NATIVE_TREE_ENTRIES
+        )
+        total_bytes = _require_bounded_integer(
+            record["total_bytes"], f"{context}.total_bytes", MAX_NATIVE_TREE_BYTES
+        )
+        trees.append(
+            {
+                "path": tree_path,
+                "sha256": digest,
+                "entry_count": entry_count,
+                "total_bytes": total_bytes,
+            }
+        )
+    tree_paths = [str(record["path"]) for record in trees]
+    if tree_paths != sorted(set(tree_paths)):
+        raise BootstrapError("native environment trees must be uniquely sorted by path")
+
+    raw_files = value["files"]
+    if not isinstance(raw_files, list) or not 1 <= len(raw_files) <= MAX_NATIVE_FILES:
+        raise BootstrapError(
+            f"native environment files must contain 1 through {MAX_NATIVE_FILES} records"
+        )
+    files: list[dict[str, object]] = []
+    for index, item in enumerate(raw_files):
+        context = f"native environment files[{index}]"
+        record = _require_object(item, context)
+        _require_keys(record, {"path", "sha256", "byte_count"}, set(), context)
+        file_path = str(_native_path(record["path"], f"{context}.path"))
+        digest = _require_string(record["sha256"], f"{context}.sha256")
+        if not HEX_SHA256.fullmatch(digest):
+            raise BootstrapError(f"{context}.sha256 must be lowercase hexadecimal SHA-256")
+        byte_count = _require_bounded_integer(
+            record["byte_count"], f"{context}.byte_count", MAX_NATIVE_FILE_BYTES
+        )
+        files.append(
+            {"path": file_path, "sha256": digest, "byte_count": byte_count}
+        )
+    file_paths = [str(record["path"]) for record in files]
+    if file_paths != sorted(set(file_paths)):
+        raise BootstrapError("native environment files must be uniquely sorted by path")
+    if not NATIVE_OS_IDENTITY_PATHS.intersection(file_paths):
+        raise BootstrapError(
+            "native environment files must include /etc/os-release or /usr/lib/os-release"
+        )
+    names = {PurePosixPath(path).name for path in file_paths}
+    missing_names = sorted(NATIVE_REQUIRED_FILE_NAMES - names)
+    if missing_names:
+        raise BootstrapError(
+            "native environment files are missing required native inputs: "
+            + ", ".join(missing_names)
+        )
+    if gcc_install_dir is not None:
+        gcc_path = PurePosixPath(gcc_install_dir)
+        if not any(
+            gcc_path == PurePosixPath(tree)
+            or PurePosixPath(tree) in gcc_path.parents
+            for tree in tree_paths
+        ):
+            raise BootstrapError(
+                "native environment gcc_install_dir must be covered by a tree"
+            )
+
+    return {
+        "schema_version": NATIVE_ENVIRONMENT_SCHEMA,
+        "qualification_scope": NATIVE_QUALIFICATION_SCOPE,
+        "platform": platform,
+        "sysroot": "/",
+        "gcc_install_dir": gcc_install_dir,
+        "trees": trees,
+        "files": files,
+        "linker": _validate_native_linker(
+            value["linker"], platform, toolchain_lock=toolchain_lock
+        ),
+    }
+
+def capture_native_environment(
+    root: Path,
+    platform: str,
+    gcc_install_dir: str | None,
+    trees: Sequence[str],
+    files: Sequence[str],
+    linker: Mapping[str, object],
+    *,
+    toolchain_lock: Mapping[str, object] | None = None,
+) -> dict[str, object]:
+    """Capture a bounded development-host native identity below ``root``."""
+    if platform not in LINUX_NATIVE_PLATFORMS:
+        raise BootstrapError(f"unsupported native environment platform: {platform}")
+    capture_lock = (
+        _load_lock()
+        if toolchain_lock is None
+        else _validate_lock(dict(toolchain_lock))
+    )
+    if isinstance(trees, (str, bytes)) or not 1 <= len(trees) <= MAX_NATIVE_TREES:
+        raise BootstrapError(
+            f"native environment trees must contain 1 through {MAX_NATIVE_TREES} paths"
+        )
+    if isinstance(files, (str, bytes)) or not 1 <= len(files) <= MAX_NATIVE_FILES:
+        raise BootstrapError(
+            f"native environment files must contain 1 through {MAX_NATIVE_FILES} paths"
+        )
+    tree_paths = sorted(
+        str(_native_path(path, "native environment tree path")) for path in trees
+    )
+    file_paths = sorted(
+        str(_native_path(path, "native environment file path")) for path in files
+    )
+    if len(tree_paths) != len(set(tree_paths)):
+        raise BootstrapError("native environment tree paths must be unique")
+    if len(file_paths) != len(set(file_paths)):
+        raise BootstrapError("native environment file paths must be unique")
+
+    normalized_gcc: str | None
+    normalized_linker = _validate_native_linker(
+        linker, platform, toolchain_lock=capture_lock
+    )
+    if gcc_install_dir is None:
+        normalized_gcc = None
+    else:
+        normalized_gcc = str(
+            _native_path(gcc_install_dir, "native environment gcc_install_dir")
+        )
+
+    with _native_root(root) as opened_root:
+        if normalized_gcc is not None:
+            gcc_path, gcc_status, _ = _resolve_native_path(
+                opened_root,
+                PurePosixPath(normalized_gcc),
+                "native environment gcc_install_dir",
+            )
+            if not stat.S_ISDIR(gcc_status.st_mode):
+                raise BootstrapError(
+                    f"native environment gcc_install_dir is not a directory: {gcc_path}"
+                )
+
+        profile = {
+            "schema_version": NATIVE_ENVIRONMENT_SCHEMA,
+            "qualification_scope": NATIVE_QUALIFICATION_SCOPE,
+            "platform": platform,
+            "sysroot": "/",
+            "gcc_install_dir": normalized_gcc,
+            "trees": [
+                _fingerprint_native_tree(opened_root, PurePosixPath(path))
+                for path in tree_paths
+            ],
+            "files": [
+                _fingerprint_native_file(opened_root, PurePosixPath(path))
+                for path in file_paths
+            ],
+            "linker": normalized_linker,
+        }
+    return _validate_native_environment_profile(
+        profile, toolchain_lock=capture_lock
+    )
+
+
+def verify_native_environment(
+    root: Path, profile: Mapping[str, object]
+) -> None:
+    """Refuse when a closed native profile differs from the supplied root."""
+    expected = _validate_native_environment_profile(profile)
+    observed = capture_native_environment(
+        root,
+        str(expected["platform"]),
+        expected["gcc_install_dir"],  # type: ignore[arg-type]
+        [str(record["path"]) for record in expected["trees"]],  # type: ignore[index]
+        [str(record["path"]) for record in expected["files"]],  # type: ignore[index]
+        expected["linker"],  # type: ignore[arg-type]
+    )
+    if observed == expected:
+        return
+    for group in ("trees", "files"):
+        expected_records = expected[group]  # type: ignore[assignment]
+        observed_records = observed[group]  # type: ignore[assignment]
+        for expected_record, observed_record in zip(
+            expected_records, observed_records  # type: ignore[arg-type]
+        ):
+            if expected_record != observed_record:
+                raise BootstrapError(
+                    f"native environment drift for {expected_record['path']}"
+                )
+    raise BootstrapError("native environment drift")
 
 
 def _destination(root: Path, relative: PurePosixPath) -> Path:
@@ -654,18 +1392,89 @@ def _find_asset(
     return matches[0]
 
 
+def _clang_linker_relative(asset: Mapping[str, object]) -> PurePosixPath:
+    executable = _safe_archive_path(str(asset["executable"]), "locked clang executable")
+    return executable.with_name("ld.lld")
+
+
+def _compiler_runtime_relatives(
+    asset: Mapping[str, object],
+) -> list[PurePosixPath]:
+    platform = str(asset["platform"])
+    if asset["id"] != "clang" or platform not in LINUX_NATIVE_PLATFORMS:
+        return []
+    architecture = {
+        "linux-amd64": "x86_64",
+        "linux-arm64": "aarch64",
+    }[platform]
+    executable = _safe_archive_path(str(asset["executable"]), "locked clang executable")
+    resource_directory = (
+        executable.parent.parent
+        / "lib"
+        / "clang"
+        / EXPECTED_ASSET_VERSIONS["clang"].split(".", 1)[0]
+        / "lib"
+        / "linux"
+    )
+    return [
+        resource_directory / f"libclang_rt.builtins-{architecture}.a",
+        resource_directory / f"clang_rt.crtbegin-{architecture}.o",
+        resource_directory / f"clang_rt.crtend-{architecture}.o",
+    ]
+
+
 def _executable_relatives(asset: Mapping[str, object]) -> list[PurePosixPath]:
     executable = _safe_archive_path(str(asset["executable"]), "locked executable")
     paths = [executable]
     if asset["id"] == "clang":
         paths.append(executable.with_name("clang++"))
+        if str(asset["platform"]) in LINUX_NATIVE_PLATFORMS:
+            paths.append(_clang_linker_relative(asset))
     return paths
+
+
+def _verify_cached_members(
+    root: Path,
+    resolved_root: Path,
+    relatives: Sequence[PurePosixPath],
+    hashes: Mapping[str, object],
+    *,
+    executable: bool,
+    context: str,
+) -> dict[PurePosixPath, Path]:
+    if set(hashes) != {str(path) for path in relatives}:
+        raise BootstrapError(f"cached {context} set mismatch: {root}")
+    result: dict[PurePosixPath, Path] = {}
+    for relative in relatives:
+        member = root.joinpath(*relative.parts)
+        try:
+            resolved = member.resolve(strict=True)
+        except OSError as exc:
+            raise BootstrapError(f"cannot resolve cached {context} {member}: {exc}") from exc
+        if not _inside(resolved_root, resolved) or not resolved.is_file():
+            raise BootstrapError(f"cached {context} escapes its install root: {member}")
+        if executable and not os.access(member, os.X_OK):
+            raise BootstrapError(f"cached {context} is not executable: {member}")
+        expected_digest = _require_string(
+            hashes[str(relative)], f"cached digest for {relative}"
+        )
+        if not HEX_SHA256.fullmatch(expected_digest):
+            raise BootstrapError(f"invalid cached digest for {relative}")
+        _verify_sha256(member, expected_digest)
+        result[relative] = member.absolute()
+    return result
 
 
 def _verify_install(root: Path, asset: Mapping[str, object]) -> dict[PurePosixPath, Path]:
     marker_path = root / ".pm-bootstrap.json"
     marker = _require_object(_read_json(marker_path), "bootstrap cache marker")
-    _require_keys(marker, {"schema_version", "asset", "executables"}, set(), "cache marker")
+    runtime_relatives = _compiler_runtime_relatives(asset)
+    _require_keys(
+        marker,
+        {"schema_version", "asset", "executables"},
+        {"runtime_files"} if runtime_relatives else set(),
+        "cache marker",
+    )
     if marker["schema_version"] != "pm.bootstrap-cache/v1":
         raise BootstrapError(f"unsupported cache marker schema: {marker_path}")
     identity = _require_object(marker["asset"], "cache marker asset")
@@ -678,38 +1487,35 @@ def _verify_install(root: Path, asset: Mapping[str, object]) -> dict[PurePosixPa
     }
     if identity != expected_identity:
         raise BootstrapError(f"cached install identity mismatch: {root}")
-    executable_hashes = _require_object(marker["executables"], "cache marker executables")
-    expected_relatives = _executable_relatives(asset)
-    if set(executable_hashes) != {str(path) for path in expected_relatives}:
-        raise BootstrapError(f"cached executable set mismatch: {root}")
     resolved_root = root.resolve(strict=True)
-    result: dict[PurePosixPath, Path] = {}
-    for relative in expected_relatives:
-        executable = root.joinpath(*relative.parts)
-        try:
-            resolved = executable.resolve(strict=True)
-        except OSError as exc:
-            raise BootstrapError(f"cannot resolve cached executable {executable}: {exc}") from exc
-        if not _inside(resolved_root, resolved) or not resolved.is_file():
-            raise BootstrapError(f"cached executable escapes its install root: {executable}")
-        if not os.access(executable, os.X_OK):
-            raise BootstrapError(f"cached executable is not executable: {executable}")
-        expected_digest = _require_string(
-            executable_hashes[str(relative)], f"cached digest for {relative}"
+    executable_hashes = _require_object(marker["executables"], "cache marker executables")
+    result = _verify_cached_members(
+        root,
+        resolved_root,
+        _executable_relatives(asset),
+        executable_hashes,
+        executable=True,
+        context="executable",
+    )
+    if runtime_relatives:
+        runtime_hashes = _require_object(
+            marker.get("runtime_files"), "cache marker compiler runtime files"
         )
-        if not HEX_SHA256.fullmatch(expected_digest):
-            raise BootstrapError(f"invalid cached digest for {relative}")
-        _verify_sha256(executable, expected_digest)
-        result[relative] = executable.absolute()
+        result.update(
+            _verify_cached_members(
+                root,
+                resolved_root,
+                runtime_relatives,
+                runtime_hashes,
+                executable=False,
+                context="compiler runtime file",
+            )
+        )
     return result
 
 
-def _install_asset(
-    lock: Mapping[str, object], asset_id: str, selected_platform: str, cache: Path
-) -> tuple[dict[str, object], dict[PurePosixPath, Path]]:
-    asset = _find_asset(lock, asset_id, selected_platform)
-    identity = f"{asset['id']}-{asset['version']}-{asset['platform']}-{asset['sha256']}"
-    install_root = (
+def _asset_install_root(asset: Mapping[str, object], cache: Path) -> Path:
+    root = (
         cache
         / "tools"
         / str(asset["id"])
@@ -717,6 +1523,20 @@ def _install_asset(
         / str(asset["platform"])
         / str(asset["sha256"])
     )
+    if (
+        asset["id"] == "clang"
+        and str(asset["platform"]) in LINUX_NATIVE_PLATFORMS
+    ):
+        return root / "native-v1"
+    return root
+
+
+def _install_asset(
+    lock: Mapping[str, object], asset_id: str, selected_platform: str, cache: Path
+) -> tuple[dict[str, object], dict[PurePosixPath, Path]]:
+    asset = _find_asset(lock, asset_id, selected_platform)
+    identity = f"{asset['id']}-{asset['version']}-{asset['platform']}-{asset['sha256']}"
+    install_root = _asset_install_root(asset, cache)
     with _file_lock(cache / "locks" / f"{identity}.lock"):
         download = _download(asset, cache)
         if install_root.exists():
@@ -742,6 +1562,7 @@ def _install_asset(
                 _extract_archive(download, str(asset["kind"]), payload)
 
             executable_hashes: dict[str, str] = {}
+            resolved_payload = payload.resolve(strict=True)
             for relative in _executable_relatives(asset):
                 executable = payload.joinpath(*relative.parts)
                 try:
@@ -750,11 +1571,23 @@ def _install_asset(
                     raise BootstrapError(
                         f"locked executable is absent from {asset_id} archive: {relative}"
                     ) from exc
-                if not _inside(payload.resolve(strict=True), resolved) or not resolved.is_file():
+                if not _inside(resolved_payload, resolved) or not resolved.is_file():
                     raise BootstrapError(f"locked executable is unsafe: {relative}")
                 if not os.access(executable, os.X_OK):
                     raise BootstrapError(f"locked executable lacks execute permission: {relative}")
                 executable_hashes[str(relative)] = _sha256_file(executable)
+            runtime_hashes: dict[str, str] = {}
+            for relative in _compiler_runtime_relatives(asset):
+                runtime = payload.joinpath(*relative.parts)
+                try:
+                    resolved = runtime.resolve(strict=True)
+                except OSError as exc:
+                    raise BootstrapError(
+                        f"compiler runtime is absent from {asset_id} archive: {relative}"
+                    ) from exc
+                if not _inside(resolved_payload, resolved) or not resolved.is_file():
+                    raise BootstrapError(f"compiler runtime is unsafe: {relative}")
+                runtime_hashes[str(relative)] = _sha256_file(runtime)
             marker = {
                 "schema_version": "pm.bootstrap-cache/v1",
                 "asset": {
@@ -765,6 +1598,8 @@ def _install_asset(
                 },
                 "executables": executable_hashes,
             }
+            if runtime_hashes:
+                marker["runtime_files"] = runtime_hashes
             _atomic_write(
                 payload / ".pm-bootstrap.json",
                 (json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n").encode(),
@@ -786,14 +1621,7 @@ def _resolve_tool(
 def _selected_asset_root(
     asset: Mapping[str, object], cache: Path
 ) -> Path:
-    root = (
-        cache
-        / "tools"
-        / str(asset["id"])
-        / str(asset["version"])
-        / str(asset["platform"])
-        / str(asset["sha256"])
-    )
+    root = _asset_install_root(asset, cache)
     try:
         return root.resolve(strict=True)
     except OSError as exc:
@@ -802,10 +1630,448 @@ def _selected_asset_root(
 
 def _compiler_paths(
     lock: Mapping[str, object], selected_platform: str, cache: Path
-) -> tuple[dict[str, object], Path, Path]:
+) -> tuple[
+    dict[str, object],
+    Path,
+    Path,
+    Path | None,
+    tuple[Path, ...],
+]:
     asset, installed = _install_asset(lock, "clang", selected_platform, cache)
     clang = _safe_archive_path(str(asset["executable"]), "locked clang executable")
-    return asset, installed[clang], installed[clang.with_name("clang++")]
+    linker = (
+        installed[_clang_linker_relative(asset)]
+        if selected_platform in LINUX_NATIVE_PLATFORMS
+        else None
+    )
+    runtimes = tuple(installed[path] for path in _compiler_runtime_relatives(asset))
+    return (
+        asset,
+        installed[clang],
+        installed[clang.with_name("clang++")],
+        linker,
+        runtimes,
+    )
+
+
+def _load_native_environment_profile() -> dict[str, object]:
+    try:
+        status = os.lstat(NATIVE_ENVIRONMENT_PATH)
+    except OSError as exc:
+        raise BootstrapError(
+            "Linux native execution is unqualified: committed "
+            f"{NATIVE_ENVIRONMENT_PATH.relative_to(ROOT)} is unavailable: {exc}"
+        ) from exc
+    if (
+        not stat.S_ISREG(status.st_mode)
+        or status.st_size < 0
+        or status.st_size > MAX_NATIVE_PROFILE_BYTES
+    ):
+        raise BootstrapError(
+            "Linux native execution is unqualified: committed native environment "
+            "profile is not a bounded regular file"
+        )
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise BootstrapError("safe native profile opening is unavailable on this host")
+    flags = os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW
+    if hasattr(os, "O_CLOEXEC"):
+        flags |= os.O_CLOEXEC
+    try:
+        descriptor = os.open(NATIVE_ENVIRONMENT_PATH, flags)
+    except OSError as exc:
+        raise BootstrapError(
+            f"cannot open committed native environment profile: {exc}"
+        ) from exc
+    try:
+        opened_status = os.fstat(descriptor)
+        if (
+            not stat.S_ISREG(opened_status.st_mode)
+            or opened_status.st_dev != status.st_dev
+            or opened_status.st_ino != status.st_ino
+            or opened_status.st_size != status.st_size
+        ):
+            raise BootstrapError(
+                "committed native environment profile changed before it was opened"
+            )
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(
+                descriptor,
+                min(CHUNK_BYTES, MAX_NATIVE_PROFILE_BYTES + 1 - total),
+            )
+            if not chunk:
+                break
+            chunks.append(chunk)
+            total += len(chunk)
+            if total > MAX_NATIVE_PROFILE_BYTES:
+                raise BootstrapError(
+                    "committed native environment profile is too large"
+                )
+        final_status = os.fstat(descriptor)
+        if (
+            total != opened_status.st_size
+            or final_status.st_dev != opened_status.st_dev
+            or final_status.st_ino != opened_status.st_ino
+            or final_status.st_size != opened_status.st_size
+            or final_status.st_mtime_ns != opened_status.st_mtime_ns
+        ):
+            raise BootstrapError(
+                "committed native environment profile changed while it was read"
+            )
+    except OSError as exc:
+        raise BootstrapError(
+            f"cannot read committed native environment profile: {exc}"
+        ) from exc
+    finally:
+        os.close(descriptor)
+    try:
+        profile = json.loads(
+            b"".join(chunks).decode("utf-8"),
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise BootstrapError(
+            f"cannot read strict native environment JSON: {exc}"
+        ) from exc
+    return _validate_native_environment_profile(profile)
+
+
+def _verified_linux_profile(
+    lock: Mapping[str, object], selected_platform: str
+) -> dict[str, object]:
+    profile = _load_native_environment_profile()
+    if profile["platform"] != selected_platform:
+        raise BootstrapError(
+            "Linux native execution is unqualified for this host: "
+            f"profile={profile['platform']}, host={selected_platform}"
+        )
+    clang_asset = _find_asset(lock, "clang", selected_platform)
+    expected_linker = {
+        "asset_id": "clang",
+        "executable": str(_clang_linker_relative(clang_asset)),
+        "source_sha256": clang_asset["sha256"],
+    }
+    if profile["linker"] != expected_linker:
+        raise BootstrapError(
+            "native environment linker does not match the selected Clang source"
+        )
+    return profile
+
+
+def _native_profile_record(
+    profile: Mapping[str, object], name: str
+) -> dict[str, object]:
+    matches = [
+        record
+        for record in profile["files"]  # type: ignore[index]
+        if PurePosixPath(str(record["path"])).name == name
+    ]
+    if len(matches) != 1:
+        raise BootstrapError(
+            f"native environment must select exactly one {name}, found {len(matches)}"
+        )
+    return matches[0]  # type: ignore[return-value]
+
+
+def _native_profile_sha256(profile: Mapping[str, object]) -> str:
+    canonical = json.dumps(
+        profile, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
+
+
+def _prepare_native_linker_inputs(
+    profile: Mapping[str, object],
+    profile_sha256: str,
+    cache: Path,
+) -> tuple[Path, dict[str, object]]:
+    targets = {
+        "libgcc_s.so": _native_profile_record(profile, "libgcc_s.so.1"),
+        "libstdc++.so": _native_profile_record(profile, "libstdc++.so.6"),
+    }
+    scripts = {
+        name: (
+            'INPUT ( "'
+            + str(record["path"]).replace('"', '\\"')
+            + '" )\n'
+        ).encode("utf-8")
+        for name, record in targets.items()
+    }
+    declaration = {
+        "schema_version": "pm.native-derived-linker-inputs/v1",
+        "native_environment_sha256": profile_sha256,
+        "targets": targets,
+        "scripts": {
+            name: hashlib.sha256(content).hexdigest()
+            for name, content in scripts.items()
+        },
+    }
+    declaration_bytes = json.dumps(
+        declaration, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    identity = hashlib.sha256(declaration_bytes).hexdigest()
+    linker_root = cache / "native-linker"
+    directory = linker_root / identity
+    with _file_lock(cache / "locks" / f"native-linker-{identity}.lock"):
+        if os.path.lexists(linker_root):
+            if not linker_root.is_dir() or linker_root.is_symlink():
+                raise BootstrapError(
+                    f"derived native linker root is not a directory: {linker_root}"
+                )
+        else:
+            try:
+                linker_root.mkdir(mode=0o700)
+            except OSError as exc:
+                raise BootstrapError(
+                    f"cannot create derived native linker root {linker_root}: {exc}"
+                ) from exc
+        if os.path.lexists(directory):
+            if not directory.is_dir() or directory.is_symlink():
+                raise BootstrapError(
+                    f"derived native linker input is not a directory: {directory}"
+                )
+        else:
+            try:
+                directory.mkdir(mode=0o700)
+            except OSError as exc:
+                raise BootstrapError(
+                    f"cannot create derived native linker input {directory}: {exc}"
+                ) from exc
+        for name, content in scripts.items():
+            path = directory / name
+            if os.path.lexists(path):
+                try:
+                    status = os.lstat(path)
+                except OSError as exc:
+                    raise BootstrapError(
+                        f"cannot inspect derived native linker input {path}: {exc}"
+                    ) from exc
+                if not stat.S_ISREG(status.st_mode):
+                    raise BootstrapError(
+                        f"derived native linker input is not a regular file: {path}"
+                    )
+                try:
+                    observed = path.read_bytes()
+                except OSError as exc:
+                    raise BootstrapError(
+                        f"cannot read derived native linker input {path}: {exc}"
+                    ) from exc
+                if observed != content:
+                    raise BootstrapError(
+                        f"derived native linker input content mismatch: {path}"
+                    )
+            else:
+                _atomic_write(path, content, 0o444)
+        try:
+            with os.scandir(directory) as entries:
+                members = {entry.name for entry in entries}
+        except OSError as exc:
+            raise BootstrapError(
+                f"cannot inspect derived native linker inputs {directory}: {exc}"
+            ) from exc
+        if members != set(scripts):
+            raise BootstrapError(
+                f"derived native linker input set mismatch: {directory}"
+            )
+    return directory, {
+        **declaration,
+        "identity_sha256": identity,
+        "path": str(directory),
+    }
+
+
+@dataclass(frozen=True)
+class _NativeSelection:
+    asset: dict[str, object]
+    cc: Path
+    cxx: Path
+    linker: Path | None
+    environment: dict[str, str]
+    driver_compile_options: tuple[str, ...]
+    driver_link_options: tuple[str, ...]
+    bazel_compile_options: tuple[str, ...]
+    bazel_link_options: tuple[str, ...]
+    identity: dict[str, object] | None
+
+
+def _native_selection(
+    lock: Mapping[str, object], selected_platform: str, cache: Path
+) -> _NativeSelection:
+    profile = (
+        _verified_linux_profile(lock, selected_platform)
+        if selected_platform in LINUX_NATIVE_PLATFORMS
+        else None
+    )
+    asset, cc, cxx, linker, compiler_runtimes = _compiler_paths(
+        lock, selected_platform, cache
+    )
+    if profile is None:
+        environment = _darwin_native_environment()
+        sdk = environment["SDKROOT"]
+        bazel_options = ("-isysroot", sdk)
+        return _NativeSelection(
+            asset=asset,
+            cc=cc,
+            cxx=cxx,
+            linker=None,
+            environment=environment,
+            driver_compile_options=(),
+            driver_link_options=(),
+            bazel_compile_options=bazel_options,
+            bazel_link_options=bazel_options,
+            identity=None,
+        )
+
+    if linker is None:
+        raise BootstrapError("selected Linux Clang archive has no verified ld.lld")
+    expected_linker = _selected_asset_root(asset, cache).joinpath(
+        *_safe_archive_path(
+            str(profile["linker"]["executable"]),  # type: ignore[index]
+            "native environment linker executable",
+        ).parts
+    )
+    if linker.resolve(strict=True) != expected_linker.resolve(strict=True):
+        raise BootstrapError("resolved linker is outside the selected Clang source")
+    verify_native_environment(Path("/"), profile)
+    profile_sha256 = _native_profile_sha256(profile)
+    linker_inputs, linker_input_identity = _prepare_native_linker_inputs(
+        profile, profile_sha256, cache
+    )
+    target_goos, target_goarch, target_triple = LINUX_NATIVE_GO_TARGETS[
+        selected_platform
+    ]
+    compile_options = [
+        "--no-default-config",
+        f"-DPM_NATIVE_ENVIRONMENT_SHA256={profile_sha256}",
+        f"--target={target_triple}",
+        "--sysroot=/",
+    ]
+    gcc_install_dir = profile["gcc_install_dir"]
+    if gcc_install_dir is None:
+        if len(compiler_runtimes) != 3:
+            raise BootstrapError(
+                "selected Clang source lacks the required compiler-rt runtime closure"
+            )
+        compile_options.append(f"--gcc-toolchain={cc.parent.parent}")
+        runtime_options = [
+            "--rtlib=compiler-rt",
+            "--unwindlib=libgcc",
+            "-nostdlib++",
+        ]
+        compiler_runtime = "selected-clang-compiler-rt"
+    else:
+        compile_options.append(f"--gcc-install-dir={gcc_install_dir}")
+        runtime_options = ["--rtlib=libgcc", "--unwindlib=libgcc"]
+        compiler_runtime = "profiled-gcc"
+
+    link_options = [
+        *compile_options,
+        f"-fuse-ld={linker}",
+        f"-L{linker_inputs}",
+        *runtime_options,
+        "-lgcc_s",
+    ]
+    environment = {
+        "CC": str(cc),
+        "CXX": str(cxx),
+        "LD": str(linker),
+        "GOENV": "off",
+        "GOOS": target_goos,
+        "GOARCH": target_goarch,
+        "CGO_CFLAGS": shlex.join(compile_options),
+        "CGO_CPPFLAGS": shlex.join(compile_options),
+        "CGO_CXXFLAGS": shlex.join(compile_options),
+        "CGO_LDFLAGS": shlex.join(link_options),
+    }
+    identity = {
+        "profile": profile,
+        "profile_sha256": profile_sha256,
+        "compiler_runtime": compiler_runtime,
+        "compiler_runtime_files": [str(path) for path in compiler_runtimes],
+        "compiler": str(cc),
+        "linker": str(linker),
+        "derived_linker_inputs": linker_input_identity,
+        "cleared_environment": sorted(LINUX_NATIVE_AMBIENT_OVERRIDES),
+    }
+    return _NativeSelection(
+        asset=asset,
+        cc=cc,
+        cxx=cxx,
+        linker=linker,
+        environment=environment,
+        driver_compile_options=tuple(compile_options),
+        driver_link_options=tuple(link_options),
+        bazel_compile_options=tuple(compile_options),
+        bazel_link_options=tuple(link_options),
+        identity=identity,
+    )
+
+
+def _clang_driver_options(
+    arguments: Sequence[str], native: _NativeSelection
+) -> tuple[str, ...]:
+    non_linking = {
+        "--help",
+        "--version",
+        "-E",
+        "-M",
+        "-MM",
+        "-S",
+        "-c",
+        "-dumpmachine",
+        "-fsyntax-only",
+        "-print-resource-dir",
+        "-print-target-triple",
+    }
+    if any(argument in non_linking for argument in arguments):
+        return native.driver_compile_options
+    return native.driver_link_options
+
+
+def _apply_native_selection(
+    environment: dict[str, str],
+    selected_platform: str,
+    selection: _NativeSelection,
+) -> None:
+    if selected_platform in LINUX_NATIVE_PLATFORMS:
+        for name in LINUX_NATIVE_AMBIENT_OVERRIDES:
+            environment.pop(name, None)
+    environment.update(selection.environment)
+
+
+def _reject_unadmitted_linux_native_requests(
+    environment: Mapping[str, str],
+    selected_platform: str,
+    tool: str,
+) -> None:
+    if tool not in {"go", "bazelisk"}:
+        return
+    cgo_overrides = sorted(
+        name
+        for name in LINUX_NATIVE_CGO_OVERRIDES
+        if environment.get(name, "").strip()
+    )
+    if cgo_overrides:
+        raise BootstrapError(
+            "unadmitted Linux native CGO flag overrides are not allowed: "
+            + ", ".join(cgo_overrides)
+        )
+    target_goos, target_goarch, _ = LINUX_NATIVE_GO_TARGETS[selected_platform]
+    requested_goos = environment.get("GOOS", "").strip()
+    requested_goarch = environment.get("GOARCH", "").strip()
+    if requested_goos and requested_goos != target_goos:
+        raise BootstrapError(
+            f"unqualified Linux native GOOS requested: {requested_goos}"
+        )
+    if requested_goarch and requested_goarch != target_goarch:
+        raise BootstrapError(
+            f"unqualified Linux native GOARCH requested: {requested_goarch}"
+        )
+
+
 
 
 def _bazel_path_segment(selected_platform: str) -> str:
@@ -859,12 +2125,14 @@ def _prepare_bazelisk_cache(
 
 
 def _bazelisk_environment(
-    lock: Mapping[str, object], selected_platform: str, cache: Path
+    lock: Mapping[str, object],
+    selected_platform: str,
+    cache: Path,
+    native: _NativeSelection,
 ) -> tuple[dict[str, object], Path, dict[str, str]]:
     bazelisk_asset, bazelisk = _resolve_tool(lock, "bazelisk", selected_platform, cache)
     bazel_asset, bazel = _resolve_tool(lock, "bazel", selected_platform, cache)
     _, go = _resolve_tool(lock, "go", selected_platform, cache)
-    _, cc, cxx = _compiler_paths(lock, selected_platform, cache)
     bazel_digest = str(bazel_asset["sha256"])
     bazelisk_home = _prepare_bazelisk_cache(
         bazel, bazel_digest, selected_platform, cache
@@ -881,8 +2149,7 @@ def _bazelisk_environment(
         "GOWORK": "off",
         "PM_GO": str(go),
         "PM_REPO_ROOT": str(ROOT),
-        "CC": str(cc),
-        "CXX": str(cxx),
+        **native.environment,
     }
     if selected_platform.startswith("darwin-"):
         environment["BAZELISK_HOME_DARWIN"] = str(bazelisk_home)
@@ -894,8 +2161,9 @@ def _bazelisk_environment(
 def _print_environment(
     lock: Mapping[str, object], selected_platform: str, cache: Path
 ) -> None:
+    native = _native_selection(lock, selected_platform, cache)
     go_asset, go = _resolve_tool(lock, "go", selected_platform, cache)
-    clang_asset, cc, cxx = _compiler_paths(lock, selected_platform, cache)
+    clang_asset = native.asset
     bazelisk_asset, bazelisk = _resolve_tool(lock, "bazelisk", selected_platform, cache)
     bazel_asset, bazel = _resolve_tool(lock, "bazel", selected_platform, cache)
     _prepare_bazelisk_cache(
@@ -923,13 +2191,17 @@ def _print_environment(
         "platform": selected_platform,
         "cache": str(cache),
         "GO": str(go),
-        "CC": str(cc),
-        "CXX": str(cxx),
+        "CC": str(native.cc),
+        "CXX": str(native.cxx),
+        "LD": str(native.linker) if native.linker is not None else None,
         "BAZELISK": str(bazelisk),
         "SYFT": str(syft),
         "ASSET_ROOTS": [source["path"] for source in asset_sources],
         "ASSET_SOURCES": asset_sources,
-        "native_environment": _native_environment(selected_platform),
+        "native_environment": native.environment,
+        "native_identity": native.identity,
+        "native_compile_options": list(native.bazel_compile_options),
+        "native_link_options": list(native.bazel_link_options),
         "identities": {
             "go": {"version": go_asset["version"], "sha256": go_asset["sha256"]},
             "clang": {
@@ -950,9 +2222,7 @@ def _print_environment(
     print(json.dumps(result, indent=2, sort_keys=True))
 
 
-def _native_environment(selected_platform: str) -> dict[str, str]:
-    if not selected_platform.startswith("darwin-"):
-        return {}
+def _darwin_native_environment() -> dict[str, str]:
     try:
         result = subprocess.run(
             ["/usr/bin/xcrun", "--sdk", "macosx", "--show-sdk-path"],
@@ -984,13 +2254,17 @@ def _bazel_output_root(cache: Path, selected_platform: str) -> Path:
     return user_cache / "pm-cli" / "bazel"
 
 
-def _bazel_native_rc(cache: Path, sdk: str) -> Path:
-    # rules_go's child compiler environment does not retain SDKROOT. Put the
-    # selected SDK in native Bazel build options, not a second argument parser.
-    content = "".join(
-        f"build --{option}=-isysroot\nbuild --{option}={json.dumps(sdk)}\n"
-        for option in ("copt", "host_copt", "linkopt", "host_linkopt")
-    ).encode("utf-8")
+def _bazel_native_rc(cache: Path, native: _NativeSelection) -> Path:
+    # Child compiler actions do not retain every repository environment value.
+    # Bind the same admitted native inputs directly into Bazel build options.
+    lines: list[str] = []
+    for option in ("copt", "host_copt"):
+        for argument in native.bazel_compile_options:
+            lines.append(f"build --{option}={json.dumps(argument)}\n")
+    for option in ("linkopt", "host_linkopt"):
+        for argument in native.bazel_link_options:
+            lines.append(f"build --{option}={json.dumps(argument)}\n")
+    content = "".join(lines).encode("utf-8")
     path = cache / "bazel-native" / f"{hashlib.sha256(content).hexdigest()}.bazelrc"
     _atomic_write(path, content, 0o444)
     return path
@@ -1004,25 +2278,45 @@ def _exec_tool(
     cache: Path,
 ) -> None:
     environment = os.environ.copy()
-    if tool in {"bazelisk", "clang", "clang++"} or (tool == "go" and environment.get("CGO_ENABLED") != "0"):
-        environment.update(_native_environment(selected_platform))
+    native_required = tool in {"bazelisk", "clang", "clang++"} or (
+        tool == "go" and environment.get("CGO_ENABLED") != "0"
+    )
+    if native_required and selected_platform in LINUX_NATIVE_PLATFORMS:
+        _reject_unadmitted_linux_native_requests(
+            environment, selected_platform, tool
+        )
+    native = (
+        _native_selection(lock, selected_platform, cache)
+        if native_required
+        else None
+    )
+    if native is not None:
+        _apply_native_selection(environment, selected_platform, native)
     if tool == "bazelisk":
-        _, executable, additions = _bazelisk_environment(lock, selected_platform, cache)
+        if native is None:
+            raise BootstrapError("Bazel native selection was not prepared")
+        _, executable, additions = _bazelisk_environment(
+            lock, selected_platform, cache, native
+        )
         environment.update(additions)
         environment.pop("BAZELISK_FORMAT_URL", None)
         argv = [
             str(executable),
+            f"--bazelrc={_bazel_native_rc(cache, native)}",
             "--nohome_rc",
             "--nosystem_rc",
             f"--output_user_root={_bazel_output_root(cache, selected_platform)}",
             *arguments,
         ]
-        if selected_platform.startswith("darwin-"):
-            argv.insert(1, f"--bazelrc={_bazel_native_rc(cache, environment['SDKROOT'])}")
     elif tool in {"clang", "clang++"}:
-        _, cc, cxx = _compiler_paths(lock, selected_platform, cache)
-        executable = cc if tool == "clang" else cxx
-        argv = [str(executable), *arguments]
+        if native is None:
+            raise BootstrapError("Clang native selection was not prepared")
+        executable = native.cc if tool == "clang" else native.cxx
+        argv = [
+            str(executable),
+            *arguments,
+            *_clang_driver_options(arguments, native),
+        ]
     else:
         _, executable = _resolve_tool(lock, tool, selected_platform, cache)
         argv = [str(executable), *arguments]
@@ -1032,10 +2326,6 @@ def _exec_tool(
             environment["GOROOT"] = str(executable.parent.parent)
             environment["PM_GO"] = str(executable)
             environment["PATH"] = str(executable.parent) + os.pathsep + environment.get("PATH", "")
-            if environment.get("CGO_ENABLED") != "0":
-                _, cc, cxx = _compiler_paths(lock, selected_platform, cache)
-                environment["CC"] = str(cc)
-                environment["CXX"] = str(cxx)
         elif tool == "syft":
             environment["SYFT_CHECK_FOR_APP_UPDATE"] = "false"
     try:

@@ -9,20 +9,6 @@ go_sdk.from_file(go_mod = "//:go.mod")
 go_deps = use_extension("@gazelle//:extensions.bzl", "go_deps")
 go_deps.from_file(go_mod = "//:go.mod")
 
-# Go records only the host-selected prebuilt module in go.mod. Keep the other
-# selected build platforms in this extension's resolution graph explicitly.
-go_deps.module(
-    indirect = True,
-    path = "github.com/duckdb/duckdb-go-bindings/lib/linux-amd64",
-    sum = "h1:nrsaVYj3XYCRbS2FpdOMD/KHE7egRMr+/NR1IHmjT84=",
-    version = "v0.10505.0",
-)
-go_deps.module(
-    indirect = True,
-    path = "github.com/duckdb/duckdb-go-bindings/lib/linux-arm64",
-    sum = "h1:qM6oGDgwXBILJGbTY4fCy6QOczLpucUA6yn6g3ORjh4=",
-    version = "v0.10505.0",
-)
 go_deps.module_override(
     patch_strip = 1,
     patches = ["//build/patches:duckdb-go-bindings.patch"],
