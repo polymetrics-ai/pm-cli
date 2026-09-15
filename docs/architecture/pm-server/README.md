@@ -1,6 +1,6 @@
 # PM server architecture and implementation context
 
-This bounded documentation tree projects the accepted PM server product contracts and the still-unexecuted implementation plan. [IMPORT-MANIFEST](IMPORT-MANIFEST.json) is the integrity and provenance authority for every included file: it keeps each original source identity separate from any sanitized predecessor and from the current transformed target digest and byte count.
+This bounded documentation tree projects the accepted PM server product contracts and the still-unexecuted implementation plan. [IMPORT-MANIFEST](IMPORT-MANIFEST.json) is the integrity and provenance authority for every included file: it keeps each original source identity separate from any sanitized predecessor and from the current transformed target digest. Its `files[]` records do not store per-file byte counts.
 
 The retained publication branch has a clean local committed accepted-contract candidate at `81d5795c850f3ba330ee7dbc7458dc10c7533335`. [PR #47](https://github.com/polymetrics-ai/pm-cli/pull/47) remains open and unmerged, targeting `main`; its last observed remote head, `fb80b101a28d573194cf13c293e7ba86e381cdaa`, is an earlier partial publication and does not contain the local candidate's accepted-contract amendments. Those amendments are therefore committed locally but unpublished. These corrections do not claim an invented successor commit.
 

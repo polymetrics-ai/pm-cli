@@ -281,7 +281,7 @@
     {
       "target": "docs/architecture/pm-server/README.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "6a17d291d01cd2cb2ab8363442bbeca3efd5b4023c85467a7ef16b5cb0c52133",
+      "sha256": "993f16d9a943b5dac381f419f73008cf6b152437c33546fd697011ff61d725e0",
       "transformation": "Projected the accepted contracts and disclosed the retained local committed candidate, earlier remote PR head, granted publication authority, OMP delivery custody and remaining CI/merge/BOOT/proof gates."
     },
     {
@@ -293,7 +293,7 @@
     {
       "target": "docs/architecture/pm-server/SOURCE-ACCESS.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "10f027fb865693a1745cbb8f7d38ee7dadae2fceed2ca7fffc8f7504a61896f9",
+      "sha256": "95a60058a424fe0822665ea4c761457d77c5db1758ace291df061d69620b4af7",
       "transformation": "Distinguished the immutable original ledger source digest, exact sanitized predecessor digest and manifest-owned current transformed output digest while retaining public-source authority and future capture/attribution rules."
     },
     {
