@@ -701,7 +701,12 @@ def _fingerprint_native_file(root: Path, path: PurePosixPath) -> dict[str, objec
     return {"path": str(path), "sha256": digest.hexdigest(), "byte_count": byte_count}
 
 
-def _fingerprint_native_tree(root: Path, path: PurePosixPath) -> dict[str, object]:
+def _fingerprint_native_tree(
+    root: Path,
+    path: PurePosixPath,
+    admitted_trees: Sequence[Path],
+    admitted_files: set[Path],
+) -> dict[str, object]:
     resolved, status, root_links = _resolve_native_path(root, path, "native tree")
     if not stat.S_ISDIR(status.st_mode):
         raise BootstrapError(f"native tree is not a directory: {path}")
@@ -750,9 +755,16 @@ def _fingerprint_native_tree(root: Path, path: PurePosixPath) -> dict[str, objec
                 _fingerprint_field(digest, relative)
                 _fingerprint_field(digest, os.fsencode(target))
                 logical = PurePosixPath(str(path), *relative_parts)
-                _, target_status, traversed = _resolve_native_path(
+                target_path, target_status, traversed = _resolve_native_path(
                     root, logical, "native tree symlink"
                 )
+                _fingerprint_links(digest, traversed)
+                if target_path not in admitted_files and not any(
+                    target_path.is_relative_to(tree) for tree in admitted_trees
+                ):
+                    raise BootstrapError(
+                        f"native tree symlink target is not profiled: {logical}"
+                    )
                 symlink_traversals += len(traversed)
                 if symlink_traversals > MAX_NATIVE_TREE_ENTRIES:
                     raise BootstrapError(
@@ -1037,6 +1049,14 @@ def capture_native_environment(
                     f"native environment gcc_install_dir is not a directory: {gcc_path}"
                 )
 
+        admitted_paths = {
+            path: _resolve_native_path(
+                opened_root, PurePosixPath(path), "native admitted path"
+            )[0]
+            for path in (*tree_paths, *file_paths)
+        }
+        admitted_trees = tuple(admitted_paths[path] for path in tree_paths)
+        admitted_files = {admitted_paths[path] for path in file_paths}
         profile = {
             "schema_version": NATIVE_ENVIRONMENT_SCHEMA,
             "qualification_scope": NATIVE_QUALIFICATION_SCOPE,
@@ -1044,7 +1064,12 @@ def capture_native_environment(
             "sysroot": "/",
             "gcc_install_dir": normalized_gcc,
             "trees": [
-                _fingerprint_native_tree(opened_root, PurePosixPath(path))
+                _fingerprint_native_tree(
+                    opened_root,
+                    PurePosixPath(path),
+                    admitted_trees,
+                    admitted_files,
+                )
                 for path in tree_paths
             ],
             "files": [
@@ -1053,6 +1078,11 @@ def capture_native_environment(
             ],
             "linker": normalized_linker,
         }
+        for path, target in admitted_paths.items():
+            if _resolve_native_path(
+                opened_root, PurePosixPath(path), "native admitted path"
+            )[0] != target:
+                raise BootstrapError(f"native admitted target changed during capture: {path}")
     return _validate_native_environment_profile(
         profile, toolchain_lock=capture_lock
     )
@@ -1910,6 +1940,7 @@ def _native_selection(
     )
     if profile is None:
         environment = _darwin_native_environment()
+        environment.update(CC=str(cc), CXX=str(cxx))
         sdk = environment["SDKROOT"]
         bazel_options = ("-isysroot", sdk)
         return _NativeSelection(
@@ -1943,11 +1974,39 @@ def _native_selection(
     target_goos, target_goarch, target_triple = LINUX_NATIVE_GO_TARGETS[
         selected_platform
     ]
+    resource_include = (
+        cc.parent.parent
+        / "lib"
+        / "clang"
+        / EXPECTED_ASSET_VERSIONS["clang"].split(".", 1)[0]
+        / "include"
+    )
+    if not resource_include.is_dir() or not resource_include.resolve(
+        strict=True
+    ).is_relative_to(_selected_asset_root(asset, cache).resolve(strict=True)):
+        raise BootstrapError("selected Clang source has no confined builtin headers")
+    system_includes = (
+        Path("/usr/include") / target_triple.replace("-unknown-", "-"),
+        Path("/usr/include"),
+    )
+    for include in system_includes:
+        if not include.is_dir() or not any(
+            include.is_relative_to(Path(record["path"]))
+            for record in profile["trees"]
+        ):
+            raise BootstrapError(f"native include directory is not profiled: {include}")
     compile_options = [
         "--no-default-config",
         f"-DPM_NATIVE_ENVIRONMENT_SHA256={profile_sha256}",
         f"--target={target_triple}",
         "--sysroot=/",
+        "-nostdinc",
+        "-isystem",
+        str(resource_include),
+        "-isystem",
+        str(system_includes[0]),
+        "-isystem",
+        str(system_includes[1]),
     ]
     gcc_install_dir = profile["gcc_install_dir"]
     if gcc_install_dir is None:

@@ -11,6 +11,16 @@
       "sha256": "938a7d8dbcba04bc4d501c5b393aa7e75cb17b7873b4cc84387b5bb8303a7974"
     },
     {
+      "byte_count": 123215144,
+      "path": "/usr/lib/llvm-18/lib/libLLVM.so.1",
+      "sha256": "7dfb344cc8c0b98092928cb9ec43b823d5315b97c31393a633345f68eed14edf"
+    },
+    {
+      "byte_count": 64796088,
+      "path": "/usr/lib/llvm-18/lib/libclang-cpp.so.18.1",
+      "sha256": "5f1cbbb6c1bed90786d32bf693c40cf82e23865abe6006c4ea6a1fbd0f671a94"
+    },
+    {
       "byte_count": 400,
       "path": "/usr/lib/os-release",
       "sha256": "c2b3fa3c0375dc18d7f15ffde0073a90f50e5f229fb9266c0c03d7114a553b22"
@@ -46,7 +56,7 @@
     {
       "entry_count": 2632,
       "path": "/usr/lib/x86_64-linux-gnu",
-      "sha256": "43e206df5e6e02f562274254c1614534fadbefae5c6420b14581772f9b9870e5",
+      "sha256": "919983b551640957e1effca786a2c1bb3f91240d95bda6c6a09ded17ac38b406",
       "total_bytes": 269723582
     }
   ]

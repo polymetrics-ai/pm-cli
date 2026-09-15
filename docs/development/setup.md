@@ -33,6 +33,8 @@ Linux development-native execution additionally requires the reviewed [`build/na
 
 Bootstrap verifies that profile before native execution, selects the locked Clang/`ld.lld` source, requires its compiler-rt startup/builtin objects when no GCC installation is selected, and derives local linker scripts for the admitted GNU runtime SONAMEs. It installs nothing into the host sysroot. The profile digest participates in compile and link options so a newly reviewed sysroot identity cannot reuse stale C objects. DuckDB application archives remain pinned separately by `go.sum` and the generated Bazel dependency repositories.
 
+Linux header search excludes implicit host locations: only the selected Clang builtin headers and profiled system include directories are enabled. Selected trees bind intermediate symlink selectors and refuse targets outside the declared trees or files. Two existing LLVM 18 shared-library targets are included only to close symlinks in the selected system-library tree; they are not the selected compiler.
+
 Unadmitted native flag overrides and mismatched native `GOOS`/`GOARCH` requests fail rather than falling back. A missing or changed profile requires a deliberate new capture and review; CI never refreshes it automatically. Linux targets without an admitted matching profile remain unqualified. This is bound-host development evidence, not a hermetic build or release qualification; immutable build-image digests remain mandatory before image-based or release-native builds under the [accepted TD27 amendment](https://github.com/polymetrics-ai/pm-cli/issues/3#issuecomment-5687998290).
 
 ### Build and test entry points
@@ -62,7 +64,7 @@ Run the isolated native qualification, including its negative controls, with:
 python3 scripts/ci/check-native.py
 ```
 
-It first builds and runs the native probe in an owned temporary directory under `.cache`, then reuses the resolved modules with network lookup disabled and requires normal build-path refusal for cgo disabled and for an incompatible 32-bit native target. On Linux, the latter requests an unqualified Go target and must fail host-profile preflight; it does not claim that a cross-target compiler ran. The macOS control retains its explicit incompatible C target.
+It builds and runs the native probe in an owned temporary directory under `.cache`. A separate C/C++ fixture must then compile and return its expected value while ambient `CC` and `CXX` point to failing executables, proving that child processes retain the pinned compilers. The qualification reuses resolved modules with network lookup disabled and requires normal build-path refusal for cgo disabled and for an incompatible 32-bit native target. On Linux, the latter requests an unqualified Go target and must fail host-profile preflight; it does not claim that a cross-target compiler ran. The macOS control retains its explicit incompatible C target.
 
 Run the current-platform external-tool and selected Bazel-module inventories with both Go graph checks using a disposable, uncommitted evidence directory:
 

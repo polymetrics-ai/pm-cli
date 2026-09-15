@@ -483,5 +483,46 @@ class BootstrapBoundaryTest(unittest.TestCase):
                     wrong_source,
                 )
 
+    def test_native_environment_rejects_unprofiled_header_target(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self._write_native_fixture(root)
+            outside = root / "opt/unprofiled.h"
+            outside.parent.mkdir()
+            outside.write_bytes(paths["primary_header"].read_bytes())
+            paths["selected_header"].unlink()
+            paths["selected_header"].symlink_to(
+                os.path.relpath(outside, paths["selected_header"].parent)
+            )
+            with self.assertRaises(BootstrapError):
+                self._capture_native_fixture(root)
+
+    def test_native_environment_binds_indirect_header_selector(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            paths = self._write_native_fixture(root)
+            indirect = root / "opt/header-selector.h"
+            indirect.parent.mkdir()
+            indirect.symlink_to(
+                os.path.relpath(paths["primary_header"], indirect.parent)
+            )
+            paths["selected_header"].unlink()
+            paths["selected_header"].symlink_to(
+                os.path.relpath(indirect, paths["selected_header"].parent)
+            )
+            profile = self._capture_native_fixture(root)
+            verify_native_environment(root, profile)
+            self.assertEqual(
+                paths["primary_header"].read_bytes(),
+                paths["alternate_header"].read_bytes(),
+            )
+            indirect.unlink()
+            indirect.symlink_to(
+                os.path.relpath(paths["alternate_header"], indirect.parent)
+            )
+            with self.assertRaises(BootstrapError):
+                verify_native_environment(root, profile)
+
+
 if __name__ == "__main__":
     unittest.main()
