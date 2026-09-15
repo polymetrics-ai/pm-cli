@@ -23,7 +23,12 @@ printf 'Runner: %s\n' "${RUNNER_NAME:?Actual runner identity required}"
 python3 scripts/install_architecture_docs_dependencies.py \
   --destination "$RUNNER_TEMP/foundation-docs-deps"
 export PYTHONPATH="$RUNNER_TEMP/foundation-docs-deps"
-make test-setup test-docs
+# Invoke the existing entrypoints directly; the runner does not require make.
+python3 -I -B scripts/ci/check-setup.py --root . --policy scripts/ci/setup-policy.json
+python3 -I -B scripts/ci/test_setup.py
+python3 -I -B tools/test_bootstrap.py
+python3 -B scripts/test_validate_architecture_docs.py
+python3 -B scripts/validate_architecture_docs.py
 python3 scripts/validate_architecture_docs.py --pr-event "$GITHUB_EVENT_PATH"
 
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/foundation-toolchain.json"
@@ -34,13 +39,23 @@ python3 tools/bootstrap.py exec clang -- -print-target-triple
 python3 tools/bootstrap.py exec clang -- -print-resource-dir
 python3 tools/bootstrap.py exec clang -- -print-prog-name=ld
 python3 tools/bootstrap.py exec bazelisk -- --batch version
-make build test vet
+mkdir -p .cache/bin
+CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- build -o .cache/bin/nativeprobe ./build/nativeprobe
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-dependency-check ./cmd/pm-dependency-check
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/staticcheck honnef.co/go/tools/cmd/staticcheck
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/govulncheck golang.org/x/vuln/cmd/govulncheck
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools test . -run '^TestResolvedDependencyPolicy$' -count=1 -timeout 5m
+CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- test ./build/nativeprobe -count=1 -timeout 3m
+CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- vet ./...
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools vet ./...
 .cache/bin/oapi-codegen -version
 .cache/bin/staticcheck -version
 .cache/bin/govulncheck -version
 python3 scripts/ci/check-native.py
 sh scripts/check-boundaries.sh
-make bazel-build bazel-test
+python3 tools/bootstrap.py exec bazelisk -- --batch build //...
+python3 tools/bootstrap.py exec bazelisk -- --batch test //... --test_output=errors --cache_test_results=no
 
 # Selected artifacts only: historical caches are not the active tool graph.
 python3 scripts/ci/check-dependencies.py --evidence-dir "$RUNNER_TEMP/foundation-sboms"
