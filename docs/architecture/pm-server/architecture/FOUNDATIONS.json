@@ -1,0 +1,1278 @@
+{
+  "schema_version": "pm.plan.foundations/v2",
+  "label": "Canonical foundation contracts with accepted product amendments; implementation and evidence remain UNEXECUTED",
+  "authority": "Planning contract map only. Actual executable registration is owned by app/activities.",
+  "foundations": [
+    {
+      "id": "FND-01",
+      "version": "1.0.0",
+      "name": "Source capture/provenance",
+      "owner": "compile",
+      "milestone": "M6",
+      "file_group_ids": [
+        "F16",
+        "N03"
+      ],
+      "files": [
+        "cmd/pmgen/main.go",
+        "internal/compile/amendment.go",
+        "internal/compile/commands.go",
+        "internal/compile/compatibility.go",
+        "internal/compile/dialects.go",
+        "internal/compile/emit.go",
+        "internal/compile/fidelity.go",
+        "internal/compile/normalize.go",
+        "internal/compile/refs.go",
+        "internal/compile/requirements.go",
+        "internal/compile/semantics.go",
+        "internal/compile/sensitivity.go",
+        "internal/compile/source.go"
+      ],
+      "interface": "ImmutableSourceSet -> pinned capture/ref closure",
+      "invariants": [
+        "Exact repository/commit/path/pointer/blob/byte/SHA/license identity and recursive reference closure; raw source need not be duplicated in documentation; no implicit network refs or moving-page substitution."
+      ],
+      "dependencies": [],
+      "registration_point": "internal/compile/source.go:CaptureSource in cmd/pmgen pipeline",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V65",
+        "V84"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Accepted GitHub full-source identity is authoritative while source.lock/compiler/live proof remain first-owner future work; PostgreSQL authority is pinned official protocol/SQL/metadata, never assumed OpenAPI.",
+      "registration_kind": "build-time",
+      "first_milestone": "M6",
+      "ready_milestone": "M6",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-02",
+      "version": "1.0.0",
+      "name": "Parsing/normalization",
+      "owner": "compile",
+      "milestone": "M6",
+      "file_group_ids": [
+        "F16",
+        "N03"
+      ],
+      "files": [
+        "cmd/pmgen/main.go",
+        "internal/compile/amendment.go",
+        "internal/compile/commands.go",
+        "internal/compile/compatibility.go",
+        "internal/compile/dialects.go",
+        "internal/compile/emit.go",
+        "internal/compile/fidelity.go",
+        "internal/compile/normalize.go",
+        "internal/compile/refs.go",
+        "internal/compile/requirements.go",
+        "internal/compile/semantics.go",
+        "internal/compile/sensitivity.go",
+        "internal/compile/source.go"
+      ],
+      "interface": "SourceSet -> typed operations and diagnostics",
+      "invariants": [
+        "2.0 conversion explicit; preserve media/status variants, schema unions and source disagreements"
+      ],
+      "dependencies": [
+        "FND-01",
+        "FND-03"
+      ],
+      "registration_point": "internal/compile/normalize.go:Normalize and internal/compile/requirements.go:CheckRequirements",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V21",
+        "V65"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "build-time",
+      "first_milestone": "M6",
+      "ready_milestone": "M6",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-03",
+      "version": "1.0.0",
+      "name": "Typed values/serialization",
+      "owner": "contract",
+      "milestone": "M1",
+      "file_group_ids": [
+        "F05",
+        "F20",
+        "N01"
+      ],
+      "files": [
+        "internal/contract/capability.go",
+        "internal/contract/command.go",
+        "internal/contract/compatibility.go",
+        "internal/contract/digest.go",
+        "internal/contract/dispatch.go",
+        "internal/contract/error.go",
+        "internal/contract/field_binding.go",
+        "internal/contract/foundation.go",
+        "internal/contract/identity.go",
+        "internal/contract/operation.go",
+        "internal/contract/profile.go",
+        "internal/contract/schema.go",
+        "internal/contract/settlement.go",
+        "internal/contract/value.go",
+        "internal/runtime/egress.go",
+        "internal/runtime/http.go",
+        "internal/runtime/inputs.go",
+        "internal/runtime/pagination.go",
+        "internal/runtime/response.go",
+        "internal/runtime/retry.go",
+        "schemas/field-binding.schema.json",
+        "schemas/foundation.schema.json"
+      ],
+      "interface": "TypedValue -> lossless request/Parquet/API value",
+      "invariants": [
+        "Complete action data by default is distinct from explicit typed selection; preserve nested objects/arrays, absent/null/value, false/zero/empty and exact integers/decimals/identifiers. Optional projection never coerces or flattens."
+      ],
+      "dependencies": [],
+      "registration_point": "internal/contract/value.go:Value with runtime/inputs.go and analytics/values.go serializers",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V02",
+        "V26",
+        "V65"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "F02 accepts complete-default action results plus optional shared typed selection/filtering across API/Go/CLI/browser; implementation remains unexecuted.",
+      "registration_kind": "pure-value-and-serializer-composition",
+      "first_milestone": "M1",
+      "ready_milestone": "M11",
+      "readiness_rule": "M1 introduces the pure value contract. Readiness is earned separately by the named consumer and evidence below; M11 is the final initial-release composition gate, not an earlier global implementation claim. All entries are planned and unexecuted.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path.",
+      "readiness_by_consumer": {
+        "pure_value_contract": "M1: pm-typed-values-source-contracts V02",
+        "api_dto": "M1: pm-public-api-generation TestGeneratedContractBoundary",
+        "http_serialization": "M6: pm-http-direct-execution V26/V65",
+        "postgres_values": "M7: pm-postgres-transport V66",
+        "parquet_analytics": "M7: pm-warehouse-query-child V37/V57",
+        "binary_metadata": "M11: pm-binary-transfer-foundation actual byte-transfer and metadata binding",
+        "initial_release_composition": "M11: pm-initial-five-composition-proof; scoped real consumers only"
+      }
+    },
+    {
+      "id": "FND-04",
+      "version": "1.1.0",
+      "name": "Operation identity/command projection",
+      "owner": "connectors",
+      "milestone": "M6",
+      "file_group_ids": [
+        "F17",
+        "F18a",
+        "F18b",
+        "F18c",
+        "N02"
+      ],
+      "files": [
+        "internal/api/catalog.go",
+        "internal/app/capabilities.go",
+        "internal/app/catalog.go",
+        "internal/cli/dynamic.go",
+        "internal/cli/help.go",
+        "internal/connectors/bundle.go",
+        "internal/connectors/catalog.go",
+        "internal/connectors/registry.go"
+      ],
+      "interface": "Operation ID -> safe command descriptor; CLI/UI project same public catalog",
+      "invariants": [
+        "stable semantic IDs separate from names; rename aliases; collision fails; scoped versioned cache"
+      ],
+      "dependencies": [
+        "FND-02",
+        "FND-03"
+      ],
+      "registration_point": "internal/connectors/registry.go:LoadBundle and internal/compile/commands.go:ProjectCommands",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V22",
+        "V23",
+        "V24",
+        "V66"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M6",
+      "ready_milestone": "M6",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-05",
+      "version": "2.0.0",
+      "name": "Authentication/secret resolution",
+      "owner": "credentials",
+      "milestone": "M3",
+      "file_group_ids": [
+        "F12",
+        "F13",
+        "N04",
+        "R04",
+        "R05",
+        "R14b"
+      ],
+      "files": [
+        "api/admin.openapi.yaml",
+        "internal/app/connections.go",
+        "internal/app/revocation.go",
+        "internal/auth/authorize.go",
+        "internal/auth/browser.go",
+        "internal/auth/device.go",
+        "internal/auth/grants.go",
+        "internal/auth/identity.go",
+        "internal/auth/oidc.go",
+        "internal/auth/revocation.go",
+        "internal/auth/service.go",
+        "internal/auth/sessions.go",
+        "internal/credentials/redact.go",
+        "internal/credentials/refresh.go",
+        "internal/credentials/resolve.go",
+        "internal/credentials/vault.go",
+        "internal/httpapi/middleware.go",
+        "internal/httpapi/problem.go",
+        "internal/httpapi/strict.go",
+        "internal/httpapi/ui/admin-credentials.html",
+        "internal/httpapi/ui/login.html",
+        "internal/runtime/admission.go",
+        "internal/runtime/limits.go",
+        "internal/store/budgets.go",
+        "internal/store/checkpoints.go",
+        "internal/store/connections.go",
+        "internal/store/identities.go",
+        "internal/store/manifests.go",
+        "internal/store/memberships.go",
+        "internal/store/migrations/postgres/0002_tenancy_rls.sql",
+        "internal/store/outbox.go",
+        "internal/store/provider_accounts.go",
+        "internal/store/secrets.go"
+      ],
+      "interface": "RunGrant+ConnectionRef -> scoped signer only at physical effect boundary",
+      "invariants": [
+        "PM identity separated from provider values; all physical I/O guarded by scoped current authority"
+      ],
+      "dependencies": [
+        "FND-16"
+      ],
+      "registration_point": "internal/credentials/resolve.go:ResolveForEffect injected only into worker execution dependencies; vault admin ingress separate",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V14",
+        "V16",
+        "V17",
+        "V74"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M3",
+      "ready_milestone": "M4",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-06",
+      "version": "1.0.0",
+      "name": "HTTP transport",
+      "owner": "runtime",
+      "milestone": "M6",
+      "file_group_ids": [
+        "F20",
+        "N04"
+      ],
+      "files": [
+        "internal/runtime/admission.go",
+        "internal/runtime/egress.go",
+        "internal/runtime/http.go",
+        "internal/runtime/inputs.go",
+        "internal/runtime/limits.go",
+        "internal/runtime/pagination.go",
+        "internal/runtime/response.go",
+        "internal/runtime/retry.go"
+      ],
+      "interface": "TypedOperation+Input -> one bounded HTTP attempt",
+      "invariants": [
+        "closed origin/method/location/media, redirect audiences, no automatic unsafe retries"
+      ],
+      "dependencies": [
+        "FND-03",
+        "FND-05",
+        "FND-10"
+      ],
+      "registration_point": "internal/app/capabilities.go:RegisterHTTP binding runtime/http.go executor; activities/execute.go consumes actual handler",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V26",
+        "V27",
+        "V28",
+        "V74"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M6",
+      "ready_milestone": "M6",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-07",
+      "version": "1.0.0",
+      "name": "SQL transport/metadata",
+      "owner": "runtime",
+      "milestone": "M7",
+      "file_group_ids": [
+        "F26",
+        "F27"
+      ],
+      "files": [
+        "internal/runtime/postgres.go",
+        "internal/runtime/sqltls.go",
+        "internal/runtime/sqltypes.go",
+        "internal/schema/discover.go",
+        "internal/schema/effective.go",
+        "internal/schema/predicates.go",
+        "internal/schema/snapshot.go"
+      ],
+      "interface": "Typed SQL metadata/read/write plan -> parameterized native request",
+      "invariants": [
+        "discovered quoted identifiers and bound values; native SQL protocol; transaction errors retain ambiguity"
+      ],
+      "dependencies": [
+        "FND-03",
+        "FND-05",
+        "FND-10"
+      ],
+      "registration_point": "internal/app/capabilities.go:RegisterSQL binding runtime/postgres.go; activities/execute.go actual consumer",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V34",
+        "V35",
+        "V74"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M7",
+      "ready_milestone": "M7",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-08",
+      "version": "1.0.0",
+      "name": "Pagination/bounded queries",
+      "owner": "runtime",
+      "milestone": "M6",
+      "file_group_ids": [
+        "F20",
+        "N04"
+      ],
+      "files": [
+        "internal/runtime/admission.go",
+        "internal/runtime/egress.go",
+        "internal/runtime/http.go",
+        "internal/runtime/inputs.go",
+        "internal/runtime/limits.go",
+        "internal/runtime/pagination.go",
+        "internal/runtime/response.go",
+        "internal/runtime/retry.go"
+      ],
+      "interface": "Declared pagination+effective request size -> honest page/continuation; page retrieval is not durable incrementality",
+      "invariants": [
+        "Provider page size differs from total record cap; filtering precedes selection; preserve source continuation, unread tails, completeness and fetched/returned/emitted counts; an empty filtered page is not exhaustion. A page boundary alone never claims a durable checkpoint or incremental-publication boundary."
+      ],
+      "dependencies": [
+        "FND-06"
+      ],
+      "registration_point": "internal/runtime/pagination.go:NewPaginator consumed by sync/direct.go and sync/etl.go",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V29",
+        "V67"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "F02 fixes complete-default results and truthful continuation through optional typed selection/filtering without rewriting provider pagination.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M6",
+      "ready_milestone": "M6",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path.",
+      "transport_selection": "This foundation owns declared HTTP pagination; native SQL query bounds are in FND-07. No HTTP dependency on native query admission."
+    },
+    {
+      "id": "FND-09",
+      "version": "1.1.0",
+      "name": "Dynamic schemas",
+      "owner": "schema",
+      "milestone": "M7",
+      "file_group_ids": [
+        "F27",
+        "N05",
+        "R04",
+        "R19"
+      ],
+      "files": [
+        "internal/schema/completeness.go",
+        "internal/schema/discover.go",
+        "internal/schema/drift.go",
+        "internal/schema/effective.go",
+        "internal/schema/predicates.go",
+        "internal/schema/property_forms.go",
+        "internal/schema/refresh.go",
+        "internal/schema/snapshot.go",
+        "internal/store/budgets.go",
+        "internal/store/checkpoints.go",
+        "internal/store/connections.go",
+        "internal/store/identities.go",
+        "internal/store/manifests.go",
+        "internal/store/memberships.go",
+        "internal/store/migrations/postgres/0002_tenancy_rls.sql",
+        "internal/store/migrations/postgres/0007_dynamic_schema.sql",
+        "internal/store/outbox.go",
+        "internal/store/provider_accounts.go",
+        "internal/store/secrets.go"
+      ],
+      "interface": "Connection/account/source pin -> complete immutable metadata snapshot",
+      "invariants": [
+        "account/resource scope; completeness and contract/content versions; immutable run bindings"
+      ],
+      "dependencies": [
+        "FND-02",
+        "FND-03",
+        "FND-05",
+        "FND-06",
+        "FND-07",
+        "FND-16"
+      ],
+      "registration_point": "internal/schema/discover.go:Discover and effective.go:BuildEffectiveSchema called by registered discovery activities",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V36",
+        "V73"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "extension_milestone": "M10",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M7",
+      "ready_milestone": "M7",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path.",
+      "transport_selection": "FND-06 for HTTP or FND-07 for PostgreSQL, selected by typed transport; never require both to admit one operation."
+    },
+    {
+      "id": "FND-10",
+      "version": "2.0.0",
+      "name": "Retry/rate/backpressure",
+      "owner": "runtime",
+      "milestone": "M6",
+      "file_group_ids": [
+        "F20",
+        "N04",
+        "R04",
+        "R14",
+        "R14a"
+      ],
+      "files": [
+        "internal/app/account_permits.go",
+        "internal/app/schedules.go",
+        "internal/runtime/admission.go",
+        "internal/runtime/egress.go",
+        "internal/runtime/http.go",
+        "internal/runtime/inputs.go",
+        "internal/runtime/limits.go",
+        "internal/runtime/pagination.go",
+        "internal/runtime/response.go",
+        "internal/runtime/retry.go",
+        "internal/store/budgets.go",
+        "internal/store/checkpoints.go",
+        "internal/store/connections.go",
+        "internal/store/identities.go",
+        "internal/store/manifests.go",
+        "internal/store/memberships.go",
+        "internal/store/migrations/postgres/0002_tenancy_rls.sql",
+        "internal/store/outbox.go",
+        "internal/store/provider_accounts.go",
+        "internal/store/secrets.go"
+      ],
+      "interface": "Scoped account permit+known provider replay disposition -> one admissible physical attempt; separate client-to-API recovery policy",
+      "invariants": [
+        "One provider/run retry authority owns physical attempts, account quota, provider Retry-After and durable workflow timing; unknown effect or commit remains charged. Separately, F01 permits at most three client-to-API sends within 30 seconds using the same key and deterministic 250ms/1s delays, applying a server Retry-After only when it fits the remaining client deadline. The client budget never truncates or otherwise governs provider/run retry scheduling."
+      ],
+      "dependencies": [
+        "FND-16"
+      ],
+      "registration_point": "internal/app/account_permits.go:AcquirePermit plus runtime/admission.go:AdmitPhysicalCall and workflow retry timing",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V28",
+        "V29",
+        "V74"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "F01 accepts development 32/8/2m, standard 256/32/10m and deployment-shared pending-reservation authority; its bounded three-send/30s client-to-API recovery is separate from provider/run-owned Retry-After and durable retry timing. The 3/2/30s profile remains test-only.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M4",
+      "ready_milestone": "M4",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-11",
+      "version": "1.1.0",
+      "name": "Binary transfer",
+      "owner": "runtime",
+      "milestone": "M11",
+      "file_group_ids": [
+        "F37",
+        "F38",
+        "R11"
+      ],
+      "files": [
+        "internal/objects/gc.go",
+        "internal/objects/reservations.go",
+        "internal/objects/s3.go",
+        "internal/objects/store.go",
+        "internal/objects/verify.go",
+        "internal/runtime/binary.go",
+        "internal/sync/binary.go",
+        "internal/sync/modes.go",
+        "internal/sync/transport.go"
+      ],
+      "interface": "Declared byte operation+ArtifactRef -> bounded verified transfer",
+      "invariants": [
+        "actual bytes and checksum; distinct JSON URL setup; signed URL stays server-private"
+      ],
+      "dependencies": [
+        "FND-03",
+        "FND-05",
+        "FND-06",
+        "FND-16"
+      ],
+      "registration_point": "internal/app/capabilities.go:RegisterBinary binding runtime/binary.go and objects/store.go",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "P_binary_download",
+        "P_binary_upload",
+        "V31",
+        "V74"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M11",
+      "ready_milestone": "M11",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-12",
+      "version": "2.0.0",
+      "name": "Extraction/checkpointing",
+      "owner": "sync",
+      "milestone": "M7",
+      "file_group_ids": [
+        "F28b",
+        "N07",
+        "R08",
+        "R11"
+      ],
+      "files": [
+        "internal/objects/gc.go",
+        "internal/objects/reservations.go",
+        "internal/objects/s3.go",
+        "internal/objects/store.go",
+        "internal/objects/verify.go",
+        "internal/store/commands.go",
+        "internal/store/dispatches.go",
+        "internal/store/migrations/postgres/0003_workflow_outbox.sql",
+        "internal/store/settlements.go",
+        "internal/store/workflows.go",
+        "internal/sync/checkpoint.go",
+        "internal/sync/etl.go",
+        "internal/temporal/bindings.go",
+        "internal/temporal/client.go",
+        "internal/temporal/commands.go",
+        "internal/temporal/outbox.go",
+        "internal/temporal/projection.go"
+      ],
+      "interface": "Page source -> verified publication and contiguous checkpoint",
+      "invariants": [
+        "source generation/partition/continuation exact; publication precedes cursor; explicit incomplete/rebootstrap"
+      ],
+      "dependencies": [
+        "FND-08",
+        "FND-09",
+        "FND-13",
+        "FND-16"
+      ],
+      "registration_point": "internal/app/capabilities.go:RegisterETL binding sync/etl.go and checkpoint.go",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V38",
+        "V39",
+        "V83"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M7",
+      "ready_milestone": "M7",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path.",
+      "transport_selection": "HTTP collection uses FND-08 and selected paginator; native PostgreSQL uses FND-07 bounded snapshot/query. FND-09 applies only where dynamic schema binding is required."
+    },
+    {
+      "id": "FND-13",
+      "version": "2.0.0",
+      "name": "Warehouse publication/query",
+      "owner": "warehouse",
+      "milestone": "M7",
+      "file_group_ids": [
+        "F28",
+        "F29",
+        "R11",
+        "R12",
+        "R17",
+        "R18"
+      ],
+      "files": [
+        "cmd/pm-query/main.go",
+        "internal/analytics/engine.go",
+        "internal/analytics/limits.go",
+        "internal/analytics/parquet.go",
+        "internal/analytics/values.go",
+        "internal/httpapi/schema.go",
+        "internal/httpapi/warehouse.go",
+        "internal/objects/gc.go",
+        "internal/objects/reservations.go",
+        "internal/objects/s3.go",
+        "internal/objects/store.go",
+        "internal/objects/verify.go",
+        "internal/store/migrations/postgres/0004_warehouse_schema.sql",
+        "internal/warehouse/child.go",
+        "internal/warehouse/compaction.go",
+        "internal/warehouse/manifest.go",
+        "internal/warehouse/object_layout.go",
+        "internal/warehouse/parquet.go",
+        "internal/warehouse/query.go",
+        "internal/warehouse/query_protocol.go",
+        "internal/warehouse/scratch.go",
+        "packaging/Dockerfile.query"
+      ],
+      "interface": "Authorized object snapshot -> exact Parquet/query result and PG manifest",
+      "invariants": [
+        "verify immutable S3 object digest/length before PG manifest/checkpoint reference; bounded segments, no whole-history rewrite; CAS compaction and reference-aware GC"
+      ],
+      "dependencies": [
+        "FND-03",
+        "FND-16"
+      ],
+      "registration_point": "internal/warehouse/manifest.go:PublishManifest and child.go:ExecuteQueryChild; cmd/pm-query composes analytics only",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V08",
+        "V38",
+        "V57",
+        "V72"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M7",
+      "ready_milestone": "M7",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-14",
+      "version": "2.0.0",
+      "name": "Destination apply/member settlement",
+      "owner": "sync",
+      "milestone": "M8",
+      "file_group_ids": [
+        "F30",
+        "N06",
+        "N07",
+        "R07",
+        "R08"
+      ],
+      "files": [
+        "cmd/pm-worker/main.go",
+        "internal/activities/admission.go",
+        "internal/activities/execute.go",
+        "internal/activities/options.go",
+        "internal/activities/project.go",
+        "internal/activities/reconcile.go",
+        "internal/activities/register.go",
+        "internal/store/commands.go",
+        "internal/store/dispatches.go",
+        "internal/store/migrations/postgres/0003_workflow_outbox.sql",
+        "internal/store/settlements.go",
+        "internal/store/workflows.go",
+        "internal/sync/capacity.go",
+        "internal/sync/dispatch.go",
+        "internal/sync/readback.go",
+        "internal/sync/reverse.go",
+        "internal/sync/settlement.go",
+        "internal/sync/workset.go",
+        "internal/sync/write.go",
+        "internal/temporal/bindings.go",
+        "internal/temporal/client.go",
+        "internal/temporal/commands.go",
+        "internal/temporal/outbox.go",
+        "internal/temporal/projection.go"
+      ],
+      "interface": "Approved exact action/member set -> per-member outcomes and readback",
+      "invariants": [
+        "Correlated individual outcomes; unknown retained; action readback and pre-I/O capacity; stable replay. PostgreSQL mapped upsert assigns only changed approved writable columns and unchanged input performs zero assignments; a possible COMMIT settles only through a declared sound occurrence witness for the exact intent, never desired rows alone."
+      ],
+      "dependencies": [
+        "FND-03",
+        "FND-05",
+        "FND-06",
+        "FND-07",
+        "FND-16",
+        "FND-17"
+      ],
+      "registration_point": "internal/app/capabilities.go:RegisterApply binding sync/write.go, dispatch.go and settlement.go",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V68",
+        "V69",
+        "V70",
+        "V72",
+        "V81"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Accepted M8 PostgreSQL extension uses the common approval/dispatch/settlement path; no separate executor, arbitrary SQL, delete or schema workaround.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M8",
+      "ready_milestone": "M8",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path.",
+      "transport_selection": "FND-06 for HTTP or FND-07 for PostgreSQL, selected by typed transport; never require both to admit one operation."
+    },
+    {
+      "id": "FND-15",
+      "version": "2.0.0",
+      "name": "Reverse mappings/worksets",
+      "owner": "sync",
+      "milestone": "M8",
+      "file_group_ids": [
+        "F30",
+        "F32",
+        "R11"
+      ],
+      "files": [
+        "internal/objects/gc.go",
+        "internal/objects/reservations.go",
+        "internal/objects/s3.go",
+        "internal/objects/store.go",
+        "internal/objects/verify.go",
+        "internal/store/approvals.go",
+        "internal/store/identity_ledger.go",
+        "internal/store/migrations/postgres/0005_profiles_approvals.sql",
+        "internal/store/profiles.go",
+        "internal/sync/readback.go",
+        "internal/sync/reverse.go",
+        "internal/sync/workset.go",
+        "internal/sync/write.go"
+      ],
+      "interface": "Saved mapping+snapshot -> immutable desired workset and approved effects",
+      "invariants": [
+        "Typed field mapping, verified stable unique-key constraint, owned-record identity, immutable desired-state revisions, duplicate source-key rejection and preservation of unmapped destination fields. Any key, account or generation reset requires an explicit approved migration, with the old mapping retained for audit."
+      ],
+      "dependencies": [
+        "FND-09",
+        "FND-13",
+        "FND-14"
+      ],
+      "registration_point": "internal/app/capabilities.go:RegisterReverse binding sync/reverse.go and workset.go",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V40",
+        "V41",
+        "V42",
+        "V69"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Accepted PostgreSQL mapping seals key/constraint/mapped values/schema/effects/cardinality and invalidates approval on relevant change.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M8",
+      "ready_milestone": "M8",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-16",
+      "version": "2.0.0",
+      "name": "Runs/tasks/recovery",
+      "owner": "app",
+      "milestone": "M4",
+      "file_group_ids": [
+        "F08",
+        "F09",
+        "F10",
+        "F21",
+        "F31",
+        "N07",
+        "R06",
+        "R07",
+        "R08",
+        "R14b"
+      ],
+      "files": [
+        "cmd/pm-worker/main.go",
+        "internal/activities/admission.go",
+        "internal/activities/execute.go",
+        "internal/activities/options.go",
+        "internal/activities/project.go",
+        "internal/activities/reconcile.go",
+        "internal/activities/register.go",
+        "internal/app/admission.go",
+        "internal/app/approvals.go",
+        "internal/app/cancel.go",
+        "internal/app/reconcile.go",
+        "internal/app/resume.go",
+        "internal/app/revocation.go",
+        "internal/app/runs.go",
+        "internal/store/artifacts.go",
+        "internal/store/audit.go",
+        "internal/store/commands.go",
+        "internal/store/db.go",
+        "internal/store/dispatches.go",
+        "internal/store/events.go",
+        "internal/store/leases.go",
+        "internal/store/migrate.go",
+        "internal/store/migrations/postgres/0001_control.sql",
+        "internal/store/migrations/postgres/0003_workflow_outbox.sql",
+        "internal/store/receipts.go",
+        "internal/store/runs.go",
+        "internal/store/scope.go",
+        "internal/store/settlements.go",
+        "internal/store/tasks.go",
+        "internal/store/transaction.go",
+        "internal/store/workflows.go",
+        "internal/temporal/bindings.go",
+        "internal/temporal/client.go",
+        "internal/temporal/commands.go",
+        "internal/temporal/outbox.go",
+        "internal/temporal/projection.go",
+        "internal/workflows/commands.go",
+        "internal/workflows/continue.go",
+        "internal/workflows/options.go",
+        "internal/workflows/run.go",
+        "internal/workflows/scheduled.go"
+      ],
+      "interface": "PG accepted intent -> durable Temporal coordination; PG effect ledger authoritative",
+      "invariants": [
+        "202 only after atomic idempotency/run/outbox/pending-reservation commit; exact replay creates no second reservation or dispatch. The reservation lasts to a controlled durable actual-execution-start transition or known terminal pre-start; Temporal acceptance, outbox acknowledgement and pre-start projections do not release it, and issue #16 owns actual-worker integration. PostgreSQL/Temporal leases and fences order local state only and cannot erase a possibly accepted external effect; unresolved receipts never age out."
+      ],
+      "dependencies": [
+        "FND-03"
+      ],
+      "registration_point": "internal/app/admission.go:AcceptRun; temporal/outbox.go:StartOrReconcile; activities/register.go registers PMRunWorkflow activities",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V09",
+        "V10",
+        "V11",
+        "V81"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "F01 exact admission/recovery/retention table supersedes synthetic 1000/1h default assumptions while preserving PG acceptance and Temporal coordination ownership.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M4",
+      "ready_milestone": "M4",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-17",
+      "version": "2.0.0",
+      "name": "Approvals/authorization",
+      "owner": "app",
+      "milestone": "M8",
+      "file_group_ids": [
+        "F31",
+        "F32",
+        "F33",
+        "R05",
+        "R14",
+        "R14b"
+      ],
+      "files": [
+        "internal/app/approvals.go",
+        "internal/app/reconcile.go",
+        "internal/app/resume.go",
+        "internal/app/revocation.go",
+        "internal/app/schedules.go",
+        "internal/auth/browser.go",
+        "internal/auth/device.go",
+        "internal/auth/grants.go",
+        "internal/auth/identity.go",
+        "internal/auth/oidc.go",
+        "internal/auth/revocation.go",
+        "internal/auth/service.go",
+        "internal/httpapi/approvals.go",
+        "internal/httpapi/middleware.go",
+        "internal/httpapi/plans.go",
+        "internal/httpapi/problem.go",
+        "internal/httpapi/profiles.go",
+        "internal/httpapi/strict.go",
+        "internal/httpapi/ui/admin-credentials.html",
+        "internal/store/approvals.go",
+        "internal/store/identity_ledger.go",
+        "internal/store/migrations/postgres/0005_profiles_approvals.sql",
+        "internal/store/profiles.go"
+      ],
+      "interface": "Exact sealed action set+current grant -> bounded execution authorization",
+      "invariants": [
+        "bind all actions and exact limits; recurring policy distinct; revocation checked before new units"
+      ],
+      "dependencies": [
+        "FND-16"
+      ],
+      "registration_point": "internal/app/approvals.go:ApprovePlan and revocation.go:RecheckRunGrant before dispatch",
+      "consumers": [
+        "direct operations",
+        "compatible sync profiles"
+      ],
+      "test_ids": [
+        "V40",
+        "V71"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M8",
+      "ready_milestone": "M8",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-18",
+      "version": "2.0.0",
+      "name": "Flows/schedules",
+      "owner": "temporal",
+      "milestone": "M9",
+      "file_group_ids": [
+        "F34",
+        "F35",
+        "F36",
+        "R13",
+        "R14"
+      ],
+      "files": [
+        "internal/app/admission_limits.go",
+        "internal/app/flows.go",
+        "internal/app/schedules.go",
+        "internal/httpapi/flows.go",
+        "internal/httpapi/schedules.go",
+        "internal/store/flows.go",
+        "internal/store/migrations/postgres/0006_schedules_flows.sql",
+        "internal/store/occurrences.go",
+        "internal/store/schedule_mutations.go",
+        "internal/store/schedules.go",
+        "internal/temporal/deployment.go",
+        "internal/temporal/schedules.go",
+        "internal/workflows/replay.go"
+      ],
+      "interface": "PG desired revision -> Temporal schedule; effect-free occurrence admission adopts execution",
+      "invariants": [
+        "unique occurrence; explicit overlap/misfire/DST; scheduler wakeups not execution truth"
+      ],
+      "dependencies": [
+        "FND-16",
+        "FND-17"
+      ],
+      "registration_point": "internal/temporal/schedules.go:ApplyScheduleCAS; workflows/scheduled.go:PMScheduledRunWorkflow",
+      "consumers": [
+        "Flows/schedules"
+      ],
+      "test_ids": [
+        "V44",
+        "V45",
+        "V46",
+        "V47"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "runtime-consumer",
+      "first_milestone": "M9",
+      "ready_milestone": "M9",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-19",
+      "version": "1.1.0",
+      "name": "Evidence/conformance",
+      "owner": "proof",
+      "milestone": "M6",
+      "file_group_ids": [
+        "F25",
+        "N11",
+        "R09"
+      ],
+      "files": [
+        "cmd/pmproof/main.go",
+        "docs/foundations/requirements.json",
+        "docs/foundations/traceability.schema.json",
+        "internal/proof/currentness.go",
+        "internal/proof/inventory.go",
+        "internal/proof/oracle.go",
+        "internal/proof/receipt.go",
+        "internal/proof/runner.go",
+        "scripts/prove.sh",
+        "sdk/browser/client.ts",
+        "sdk/browser/package-lock.json",
+        "sdk/browser/package.json",
+        "sdk/browser/schema.d.ts",
+        "sdk/browser/tsconfig.json",
+        "tests/client-parity/browser.ts",
+        "tests/client-parity/fixtures.json",
+        "tests/client-parity/parity_test.go",
+        "tools/atlas/main.go"
+      ],
+      "interface": "Case+independent oracle -> sanitized immutable proof receipt",
+      "invariants": [
+        "Public binary/server path and independent oracle compare complete/selected output, exact values, source membership/pagination and destination readback; missing evidence remains operation-local; no self-certified descriptor."
+      ],
+      "dependencies": [
+        "FND-04",
+        "FND-16"
+      ],
+      "registration_point": "internal/proof/runner.go:ExecuteCase and oracle.go:AssertExpected through actual public client/API/worker path",
+      "consumers": [
+        "Evidence/conformance"
+      ],
+      "test_ids": [
+        "V32",
+        "V33",
+        "V80"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "proof-tool",
+      "first_milestone": "M6",
+      "ready_milestone": "M6",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    },
+    {
+      "id": "FND-20",
+      "version": "2.0.0",
+      "name": "Instance lifecycle/distribution",
+      "owner": "server",
+      "milestone": "M0",
+      "file_group_ids": [
+        "F11",
+        "N08",
+        "N09",
+        "N10",
+        "N12",
+        "R01",
+        "R02",
+        "R15",
+        "R16"
+      ],
+      "files": [
+        "LICENSE",
+        "cmd/pm-server/main.go",
+        "deploy/backup.schema.json",
+        "deploy/caddy/Caddyfile",
+        "deploy/compose.managed.yaml",
+        "deploy/compose.yaml",
+        "deploy/images.lock.json",
+        "deploy/postgres/bootstrap.sql",
+        "deploy/seaweed/filer.toml.tmpl",
+        "deploy/seaweed/s3.json.tmpl",
+        "deploy/seaweed/security.toml.tmpl",
+        "deploy/server.example.json",
+        "deploy/temporal/config.yaml.tmpl",
+        "deploy/temporal/dynamicconfig.yaml",
+        "deploy/temporal/schema-init.sh",
+        "docs/server/artifacts.md",
+        "docs/server/install.md",
+        "docs/server/operations.md",
+        "docs/server/pairing.md",
+        "docs/server/restore.md",
+        "docs/server/standalone.md",
+        "docs/server/temporal.md",
+        "docs/server/tenancy.md",
+        "docs/server/uninstall.md",
+        "docs/server/upgrade.md",
+        "internal/config/config.go",
+        "internal/config/server.go",
+        "internal/config/validate.go",
+        "internal/httpapi/admin.go",
+        "internal/httpapi/routes.go",
+        "internal/server/health.go",
+        "internal/server/lifecycle.go",
+        "internal/server/server.go",
+        "packaging/Dockerfile.server",
+        "packaging/Dockerfile.worker",
+        "packaging/config/server.example.json",
+        "packaging/install-manifest.schema.json",
+        "packaging/release-pair.schema.json",
+        "schemas/server-config.schema.json",
+        "scripts/backup-stack.sh",
+        "scripts/install.sh",
+        "scripts/pm-stack",
+        "scripts/restore-stack.sh",
+        "scripts/uninstall.sh",
+        "scripts/upgrade.sh",
+        "scripts/verify-release.sh",
+        "tests/stack/load_test.go",
+        "tests/stack/outages_test.go",
+        "tests/stack/replicas_test.go",
+        "tests/stack/restore_effects_test.go",
+        "tools/release/main.go"
+      ],
+      "interface": "Strict deployment config -> independently managed API/worker readiness, never dependency autospawn",
+      "invariants": [
+        "paired installation distinct from server lifetime; one authority; explicit startup and identity negotiation"
+      ],
+      "dependencies": [
+        "FND-16"
+      ],
+      "registration_point": "scripts/pm-stack operator composition and internal/server/server.go:Serve, cmd/pm-worker main",
+      "consumers": [
+        "Instance lifecycle/distribution"
+      ],
+      "test_ids": [
+        "V75",
+        "V76",
+        "V77",
+        "V78",
+        "V79",
+        "V82"
+      ],
+      "implementation_status": "planned",
+      "evidence_status": "unexecuted",
+      "historical_aliases": [],
+      "prior_version": "1.0.0",
+      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "registration_kind": "operator-process-composition",
+      "first_milestone": "M0",
+      "ready_milestone": "M12",
+      "readiness_rule": "First milestone introduces contract/owner; ready_milestone requires actual consumers/dependencies and causal checks. No availability is claimed merely by creating a file.",
+      "dependency_scope": "Design integration dependencies across all consumers; not an unconditional runtime AND over transports, compiler/proof or operator readiness. TypedOperation capability requirements select the applicable consumer path."
+    }
+  ]
+}

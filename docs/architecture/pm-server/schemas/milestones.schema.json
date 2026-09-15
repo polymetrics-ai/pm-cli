@@ -1,0 +1,273 @@
+{
+  "type": "object",
+  "properties": {
+    "deferred_extensions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "file_group_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "id": {
+            "type": "string"
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          },
+          "required_for_initial_release": {
+            "type": "boolean"
+          },
+          "title": {
+            "type": "string"
+          },
+          "validation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "file_group_ids",
+          "id",
+          "prerequisites",
+          "reason",
+          "required_for_initial_release",
+          "title",
+          "validation_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "milestones": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "acceptance": {
+            "type": "string"
+          },
+          "evidence_required": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "file_group_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "focused_commands": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "check_id": {
+                  "type": "string"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "check_id",
+                "command",
+                "status"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "future_agent_ownership": {
+            "type": "string"
+          },
+          "gate": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "implementation_sequence": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "interfaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "label": {
+            "type": "string"
+          },
+          "non_goals": {
+            "type": "string"
+          },
+          "objective": {
+            "type": "string"
+          },
+          "prerequisites": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recovery": {
+            "type": "string"
+          },
+          "relative_effort_and_unknowns": {
+            "type": "string"
+          },
+          "schemas_and_migrations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "technology_dependency_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "title": {
+            "type": "string"
+          },
+          "update_existing_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "validation_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "acceptance",
+          "evidence_required",
+          "file_group_ids",
+          "files",
+          "focused_commands",
+          "future_agent_ownership",
+          "gate",
+          "id",
+          "implementation_sequence",
+          "interfaces",
+          "label",
+          "non_goals",
+          "objective",
+          "prerequisites",
+          "recovery",
+          "relative_effort_and_unknowns",
+          "schemas_and_migrations",
+          "technology_dependency_ids",
+          "title",
+          "update_existing_files",
+          "validation_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "prior_phase_crosswalk": {
+      "type": "object",
+      "properties": {
+        "M0": {
+          "type": "string"
+        },
+        "M1": {
+          "type": "string"
+        },
+        "M10": {
+          "type": "string"
+        },
+        "M11": {
+          "type": "string"
+        },
+        "M2": {
+          "type": "string"
+        },
+        "M3": {
+          "type": "string"
+        },
+        "M4": {
+          "type": "string"
+        },
+        "M5": {
+          "type": "string"
+        },
+        "M6": {
+          "type": "string"
+        },
+        "M7": {
+          "type": "string"
+        },
+        "M8": {
+          "type": "string"
+        },
+        "M9": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "M0",
+        "M1",
+        "M10",
+        "M11",
+        "M2",
+        "M3",
+        "M4",
+        "M5",
+        "M6",
+        "M7",
+        "M8",
+        "M9"
+      ],
+      "additionalProperties": false
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.milestones/v2"
+    }
+  },
+  "required": [
+    "deferred_extensions",
+    "label",
+    "milestones",
+    "prior_phase_crosswalk",
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote%20design:milestones",
+  "title": "MILESTONES.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}

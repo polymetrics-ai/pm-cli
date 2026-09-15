@@ -1,0 +1,167 @@
+{
+  "schema_version": "pm.plan.state-ownership/v1",
+  "label": "Canonical state ownership with accepted admission, auth and PostgreSQL amendments; implementation UNEXECUTED",
+  "rows": [
+    {
+      "id": "S01",
+      "field_or_resource": "Organizations, users, workspace memberships, login/device sessions, service accounts, delegation grants and run grants",
+      "authority": "PM PostgreSQL",
+      "owner": "auth",
+      "projection": "Temporal sees opaque run/scope/actor/effective-actor references only; clients see authorized safe projections",
+      "transaction_and_guard": "Current authorization and scope precede identity replay disclosure. Session, delegation and run grants carry explicit connection/operation/workspace/time ceilings; a delegation cannot broaden or create an unauthorized second hop, and actor/effective actor remain distinct and auditable. Six named access mutations atomically bind effect, collection/resource revision and workspace/principal/operation/target-scoped receipt; new mutations require If-Match.",
+      "disagreement_recovery": "Exact authorized replay returns the original safe result/revision with no new effect; changed intent conflicts. Explicit revocation stops future effects without rewriting immutable accepted-run attribution; only separately authorized narrower read-only reconciliation may continue. A one-time service-account credential exists only in the original successful create response; loss requires explicit revoke/new create, never replay or reissue."
+    },
+    {
+      "id": "S02",
+      "field_or_resource": "Connection, provider-account witness and credential versions/ciphertext",
+      "authority": "PM PostgreSQL plus operator-owned wrapping-key service",
+      "owner": "credentials",
+      "projection": "No raw provider secret in public DTO, workflow input/history/search attributes/heartbeat/error",
+      "transaction_and_guard": "Scope and account revalidated before signer resolution; CAS refresh version and distributed lock/lease",
+      "disagreement_recovery": "Refresh loss may require reauthorization; alias connections share account coordination identity"
+    },
+    {
+      "id": "S03",
+      "field_or_resource": "Immutable RunSpec, complete action set, profile/flow/workset/schema bindings, submission key, canonical intent digest, pending reservation and retained outcome guard",
+      "authority": "PM PostgreSQL",
+      "owner": "app/store",
+      "projection": "Temporal coordinates by PM run ID and immutable safe refs, never bulk intent; an accepted pending run remains durably visible while Temporal is unavailable",
+      "transaction_and_guard": "One serialized PostgreSQL decision inserts idempotency/RunSpec, pending reservation, outbox and audit/events before 202. Admit only when post-reservation deployment and workspace pending counts are <= caps. When predicates coincide, refuse workspace pending count first with 429, then nonempty oldest workspace pending-reservation accepted_at age >= its cap with 429, and deployment pending count last with 503; an empty backlog has no oldest-age refusal.",
+      "disagreement_recovery": "A lost/unknown response reconciles the same scope/key/hash; exact replay performs no second reservation, dispatch or capacity check, while changed hash is 409. The pending reservation releases only at the controlled durable execution-start transition or known terminal pre-start; Temporal acceptance, outbox acknowledgement and pre-start projections do not release it, and issue #16 owns actual-worker integration. Active-run, account, run-window and effect budgets remain distinct. An unresolved guard never expires; a resolved safe response compacts after >=7d to a namespace-lifetime refusal guard."
+    },
+    {
+      "id": "S04",
+      "field_or_resource": "Workflow/activity schedule, durable timers, retry state and workflow history",
+      "authority": "Temporal",
+      "owner": "workflows/activities",
+      "projection": "PM API read model tracks workflow binding/observed orchestration status with observation timestamp",
+      "transaction_and_guard": "Deterministic workflows; all external I/O in activities; bounded metadata reads may remain synchronous in API",
+      "disagreement_recovery": "Workflow retry/replay cannot rewrite PM effect truth; missing/expired history is explicit repair condition"
+    },
+    {
+      "id": "S05",
+      "field_or_resource": "Physical dispatch intent, member identities, attempts, effects and exact acknowledgement/readback",
+      "authority": "PM PostgreSQL",
+      "owner": "sync/store",
+      "projection": "Temporal carries safe receipt IDs/dispositions, not request bodies or provider tokens",
+      "transaction_and_guard": "Persist exact dispatch/member intent, reserve result/readback/member/byte capacity and apply per-member CAS/fences before I/O. PostgreSQL mapped upsert seals stable key/constraint, mapped values and changed-column set; assign only changed approved columns and settle equal rows unchanged with zero assignments.",
+      "disagreement_recovery": "Confirmed rollback permits only safely re-admitted work and does not prove that no physical dispatch occurred. A possibly accepted COMMIT or remote acknowledgement remains unknown and charged until a declared sound occurrence witness identifies the exact intent; desired rows, counts or ordinary readback alone cannot identify which occurrence committed. Preserve actual dispatch history, unmapped values and unrelated rows; a local fence cannot unsend an external effect. No blind retry, customer ledger, DDL/delete or blanket replacement."
+    },
+    {
+      "id": "S06",
+      "field_or_resource": "Run state, task/member counters, results and terminal effect classification",
+      "authority": "PM PostgreSQL",
+      "owner": "app/store",
+      "projection": "Temporal status is an orchestration observation, not proof of remote effects",
+      "transaction_and_guard": "Reducer gives unknown/reconciling precedence; blocked task reason and cancel_requested are separate",
+      "disagreement_recovery": "Temporal completion without final PM projection remains projection_pending; reconcile from PM receipts, never infer success from workflow closed"
+    },
+    {
+      "id": "S07",
+      "field_or_resource": "Admission outbox, workflow start binding and schedule mutation desired/applied revision",
+      "authority": "PM PostgreSQL",
+      "owner": "temporal/store",
+      "projection": "Temporal owns actual workflow/schedule object; API exposes desired/applied lag",
+      "transaction_and_guard": "API-origin stable StartRun outbox; schedule-origin EnsureWorkflowBinding outbox. Schedule updates use Describe conflict token plus persistent exact-payload RequestId; rebase changes dispatch identity.",
+      "disagreement_recovery": "No atomic PG/Temporal transaction claim; retry same start, distinguish running/closed/absent/history-retained; never restart closed effect scope blindly"
+    },
+    {
+      "id": "S08",
+      "field_or_resource": "Schedule desired configuration, grants, revisions and occurrence admission ledger",
+      "authority": "PM PostgreSQL",
+      "owner": "app/store",
+      "projection": "Temporal owns schedule triggering and timer execution; PM stores intent and accepted occurrence/effect policy",
+      "transaction_and_guard": "Temporal schedule workflow first admits occurrence with PG RunSpec/budget/audit/binding-outbox. Uniqueness is schedule ID plus nominal UTC instant; adopt actual execution, never duplicate StartRun. Explicit 1h catchup, SKIP across actual run, DOM/DOW AND and both DST folds.",
+      "disagreement_recovery": "PM does not run a competing cron loop; stale trigger revision is blocked explicitly rather than rebound to latest flow"
+    },
+    {
+      "id": "S09",
+      "field_or_resource": "Provider-account concurrency/rate reservations across aliases and worker replicas",
+      "authority": "PM PostgreSQL",
+      "owner": "store/app",
+      "projection": "Temporal task-queue fairness/throughput complements account permits; clients cannot set provider rate keys",
+      "transaction_and_guard": "Atomic account permit/token reservation, short expiry and durable retry eligibility; scope-derived canonical account identity",
+      "disagreement_recovery": "A per-process limiter is only an additional cap; queue limits do not imply global account limits; unknown effects retain relevant budgets"
+    },
+    {
+      "id": "S10",
+      "field_or_resource": "Immutable artifact bytes, Parquet segments and sealed worksets",
+      "authority": "Shared object storage",
+      "owner": "objects",
+      "projection": "Worker scratch files are disposable; clients use scoped PM artifact API; Temporal stores refs only",
+      "transaction_and_guard": "Complete bounded upload, verify hash/length/version, then PG registers object/manifest revision and cursor",
+      "disagreement_recovery": "Object success before PG failure leaves an orphan; PG never references partial bytes; no filesystem rename/cross-storage atomicity fiction"
+    },
+    {
+      "id": "S11",
+      "field_or_resource": "Dataset manifest revisions, exact segment sets, snapshots and cursors",
+      "authority": "PM PostgreSQL",
+      "owner": "warehouse/store",
+      "projection": "Query workers open only registered immutable objects; no shared writable DuckDB file",
+      "transaction_and_guard": "Manifest/cursor/ack transaction under scope and CAS/fence; empty publication gets generation witness",
+      "disagreement_recovery": "Compaction publishes new immutable objects then CAS manifest; GC uses snapshot/plan/proof/backup reachability and retention"
+    },
+    {
+      "id": "S12",
+      "field_or_resource": "Ephemeral query compute, download buffers and worker scratch",
+      "authority": "Worker process only",
+      "owner": "warehouse/runtime",
+      "projection": "Not a recovery authority or shared writable database",
+      "transaction_and_guard": "Bound memory/disk/rows/time; reconstruct from registered object snapshot",
+      "disagreement_recovery": "Worker death discards scratch, not accepted intent or committed data; retries use same snapshot"
+    },
+    {
+      "id": "S13",
+      "field_or_resource": "Safe event history, audit and SSE sequence/snapshot",
+      "authority": "PM PostgreSQL",
+      "owner": "store/httpapi",
+      "projection": "SSE notifications and telemetry are hints; CLI/UI use same durable sequence API",
+      "transaction_and_guard": "State/effect/receipt/audit/event commit together; scoped cursor, retention gap and consistent snapshot",
+      "disagreement_recovery": "Any API replica can replay; local bus loss cannot lose history; client disappearance does not cancel run"
+    },
+    {
+      "id": "S14",
+      "field_or_resource": "Catalog bundle and foundation implementation availability",
+      "authority": "Immutable release bundle plus actual worker handler registrations",
+      "owner": "app/connectors",
+      "projection": "Safe CLI/UI projections derive from installed revision and compatible registered worker build",
+      "transaction_and_guard": "One actual handler registry; version closure and real reachability gates; Atlas/proof not runtime authorities",
+      "disagreement_recovery": "Missing worker capability blocks dependent cell; descriptor alone cannot advertise implemented execution"
+    },
+    {
+      "id": "S15",
+      "field_or_resource": "Discovered account schemas and active snapshot selection",
+      "authority": "PM PostgreSQL",
+      "owner": "schema",
+      "projection": "Public typed safe schema; provider credentials/private origins excluded",
+      "transaction_and_guard": "Candidate completeness/content fingerprint/account scope, If-Match promotion and immutable accepted bindings",
+      "disagreement_recovery": "Relevant drift blocks new effects; partial capture cannot replace complete; unrelated fields do not invalidate unused bindings"
+    },
+    {
+      "id": "S16",
+      "field_or_resource": "Build, deployment and environment configuration",
+      "authority": "Versioned strict operator configuration and release manifest",
+      "owner": "config/packaging",
+      "projection": "Same selected backend stack in dev, one host and many hosts; endpoints/replicas differ",
+      "transaction_and_guard": "Only the explicit operator launcher starts declared dependencies; HTTP/API/CLI processes never fork or autostart a private database or workflow engine. Resolve one explicit development or standard admission profile plus finite positive typed overrides through one configuration registry; workspace <= global and replicas share one durable deployment budget. Reject unknown/obsolete aliases.",
+      "disagreement_recovery": "Missing, incompatible or unready dependencies surface explicit readiness/degraded state and safe refusal. No SQLite, in-memory, process-local queue or local-only fallback substitutes for PostgreSQL, Temporal or shared object storage. Development is selected by generated local setup; historical 1000/1h and synthetic 3/2/30s are never production defaults."
+    },
+    {
+      "id": "S17",
+      "field_or_resource": "Backup recovery epoch, restore manifest and dispatch quarantine",
+      "authority": "PM PostgreSQL plus coordinated Temporal/object/key backups",
+      "owner": "operations",
+      "projection": "Temporal internal persistence tables remain Temporal-owned; PM never repairs them directly",
+      "transaction_and_guard": "Restore components at explicit consistent checkpoints; verify references and retain uncertain effect intents",
+      "disagreement_recovery": "Stale restoration can lose evidence of real effects: quarantine post-backup dispatch window and reconcile before writes, never claim rollback undid providers"
+    }
+  ],
+  "authority_rule": "Field authority wins; a projection never silently overwrites canonical external-effect truth. No two-system atomicity claim.",
+  "settled_stack": [
+    "PostgreSQL PM application state",
+    "Temporal durable orchestration",
+    "shared object storage",
+    "thin CLI and equivalent UI API"
+  ],
+  "application_checks": "UNEXECUTED"
+}

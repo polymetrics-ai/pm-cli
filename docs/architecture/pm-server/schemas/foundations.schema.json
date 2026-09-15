@@ -1,0 +1,161 @@
+{
+  "type": "object",
+  "properties": {
+    "authority": {
+      "type": "string"
+    },
+    "foundations": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "consumers": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "contract_change": {
+            "type": "string"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "dependency_scope": {
+            "type": "string"
+          },
+          "evidence_status": {
+            "type": "string"
+          },
+          "extension_milestone": {
+            "type": "string"
+          },
+          "file_group_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "first_milestone": {
+            "type": "string"
+          },
+          "historical_aliases": {
+            "type": "array",
+            "items": {}
+          },
+          "id": {
+            "type": "string"
+          },
+          "implementation_status": {
+            "type": "string"
+          },
+          "interface": {
+            "type": "string"
+          },
+          "invariants": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "milestone": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "prior_version": {
+            "type": "string"
+          },
+          "readiness_rule": {
+            "type": "string"
+          },
+          "ready_milestone": {
+            "type": "string"
+          },
+          "registration_kind": {
+            "type": "string"
+          },
+          "registration_point": {
+            "type": "string"
+          },
+          "test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "transport_selection": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          },
+          "readiness_by_consumer": {
+            "type": "object",
+            "minProperties": 1,
+            "additionalProperties": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "consumers",
+          "contract_change",
+          "dependencies",
+          "dependency_scope",
+          "evidence_status",
+          "file_group_ids",
+          "files",
+          "first_milestone",
+          "historical_aliases",
+          "id",
+          "implementation_status",
+          "interface",
+          "invariants",
+          "milestone",
+          "name",
+          "owner",
+          "prior_version",
+          "readiness_rule",
+          "ready_milestone",
+          "registration_kind",
+          "registration_point",
+          "test_ids",
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.foundations/v2"
+    }
+  },
+  "required": [
+    "authority",
+    "foundations",
+    "label",
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote%20design:foundations",
+  "title": "FOUNDATIONS.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}

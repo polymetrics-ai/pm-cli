@@ -1,0 +1,294 @@
+{
+  "type": "object",
+  "properties": {
+    "coverage": {
+      "type": "object",
+      "properties": {
+        "candidate_artifacts": {
+          "type": "integer"
+        },
+        "corpus_directories": {
+          "type": "integer"
+        },
+        "current475_semantic_artifacts": {
+          "type": "integer"
+        },
+        "direct475_reinspected_entries": {
+          "type": "integer"
+        },
+        "executor_entries": {
+          "type": "integer"
+        },
+        "named_byte_revalidated_inputs": {
+          "type": "integer"
+        },
+        "oc_entries": {
+          "type": "integer"
+        }
+      },
+      "required": [
+        "candidate_artifacts",
+        "corpus_directories",
+        "current475_semantic_artifacts",
+        "direct475_reinspected_entries",
+        "executor_entries",
+        "named_byte_revalidated_inputs",
+        "oc_entries"
+      ],
+      "additionalProperties": false
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "application_test_status": {
+            "type": "string"
+          },
+          "capture": {
+            "type": "string"
+          },
+          "claim": {
+            "type": "string"
+          },
+          "commit": {
+            "type": "string"
+          },
+          "current475_ranges": {
+            "type": "array",
+            "items": {
+              "type": "array",
+              "items": {
+                "type": "integer"
+              }
+            }
+          },
+          "disposition": {
+            "type": "string"
+          },
+          "end_line": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string"
+          },
+          "evidence_level": {
+            "type": "string"
+          },
+          "evidence_type": {
+            "type": "string"
+          },
+          "file_sha256": {
+            "type": "string"
+          },
+          "hash_matches_prior": {
+            "type": "boolean"
+          },
+          "id": {
+            "type": "string"
+          },
+          "lines": {
+            "type": "integer"
+          },
+          "local": {
+            "type": "string"
+          },
+          "local_path": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "pointer": {
+            "type": "string"
+          },
+          "read_at": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "repository": {
+            "type": "string"
+          },
+          "revalidated_at": {
+            "type": "string"
+          },
+          "revalidated_sha256": {
+            "type": "string"
+          },
+          "reviewed_sections": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "claim_key": {
+                  "type": "string"
+                },
+                "lines": {
+                  "type": "array",
+                  "items": {
+                    "type": "integer"
+                  }
+                }
+              },
+              "required": [
+                "claim_key",
+                "lines"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "semantic_coverage": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "start_line": {
+            "type": "integer"
+          },
+          "status": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "tag": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "id"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "flow_coverage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "disposition": {
+            "type": "string"
+          },
+          "flow": {
+            "type": "string"
+          },
+          "foundation_id": {
+            "type": "string"
+          },
+          "limitations": {
+            "type": "string"
+          },
+          "new_file": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "source_id": {
+            "type": "string"
+          },
+          "test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "disposition",
+          "flow",
+          "foundation_id",
+          "limitations",
+          "new_file",
+          "reason",
+          "source_id",
+          "test_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "flow_crosswalks": {
+      "type": "array",
+      "items": {}
+    },
+    "label": {
+      "type": "string"
+    },
+    "limitations": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "local_inputs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "bytes": {
+            "type": "integer"
+          },
+          "id": {
+            "type": "string"
+          },
+          "method": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "read_at": {
+            "type": "string"
+          },
+          "sha256": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "bytes",
+          "id",
+          "method",
+          "path",
+          "read_at",
+          "sha256"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "research_date": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.source-ledger/v2"
+    }
+  },
+  "required": [
+    "coverage",
+    "entries",
+    "flow_coverage",
+    "flow_crosswalks",
+    "label",
+    "limitations",
+    "local_inputs",
+    "research_date",
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote%20design:source-ledger",
+  "title": "Historical pm.plan.source-ledger/v2 private planning record",
+  "description": "Structural schema retained for the historical private pm.plan.source-ledger/v2 planning artifact. It does not apply to reference/SOURCE-LEDGER.json, the sanitized pm.context.sources/v1 projection that intentionally omits historical/private fields. It is not a runtime/provider schema or implementation proof."
+}

@@ -1,0 +1,826 @@
+{
+  "schema_version": "pm.plan.contracts/v4",
+  "label": "Canonical accepted product contracts with planned, unexecuted implementation and proof",
+  "authority": "Normative product contract. F01, F02, F03, AUTH-MUTATION-PARITY and the bounded PostgreSQL amendment are accepted; implementation, generated artifacts and provider proof remain future owned work.",
+  "initial_connectors": [
+    "github",
+    "postgres",
+    "gong",
+    "pylon",
+    "hubspot"
+  ],
+  "lanes": [
+    "direct_read",
+    "direct_write",
+    "etl",
+    "reverse_etl",
+    "binary_download",
+    "binary_upload",
+    "sync_transport"
+  ],
+  "contracts": {
+    "ConnectorSource": {
+      "required": [
+        "schema_version",
+        "connector_id",
+        "source_set",
+        "operations",
+        "semantics_revision"
+      ],
+      "source_set": "immutable raw bytes hashes, official URL/license/date/dialect, recursively captured reference map; build-time only",
+      "operations": "All source operations preserved including blocked/unsupported; no implemented/live flags copied from old repo"
+    },
+    "TypedOperation": {
+      "required": [
+        "operation_id",
+        "source_refs",
+        "transport",
+        "inputs",
+        "responses",
+        "capability_requirements",
+        "lane_eligibility"
+      ],
+      "inputs": "Location+wire-name+stable field ID+JSON pointer+type+presence/nullable/default+style/explode/allowReserved+sensitivity; required list is per request variant; shared output field-selection and record-filter controls are typed separately from provider request parameters",
+      "responses": "Every declared status/media/schema variant and complete action result by default, preserving body/record/binary semantics, nested values, presence and returned relationship identity; optional shared typed selection/filtering never reduces upstream schema requiredness or source pagination.",
+      "eligibility": "Per operation/lane/behavior; independent source strategy/write/deletion/matching/null/cadence/delivery/order/dedup/state/binary dimensions"
+    },
+    "Value": {
+      "presence": [
+        "absent",
+        "null",
+        "value"
+      ],
+      "logical_types": [
+        "string",
+        "bool",
+        "integer",
+        "decimal",
+        "date",
+        "timestamp_instant",
+        "timestamp_local",
+        "array",
+        "object",
+        "union",
+        "binary_ref"
+      ],
+      "precision": "Integer/decimal/identifier wire values remain exact; canonical strings plus precision/scale metadata are used where a JSON number cannot remain lossless across Go/browser. Preserve false, zero and empty values; no float64 or string/number coercion.",
+      "temporal": "Instant includes zone/offset normalization; timestamp without zone preserves wall-time semantics, never guessed UTC"
+    },
+    "RunSpec": {
+      "required": [
+        "run_id",
+        "org_id",
+        "workspace_id",
+        "actor",
+        "execution_grant_ref",
+        "origin",
+        "operation_or_plan_ref",
+        "input_refs",
+        "schema_refs",
+        "capability_versions",
+        "budget",
+        "idempotency_fingerprint"
+      ],
+      "immutable": true,
+      "origin": [
+        "api",
+        "schedule",
+        "recovery"
+      ],
+      "execution_grant": "Persisted independent expiry/revocation epochs, not short-lived login-session token",
+      "schedule_origin": "Adopt existing effect-free workflow only after occurrence admission; binding-outbox, no duplicate StartRun"
+    },
+    "DispatchIntent": {
+      "required": [
+        "run_id",
+        "effect_key",
+        "dispatch_id",
+        "ordered_member_ids",
+        "payload_hash",
+        "request_artifact_ref",
+        "operation_revision",
+        "account_witness",
+        "grant_epoch",
+        "capacity_reservation",
+        "attempt_id"
+      ],
+      "effect_identity": "Stable intended action occurrence; entity identity alone insufficient",
+      "send_rule": "Persist exact intent and reserve outcome/readback capacity before one physical send; ambiguous retry uses same proven provider idempotency contract or reconciliation"
+    },
+    "MemberOutcome": {
+      "states": [
+        "unsent",
+        "succeeded",
+        "unchanged",
+        "rejected",
+        "unknown"
+      ],
+      "required": [
+        "member_id",
+        "effect_key",
+        "dispatch_id",
+        "state",
+        "observed_at",
+        "assertion_refs"
+      ],
+      "correlation": "Provider documented key/order with exact cardinality only; unknown missing/extra/unmapped results retained; never aggregate input count as success"
+    },
+    "Checkpoint": {
+      "required": [
+        "workspace_id",
+        "connection_id",
+        "resource_id",
+        "source_generation",
+        "schema_fingerprint",
+        "partition",
+        "continuation",
+        "committed_manifest_id",
+        "revision"
+      ],
+      "continuation": "Tagged kind/presence/opaque bytes, tie-breaker and unread-tail reference as applicable; exact complete identity participates in CAS",
+      "commit": "Only exact acknowledged prefix and verified published object manifest advance together in PG"
+    },
+    "ArtifactRef": {
+      "required": [
+        "org_id",
+        "workspace_id",
+        "artifact_id",
+        "object_attempt_key",
+        "sha256",
+        "byte_length",
+        "media_type",
+        "backend_generation"
+      ],
+      "publication": "Unique immutable object; SHA256 not ETag; complete+verify before PG manifest. No arbitrary URL/path membership",
+      "gc": "Reservations, runs, manifests, accepted plans, proof receipts and backup retention checked before deletion"
+    },
+    "Scenario": {
+      "required": [
+        "scenario_id",
+        "connector_id",
+        "lane",
+        "operation_id",
+        "source_refs",
+        "requirements",
+        "steps",
+        "assertions",
+        "cleanup"
+      ],
+      "steps": "Ordered dependency DAG: setup invokes real commands, captures actual returned IDs, write/readback/cleanup uses those; shared fixtures explicit and bounded",
+      "assertions": "Independent expected fields, effects, byte hashes, stored rows and cursor transitions, never copied from actual response as oracle",
+      "cleanup": "Owned created IDs only, retained even after failure; does not invalidate independent passes"
+    },
+    "Proof": {
+      "required": [
+        "proof_version",
+        "connector_id",
+        "lane",
+        "operation_id",
+        "behavior_id",
+        "case_id",
+        "run_id",
+        "source_hashes",
+        "bundle_hash",
+        "schema_hash",
+        "assertion_hash",
+        "pm_client_hash",
+        "pm_api_hash",
+        "pm_worker_hash",
+        "query_helper_hash_if_used",
+        "handler_versions",
+        "workspace_account_scope_hash",
+        "command",
+        "request",
+        "response",
+        "assertions",
+        "effect",
+        "status",
+        "started_at",
+        "finished_at",
+        "provenance"
+      ],
+      "sanitization": "Sensitive values excluded or hashes/references under scoped access; no token/header/body leakage; actual sanitized request/response and expected-vs-observed assertions retained",
+      "status": [
+        "unproven",
+        "blocked",
+        "failed",
+        "passed_fake",
+        "passed_live"
+      ],
+      "reuse": "Original physical run timestamp/binary/source preserved; new invocation may reuse only current exact independent pass, never present cached as freshly executed"
+    },
+    "FoundationGap": {
+      "required": [
+        "gap_id",
+        "semantic_signature",
+        "source_refs",
+        "field_or_operation_bindings",
+        "required_contract",
+        "affected_cells",
+        "reason",
+        "proposed_owner",
+        "causal_test"
+      ],
+      "dedupe": "Same missing semantic contract deduplicated independent of provider name; compatible handler extension preferred, otherwise versioned foundation. Bounded SQL/native adapter only for actual non-HTTP transport",
+      "authority": "Authoring impact view only; never runtime proof gate or HTTP escape hatch"
+    },
+    "ScheduleRevision": {
+      "required": [
+        "schedule_id",
+        "revision",
+        "flow_or_profile_revision",
+        "timezone",
+        "calendar_spec",
+        "overlap",
+        "catchup_window",
+        "execution_policy_ref"
+      ],
+      "calendar_semantics": "Temporal DOM AND DOW; missing wall time skipped, both repeated UTC instants trigger",
+      "defaults": {
+        "timezone": "UTC",
+        "overlap": "SKIP",
+        "catchup_window": "1h",
+        "jitter": "0"
+      },
+      "update": "PG If-Match/outbox, low-level Temporal Describe conflict token; persistent RequestId per exact mutation dispatch; new rebase gets new linked ID"
+    },
+    "Configuration": {
+      "schema": "schemas/server-config.schema.json",
+      "mode_field": null,
+      "pg": "pm_app only for PM pool; separate temporal, temporal_visibility, pm_objects_meta databases/roles; customer Postgres connector explicitly distinct",
+      "temporal": "private authenticated namespace per deployment; workload task queues, explicit retention/versioning/fairness",
+      "objects": "One qualified S3 contract; bundled Seaweed or managed provisioned backend",
+      "secrets": "Operator KMS/key mount references and PG ciphertext; no plaintext defaults",
+      "limits": "Accepted development and standard pending-admission profiles plus separate tenant active-run, account, run/window/effect, bytes, rows, memory, scratch, history, upload and event-buffer/backlog bounds. No zero/unlimited alias and no historical 1000/1h default.",
+      "admission": "Resolve exactly one named finite admission profile plus typed finite positive overrides through the single server-configuration owner; workspace pending <= deployment pending; one deployment-wide durable authority across replicas."
+    },
+    "ServerEvent": {
+      "required": [
+        "org_id",
+        "workspace_id",
+        "run_id",
+        "sequence",
+        "state_revision",
+        "type",
+        "safe_payload",
+        "committed_at"
+      ],
+      "sequence": "Per-run integer allocated while locking that run row in the same PG state/event transaction. No global bigserial commit-order assumption.",
+      "sse_id": "Opaque signed scope/run/sequence cursor; clients dedupe sequence and resnapshot only on explicit retention gap.",
+      "payload": "Safe refs/counts/reason codes only; never raw provider data/secrets."
+    },
+    "Task": {
+      "required": [
+        "task_id",
+        "run_id",
+        "org_id",
+        "workspace_id",
+        "operation_id",
+        "lane",
+        "behavior_id",
+        "input_refs",
+        "schema_refs",
+        "state",
+        "effect_summary",
+        "revision"
+      ],
+      "state": "Known task scheduling state separate from member outcomes and cancel intent; unknown effects remain visible.",
+      "ownership": "PG application state; Temporal activity attempt is execution observation, never task identity."
+    },
+    "CredentialBinding": {
+      "required": [
+        "credential_ref",
+        "workspace_id",
+        "connection_id",
+        "provider_account_witness",
+        "ciphertext_version",
+        "key_ref",
+        "scopes",
+        "auth_epoch"
+      ],
+      "public_projection": "Only opaque reference/version/status when authorized; no value, private locator or raw scope token. One-time PM automation credential material may appear only in the original successful service-account creation response, never a replay/read/cache/receipt/log/error.",
+      "resolution": "Worker receives provider signer only after run/reconciliation grant check. API admin can encrypt ingress; public clients never resolve provider secrets. Lost PM automation credential response requires explicit authorized revoke/new create; no reissue or silent rotation."
+    },
+    "PhysicalHTTPAttempt": {
+      "required": [
+        "dispatch_id",
+        "attempt_id",
+        "operation_revision",
+        "permit_ref",
+        "deadline"
+      ],
+      "initial_transport_policy": "Provider HTTP transport uses HTTP/1.1 with DisableKeepAlives=true, ForceAttemptHTTP2=false and a non-nil empty TLSNextProto map; redirects are disabled and separately admitted. No synthesized Idempotency-Key or replayable GetBody for unsafe writes.",
+      "tradeoff": "Fresh connections cost latency/TLS work. Qualification tests verify one physical provider request per durable attempt. HTTP2-only providers remain unsupported until a separately proven single-attempt transport exists. API ingress/browser transports are unaffected.",
+      "retry_owner": "Temporal retries safe logical activities after durable disposition; transport never hides repeated provider sends.",
+      "source": "Pinned Go1.27.1 net/http/transport.go89–97 and retry eligibility behavior inspected in473. V28/V74 must fault connection reuse/response loss before enabling pooling or HTTP2."
+    },
+    "ActionResult": {
+      "default_projection": "Return complete action data. The former six-field GitHub proposal is neither the default projection nor a reduced provider schema.",
+      "field_selection": "Optional caller-selected fields use one shared typed request/result control. Selecting nested data preserves the selected value without flattening; selecting an absent field does not fabricate null.",
+      "record_filter": "Optional shared typed filtering distinguishes absent, null and unlike JSON types without coercion and evaluates the unprojected record before field selection. No filter retains every entry.",
+      "preflight": "Malformed or unsupported selection/filter controls fail shared validation before provider I/O. No provider-specific parser, proof-only selector, hidden filter or alternate CLI contract is permitted.",
+      "value_fidelity": [
+        "nested objects",
+        "nested arrays",
+        "absent",
+        "null",
+        "value",
+        "false",
+        "zero",
+        "empty string/array/object",
+        "exact integer",
+        "exact decimal",
+        "exact identifier"
+      ],
+      "source_membership": "Retain every returned source entry, including GitHub issue-list entries that contain pull_request. Preserve pull_request absent/value semantics and full upstream requiredness.",
+      "identity_assertions": "Independent id, repository-scoped number and repository identity assertions remain required but do not define the complete result.",
+      "pagination": {
+        "provider_page_size": "Distinct from the caller total record cap; report the actual effective wire limit.",
+        "total_record_cap": "May truncate local emission without rewriting source continuation; retain any unread page tail.",
+        "continuation": "Validate before another request and preserve across filtering; an empty filtered page does not imply exhaustion.",
+        "counts": "Distinguish provider total/completeness from fetched, returned and emitted counts.",
+        "filtering_effect": "Filtering and field selection never rewrite provider pagination or source schema requiredness."
+      }
+    },
+    "AdmissionPolicy": {
+      "error_precedence": "Authenticate and authorize scope before idempotency/replay disclosure. For the same new admission, evaluate workspace pending-count 429 first and nonempty workspace oldest-pending-reservation age 429 second; only then evaluate deployment pending-count overload 503, so either workspace refusal wins when predicates coincide. Never reveal inaccessible resource existence or guess Retry-After.",
+      "errors": [
+        {
+          "condition": "authentication_missing_or_invalid",
+          "http_status": 401,
+          "code": "authentication_required",
+          "safe_retry_action": "refresh_authorization"
+        },
+        {
+          "condition": "resource_absent_or_scope_hidden",
+          "http_status": 404,
+          "code": "resource_not_found",
+          "safe_retry_action": "correct_scope"
+        },
+        {
+          "condition": "required_grant_unavailable",
+          "http_status": 403,
+          "code": "grant_unavailable",
+          "safe_retry_action": "refresh_authorization"
+        },
+        {
+          "condition": "registered_capability_unavailable",
+          "http_status": 503,
+          "code": "capability_unavailable",
+          "safe_retry_action": "after_capability_change"
+        },
+        {
+          "condition": "foundation_incompatible",
+          "http_status": 409,
+          "code": "foundation_incompatible",
+          "safe_retry_action": "after_capability_change"
+        },
+        {
+          "condition": "specification_stale",
+          "http_status": 409,
+          "code": "specification_stale",
+          "safe_retry_action": "refresh_specification"
+        },
+        {
+          "condition": "workspace_pending_count_full",
+          "http_status": 429,
+          "code": "workspace_admission_count_limit",
+          "safe_retry_action": "after_backlog_progress"
+        },
+        {
+          "condition": "workspace_oldest_pending_age_at_or_over_limit",
+          "http_status": 429,
+          "code": "workspace_admission_age_limit",
+          "safe_retry_action": "after_backlog_progress"
+        },
+        {
+          "condition": "deployment_pending_count_full",
+          "http_status": 503,
+          "code": "deployment_admission_overload",
+          "safe_retry_action": "after_backlog_progress"
+        },
+        {
+          "condition": "control_store_unavailable_before_known_commit",
+          "http_status": 503,
+          "code": "control_store_unavailable",
+          "safe_retry_action": "same_key_after_dependency_recovery"
+        },
+        {
+          "condition": "admission_commit_outcome_unknown",
+          "http_status": 503,
+          "code": "admission_outcome_unknown",
+          "safe_retry_action": "same_key_reconcile_only"
+        },
+        {
+          "condition": "resume_unavailable",
+          "http_status": 409,
+          "code": "resume_unavailable",
+          "safe_retry_action": "refresh_run_state"
+        },
+        {
+          "condition": "required_control_revision_missing",
+          "http_status": 428,
+          "code": "control_revision_required",
+          "safe_retry_action": "refresh_control_revision"
+        },
+        {
+          "condition": "control_revision_mismatch",
+          "http_status": 412,
+          "code": "control_revision_mismatch",
+          "safe_retry_action": "refresh_control_revision"
+        },
+        {
+          "condition": "committed_key_reused_with_changed_canonical_input",
+          "http_status": 409,
+          "code": "idempotency_conflict",
+          "safe_retry_action": "new_key_for_new_intent"
+        },
+        {
+          "condition": "malformed_or_unsupported_typed_request",
+          "http_status": 400,
+          "code": "invalid_request",
+          "safe_retry_action": "correct_input"
+        },
+        {
+          "condition": "safe_retry_response_expired_after_known_resolution",
+          "http_status": 410,
+          "code": "retry_receipt_expired",
+          "safe_retry_action": "inspect_existing_result"
+        }
+      ],
+      "profiles": {
+        "development": {
+          "global_pending": 32,
+          "workspace_pending": 8,
+          "workspace_max_pending_age": "2m"
+        },
+        "standard": {
+          "global_pending": 256,
+          "workspace_pending": 32,
+          "workspace_max_pending_age": "10m"
+        }
+      },
+      "profile_resolution": "Deployment configuration explicitly selects one named profile; generated local development selects development. Typed overrides resolve once through the single server-configuration owner, remain finite and strictly positive, reject obsolete/unknown aliases, require workspace_pending <= global_pending, and apply deployment-wide across replicas. They are guardrails, not throughput promises.",
+      "test_fixture": {
+        "global_pending": 3,
+        "workspace_pending": 2,
+        "workspace_max_pending_age": "30s",
+        "scope": "synthetic tests only; never a server default or live configuration"
+      },
+      "rejected_defaults": "Historical 1000 pending / 1h and the synthetic 3/2/30s fixture are not production profiles.",
+      "reservation": {
+        "ownership": "A pending reservation belongs to a durably accepted run until the controlled durable execution-start transition or a known terminal pre-start outcome. Issue #14 proves that actual route/transition; issue #16 later proves actual-worker-start integration.",
+        "not_start": "Temporal submission/acknowledgement, queued, blocked, reconciling and awaiting-approval states remain pending. Once the controlled durable execution-start transition releases a reservation, later waiting does not make that run pending again.",
+        "decision": "Under one serialized transaction, admit only when both post-reservation counts are <= their caps; the final slot is allowed and a full count is refused.",
+        "age": "Use the authoritative PostgreSQL clock and oldest outstanding immutable accepted_at; refuse at age >= cap, including equality. Retry never resets accepted_at; no oldest-age refusal exists for an empty workspace.",
+        "atomicity": "Idempotency record, immutable RunSpec/grant/run, separate execution budgets, audit/event, StartRun outbox and pending reservation commit atomically. Release is atomic with its durable transition; concurrent admissions cannot both take the last slot.",
+        "separation": "Active-run, account, run/window/effect budgets remain separate; unknown effects retain required charges. Age refusal preserves accepted work."
+      },
+      "idempotency": {
+        "precommit": "A pre-commit refusal creates no accepted run, outbox or reservation; HTTP 202 is returned only after confirmed commit.",
+        "replay": "An exact currently authorized replay returns the original acceptance/run identity without new reservation, dispatch or capacity decision.",
+        "conflict": "Same committed key with changed canonical input is idempotency_conflict. Unknown commit is reconciled only with the same scoped key; never mint a replacement logical run."
+      },
+      "client_recovery": {
+        "journal": "CLI and browser/SDK allocate a key and persist a secret-free key/intent fingerprint before the first client-to-API send; reconnect/restart reuses the same key and canonical intent.",
+        "budget": "At most three client-to-API sends inside one 30-second deadline with deterministic 250ms then 1s bounded backoff. A server Retry-After may delay a client submission only when it fits that same remaining deadline; this client budget never constrains provider/run-owned Retry-After or durable retry scheduling.",
+        "after_budget": "Expose stable request/run reference and exact safe recovery guidance; do not guess failure or create a new intent.",
+        "controls": "Never auto-rebase stale 409/412/428 control mutations; never auto-resubmit 410. Authorization refresh may continue only with unchanged authorized principal/scope."
+      },
+      "retention": {
+        "safe_response": "Retain full safe retry responses for at least 7 days after known final resolution.",
+        "unresolved": "Retain receipt, canonical intent digest and deduplication guard without time expiry until resolved; admission age never removes accepted work.",
+        "compaction": "After response expiry, atomically retain a secret-free key/digest/outcome-reference refusal guard for the immutable workspace/key namespace lifetime. Exact old intent returns 410 with scope-safe reference when available; changed intent remains 409.",
+        "namespace": "Workspace deletion cannot recycle the same identity/namespace. Compaction cannot race an in-flight or unresolved mutation into fresh execution.",
+        "secret_boundary": "Client key journals, retry caches, receipts, logs and errors contain no credential material."
+      }
+    },
+    "AuthorizationMutation": {
+      "operations": [
+        {
+          "parity_row": "CP-memberships-grant",
+          "endpoint": "/v1/workspaces/{workspace_id}/memberships",
+          "revision_target": "membership collection revision",
+          "new_status": 201,
+          "unchanged_status": null,
+          "creation_secret": "none"
+        },
+        {
+          "parity_row": "CP-memberships-revoke",
+          "endpoint": "/v1/workspaces/{workspace_id}/memberships/{id}/revoke",
+          "revision_target": "target membership control revision",
+          "new_status": 200,
+          "unchanged_status": 200,
+          "creation_secret": "none"
+        },
+        {
+          "parity_row": "CP-service-accounts-create",
+          "endpoint": "/v1/workspaces/{workspace_id}/service-accounts",
+          "revision_target": "service-account collection revision",
+          "new_status": 201,
+          "unchanged_status": null,
+          "creation_secret": "PM automation credential only on original successful response"
+        },
+        {
+          "parity_row": "CP-service-accounts-revoke",
+          "endpoint": "/v1/workspaces/{workspace_id}/service-accounts/{id}/revoke",
+          "revision_target": "target service-account control revision",
+          "new_status": 200,
+          "unchanged_status": 200,
+          "creation_secret": "none"
+        },
+        {
+          "parity_row": "CP-delegations-create",
+          "endpoint": "/v1/workspaces/{workspace_id}/delegations",
+          "revision_target": "delegation collection revision",
+          "new_status": 201,
+          "unchanged_status": null,
+          "creation_secret": "none"
+        },
+        {
+          "parity_row": "CP-delegations-revoke",
+          "endpoint": "/v1/workspaces/{workspace_id}/delegations/{id}/revoke",
+          "revision_target": "target delegation control revision",
+          "new_status": 200,
+          "unchanged_status": 200,
+          "creation_secret": "none"
+        }
+      ],
+      "reads": "The three GET list rows remain reads with scoped cursor/ETag semantics; read metadata exposes the collection/resource revision. A cursor/ETag is never mutation idempotency authority.",
+      "preconditions": "Before revealing replay metadata, require current authentication and explicit workspace/resource authorization. A new mutation requires If-Match and a scoped idempotency key; missing revision is 428 and stale revision is 412 with zero effects.",
+      "key_scope": "Scope by workspace, authenticated principal, operation and target resource/collection; hash canonical typed intent and original expected revision.",
+      "replay": "Within one transaction, exact same-key/same-input replay returns HTTP 200, explicit replay indication and the original safe result/revision with no mutation. Resolve exact replay before new-mutation revision comparison. Changed canonical input is 409. Concurrent equal requests commit one logical mutation.",
+      "atomicity": "Keep mutation effect, collection/resource revision and scoped receipt atomic. Already-revoked under the current revision is unchanged, not a second effect.",
+      "one_time_credential": "Only CP-service-accounts-create may emit PM automation credential material, only in the original successful 201 response. Omit it from replays, reads, logs, errors, caches and receipts; never retrieve/reissue/rotate it. Lost response requires explicit authorized revoke and new create. No provider credential enters this path.",
+      "ownership": "Issue #12 retains identity implementation ownership; issue #8 projects shared DTO/error contracts and existing client owners consume them. No second auth/replay authority or manual review gate is added."
+    },
+    "ConnectorSourceAuthority": {
+      "github": {
+        "repository": "https://github.com/github/rest-api-description",
+        "commit": "0a144e030abbe358000f0d32874e197b59a8f7ed",
+        "path": "descriptions/api.github.com/api.github.com.json",
+        "operation_id": "issues/list-for-repo",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get",
+        "git_blob_sha1": "ed76b1371e381b078e50c8a698b890911031aeb2",
+        "bytes": 12939686,
+        "sha256": "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2",
+        "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/descriptions/api.github.com/api.github.com.json",
+        "license": {
+          "path": "LICENSE.md",
+          "license": "MIT",
+          "copyright": "Copyright (c) 2020 GitHub",
+          "git_blob_sha1": "b50625eb63949013cae604b1cadd42cfa1eaf825",
+          "bytes": 1063,
+          "sha256": "3243761cbac07e6d169a5a2f4e7c25cc544da85248e735df74c3672e055cc87b",
+          "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/LICENSE.md"
+        },
+        "capture_scope": "Complete raw source identity verified; the 12.9 MB payload is intentionally not duplicated in this documentation tree.",
+        "remaining_work": "Issue #27 still first-owns source.lock, complete reference closure, NOTICE, compiler validation, generated inventories and causal/live proof. Capture evidence is not connector certification."
+      },
+      "postgres": {
+        "authority": "Pinned official PostgreSQL protocol, SQL and metadata documentation for the selected supported version, with complete relevant definitions and attribution.",
+        "official_documentation": [
+          "https://www.postgresql.org/docs/16/protocol.html",
+          "https://www.postgresql.org/docs/16/sql.html",
+          "https://www.postgresql.org/docs/16/information-schema.html"
+        ],
+        "openapi_assumption": false,
+        "remaining_work": "Issue #28 first-owns the exact versioned source.lock capture, hashes, attribution and reusable SQL transport/metadata semantics. No OpenAPI source or arbitrary SQL executor is implied."
+      }
+    },
+    "PostgresMappedUpsert": {
+      "operation": "One admitted immutable PostgreSQL mapped insert-or-update operation over separate source and destination connection/account/relation identities.",
+      "prerequisites": "Explicit stable unique key backed by a verified usable unique constraint, approved writable-column mappings, bound destination identity/schema and sealed row cardinality/effects.",
+      "preflight": "Reject missing or ambiguous keys, duplicate source-key intents, unusable constraints and unapproved mapping/schema/account changes before any effect.",
+      "insert": "Insert when the stable destination key is absent using bound values and declared defaults/generated/constraint effects.",
+      "update": "For an existing key assign only approved writable mapped columns whose values changed. Never assign unchanged mapped columns, replace the whole row or hide secondary effects.",
+      "unchanged": "When every mapped value is equal, settle unchanged with zero destination assignments. A separately approved repeat creates no duplicate row and preserves the original entity identity. Any key, account or generation reset requires an explicit approved migration, with the old mapping retained for audit.",
+      "preservation": "Preserve all unmapped destination fields and unrelated rows. Deletes, DDL, customer ledger/schema workarounds and unrestricted raw SQL are forbidden.",
+      "transaction": "Confirmed rollback permits only safely re-admitted work and does not prove that no physical dispatch occurred. A possible COMMIT with lost reply remains unknown and charged until a declared sound occurrence witness identifies this exact intent; desired key/type/mapped/unmapped rows or counts alone cannot identify which occurrence committed. Preserve actual dispatch history and never blind-retry.",
+      "readback": "Independently verify exact stable keys, typed mapped values and pre-seeded unmapped sentinels; count or SQL exit status is insufficient.",
+      "ownership": "Issue #28 supplies reusable typed SQL; issue #34 owns mapping/workset/dispatch/settlement and later serialized updates to PostgreSQL semantics/lifecycle. The common generator and proof runner remain sole authorities."
+    }
+  },
+  "identities": [
+    {
+      "id": "org_id",
+      "purpose": "Tenant/organization authorization and billing boundary",
+      "invariant": "Opaque stable ID; workspace belongs to exactly one org"
+    },
+    {
+      "id": "user_id",
+      "purpose": "Human identity independent of workspace",
+      "invariant": "One human may hold multiple workspace memberships; identity provider subject is issuer-scoped"
+    },
+    {
+      "id": "membership_id",
+      "purpose": "Principal-to-workspace role and resource grants",
+      "invariant": "Versioned policy epoch, expiry/revocation; role alone not permission to every connection"
+    },
+    {
+      "id": "service_account_id",
+      "purpose": "Authorized automation identity",
+      "invariant": "Org-owned, explicit workspace/connection/operation scopes, expiry and separate credential rotation"
+    },
+    {
+      "id": "delegation_id",
+      "purpose": "Optional bounded authorized-agent delegation",
+      "invariant": "At most one explicit delegation hop initially; cannot exceed parent grant; immutable requested_actor/effective_actor attribution"
+    },
+    {
+      "id": "workspace_id",
+      "purpose": "Per-invocation resource boundary",
+      "invariant": "Mandatory in every workspace route and CLI effect invocation; no mutable global current workspace"
+    },
+    {
+      "id": "connection_id",
+      "purpose": "Workspace-owned provider configuration handle",
+      "invariant": "Aliases may share provider account but grants remain separate"
+    },
+    {
+      "id": "provider_account_id",
+      "purpose": "Canonical provider account/instance witness",
+      "invariant": "Shared distributed auth/rate coordination identity; safe nonreversible internal key, never raw credential"
+    },
+    {
+      "id": "credential_ref",
+      "purpose": "Opaque reference to server-owned ciphertext version",
+      "invariant": "No raw value/locator in CLI/UI public schema/history"
+    },
+    {
+      "id": "profile_id",
+      "purpose": "Logical synchronization policy identity",
+      "invariant": "Immutable revisions; stable creation ledger survives nonidentity revisions"
+    },
+    {
+      "id": "plan_id",
+      "purpose": "Sealed intended actions and workset",
+      "invariant": "Exact schema/account/mapping/actions/budgets; If-Match for editable candidates, immutable accepted snapshot"
+    },
+    {
+      "id": "flow_id",
+      "purpose": "Explicit typed DAG identity",
+      "invariant": "Revisioned graph; no inferred dependencies"
+    },
+    {
+      "id": "run_id",
+      "purpose": "PM durable accepted intent",
+      "invariant": "Stable across Temporal retries and ContinueAsNew; source of public run identity"
+    },
+    {
+      "id": "workflow_id",
+      "purpose": "Temporal orchestration identity",
+      "invariant": "API-origin uses pm/run/<opaque UUID>; schedule-origin adopts its actual Temporal execution after effect-free admission. Both map to stable PM run identity; never start a second workflow for admitted schedule origin."
+    },
+    {
+      "id": "temporal_run_id",
+      "purpose": "Temporal execution-chain member",
+      "invariant": "Changes across retries/ContinueAsNew; mapped as orchestration observations"
+    },
+    {
+      "id": "entity_key",
+      "purpose": "Logical provider entity identity",
+      "invariant": "Source/destination account/resource/key + explicit creation generation"
+    },
+    {
+      "id": "effect_key",
+      "purpose": "Intended action occurrence identity",
+      "invariant": "Entity key + explicit logical action occurrence/revision where semantically required; exact retry retains key"
+    },
+    {
+      "id": "dispatch_id",
+      "purpose": "One exact physical request envelope",
+      "invariant": "Ordered member IDs, payload hash/ref, attempt and pre-I/O intent"
+    },
+    {
+      "id": "member_id",
+      "purpose": "Independently attributable input/effect member",
+      "invariant": "Never infer result from aggregate counts or response array position without declared contract"
+    },
+    {
+      "id": "artifact_id",
+      "purpose": "Registered immutable business bytes",
+      "invariant": "Workspace scope, digest/length/media/object version; no arbitrary paths or client storage authority"
+    }
+  ],
+  "session_and_run_grant_policy": "Session validity is checked at API acceptance and control actions only. Accepted jobs use durable execution grants with their own expiry, membership/service/delegation/connection/approval policy epochs and explicit revocation. Ordinary logout or login-session expiry does not cancel accepted work. Explicit principal/run-grant revocation stops future dispatch; already sent effects remain observable under restricted reconciliation-only read authority, which cannot create new mutations.",
+  "state_authority_ids": [
+    "S01",
+    "S02",
+    "S03",
+    "S04",
+    "S05",
+    "S06",
+    "S07",
+    "S08",
+    "S09",
+    "S10",
+    "S11",
+    "S12",
+    "S13",
+    "S14",
+    "S15",
+    "S16",
+    "S17"
+  ],
+  "synthetic_server_config": {
+    "schema_version": "1",
+    "deployment_id": "synthetic-deployment-475",
+    "public_origin": "https://pm.example.invalid",
+    "postgres": {
+      "ownership": "bundled",
+      "database": "pm_app",
+      "endpoint_ref": "secret://infra/pm-dsn"
+    },
+    "temporal": {
+      "ownership": "bundled",
+      "endpoint": "temporal:7233",
+      "namespace": "pm-production",
+      "client_identity_ref": "secret://infra/temporal-mtls",
+      "retention": "720h",
+      "task_queues": [
+        "pm-control",
+        "pm-read",
+        "pm-effect",
+        "pm-binary-query"
+      ]
+    },
+    "artifacts": {
+      "ownership": "bundled",
+      "driver": "s3",
+      "endpoint": "https://objects.internal.invalid",
+      "bucket": "pm-artifacts",
+      "credential_ref": "secret://infra/object-access",
+      "attempt_key_policy": "unique_immutable"
+    },
+    "identity": {
+      "issuer": "https://identity.example.invalid",
+      "client_id": "pm-server",
+      "client_secret_ref": "secret://infra/oidc"
+    },
+    "encryption": {
+      "wrapping_key_ref": "secret://infra/pm-wrap-v1"
+    },
+    "limits": {
+      "workspace_active_runs": 4,
+      "workflow_payload_bytes": 65536,
+      "workflow_fanout": 32,
+      "event_buffer": 128,
+      "query_children": 1,
+      "query_child_memory_bytes": 4294967296,
+      "query_child_deadline": "5m",
+      "request_bytes": 1048576,
+      "metadata_deadline": "5s"
+    },
+    "label": "SYNTHETIC non-secret illustration using the accepted development profile; addresses/references are not real credentials or endpoints",
+    "admission": {
+      "profile": "development",
+      "resolved_limits": {
+        "global_pending": 32,
+        "workspace_pending": 8,
+        "workspace_max_pending_age": "2m"
+      },
+      "field_spelling_owner": "Illustrative resolved values; the server-configuration owner publishes and validates exact typed field names with no aliases."
+    }
+  },
+  "capability_availability": [
+    "implemented",
+    "unsupported",
+    "not_applicable",
+    "blocked"
+  ],
+  "evidence_readiness": [
+    "planned",
+    "implemented",
+    "locally_verified",
+    "provider_tested",
+    "live_certified"
+  ],
+  "effect_states": [
+    "unsent",
+    "succeeded",
+    "unchanged",
+    "rejected",
+    "unknown"
+  ],
+  "run_states": [
+    "accepted",
+    "queued",
+    "running",
+    "awaiting_approval",
+    "blocked",
+    "reconciling",
+    "succeeded",
+    "partial",
+    "failed",
+    "cancelled"
+  ],
+  "orthogonal_run_fields": [
+    "cancel_requested",
+    "orchestration_condition",
+    "projection_observed_at",
+    "unknown_effect_count"
+  ],
+  "aggregate_rule": "Unknown effects prevent clean failure/cancel/success claim. Orchestration closure is observation only; complete exact effect/member/checkpoint evidence owns terminal business outcome.",
+  "all_examples": "Illustrative non-secret values only. Accepted product semantics do not assert implementation, command availability, provider execution or an actual receipt."
+}

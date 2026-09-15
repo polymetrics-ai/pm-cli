@@ -1,0 +1,90 @@
+{
+  "type": "object",
+  "properties": {
+    "excluded_choices": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "constraints": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "license": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "primary_source": {
+            "type": "string"
+          },
+          "prior_id": {
+            "type": "string"
+          },
+          "purpose": {
+            "type": "string"
+          },
+          "source_archive_sha256": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "constraints",
+          "id",
+          "license",
+          "name",
+          "owner",
+          "primary_source",
+          "prior_id",
+          "purpose",
+          "status",
+          "version"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.technology/v1"
+    },
+    "selection_limit": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "excluded_choices",
+    "label",
+    "rows",
+    "schema_version",
+    "selection_limit"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote%20design:technology",
+  "title": "TECHNOLOGY.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}

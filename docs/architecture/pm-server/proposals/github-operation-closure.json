@@ -1,0 +1,717 @@
+{
+  "status": "ACCEPTED_IMMUTABLE_SOURCE_IDENTITY; RAW_SOURCE_NOT_COPIED; SOURCE_LOCK_COMPILER_AND_PROVIDER_PROOF_UNEXECUTED",
+  "repository": "https://github.com/github/rest-api-description",
+  "commit": "0a144e030abbe358000f0d32874e197b59a8f7ed",
+  "path": "descriptions/api.github.com/api.github.com.json",
+  "git_blob_sha1": "ed76b1371e381b078e50c8a698b890911031aeb2",
+  "upstream_bytes": 12939686,
+  "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/descriptions/api.github.com/api.github.com.json",
+  "operation_pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get",
+  "operation_id": "issues/list-for-repo",
+  "license": "MIT; Copyright (c) 2020 GitHub; same-commit LICENSE.md retained beside this closure",
+  "capture_kind": "The complete 12,939,686-byte immutable upstream source identity was accepted after full-byte verification against its Git blob and SHA-256. This file retains bounded operation/reference facts only; the raw 12.9 MB source is intentionally not copied into canonical docs and these normalized facts are not a compiler input.",
+  "normalized_source_facts_sha256": "844ade4e90130296ffefe8938c7a38d3b0caec657e767a9404276f98f6a38855",
+  "info": {
+    "contact": {
+      "name": "Support",
+      "url": "https://support.github.com/contact?tags=dotcom-rest-api"
+    },
+    "description": "GitHub's v3 REST API.",
+    "license": {
+      "name": "MIT",
+      "url": "https://spdx.org/licenses/MIT"
+    },
+    "termsOfService": "https://docs.github.com/articles/github-terms-of-service",
+    "title": "GitHub v3 REST API",
+    "version": "1.1.4",
+    "x-github-plan": "api.github.com"
+  },
+  "openapi": "3.0.3",
+  "operation": {
+    "description": "List issues in a repository. Only open issues will be listed.\n\n> [!NOTE]\n> GitHub's REST API considers every pull request an issue, but not every issue is a pull request. For this reason, \"Issues\" endpoints may return both issues and pull requests in the response. You can identify pull requests by the `pull_request` key. Be aware that the `id` of a pull request returned from \"Issues\" endpoints will be an _issue id_. To find out the pull request id, use the \"[List pull requests](https://docs.github.com/rest/pulls/pulls#list-pull-requests)\" endpoint.\n\nThis endpoint supports the following custom media types. For more information, see \"[Media types](https://docs.github.com/rest/using-the-rest-api/getting-started-with-the-rest-api#media-types).\"\n\n- **`application/vnd.github.raw+json`**: Returns the raw markdown body. Response will include `body`. This is the default if you do not pass any specific media type.\n- **`application/vnd.github.text+json`**: Returns a text only representation of the markdown body. Response will include `body_text`.\n- **`application/vnd.github.html+json`**: Returns HTML rendered from the body's markdown. Response will include `body_html`.\n- **`application/vnd.github.full+json`**: Returns raw, text, and HTML representations. Response will include `body`, `body_text`, and `body_html`.",
+    "externalDocs": {
+      "description": "API method documentation",
+      "url": "https://docs.github.com/rest/issues/issues#list-repository-issues"
+    },
+    "operationId": "issues/list-for-repo",
+    "parameters": [
+      {
+        "$ref": "#/components/parameters/owner"
+      },
+      {
+        "$ref": "#/components/parameters/repo"
+      },
+      {
+        "description": "If an `integer` is passed, it should refer to a milestone by its `number` field. If the string `*` is passed, issues with any milestone are accepted. If the string `none` is passed, issues without milestones are returned.",
+        "in": "query",
+        "name": "milestone",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "Indicates the state of the issues to return.",
+        "in": "query",
+        "name": "state",
+        "required": false,
+        "schema": {
+          "default": "open",
+          "enum": [
+            "open",
+            "closed",
+            "all"
+          ],
+          "type": "string"
+        }
+      },
+      {
+        "description": "Can be the name of a user. Pass in `none` for issues with no assigned user, and `*` for issues assigned to any user.",
+        "in": "query",
+        "name": "assignee",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "Can be the name of an issue type. If the string `*` is passed, issues with any type are accepted. If the string `none` is passed, issues without type are returned.",
+        "in": "query",
+        "name": "type",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "The user that created the issue.",
+        "in": "query",
+        "name": "creator",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "A user that's mentioned in the issue.",
+        "in": "query",
+        "name": "mentioned",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "description": "A comma-separated list of issue field filters in `field_slug:value` format.\nOnly issues matching all specified field values are returned.\nRequires issue fields to be enabled for the repository. Issue fields are\nnot available for user-owned repositories, and field availability for\norganization-owned public repositories depends on the organization's\nvisibility settings. For example, `priority:Urgent,severity:High` filters\nissues where the `priority` field is `Urgent` AND the `severity` field is\n`High`.",
+        "in": "query",
+        "name": "issue_field_values",
+        "required": false,
+        "schema": {
+          "type": "string"
+        }
+      },
+      {
+        "$ref": "#/components/parameters/labels"
+      },
+      {
+        "description": "What to sort results by.",
+        "in": "query",
+        "name": "sort",
+        "required": false,
+        "schema": {
+          "default": "created",
+          "enum": [
+            "created",
+            "updated",
+            "comments"
+          ],
+          "type": "string"
+        }
+      },
+      {
+        "$ref": "#/components/parameters/direction"
+      },
+      {
+        "$ref": "#/components/parameters/since"
+      },
+      {
+        "$ref": "#/components/parameters/per-page"
+      },
+      {
+        "$ref": "#/components/parameters/page"
+      }
+    ],
+    "responses": {
+      "200": {
+        "content": {
+          "application/json": {
+            "examples": {
+              "default": {
+                "$ref": "#/components/examples/issue-items"
+              }
+            },
+            "schema": {
+              "items": {
+                "$ref": "#/components/schemas/issue"
+              },
+              "type": "array"
+            }
+          }
+        },
+        "description": "Response",
+        "headers": {
+          "Link": {
+            "$ref": "#/components/headers/link"
+          }
+        }
+      },
+      "301": {
+        "$ref": "#/components/responses/moved_permanently"
+      },
+      "404": {
+        "$ref": "#/components/responses/not_found"
+      },
+      "422": {
+        "$ref": "#/components/responses/validation_failed"
+      }
+    },
+    "summary": "List repository issues",
+    "tags": [
+      "issues"
+    ],
+    "x-github": {
+      "category": "issues",
+      "enabledForGitHubApps": true,
+      "githubCloudOnly": false,
+      "subcategory": "issues"
+    }
+  },
+  "reference_closure": {
+    "#/components/examples/issue-items": {
+      "required": null,
+      "type": null
+    },
+    "#/components/headers/link": {
+      "required": null,
+      "type": null
+    },
+    "#/components/parameters/direction": {
+      "required": false,
+      "type": null
+    },
+    "#/components/parameters/labels": {
+      "required": false,
+      "type": null
+    },
+    "#/components/parameters/owner": {
+      "required": true,
+      "type": null
+    },
+    "#/components/parameters/page": {
+      "required": null,
+      "type": null
+    },
+    "#/components/parameters/per-page": {
+      "required": null,
+      "type": null
+    },
+    "#/components/parameters/repo": {
+      "required": true,
+      "type": null
+    },
+    "#/components/parameters/since": {
+      "required": false,
+      "type": null
+    },
+    "#/components/responses/moved_permanently": {
+      "required": null,
+      "type": null
+    },
+    "#/components/responses/not_found": {
+      "required": null,
+      "type": null
+    },
+    "#/components/responses/validation_failed": {
+      "required": null,
+      "type": null
+    },
+    "#/components/schemas/author-association": {
+      "required": null,
+      "type": "string"
+    },
+    "#/components/schemas/basic-error": {
+      "required": null,
+      "type": "object"
+    },
+    "#/components/schemas/enterprise": {
+      "required": [
+        "id",
+        "node_id",
+        "name",
+        "slug",
+        "html_url",
+        "created_at",
+        "updated_at",
+        "avatar_url"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/issue": {
+      "required": [
+        "assignee",
+        "closed_at",
+        "comments",
+        "comments_url",
+        "events_url",
+        "html_url",
+        "id",
+        "node_id",
+        "labels",
+        "labels_url",
+        "milestone",
+        "number",
+        "repository_url",
+        "state",
+        "locked",
+        "title",
+        "url",
+        "user",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/issue-dependencies-summary": {
+      "required": [
+        "blocked_by",
+        "blocking",
+        "total_blocked_by",
+        "total_blocking"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/issue-field-value": {
+      "required": [
+        "issue_field_id",
+        "node_id",
+        "data_type",
+        "value"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/issue-type": {
+      "required": [
+        "id",
+        "node_id",
+        "name",
+        "description"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/nullable-integration": {
+      "required": [
+        "id",
+        "node_id",
+        "owner",
+        "name",
+        "description",
+        "external_url",
+        "html_url",
+        "created_at",
+        "updated_at",
+        "permissions",
+        "events"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/nullable-issue-comment": {
+      "required": [
+        "id",
+        "node_id",
+        "html_url",
+        "issue_url",
+        "user",
+        "url",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/nullable-issue-comment-minimized": {
+      "required": [
+        "reason"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/nullable-license-simple": {
+      "required": [
+        "key",
+        "name",
+        "url",
+        "spdx_id",
+        "node_id"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/nullable-milestone": {
+      "required": [
+        "closed_issues",
+        "creator",
+        "description",
+        "due_on",
+        "closed_at",
+        "id",
+        "node_id",
+        "labels_url",
+        "html_url",
+        "number",
+        "open_issues",
+        "state",
+        "title",
+        "url",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/nullable-pinned-issue-comment": {
+      "required": [
+        "pinned_at",
+        "pinned_by"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/nullable-simple-user": {
+      "required": [
+        "avatar_url",
+        "events_url",
+        "followers_url",
+        "following_url",
+        "gists_url",
+        "gravatar_id",
+        "html_url",
+        "id",
+        "node_id",
+        "login",
+        "organizations_url",
+        "received_events_url",
+        "repos_url",
+        "site_admin",
+        "starred_url",
+        "subscriptions_url",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/reaction-rollup": {
+      "required": [
+        "url",
+        "total_count",
+        "+1",
+        "-1",
+        "laugh",
+        "confused",
+        "heart",
+        "hooray",
+        "eyes",
+        "rocket"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/repository": {
+      "required": [
+        "archive_url",
+        "assignees_url",
+        "blobs_url",
+        "branches_url",
+        "collaborators_url",
+        "comments_url",
+        "commits_url",
+        "compare_url",
+        "contents_url",
+        "contributors_url",
+        "deployments_url",
+        "description",
+        "downloads_url",
+        "events_url",
+        "fork",
+        "forks_url",
+        "full_name",
+        "git_commits_url",
+        "git_refs_url",
+        "git_tags_url",
+        "hooks_url",
+        "html_url",
+        "id",
+        "node_id",
+        "issue_comment_url",
+        "issue_events_url",
+        "issues_url",
+        "keys_url",
+        "labels_url",
+        "languages_url",
+        "merges_url",
+        "milestones_url",
+        "name",
+        "notifications_url",
+        "owner",
+        "private",
+        "pulls_url",
+        "releases_url",
+        "stargazers_url",
+        "statuses_url",
+        "subscribers_url",
+        "subscription_url",
+        "tags_url",
+        "teams_url",
+        "trees_url",
+        "url",
+        "clone_url",
+        "default_branch",
+        "forks",
+        "forks_count",
+        "git_url",
+        "has_downloads",
+        "has_issues",
+        "has_projects",
+        "has_wiki",
+        "has_pages",
+        "homepage",
+        "language",
+        "archived",
+        "disabled",
+        "mirror_url",
+        "open_issues",
+        "open_issues_count",
+        "license",
+        "pushed_at",
+        "size",
+        "ssh_url",
+        "stargazers_count",
+        "svn_url",
+        "watchers",
+        "watchers_count",
+        "created_at",
+        "updated_at"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/simple-user": {
+      "required": [
+        "avatar_url",
+        "events_url",
+        "followers_url",
+        "following_url",
+        "gists_url",
+        "gravatar_id",
+        "html_url",
+        "id",
+        "node_id",
+        "login",
+        "organizations_url",
+        "received_events_url",
+        "repos_url",
+        "site_admin",
+        "starred_url",
+        "subscriptions_url",
+        "type",
+        "url"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/sub-issues-summary": {
+      "required": [
+        "total",
+        "completed",
+        "percent_completed"
+      ],
+      "type": "object"
+    },
+    "#/components/schemas/validation-error": {
+      "required": [
+        "message",
+        "documentation_url"
+      ],
+      "type": "object"
+    }
+  },
+  "referenced_parameters": {
+    "direction": {
+      "description": "The direction to sort the results by.",
+      "in": "query",
+      "name": "direction",
+      "required": false,
+      "schema": {
+        "default": "desc",
+        "enum": [
+          "asc",
+          "desc"
+        ],
+        "type": "string"
+      }
+    },
+    "labels": {
+      "description": "A list of comma separated label names. Example: `bug,ui,@high`",
+      "in": "query",
+      "name": "labels",
+      "required": false,
+      "schema": {
+        "type": "string"
+      }
+    },
+    "owner": {
+      "description": "The account owner of the repository. The name is not case sensitive.",
+      "in": "path",
+      "name": "owner",
+      "required": true,
+      "schema": {
+        "type": "string"
+      }
+    },
+    "page": {
+      "description": "The page number of the results to fetch. For more information, see \"[Using pagination in the REST API](https://docs.github.com/rest/using-the-rest-api/using-pagination-in-the-rest-api).\"",
+      "in": "query",
+      "name": "page",
+      "schema": {
+        "default": 1,
+        "type": "integer"
+      }
+    },
+    "per-page": {
+      "description": "The number of results per page (max 100). For more information, see \"[Using pagination in the REST API](https://docs.github.com/rest/using-the-rest-api/using-pagination-in-the-rest-api).\"",
+      "in": "query",
+      "name": "per_page",
+      "schema": {
+        "default": 30,
+        "type": "integer"
+      }
+    },
+    "repo": {
+      "description": "The name of the repository without the `.git` extension. The name is not case sensitive.",
+      "in": "path",
+      "name": "repo",
+      "required": true,
+      "schema": {
+        "type": "string"
+      }
+    },
+    "since": {
+      "description": "Only show results that were last updated after the given time. This is a timestamp in [ISO 8601](https://en.wikipedia.org/wiki/ISO_8601) format: `YYYY-MM-DDTHH:MM:SSZ`.",
+      "in": "query",
+      "name": "since",
+      "required": false,
+      "schema": {
+        "format": "date-time",
+        "type": "string"
+      }
+    }
+  },
+  "selected_issue_fields": {
+    "properties": {
+      "id": {
+        "format": "int64",
+        "type": "integer"
+      },
+      "number": {
+        "description": "Number uniquely identifying the issue within its repository",
+        "example": 42,
+        "type": "integer"
+      },
+      "pull_request": {
+        "properties": {
+          "diff_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "html_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "merged_at": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "patch_url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          },
+          "url": {
+            "format": "uri",
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "diff_url",
+          "html_url",
+          "patch_url",
+          "url"
+        ],
+        "type": "object"
+      },
+      "repository_url": {
+        "format": "uri",
+        "type": "string"
+      },
+      "state": {
+        "description": "State of the issue; either 'open' or 'closed'",
+        "example": "open",
+        "type": "string"
+      },
+      "title": {
+        "description": "Title of the issue",
+        "example": "Widget creation fails in Safari on OS X 10.8",
+        "type": "string"
+      },
+      "url": {
+        "description": "URL for the issue",
+        "example": "https://api.github.com/repositories/42/issues/1",
+        "format": "uri",
+        "type": "string"
+      }
+    },
+    "required": [
+      "assignee",
+      "closed_at",
+      "comments",
+      "comments_url",
+      "events_url",
+      "html_url",
+      "id",
+      "node_id",
+      "labels",
+      "labels_url",
+      "milestone",
+      "number",
+      "repository_url",
+      "state",
+      "locked",
+      "title",
+      "url",
+      "user",
+      "created_at",
+      "updated_at"
+    ]
+  },
+  "upstream_sha256": "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2",
+  "license_identity": {
+    "path": "LICENSE.md",
+    "git_blob_sha1": "b50625eb63949013cae604b1cadd42cfa1eaf825",
+    "upstream_bytes": 1063,
+    "sha256": "3243761cbac07e6d169a5a2f4e7c25cc544da85248e735df74c3672e055cc87b",
+    "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/LICENSE.md"
+  },
+  "accepted_decision": {
+    "url": "https://github.com/polymetrics-ai/pm-cli/issues/27#issuecomment-5669069268",
+    "issue_revision_url": "https://github.com/polymetrics-ai/pm-cli/issues/27",
+    "issue_body_sha256": "6f671f9d39adb8390d82478b8fa5e44f43e98c0653bf1aa0146db8143958e764",
+    "issue_body_bytes": 43761
+  },
+  "accepted_result_contract": "Complete action data by default; optional shared typed field selection and record filtering; preserve nested values, absent/null/value, exact identifiers/numbers, every mixed issue/pull-request entry and truthful source pagination. The prior fixed six-field proposal is superseded.",
+  "remaining_work": "Issue #27 first-owns source.lock, complete recursive reference capture, NOTICE, compiler validation/generated inventories, causal controlled cases and separately authorized live provider proof."
+}

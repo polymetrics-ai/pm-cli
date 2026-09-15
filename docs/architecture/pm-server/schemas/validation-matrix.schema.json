@@ -1,0 +1,141 @@
+{
+  "type": "object",
+  "properties": {
+    "cache_policy": {
+      "type": "string"
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "command_status": {
+            "type": "string"
+          },
+          "contexts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "deferred_gate": {
+            "type": "string"
+          },
+          "execution_evidence": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "integration_fault": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string"
+          },
+          "live_requirement": {
+            "type": "string"
+          },
+          "milestone": {
+            "type": "string"
+          },
+          "negative_control_and_expected_observation": {
+            "type": "string"
+          },
+          "owner_file": {
+            "type": "string"
+          },
+          "planned_command": {
+            "type": "string"
+          },
+          "prior_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "provider_proof": {
+            "type": "string"
+          },
+          "readiness_when_passed": {
+            "type": "string"
+          },
+          "receipt_binding": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "required_for_initial_release": {
+            "type": "boolean"
+          },
+          "source_requirement": {
+            "type": "string"
+          },
+          "staged_coverage": {
+            "type": "string"
+          },
+          "symbol": {
+            "type": "string"
+          },
+          "unit_contract": {
+            "type": "string"
+          },
+          "completion_owner": {
+            "type": "string",
+            "pattern": "^pm-[a-z0-9-]+$"
+          }
+        },
+        "required": [
+          "command_status",
+          "contexts",
+          "execution_evidence",
+          "id",
+          "kind",
+          "milestone",
+          "negative_control_and_expected_observation",
+          "owner_file",
+          "planned_command",
+          "prior_id",
+          "readiness_when_passed",
+          "required_for_initial_release",
+          "symbol"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "proof_modes": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "proof_status": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.validation/v2"
+    },
+    "test_policy": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "cache_policy",
+    "entries",
+    "label",
+    "proof_modes",
+    "proof_status",
+    "schema_version",
+    "test_policy"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote%20design:validation-matrix",
+  "title": "VALIDATION-MATRIX.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}

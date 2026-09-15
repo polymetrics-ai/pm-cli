@@ -1,0 +1,7 @@
+# Test-only dependency declaration for scripts/validate_architecture_docs.py.
+# jsonschema 4.25.1 is MIT-licensed (PyPI license_expression: MIT) and validates
+# the architecture's Draft 2020-12 schemas. requirements-docs.lock records the
+# complete version/hash/license closure used in job-owned disposable storage.
+# URI identifiers use the validator's explicit PM lexical contract; no optional
+# jsonschema format checker is claimed.
+jsonschema==4.25.1

@@ -1,0 +1,289 @@
+{
+  "type": "object",
+  "properties": {
+    "composition_rule": {
+      "type": "string"
+    },
+    "crosswalk": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "disposition": {
+            "type": "string"
+          },
+          "new_path": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "prior_path": {
+            "type": "string"
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "disposition",
+          "new_path",
+          "prior_path",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "entries": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "data_owned": {
+            "type": "string"
+          },
+          "first_milestone": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "imports": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "lifecycle": {
+            "type": "string"
+          },
+          "must_not_own": {
+            "type": "string"
+          },
+          "package": {
+            "type": "string"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "prior_group_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "process_owner": {
+            "type": "string"
+          },
+          "public_interfaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "review_state": {
+            "type": "string"
+          },
+          "sequence_within_milestone": {
+            "type": "integer"
+          },
+          "test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "data_owned",
+          "first_milestone",
+          "id",
+          "imports",
+          "must_not_own",
+          "package",
+          "paths",
+          "prior_group_id",
+          "process_owner",
+          "public_interfaces",
+          "review_state",
+          "sequence_within_milestone",
+          "test_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "allowed_internal_dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "assignment_owner": {
+            "type": "string"
+          },
+          "dependencies": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "generator": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "go_package": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "group_id": {
+            "type": "string"
+          },
+          "group_responsibility": {
+            "type": "string"
+          },
+          "import_activation": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "earliest_milestone": {
+                  "type": "string"
+                },
+                "package": {
+                  "type": "string"
+                },
+                "rule": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "earliest_milestone",
+                "package",
+                "rule"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "interfaces": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "kind": {
+            "type": "string"
+          },
+          "milestone": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "prior_group_id": {
+            "type": [
+              "null",
+              "string"
+            ]
+          },
+          "process": {
+            "type": "string"
+          },
+          "responsibility": {
+            "type": "string"
+          },
+          "subsequent_wiring_milestones": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "test_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "action",
+          "allowed_internal_dependencies",
+          "assignment_owner",
+          "dependencies",
+          "generator",
+          "go_package",
+          "group_id",
+          "group_responsibility",
+          "import_activation",
+          "interfaces",
+          "kind",
+          "milestone",
+          "owner",
+          "path",
+          "prior_group_id",
+          "process",
+          "responsibility",
+          "subsequent_wiring_milestones",
+          "test_ids"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "forbidden_transfers": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "label": {
+      "type": "string"
+    },
+    "note": {
+      "type": "string"
+    },
+    "provider_io_rule": {
+      "type": "string"
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.files/v2"
+    }
+  },
+  "required": [
+    "composition_rule",
+    "crosswalk",
+    "entries",
+    "files",
+    "forbidden_transfers",
+    "label",
+    "note",
+    "provider_io_rule",
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote%20design:file-ownership",
+  "title": "FILE-OWNERSHIP.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}

@@ -1,0 +1,598 @@
+{
+  "schema_version": "pm.plan.delta/v2",
+  "label": "Canonical475 architecture: accepted product amendments plus remaining planned/unexecuted implementation decisions",
+  "rows": [
+    {
+      "id": "ADR475-01",
+      "subject": "One remote stack",
+      "decision": "PostgreSQL+Temporal+workers+shared objects in every deployment.",
+      "supersedes": "SQLite/local custom queue removed.",
+      "falsifier": "Source-backed chosen stack cannot meet qualified recovery/budget constraints.",
+      "first_milestone": "M0",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Accepted jobs must outlive clients and work across users/hosts.",
+      "considered_options": [
+        "One PG/Temporal/S3 stack",
+        "Local embedded product plus later hosted rewrite"
+      ],
+      "tradeoffs_and_consequences": "Adds operational components and maintenance; avoids two durability architectures.",
+      "evidence_ids": [
+        "TEMP-SRC-001",
+        "OC02",
+        "EX06"
+      ],
+      "revisit_trigger": "Source-backed chosen stack cannot meet qualified recovery/budget constraints."
+    },
+    {
+      "id": "ADR475-02",
+      "subject": "Gin adapter",
+      "decision": "Gin with strict schema/error/proxy/context policy; domain uses context.Context.",
+      "supersedes": "Standard library/Chi viable, no unsupported inferiority claim.",
+      "falsifier": "Strict boundary or maintainability tests cannot be satisfied without disproportionate patching.",
+      "first_milestone": "M3",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "473 used standard HTTP simplicity without deep Gin study.",
+      "considered_options": [
+        "Gin",
+        "Chi",
+        "Echo",
+        "net/http"
+      ],
+      "tradeoffs_and_consequences": "Framework context/binding defaults need explicit adaptation; cohesive route tooling is the benefit.",
+      "evidence_ids": [
+        "TECH475-001",
+        "TECH475-003",
+        "TECH475-004"
+      ],
+      "revisit_trigger": "Strict boundary or maintainability tests cannot be satisfied without disproportionate patching."
+    },
+    {
+      "id": "ADR475-03",
+      "subject": "PG application truth",
+      "decision": "pm_app owns accepted intent, effects, grants, manifests and events.",
+      "supersedes": "Temporal owns orchestration, not provider effect facts.",
+      "falsifier": "Cross-store recovery loses accepted work/effect identity.",
+      "first_milestone": "M4",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Two durable systems can disagree after either handoff reply is lost.",
+      "considered_options": [
+        "PG app truth plus Temporal orchestration",
+        "Temporal history as all business state",
+        "Custom PG queue"
+      ],
+      "tradeoffs_and_consequences": "Outbox/reconciler complexity is necessary; no cross-system atomicity claim.",
+      "evidence_ids": [
+        "475-TEMPORAL"
+      ],
+      "revisit_trigger": "Cross-store recovery loses accepted work/effect identity."
+    },
+    {
+      "id": "ADR475-04",
+      "subject": "Tenant authority",
+      "decision": "Application authorization plus scoped RLS/non-owner roles and explicit workspace.",
+      "supersedes": "No global current-workspace or app-only filter dependence.",
+      "falsifier": "Any cross-resource/pool-reuse negative case leaks or mutates foreign scope.",
+      "first_milestone": "M2",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Multiple workspaces and pooled connections make missing filters consequential.",
+      "considered_options": [
+        "Application authorization plus RLS",
+        "Application-only checks"
+      ],
+      "tradeoffs_and_consequences": "Policies/roles/transaction cleanup add complexity and do not protect against fully compromised trusted PG credentials.",
+      "evidence_ids": [
+        "475-TEMPORAL"
+      ],
+      "revisit_trigger": "Any cross-resource/pool-reuse negative case leaks or mutates foreign scope."
+    },
+    {
+      "id": "ADR475-05",
+      "subject": "Durable grant",
+      "decision": "Session checked at API acceptance; independent run grant checked at effect boundaries.",
+      "supersedes": "Logout/expiry does not cancel accepted work.",
+      "falsifier": "Expiry stops accepted job or explicit grant revocation permits a new mutation.",
+      "first_milestone": "M1 contract, M4 admission; M9 explicit control integration",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Short login sessions and long accepted jobs have different lifetimes.",
+      "considered_options": [
+        "Durable execution grant",
+        "Recheck original login session every send"
+      ],
+      "tradeoffs_and_consequences": "Requires explicit grant revocation/expiry and reconciliation-only authority, but ordinary logout is safe.",
+      "evidence_ids": [
+        "BRIEF475",
+        "475-TEMPORAL"
+      ],
+      "revisit_trigger": "Expiry stops accepted job or explicit grant revocation permits a new mutation."
+    },
+    {
+      "id": "ADR475-06",
+      "subject": "Provider I/O ownership",
+      "decision": "All provider requests/discovery run in admitted worker activities.",
+      "supersedes": "API inline reads are PM metadata only; admin encrypts ingress only.",
+      "falsifier": "API obtains provider signer/executes request outside admitted worker path.",
+      "first_milestone": "M6",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Inline provider execution could create another signer/rate/receipt path.",
+      "considered_options": [
+        "Worker-only provider I/O",
+        "Bounded API provider execution with same guards"
+      ],
+      "tradeoffs_and_consequences": "Direct reads incur durable admission latency; one execution path is easier to audit.",
+      "evidence_ids": [
+        "EX18",
+        "EX22",
+        "BRIEF475"
+      ],
+      "revisit_trigger": "API obtains provider signer/executes request outside admitted worker path."
+    },
+    {
+      "id": "ADR475-07",
+      "subject": "Source fidelity",
+      "decision": "One pinned source/ref closure -> typed operations -> generated safe projections.",
+      "supersedes": "No generated provider-specific Go SDK or source/proof runtime reader.",
+      "falsifier": "Null/media/status/location/requiredness changes without valid source rule.",
+      "first_milestone": "M6",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Historical projected schemas invented nullability and discarded response variants.",
+      "considered_options": [
+        "Pinned typed compiler with sparse amendments",
+        "Provider SDK per connector",
+        "Loose runtime spec interpretation"
+      ],
+      "tradeoffs_and_consequences": "Compiler fidelity requires real fixtures and explicit unsupported shapes; generated code remains disposable.",
+      "evidence_ids": [
+        "RI-0167",
+        "EX11",
+        "EX14",
+        "EX24"
+      ],
+      "revisit_trigger": "Null/media/status/location/requiredness changes without valid source rule."
+    },
+    {
+      "id": "ADR475-08",
+      "subject": "Actual capability registry",
+      "decision": "One executable composition with real activity consumers; compiler/value/proof foundations compose at their actual owners.",
+      "supersedes": "Atlas and descriptors alone cannot claim implementation.",
+      "falsifier": "Removing actual handler leaves capability reported implemented.",
+      "first_milestone": "M4",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Historical helper libraries/descriptors lacked product consumers.",
+      "considered_options": [
+        "One actual handler composition",
+        "Atlas/descriptor as availability authority"
+      ],
+      "tradeoffs_and_consequences": "Requires end-to-end reachability and phase wiring tests; avoids false implementation claims.",
+      "evidence_ids": [
+        "RI-0125"
+      ],
+      "revisit_trigger": "Removing actual handler leaves capability reported implemented."
+    },
+    {
+      "id": "ADR475-09",
+      "subject": "Member effect truth",
+      "decision": "Persist dispatch/member intent and capacity before I/O, settle exact correlated outcomes.",
+      "supersedes": "Aggregate counts or workflow success are insufficient.",
+      "falsifier": "Response loss/retry creates duplicate or erases unknown effect.",
+      "first_milestone": "M8",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Batch transport and member outcomes are different; response loss is ambiguous.",
+      "considered_options": [
+        "Durable member/effect ledger",
+        "Batch success counts",
+        "Blind activity retry"
+      ],
+      "tradeoffs_and_consequences": "More state and readback cost; preserves partial success and honest unknowns.",
+      "evidence_ids": [
+        "RI-0009",
+        "EX31"
+      ],
+      "revisit_trigger": "Response loss/retry creates duplicate or erases unknown effect."
+    },
+    {
+      "id": "ADR475-10",
+      "subject": "Temporal schedules",
+      "decision": "Temporal trigger owns occurrence; effect-free scheduled workflow first admits then adopts same execution.",
+      "supersedes": "No short launcher breaking overlap, duplicate StartRun or PM cron.",
+      "falsifier": "Concurrent mutation/trigger/DST/overlap case admits duplicate or wrong occurrence.",
+      "first_milestone": "M9",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Calendar semantics, overlap and out-of-order edits are provider-specific to the scheduler.",
+      "considered_options": [
+        "Temporal Schedule and adopted workflow",
+        "PM cron trigger",
+        "Short launcher starting independent run"
+      ],
+      "tradeoffs_and_consequences": "Low-level CAS adapter and occurrence admission add code; no competing scheduler.",
+      "evidence_ids": [
+        "475-TEMPORAL"
+      ],
+      "revisit_trigger": "Concurrent mutation/trigger/DST/overlap case admits duplicate or wrong occurrence."
+    },
+    {
+      "id": "ADR475-11",
+      "subject": "Immutable shared bytes",
+      "decision": "Unique S3 attempt objects then PG manifest/checkpoint commit.",
+      "supersedes": "No host rename or conditional-PUT atomicity assumption.",
+      "falsifier": "Partial/corrupt bytes publish or a second host cannot read registered data.",
+      "first_milestone": "M7",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Multiple worker hosts cannot use one host rename as byte publication truth.",
+      "considered_options": [
+        "S3 immutable attempts plus PG manifest",
+        "Host/shared writable files",
+        "PG bytea for all data"
+      ],
+      "tradeoffs_and_consequences": "Object service plus orphan/GC/integrity handling; portable bytes and bounded control DB.",
+      "evidence_ids": [
+        "475-STORAGE"
+      ],
+      "revisit_trigger": "Partial/corrupt bytes publish or a second host cannot read registered data."
+    },
+    {
+      "id": "ADR475-12",
+      "subject": "Analytical child",
+      "decision": "Only restricted pm-query/analytics links DuckDB native driver.",
+      "supersedes": "No shared writable native file or arbitrary SQL security assumption.",
+      "falsifier": "Query escapes admitted files/secrets/resource bounds.",
+      "first_milestone": "M7",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Untrusted analytical data/query bounds need an actual process boundary.",
+      "considered_options": [
+        "Restricted DuckDB child",
+        "Shared writable DuckDB",
+        "Additional distributed query service"
+      ],
+      "tradeoffs_and_consequences": "Native helper packaging and scratch copying cost; contains query failures/secrets.",
+      "evidence_ids": [
+        "475-STORAGE"
+      ],
+      "revisit_trigger": "Query escapes admitted files/secrets/resource bounds."
+    },
+    {
+      "id": "ADR475-13",
+      "subject": "Public client parity",
+      "decision": "One OpenAPI3.1 Go/browser contract; separate admin ingress and route-specific auth.",
+      "supersedes": "Full UI deferred; browser harness real, not Node-only cookie proof.",
+      "falsifier": "Equivalent use cases differ in permissions, inputs, effects or errors.",
+      "first_milestone": "M5",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Future UI must exercise the same product use cases as CLI.",
+      "considered_options": [
+        "One public OpenAPI3.1 with two clients",
+        "Independent UI backend",
+        "Go-only API client"
+      ],
+      "tradeoffs_and_consequences": "Requires actual-browser auth tests and constrained generator schemas; no full UI now.",
+      "evidence_ids": [
+        "OC35",
+        "TECH475-043",
+        "TECH475-044",
+        "BRIEF475"
+      ],
+      "revisit_trigger": "Equivalent use cases differ in permissions, inputs, effects or errors."
+    },
+    {
+      "id": "ADR475-14",
+      "subject": "Durable events",
+      "decision": "Per-run locked sequence with state/event TX and scoped snapshot/gap replay.",
+      "supersedes": "Global sequence allocation or live bus is not commit-order durability.",
+      "falsifier": "Delayed first transaction causes reconnect cursor to skip committed event.",
+      "first_milestone": "M4",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "SSE reconnect cannot infer commit order from ID allocation or live notifications.",
+      "considered_options": [
+        "Per-run locked sequence and PG replay",
+        "Global allocation cursor",
+        "Live bus only"
+      ],
+      "tradeoffs_and_consequences": "Run-row serialization and retention snapshots cost writes; prevents skipped late commits.",
+      "evidence_ids": [
+        "OC22",
+        "OC23",
+        "OC38"
+      ],
+      "revisit_trigger": "Delayed first transaction causes reconnect cursor to skip committed event."
+    },
+    {
+      "id": "ADR475-15",
+      "subject": "Operator lifecycle and recovery",
+      "decision": "Explicit full stack launcher, ownership-aware schema/init, quarantine restore and data retention.",
+      "supersedes": "No CLI autostart, managed-service mutation or implicit purge.",
+      "falsifier": "Upgrade/restore reissues uncertain external effect or loses required state.",
+      "first_milestone": "M12",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "Operator must know which services/data PM owns and what restore can safely resume.",
+      "considered_options": [
+        "Explicit owned stack launcher",
+        "Client/HTTP autostart",
+        "Implicit managed-service lifecycle"
+      ],
+      "tradeoffs_and_consequences": "Coordinated maintenance/backup drills are required; one-host is not HA.",
+      "evidence_ids": [
+        "OC33",
+        "EX06",
+        "475-STORAGE",
+        "475-TEMPORAL"
+      ],
+      "revisit_trigger": "Upgrade/restore reissues uncertain external effect or loses required state."
+    },
+    {
+      "id": "ADR475-16",
+      "subject": "Proof scope",
+      "decision": "Connector/lane/operation/behavior/case evidence with exact component/scope/currentness.",
+      "supersedes": "No batch authority, stale pass resurrection or inherited certification.",
+      "falsifier": "Wrong effect/bytes/rows or invalidated old pass appears certified.",
+      "first_milestone": "M11",
+      "status": "proposed",
+      "source_refs": [
+        "BRIEF.md",
+        "tech/FRAMEWORK.md",
+        "tech/STORAGE-DEPLOYMENT.md",
+        "tech/temporal/REPORT.md"
+      ],
+      "context": "New binaries cannot inherit old connector proof counts.",
+      "considered_options": [
+        "Exact case receipts and independent oracles",
+        "Batch certification/global CURRENT",
+        "Credential presence as proof"
+      ],
+      "tradeoffs_and_consequences": "Live validation can be tier/account blocked; valid independent passes are preserved with provenance.",
+      "evidence_ids": [
+        "RI-0233",
+        "RI-0125",
+        "BRIEF475"
+      ],
+      "revisit_trigger": "Wrong effect/bytes/rows or invalidated old pass appears certified."
+    },
+    {
+      "id": "ADR475-17",
+      "subject": "Complete action result surface",
+      "context": "A fixed display subset and hidden pull-request filter lose source data and make pagination/result truth ambiguous.",
+      "considered_options": [
+        "Complete data by default plus shared typed optional selection/filtering",
+        "Fixed six-field default",
+        "Provider-specific or proof-only projection"
+      ],
+      "decision": "Accepted F02: complete action data by default; shared typed optional field selection and record filtering preserve nesting, presence, exact values, all source entries and truthful pagination.",
+      "evidence_ids": [
+        "V02",
+        "V29",
+        "V32",
+        "V67",
+        "P_direct_read"
+      ],
+      "falsifier": "An absent selector omits a valid source field/entry, a filter coerces types or runs after selection, or an empty filtered page is reported exhausted.",
+      "first_milestone": "M1 contract; M6 first GitHub consumer",
+      "revisit_trigger": "Only an explicit replacement product decision with migration semantics; provider display preferences are insufficient.",
+      "source_refs": [
+        "PM-ISSUE-27-ACCEPTED",
+        "GITHUB-REST-SPEC-ACCEPTED"
+      ],
+      "status": "accepted product contract; implementation and proof UNEXECUTED",
+      "supersedes": "The six-field GitHub default and hidden pull_request exclusion are rejected, not compatibility behavior.",
+      "tradeoffs_and_consequences": "Payloads can be larger; callers opt into typed selection/filtering while server and clients preserve source membership, continuation and exact values."
+    },
+    {
+      "id": "ADR475-18",
+      "subject": "Finite durable admission and recovery",
+      "context": "Unbounded or synthetic-only limits and replacement keys after uncertain commit can overload a deployment or create duplicate logical runs.",
+      "considered_options": [
+        "Finite deployment/workspace reservations with same-key recovery",
+        "Historical 1000/1h sample as default",
+        "Unlimited/zero-disable aliases or client-generated replacement keys"
+      ],
+      "decision": "Accepted F01: exact refusal table, development 32/8/2m and standard 256/32/10m, atomic PostgreSQL pending reservations and workspace-count/workspace-age-before-deployment precedence. The three-send/30s bound applies only to client-to-API recovery and never constrains provider/run-owned Retry-After or durable retry timing. Issue #14 proves the route and a controlled durable execution-start transition; #16 later proves actual-worker integration and #19/#21 own client recovery.",
+      "evidence_ids": [
+        "V09",
+        "R09",
+        "R10",
+        "R14"
+      ],
+      "falsifier": "202 precedes known commit, a replica multiplies budget, replay reserves again, age removes accepted work, or unresolved/used keys can execute as fresh intent.",
+      "first_milestone": "M4",
+      "revisit_trigger": "Measured capacity may change named finite values through an explicit compatible contract revision; never by silent unlimited fallback.",
+      "source_refs": [
+        "PM-DECISION-F01-AUTH",
+        "PM-ISSUE-14-ACCEPTED"
+      ],
+      "status": "accepted product contract; implementation and proof UNEXECUTED",
+      "supersedes": "Historical 1000 pending/1h and synthetic 3/2/30s are not production defaults; incomplete refusal bindings are closed.",
+      "tradeoffs_and_consequences": "Some overloads refuse new work while preserving accepted work. Clients retain secret-free intent journals and stable recovery guidance; provider/run retry timing remains independently durable."
+    },
+    {
+      "id": "ADR475-19",
+      "subject": "Revision-safe access mutation replay",
+      "context": "The six M3 access POST rows incorrectly inherited read cursor/ETag idempotency and could reissue one-time credential material or duplicate mutations.",
+      "considered_options": [
+        "Scoped mutation receipt plus If-Match",
+        "Read cursor/ETag as idempotency",
+        "Automatic stale-revision rebase or secret replay"
+      ],
+      "decision": "Accepted AUTH-MUTATION-PARITY: preserve explicit connection/operation/workspace/time ceilings and distinct auditable actor/effective-actor identities; six exact POST rows use current authorization, If-Match and workspace/principal/operation/target-scoped keys. Original grant/create is 201, revoke/unchanged is 200 and exact replay is 200 with the safe original result.",
+      "evidence_ids": [
+        "V14",
+        "R08",
+        "R14"
+      ],
+      "falsifier": "Replay bypasses current authorization, a grant exceeds its ceiling, actor attribution collapses, a stale/missing revision mutates, concurrent equal requests cause two effects, or service-account secret appears outside the original 201.",
+      "first_milestone": "M3",
+      "revisit_trigger": "Any change to identity/revision/key namespace or one-time credential lifecycle requires an explicit security/product decision.",
+      "source_refs": [
+        "PM-DECISION-F01-AUTH",
+        "PM-ISSUE-8-ACCEPTED",
+        "PM-ISSUE-12-ACCEPTED"
+      ],
+      "status": "accepted product contract; implementation and proof UNEXECUTED",
+      "supersedes": "Read-style mutation idempotency metadata and replay secret recovery are rejected.",
+      "tradeoffs_and_consequences": "Clients must retain keys and expected revisions, and a lost one-time credential requires explicit revoke/new create rather than recovery by replay."
+    },
+    {
+      "id": "ADR475-20",
+      "subject": "Connector source authority",
+      "context": "A moving documentation page or assumed OpenAPI cannot supply immutable schema fidelity for GitHub or native PostgreSQL.",
+      "considered_options": [
+        "Pinned official source/license and provider-native documentation",
+        "Moving docs page",
+        "Invented or assumed OpenAPI for PostgreSQL"
+      ],
+      "decision": "Accept the exact GitHub REST source/license identity and require official version-pinned PostgreSQL protocol/SQL/metadata sources; raw GitHub payload remains external to this bounded docs tree and source.lock stays with first owners.",
+      "evidence_ids": [
+        "V20",
+        "V21",
+        "V24"
+      ],
+      "falsifier": "Generated meaning comes from a different GitHub revision/hash, incomplete closure, moving page, or a fabricated PostgreSQL OpenAPI contract.",
+      "first_milestone": "M6 GitHub; M7 PostgreSQL",
+      "revisit_trigger": "Upstream correction or selected-version change requires a new exact source.lock and compatibility analysis.",
+      "source_refs": [
+        "GITHUB-REST-SPEC-ACCEPTED",
+        "GITHUB-REST-LICENSE-ACCEPTED",
+        "PM-ISSUE-28-ACCEPTED"
+      ],
+      "status": "accepted source authority; compiler, source.lock and live proof UNEXECUTED",
+      "supersedes": "WEB-GITHUB and WEB-PG remain historical observations, not the accepted immutable implementation inputs.",
+      "tradeoffs_and_consequences": "Source owners must capture full relevant definitions and attribution; the documentation package records identities without redistributing 12.9 MB of source."
+    },
+    {
+      "id": "ADR475-21",
+      "subject": "Bounded PostgreSQL mapped upsert and staged composition",
+      "context": "The reusable SQL foundation did not itself define safe destination identity, changed-column effects or when the narrow pg-wh-pg demonstration could be composed.",
+      "considered_options": [
+        "Approved keyed mapped insert-or-update through common settlement",
+        "Arbitrary SQL or blanket replacement",
+        "Demo-specific executor or wait for all-five M11 before any PostgreSQL composition"
+      ],
+      "decision": "Accept one bounded mapped insert-or-update owned by #34, with an explicit approved migration for any key/account/generation reset and retained old mapping audit. N13-PG is first-created by #41 after #28-#34; #28 first-owns source/semantics/lifecycle, #34 later updates those files, and full N13 later updates composition at M11.",
+      "evidence_ids": [
+        "V34",
+        "V40",
+        "V41",
+        "V42",
+        "V43",
+        "P_etl",
+        "P_reverse_etl"
+      ],
+      "falsifier": "A missing/ambiguous key reaches I/O, unchanged columns are assigned, unmapped fields change, identity resets without approved migration, confirmed rollback is treated as definitely unsent, desired rows are treated as an occurrence witness, unknown COMMIT is blindly retried, or early proof is counted as full N13/V74/P_sync_transport.",
+      "first_milestone": "M8 after M7/M8 prerequisites",
+      "revisit_trigger": "A new write mode/delete/schema effect or composition authority needs a separate accepted contract and ownership update.",
+      "source_refs": [
+        "PM-ISSUE-28-ACCEPTED",
+        "PM-ISSUE-34-ACCEPTED",
+        "PM-ISSUE-41-ACCEPTED"
+      ],
+      "status": "accepted bounded extension; implementation, fixture authority and proof UNEXECUTED",
+      "supersedes": "Stop-at-#28 staging and an M11-only first creation for PostgreSQL composition are superseded only for pg-wh-pg.",
+      "tradeoffs_and_consequences": "More metadata/readback, a declared sound occurrence witness and serialized file integration are required. Actual dispatch history and unknown charge remain until exact settlement; all broader #41 obligations stay open."
+    }
+  ],
+  "settled": [
+    "remote-first",
+    "multiple users/workspaces",
+    "shared CLI/UI API",
+    "server provider secrets",
+    "PM MIT",
+    "initial five",
+    "seven lanes",
+    "complete action data with typed selection/filtering",
+    "finite durable admission and bounded recovery",
+    "revision-safe access mutations",
+    "pinned connector source authority",
+    "bounded PostgreSQL mapped upsert and N13-PG stage"
+  ],
+  "approval_scope": [
+    "implementation start",
+    "operations owner/budget/deployment trust",
+    "live account/tier/effect scope"
+  ]
+}

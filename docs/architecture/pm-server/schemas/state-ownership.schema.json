@@ -1,0 +1,76 @@
+{
+  "type": "object",
+  "properties": {
+    "application_checks": {
+      "type": "string"
+    },
+    "authority_rule": {
+      "type": "string"
+    },
+    "label": {
+      "type": "string"
+    },
+    "rows": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "authority": {
+            "type": "string"
+          },
+          "disagreement_recovery": {
+            "type": "string"
+          },
+          "field_or_resource": {
+            "type": "string"
+          },
+          "id": {
+            "type": "string"
+          },
+          "owner": {
+            "type": "string"
+          },
+          "projection": {
+            "type": "string"
+          },
+          "transaction_and_guard": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "authority",
+          "disagreement_recovery",
+          "field_or_resource",
+          "id",
+          "owner",
+          "projection",
+          "transaction_and_guard"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "schema_version": {
+      "type": "string",
+      "const": "pm.plan.state-ownership/v1"
+    },
+    "settled_stack": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "required": [
+    "application_checks",
+    "authority_rule",
+    "label",
+    "rows",
+    "schema_version",
+    "settled_stack"
+  ],
+  "additionalProperties": false,
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:pm:remote%20design:state-ownership",
+  "title": "STATE-OWNERSHIP.json private planning record",
+  "description": "Structural schema for this planning artifact, not a runtime/provider schema or implementation proof."
+}
