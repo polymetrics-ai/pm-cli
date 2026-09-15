@@ -1433,10 +1433,7 @@ def _compiler_runtime_relatives(
     platform = str(asset["platform"])
     if asset["id"] != "clang" or platform not in LINUX_NATIVE_PLATFORMS:
         return []
-    architecture = {
-        "linux-amd64": "x86_64",
-        "linux-arm64": "aarch64",
-    }[platform]
+    target_triple = LINUX_NATIVE_GO_TARGETS[platform][2]
     executable = _safe_archive_path(str(asset["executable"]), "locked clang executable")
     resource_directory = (
         executable.parent.parent
@@ -1444,12 +1441,12 @@ def _compiler_runtime_relatives(
         / "clang"
         / EXPECTED_ASSET_VERSIONS["clang"].split(".", 1)[0]
         / "lib"
-        / "linux"
+        / target_triple
     )
     return [
-        resource_directory / f"libclang_rt.builtins-{architecture}.a",
-        resource_directory / f"clang_rt.crtbegin-{architecture}.o",
-        resource_directory / f"clang_rt.crtend-{architecture}.o",
+        resource_directory / "libclang_rt.builtins.a",
+        resource_directory / "clang_rt.crtbegin.o",
+        resource_directory / "clang_rt.crtend.o",
     ]
 
 
