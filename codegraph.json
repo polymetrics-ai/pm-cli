@@ -1,6 +1,10 @@
 {
   "exclude": [
     ".codegraph/",
+    ".cache/",
+    "bazel-bin/",
+    "bazel-out/",
+    "bazel-testlogs/",
     "internal/bundle/data/",
     "website/generated/",
     "docs/cli/",

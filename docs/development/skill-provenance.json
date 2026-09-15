@@ -1,0 +1,608 @@
+{
+  "schema_version": "pm.skill-provenance/v1",
+  "project_skills": [
+    {
+      "name": "pm-connector-contracts",
+      "path": ".agents/skills/pm-connector-contracts/SKILL.md",
+      "sha256": "e500c4b12d9c979668966fb6e22488eed6f1d2d5d61a55d720ab97f01a3ae39f",
+      "origin": "repository-original",
+      "license": "MIT",
+      "references": [
+        "AGENTS.md",
+        "docs/development/skills.md",
+        "docs/agents/issue-tracker.md"
+      ],
+      "overrides": [
+        "Accepted tasks and canonical repository contracts govern scope; skills do not authorize implementation.",
+        "pm-go is the sole Go router; the three domain skills add bounded procedures only.",
+        "Active repository instructions, skill routing and issue intake are required; no private path or third-party payload is a delivered dependency."
+      ]
+    },
+    {
+      "name": "pm-durable-effects",
+      "path": ".agents/skills/pm-durable-effects/SKILL.md",
+      "sha256": "3d2ad3ef95f7b61ceabf0ce77fdc9c9cb7ec32e6fa6b8b1c63e5f03880f79cb6",
+      "origin": "repository-original",
+      "license": "MIT",
+      "references": [
+        "AGENTS.md",
+        "docs/development/skills.md",
+        "docs/agents/issue-tracker.md"
+      ],
+      "overrides": [
+        "Accepted tasks and canonical repository contracts govern scope; skills do not authorize implementation.",
+        "pm-go is the sole Go router; the three domain skills add bounded procedures only.",
+        "Active repository instructions, skill routing and issue intake are required; no private path or third-party payload is a delivered dependency."
+      ]
+    },
+    {
+      "name": "pm-go",
+      "path": ".agents/skills/pm-go/SKILL.md",
+      "sha256": "12a3678985b0925437608a9ce3ed2ea54650828ec9b43dac87d09f8c245012c7",
+      "origin": "repository-original",
+      "license": "MIT",
+      "references": [
+        "AGENTS.md",
+        "docs/development/skills.md",
+        "docs/agents/issue-tracker.md"
+      ],
+      "overrides": [
+        "Accepted tasks and canonical repository contracts govern scope; skills do not authorize implementation.",
+        "pm-go is the sole Go router; the three domain skills add bounded procedures only.",
+        "Active repository instructions, skill routing and issue intake are required; no private path or third-party payload is a delivered dependency."
+      ]
+    },
+    {
+      "name": "pm-release-recovery",
+      "path": ".agents/skills/pm-release-recovery/SKILL.md",
+      "sha256": "f8ca70d1f84a1a1f11c69e1cdebc848f54ce9183122bfb453142f0a7274c8de5",
+      "origin": "repository-original",
+      "license": "MIT",
+      "references": [
+        "AGENTS.md",
+        "docs/development/skills.md",
+        "docs/agents/issue-tracker.md"
+      ],
+      "overrides": [
+        "Accepted tasks and canonical repository contracts govern scope; skills do not authorize implementation.",
+        "pm-go is the sole Go router; the three domain skills add bounded procedures only.",
+        "Active repository instructions, skill routing and issue intake are required; no private path or third-party payload is a delivered dependency."
+      ]
+    }
+  ],
+  "external_sources": [
+    {
+      "id": "go-engineering",
+      "url": null,
+      "revision": null,
+      "license": "UNVERIFIED",
+      "notice": "Local source qualified by file hashes only; no source-root license found. Use in place; redistribution is not authorized.",
+      "strategy": "use-installed-no-copy",
+      "required_for": "optional-reference",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "b3c17cc11fab2c1dff1df3d609d596156a087988a67d05559982a7b5400bdee9",
+          "role": "entrypoint"
+        },
+        {
+          "path": "references/fundamentals.md",
+          "sha256": "443b4febef857a26842628550ac97d1611329c3d98066419fe2644675518e68d",
+          "role": "reference"
+        },
+        {
+          "path": "references/advanced.md",
+          "sha256": "b37a7905b17f701449c9159afc91f50cd86abf178628649abeb7cb0a4b49853e",
+          "role": "reference"
+        },
+        {
+          "path": "references/production.md",
+          "sha256": "87236f9f1b3828aca58023dea604f52ea27e4680479b6fe7b4d3a071471372fe",
+          "role": "reference"
+        },
+        {
+          "path": "references/agentic-etl.md",
+          "sha256": "a2a4549c508d4b2b961d92d2598ed8cb54822e83682512a500de502904378a7d",
+          "role": "reference"
+        },
+        {
+          "path": "agents/openai.yaml",
+          "sha256": "a2de59b06f20c85c15402ebc95b3c9e9a115150b7ab19d63d813eac79bc39240",
+          "role": "metadata"
+        }
+      ],
+      "overrides": [
+        "PM remote-first boundaries override local ETL/MCP/service-topology examples.",
+        "Focused causal checks override blanket full-suite/race defaults.",
+        "Unsafe provider writes follow the admitted physical-attempt contract, not generic connection reuse."
+      ]
+    },
+    {
+      "id": "samber-cc-skills-golang",
+      "url": "https://github.com/samber/cc-skills-golang",
+      "revision": "466ea6dfd4aecb5c19caf29e7595e752c66c1a5d",
+      "license": "MIT",
+      "notice": "Copyright 2026 Samuel Berthe. Selected entrypoints, linked in-package references/assets and root LICENSE match the recorded commit. No payload copied.",
+      "strategy": "use-installed-no-copy",
+      "required_for": "optional-reference",
+      "files": [
+        {
+          "path": "skills/golang-testing/SKILL.md",
+          "sha256": "c49ca69d2e297950863d207c6dc036ff5a47a8d32a46dabfec94b9f131afa011",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-testing/references/http-testing.md",
+          "sha256": "39381274d7887651b86bde513085835f52860aa0832eb6f945f79c008f240e0f",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-testing/references/helpers.md",
+          "sha256": "8c71d253a246e66b8249022c96d7e8892f5bfc2156b02a36673c321db2c843f4",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-testing/references/integration-testing.md",
+          "sha256": "e5e7698f43d5d87ef58ae542fab4aad6958fcc23bd2d856d04984d8c862b4313",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-testing/references/mocking.md",
+          "sha256": "f40022ada1d1b359fdb1ffe66c077e3f6b9575d177ec4834cf78afc2956cf10b",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-context/SKILL.md",
+          "sha256": "2c801e7a59f3885058ed70d19423f8c943525294182796c46101c4a554ca4cb1",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-context/references/cancellation.md",
+          "sha256": "d0069427b3d4fc6ec4a90c4af6d49b293227852829a415220c61cae43330a43e",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-context/references/values-tracing.md",
+          "sha256": "7ef49277791408380d3b8ad285a81fe7814f5d727c3950abae2958e6dd9058af",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-context/references/http-services.md",
+          "sha256": "2666634a2c5db4fa4559c8bd9b5dd260a6d6884e7f41eda397a4c0d2578f0175",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-concurrency/SKILL.md",
+          "sha256": "8e68d3f89da84b2fd61cd9c37c6e902d94ce4dcc45d421988ba4e67f556454bd",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-concurrency/references/channels-and-select.md",
+          "sha256": "550b430aaed72c0585bf823117301c22ec8ead0d0213c53dd7d1731408b9ae9a",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-concurrency/references/sync-primitives.md",
+          "sha256": "7a0b2798d854b1be7d276e3c099a066384c8f29f1c99dd109792f16e6e78d483",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-concurrency/references/pipelines.md",
+          "sha256": "89321d64196cab5e4113f0d1301695324daf2f09b1cd12d7076a048a348b440a",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-database/SKILL.md",
+          "sha256": "a69c730085d906c6ed420b9d9e98b026fdf2b3524cfbf3cda9db16db58496bf3",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-database/references/scanning.md",
+          "sha256": "f89c7f6f17a4a21f90e22dd4ff1f9c3bea3d6c6a42de0b4d11869cae206ca678",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-database/references/transactions.md",
+          "sha256": "f5a2ccec4d0f8a6f94529e178dfc711f96f7768ce32695060f9cb8084d733819",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-database/references/performance.md",
+          "sha256": "8ef0fdfe40d29856b5665dd76b4c81a55ef01ccbf01dd85dab9032d6e2557bf5",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-database/references/testing.md",
+          "sha256": "417f04fad9cecb42a2f2fc297a0fddc79661bcd982613deb8389edac3bc25256",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/SKILL.md",
+          "sha256": "70aea8ac83f721d3c3ff14d5364d255cbb79f9d7d6b1db35f5009affb9efee5f",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-security/references/threat-modeling.md",
+          "sha256": "e88514d6736b5899320f590c3cc918b9d6c82dd52c9c56a1a88e93618d19003d",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/cryptography.md",
+          "sha256": "4fc95098c129a79be6569169abe736ebd4e01ec74040713ff713f824f6da69e4",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/network.md",
+          "sha256": "fa975ccc68cc55c4c22e4925b49de834040ab6f6020f345dc52734ca293ef19c",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/injection.md",
+          "sha256": "6bd9bddea0d2e6ab3da60f350e50d2a1790236fc996e4b91f97e58aea60b3bb0",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/filesystem.md",
+          "sha256": "78bfedb0b0ba94aa4db1bd1c9b1fbbef4250edef323d8c0c3c82a6f95908c84b",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/cookies.md",
+          "sha256": "69077417c0945a8bfc6f079ea03ff8390abc5e52324a1047c896df3982f7b03d",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/third-party.md",
+          "sha256": "e10e3357fdf6e27b78692ebf8620158d89378ac16081b81dff1a77beb2b07b99",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/memory-safety.md",
+          "sha256": "e17b801ef4af4afa527a422aedb46a9302c61ea2c4101737b50f0f7938aecdca",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/secrets.md",
+          "sha256": "5496cc9ce3d9e7694d30eef275c46bd5aead91ee0b5922a2640aaf5933bba2d0",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/logging.md",
+          "sha256": "109c5dbc89e8b4ac1ada5ffc9e49727b36a178a8d748ad71ea8a9f7e43471889",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/architecture.md",
+          "sha256": "2f7f5615683e28a1e54e4953d2f1725b63853b2e5b97ed76281409c4b2d50a81",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-security/references/checklist.md",
+          "sha256": "4c73996ad4c4e70756f1319c261e01d10977d26c0050ebbee6e19ca513ed1fdb",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-observability/SKILL.md",
+          "sha256": "df700dfead33d52da620816e2bfbb6f4d5002f1c88d3845868a192a2119d561b",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-observability/references/logging.md",
+          "sha256": "5b19a1feed983ac9e7f83c1a0f9ae6625b8f270ba47bccc32ce799bc1db1e9b9",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-observability/references/metrics.md",
+          "sha256": "ad4b2802626eafdb5c0dc5cffd31aa59366e2ccda012b2e5aba4442a33cc649d",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-observability/references/alerting.md",
+          "sha256": "607142b5b7339dc10a7f1f6b953ac2589321aa357d4ab9430faf034714b5af76",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-observability/references/tracing.md",
+          "sha256": "bb18a1889f790ef869f1c247290c63944b864d0237331d96588bbf25711bc67c",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-observability/references/profiling.md",
+          "sha256": "977c24bfbc4684f85b29663878ceb1c594871245e2c88e46cb01874ac3a4de05",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-observability/references/rum.md",
+          "sha256": "8a34c933be0d13e62444c69d8c9e0305c9fb4b08ec52e2a30b65c679cd43186f",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-observability/references/dashboards.md",
+          "sha256": "fac3c553d5b824db3c9a1f569a514248d556cffeebe22a61609090808eaa79f1",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/SKILL.md",
+          "sha256": "f2600ad02567e9d3f3d69e8605ad9eb2d817a3143f09a7658bb62ff326ecd9f3",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/test.yml",
+          "sha256": "4270bed0d6cf7d307e017addf74358c607497fc025f9722115b50f9d05f1e640",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/codecov.yml",
+          "sha256": "6fd9fcc281e3c5e78636e8722c5ce6dfa235bc86319a645629f79d0557235365",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/integration.yml",
+          "sha256": "66d55a41c058e816d851d4dc2099b8e3d299d95b85897abb912f0652c86b01b8",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/lint.yml",
+          "sha256": "f97f43de7ea822d7906d1d360f321826933ec288cb6369d95be19fcad14a0dfc",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/security.yml",
+          "sha256": "fe3de422399a07791960e058974c76d2ce27d5e0a347ae0a24be5cf1eebec987",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/codeql-config.yml",
+          "sha256": "e656a4bfd48df5172a6bbc627ccc9cc9afee27317c37444c19cd24b0a37c0cf7",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/docker.yml",
+          "sha256": "96e9b83fdde1f01ed0ac63d602395fd57aa2918b340f66d741d3d5785ef60db1",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/dependabot.yml",
+          "sha256": "e0e1bc6589c17fa8bac435fb7c8087dabf36da82fd4ce6c7fbd0017353237c3e",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/dependabot-auto-merge.yml",
+          "sha256": "bf51d1604c483aa4fe68be861570203b77cacc06b08ec6f1b448b1641ee87d76",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/renovate.json",
+          "sha256": "56eebfd3354023f302c10758023b1604f50da79ad035124dfd416ac5ed32ebcd",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/release.yml",
+          "sha256": "a99ceea9da5f6de14fb97f89c3edddbd6e5167015528554d129261db4f61c05e",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/goreleaser-cli.yml",
+          "sha256": "71443d4d6baca1aa79601ef18faa48a6557caf889036556633d4518a1e141e50",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/goreleaser-lib.yml",
+          "sha256": "55962e46bab389746bebc001b08ba242766fa0a79c36aa925561aa8899a76cd8",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/goreleaser-monorepo.yml",
+          "sha256": "3726554731cd2baa084aea59b177637cc8c981f8fcc75040e53b87fc86978162",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/references/repo-security.md",
+          "sha256": "925b28aa8119f497c0a08cb7547d7d9bdcf4cc0831a0fb43ee08a628ae28b8bc",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/claude-code-review.yml",
+          "sha256": "44dc118833565ccc5540a6544356c1c62920b819ca493b542a9eece3584693c6",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-continuous-integration/assets/copilot-review-instructions.md",
+          "sha256": "87fc280e934242e129e66a2f51a85de22cec15fd3f553ddc02881ef9aa673fff",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-spf13-cobra/SKILL.md",
+          "sha256": "332b3b6b5ed3a610c3a080b04ac83e407e9f013c8d5069e04106e933d78cffca",
+          "role": "entrypoint"
+        },
+        {
+          "path": "skills/golang-spf13-cobra/references/commands-and-args.md",
+          "sha256": "30ff6d61b9ba030799a6dc089a2f1404675e10115f6eb2626c5599875f30025b",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-spf13-cobra/references/flags.md",
+          "sha256": "534591a78c261aaff97687b232faaec969508b0f62eefdea50d25d649183d435",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-spf13-cobra/references/completions.md",
+          "sha256": "3f6122cd6ee9c1527ceac0ce42f427e9af0f4de39b840923dd5cd16cb064ae07",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-spf13-cobra/references/testing.md",
+          "sha256": "d7107f8efbf76f244717f155e2e182fe0c076c61d48ffff6fddde9a15834ce5e",
+          "role": "reference"
+        },
+        {
+          "path": "skills/golang-spf13-cobra/references/generators.md",
+          "sha256": "069cc180ffc620cbf3e61810c2a222cc964a09d39f5db421a4991e2085f2c7f5",
+          "role": "reference"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "a6735e3815503be2fc1ae4813758cb3d0c24a5309df508309ce180cf5a4ead58",
+          "role": "license"
+        }
+      ],
+      "overrides": [
+        "Use only the task-relevant entrypoints; no golang-how-to umbrella, recursive catalog or automatic installs/agents.",
+        "PM RLS and reviewed migration ownership supersede the database skill's exclusion of these features.",
+        "No blanket race/coverage/hosted-review/auto-merge setup; exact CI action and tool pins follow authorized setup.",
+        "No automatic analytics/profiling export, high-cardinality metrics or public debug endpoints.",
+        "Cobra plus strict JSON; Viper deferred and offline help independent of auth."
+      ]
+    },
+    {
+      "id": "nbj-write-clearly",
+      "url": "https://github.com/daniel-p-green/nbj-write-clearly",
+      "revision": null,
+      "license": "MIT AND CC-BY-4.0",
+      "notice": "Local hashes identify this six-file installation. LICENSE: Daniel Green, 2026. NOTICE attributes Google developer style material under CC BY 4.0; it states no Google code samples are included. Earlier setup recorded upstream commit 56e3a27f920bcd772f7b03fa476b5cfb9268332c, not byte-requalified here.",
+      "strategy": "use-installed-no-copy",
+      "required_for": "optional-reference",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "098909e21d471780ba4525f887c38b38671231bc4770a2cf3291cc743b369e5a",
+          "role": "entrypoint"
+        },
+        {
+          "path": "references/guide.md",
+          "sha256": "287b2f65d3af273fd93d9bce14665604961072c33b7911f2d650b7a636bd5f30",
+          "role": "reference"
+        },
+        {
+          "path": "references/official-index.md",
+          "sha256": "4bcaf061b81b4eca6cefbdb3118cadb380da51c4702b2c2f94102cd93dbde48c",
+          "role": "reference"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "bacb2830175a2121ca1fdec4698455137cd53c983d328300b0ba04c968aa0ed0",
+          "role": "license"
+        },
+        {
+          "path": "NOTICE.md",
+          "sha256": "43e2bc2a1c29685bc0030d2c8ea9d385ad6aded7debb9272ff48a724aa7ae6ae",
+          "role": "notice"
+        },
+        {
+          "path": "agents/openai.yaml",
+          "sha256": "92c2d02910c29c6a0915d570cbd44a71a376283f93a05eb3907ff186119f0d3e",
+          "role": "metadata"
+        }
+      ],
+      "overrides": [
+        "Preserve technical facts, exact identifiers and modality; do not turn proposals into observations."
+      ]
+    },
+    {
+      "id": "aihero-code-review",
+      "url": "https://github.com/mattpocock/skills/blob/3cca18b368ae95cdbdebbff572ccafa662551015/skills/engineering/code-review/SKILL.md",
+      "revision": "3cca18b368ae95cdbdebbff572ccafa662551015",
+      "license": "MIT",
+      "notice": "Copyright 2026 Matt Pocock. Installed SKILL.md matches skills/engineering/code-review/SKILL.md and installed LICENSE matches the source-root LICENSE byte for byte at this commit. Host UI metadata is not upstream review policy.",
+      "strategy": "use-installed-no-copy",
+      "required_for": "authorized-review",
+      "files": [
+        {
+          "path": "SKILL.md",
+          "sha256": "47f4e52c21694def9c7c11cbfbf891ca35eac7a93e395797515be3c8a409ae50",
+          "role": "entrypoint"
+        },
+        {
+          "path": "LICENSE",
+          "sha256": "0e7ac423bf2c6e223b7c5b156f8cf72da49d748e56a1641402c31f22ad07dbb5",
+          "role": "license"
+        }
+      ],
+      "overrides": [
+        "Run independent Standards and Spec axes only when review is authorized, with actual required runtime verification.",
+        "Missing or inaccessible accepted specification blocks PM review readiness; do not convert Spec skip into a pass.",
+        "Use the recorded target SHA, merge base and exact head; no mutable-base comparison or empty-diff review.",
+        "Issue lookup setup and pipeline integration require separate qualification; this source does not activate them."
+      ]
+    }
+  ],
+  "official_fallbacks": [
+    {
+      "id": "go",
+      "url": "https://go.dev/doc/"
+    },
+    {
+      "id": "go-testing",
+      "url": "https://go.dev/doc/tutorial/add-a-test"
+    },
+    {
+      "id": "go-fuzz",
+      "url": "https://go.dev/doc/security/fuzz/"
+    },
+    {
+      "id": "go-context",
+      "url": "https://pkg.go.dev/context"
+    },
+    {
+      "id": "go-security",
+      "url": "https://go.dev/doc/security/"
+    },
+    {
+      "id": "go-modules",
+      "url": "https://go.dev/ref/mod"
+    },
+    {
+      "id": "cobra",
+      "url": "https://github.com/spf13/cobra/blob/main/site/content/user_guide.md"
+    },
+    {
+      "id": "gin",
+      "url": "https://gin-gonic.com/en/docs/"
+    },
+    {
+      "id": "openapi31",
+      "url": "https://spec.openapis.org/oas/v3.1.0.html"
+    },
+    {
+      "id": "oapi-codegen",
+      "url": "https://github.com/oapi-codegen/oapi-codegen"
+    },
+    {
+      "id": "postgresql",
+      "url": "https://www.postgresql.org/docs/current/"
+    },
+    {
+      "id": "pgx",
+      "url": "https://pkg.go.dev/github.com/jackc/pgx/v5"
+    },
+    {
+      "id": "temporal-go",
+      "url": "https://docs.temporal.io/develop/go"
+    },
+    {
+      "id": "temporal-testing",
+      "url": "https://docs.temporal.io/develop/go/testing-suite"
+    },
+    {
+      "id": "temporal-upgrades",
+      "url": "https://docs.temporal.io/self-hosted-guide/upgrade-server"
+    },
+    {
+      "id": "otel-go",
+      "url": "https://opentelemetry.io/docs/languages/go/"
+    },
+    {
+      "id": "github-actions",
+      "url": "https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions"
+    },
+    {
+      "id": "bdd-example-mapping",
+      "url": "https://cucumber.io/docs/bdd/example-mapping/"
+    },
+    {
+      "id": "clear-writing",
+      "url": "https://developers.google.com/style"
+    }
+  ]
+}

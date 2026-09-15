@@ -1,6 +1,6 @@
 # 0001: Cobra and strict client/server configuration boundaries
 
-Date: 2026-09-10. Server-first reconciliation: 2026-09-15. Status: selected planning decision; application implementation and its checks remain unexecuted. This ADR preserves the accepted Cobra, typed-presence, and no-Viper choices while superseding the earlier local-engine, local connection/schema, and CLI credential assumptions. It neither establishes a landed BOOT baseline nor authorizes application work.
+Date: 2026-09-10. Server-first reconciliation: 2026-09-15. Status: selected planning decision; PR #47's accepted documentation baseline is landed and BOOT-1 readback is recorded, while application configuration and its checks remain unexecuted. This ADR preserves the accepted Cobra, typed-presence, and no-Viper choices while superseding the earlier local-engine, local connection/schema, and CLI credential assumptions. It does not authorize application work or turn source presence into qualification.
 
 ## Decision
 

@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "pm-dependency-check_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/tools/cmd/pm-dependency-check",
+    visibility = ["//visibility:private"],
+    deps = ["//tools"],
+)
+
+go_binary(
+    name = "pm-dependency-check",
+    embed = [":pm-dependency-check_lib"],
+    visibility = ["//visibility:public"],
+)

@@ -1,10 +1,10 @@
 # Synchronized inactive projection: `docs/decisions/0001-cli-configuration.md`
 
-This file mirrors the intended configuration ADR for provenance and comparison. It is not an active instruction entrypoint, is not fresh-worker intake, and does not establish a landed BOOT baseline. Relative links in the projected body resolve from the target path named in `INSTRUCTION-TARGETS.json`.
+This file mirrors the current target `docs/decisions/0001-cli-configuration.md` below for provenance and comparison. It is not an active decision entrypoint, is not fresh-worker intake, and does not establish current-candidate checks, review, CI, merge, application behavior, or full BOOT. Relative links in the projected body resolve from the target path named in `INSTRUCTION-TARGETS.json`.
 
 # 0001: Cobra and strict client/server configuration boundaries
 
-Date: 2026-09-10. Server-first reconciliation: 2026-09-15. Status: selected planning decision; application implementation and its checks remain unexecuted. This ADR preserves the accepted Cobra, typed-presence, and no-Viper choices while superseding the earlier local-engine, local connection/schema, and CLI credential assumptions. It neither establishes a landed BOOT baseline nor authorizes application work.
+Date: 2026-09-10. Server-first reconciliation: 2026-09-15. Status: selected planning decision; PR #47's accepted documentation baseline is landed and BOOT-1 readback is recorded, while application configuration and its checks remain unexecuted. This ADR preserves the accepted Cobra, typed-presence, and no-Viper choices while superseding the earlier local-engine, local connection/schema, and CLI credential assumptions. It does not authorize application work or turn source presence into qualification.
 
 ## Decision
 

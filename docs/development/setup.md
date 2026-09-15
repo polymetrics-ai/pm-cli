@@ -1,30 +1,116 @@
 # Developer setup
 
-This checkout contains accepted planning documents and active candidate instructions, but application implementation is still absent. The `pm` client, PM Server, workers, Go packages, build targets, generated bundles, and connector proof remain planned. Installing navigation tools or creating an index does not implement them.
+This checkout contains the accepted PM Server documentation baseline and the combined issue #2/#3 foundation. PR #47 landed the reviewed context on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, and BOOT-1 readback verified the approved staging-to-landed relationship. The bounded Darwin foundation checks and fresh-worker discovery below do not substitute for independent review, exact-head Linux CI, or merge records. A working build/toolchain foundation does not implement PM services, client commands, generated bundles, connectors, provider effects, or certification.
 
 ## What is available now
 
-From the repository root, run the included availability report:
+The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
+
+### Resolve and run pinned tools
+
+`tools/bootstrap.py` is the public entry point for the locked Go, LLVM/Clang, Bazelisk/Bazel, and Syft assets in `build/toolchains.lock.json`:
+
+```sh
+python3 tools/bootstrap.py print-env
+python3 tools/bootstrap.py exec go -- version
+python3 tools/bootstrap.py exec clang -- --version
+python3 tools/bootstrap.py exec bazelisk -- --batch version
+```
+
+The literal `--` before tool arguments is required. On a cache miss the bootstrap downloads only locked assets for the selected host platform, verifies each locked SHA-256, and installs them into a persistent local cache. The default is `.cache/pm-tools`; set `PM_TOOLS_CACHE` to another persistent directory when needed. The bootstrap rejects caches under `/tmp` and `/private/tmp`. When the default repository-local tool cache is used, Bazel's output-user root is placed in the platform user cache because Bazel does not permit its repository-contents cache inside the source workspace.
+
+Bootstrap environment changes apply only to the process it executes. In particular, the pinned Go directory is prepended only to that child process's `PATH`; the parent shell, global `PATH`, and globally installed tools are not changed. Go and Bazel execution force `GOTOOLCHAIN=local` and `GOWORK=off`, so an ambient workspace or Go's automatic toolchain selection cannot replace the locked inputs.
+
+On macOS, cgo-enabled Go, Clang, and Bazel execution require an Apple macOS SDK discoverable through the fixed system command:
+
+```sh
+/usr/bin/xcrun --sdk macosx --show-sdk-path
+```
+
+Select Xcode or the Xcode Command Line Tools so that command returns an available absolute SDK directory. The bootstrap refuses native execution when it cannot resolve that prerequisite; it passes the resulting SDK and deployment target only to the child process.
+
+### Build and test entry points
+
+These Make targets are source-present:
+
+| Command | Boundary exercised |
+| --- | --- |
+| `make build` | Builds the cgo native probe and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
+| `make test` | Runs the resolved-dependency policy test and the native DuckDB behavioral test |
+| `make vet` | Vets the application module with cgo and the tools module without cgo |
+| `make boundaries` | Checks native-linkage and module ownership boundaries |
+| `make bazel-build` | Runs `bazelisk --batch build //...` through the bootstrap |
+| `make bazel-test` | Runs `bazelisk --batch test //...` with test-result caching disabled |
+
+The bounded Bazel timing probe is also source-present:
+
+```sh
+make benchmark
+```
+
+It asks Bazel for the actual output base, creates an isolated temporary output/action cache alongside it and outside the source workspace, and measures one cold-output-cache build followed by one warm build of the same `//...` targets and output base. Tool and repository-download caches may already be warm, and one sample is not a statistical speedup claim.
+
+Run the isolated native qualification, including its negative controls, with:
+
+```sh
+python3 scripts/ci/check-native.py
+```
+
+It first builds and runs the native probe in an owned temporary directory under `.cache`, then reuses the resolved modules with network lookup disabled and requires normal build refusal for cgo disabled and for an incompatible 32-bit C target.
+
+Run the full current-platform external-tool inventory and both Go graph checks with a disposable, uncommitted evidence directory:
+
+```sh
+python3 scripts/ci/check-dependencies.py --evidence-dir .cache/foundation-sboms
+```
+
+That orchestrator resolves the five selected tool installs, expands Bazel to its actual install base, creates package and per-file SHA-256 CycloneDX inventories, invokes the dependency-policy CLI, and reruns `TestResolvedDependencyPolicy` against those SBOMs. File inventory is evidence about installed bytes, not a claim that a package catalog recognized every dependency.
+
+The optional availability report remains:
 
 ```sh
 sh scripts/dev/doctor.sh
 ```
 
-It prints tool versions and index status. It does not install dependencies, change global configuration, generate source, build PM, run tests, or contact providers. Missing optional tools are reported explicitly; exit zero means the report completed, not that the application is validated. An installed tool that fails its version/status command makes the report fail.
+It reports ambient tool versions and index status without installing dependencies, changing global configuration, generating source, building PM, running tests, or contacting providers. Missing optional tools are reported explicitly; an installed tool whose version/status command fails makes the report fail. Exit zero means the report completed, not that the application is validated.
 
-The setup investigation on 2026-09-10 verified CodeGraph 1.5.0. The private candidate doctor observed Go1.26.5 darwin/arm64 and golangci-lint2.12.2; govulncheck was absent. After installation, the setup owner ran doctor in the actual clone: it completed successfully, but that process's PATH selected **Go1.25.6 darwin/amd64**. An explicit native Go binary on the same machine reports **Go1.26.5 darwin/arm64**. Doctor success therefore does not establish that the intended compiler or architecture is selected.
+### Go tool and module pin maintenance
 
-These observations describe one machine and execution context, not minimum supported versions or the project's eventual toolchain lock. Run doctor in the actual checkout and build context. At M0, explicitly select and pin the native Go executable/toolchain and verify its version and architecture. Qualify cgo, the C compiler, and DuckDB only for the restricted query child; the CLI, API, and ordinary workers must not acquire that native analytical dependency. Record the resolved executable identity as well as the version. Do not upgrade tools or rewrite global PATH merely to make setup appear ready; no version choice is made here. C/DuckDB build readiness remains unverified.
+The `tool` block in `tools/go.mod` names three executable packages: oapi-codegen, govulncheck, and Staticcheck. Their modules and two deliberately selected supporting modules form the five exact tools-graph entries in `tools/versions.json`: `github.com/getkin/kin-openapi`, `github.com/oapi-codegen/oapi-codegen/v2`, `go.yaml.in/yaml/v3`, `golang.org/x/vuln`, and `honnef.co/go/tools`. Go may annotate these explicit `require` entries `// indirect` because ordinary non-tool packages do not import them. That annotation does not turn a reviewed root pin into an incidental transitive selection.
 
-No `make test`, PM smoke, schema-generation target, or Go-module setup command is advertised as available yet. The new module and pinned toolchain belong to the later implementation task.
+Conversely, a version chosen transitively by minimal version selection is not an approved pin merely because it appears in `go list -m all`. The policy requires every selected manifest entry at the exact version and as a direct main-module graph edge; it separately examines the full graph for forbidden identities.
+
+Do not run a blind `go mod tidy`: the foundation intentionally pins approved modules whose later consumers do not exist yet. Tidy can remove those requirements, including deliberately selected tools support modules. Inspect a proposed tidy without applying it:
+
+```sh
+python3 tools/bootstrap.py exec go -- mod tidy -diff
+python3 tools/bootstrap.py exec go -- -C tools mod tidy -diff
+```
+
+These read-only previews return nonzero when they propose changes. Apply only reviewed changes for an authorized pin update, retaining all still-approved explicit requirements. After updating the affected module and selection manifest, retain full-graph module and `go.mod` sums:
+
+```sh
+python3 tools/bootstrap.py exec go -- mod download all
+python3 tools/bootstrap.py exec go -- -C tools mod download all
+```
+
+Use the command for each affected module. Keep its graph selections, checksums, `tools/versions.json`, affected Bazel locks, external-asset lock when applicable, and `THIRD-PARTY-NOTICES.md` synchronized. `go mod download all` supplies full-graph sums; it does not approve a version or refresh manifests and notices by itself. See [testing](testing.md) for the bounded local observations and their unqualified scope.
 
 ## Active instructions and workflow
 
-Fresh workers start with the root [AGENTS.md](../../AGENTS.md), [issue/spec lookup](../agents/issue-tracker.md), [skill routing](skills.md), the active [configuration ADR](../decisions/0001-cli-configuration.md), and the assigned accepted PM Server contracts. Files under `docs/architecture/pm-server/instructions/` are synchronized inactive projections, not a second instruction tree. Historical issue drafts, private setup/controller runbooks, transition evidence, and operator configuration are excluded from fresh-worker intake.
+Fresh workers start with the root [AGENTS.md](../../AGENTS.md), [issue/spec lookup](../agents/issue-tracker.md), short [architecture overview](../architecture/overview.md), [decision index](../architecture/decisions.md), [domain glossary](../agents/domain.md), [testing](testing.md), [release](release.md), [skill routing](skills.md), [skill provenance](skill-provenance.md), the active [configuration ADR](../decisions/0001-cli-configuration.md), and the assigned accepted PM Server contracts.
+
+Use the sole [PM Go router](../../.agents/skills/pm-go/SKILL.md) for Go work. Add [connector contracts](../../.agents/skills/pm-connector-contracts/SKILL.md), [durable effects](../../.agents/skills/pm-durable-effects/SKILL.md), or [release and recovery](../../.agents/skills/pm-release-recovery/SKILL.md) only for its named behavior boundary. Files under `docs/architecture/pm-server/instructions/` are synchronized inactive projections, not a second instruction tree. Historical issue drafts, private setup/controller runbooks, transition evidence, and operator configuration are excluded from fresh-worker intake.
 
 OMP is the sole coordinator and integration owner. The single [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md) owns validation, independent review, and delivery. Agent model/account routing is supplied separately by the operator and is not application documentation. No controller installation, private home path, model login, or host qualification is a general application prerequisite.
 
-The doctor command above and the CodeGraph commands below are real developer-tool commands for this checkout. They do not activate application work. Every `pm`, server, worker, stack, generation, proof, build, and application-test command described in planning documents remains future until its owning issue creates and exercises it.
+The doctor command above and the CodeGraph commands below are real developer-tool commands for this checkout. They do not activate application work. Every `pm`, server, worker, stack, generation, proof, build, test, and provider command described only in planning remains future until its owner creates and exercises the actual path.
+
+## Repository skills and source provenance
+
+The [machine-readable manifest](skill-provenance.json) records exactly four repository-original project skills, their current byte hashes, required repository-relative references, and selected external source closure. External references use `use-installed-no-copy`; [the provenance guide](skill-provenance.md) records licenses, immutable revisions or file hashes, PM overrides, and official HTTPS fallbacks.
+
+Optional references may be absent on a host. Use the official fallback and report the missing discovery rather than installing a catalog or rewriting global configuration. No third-party skill payload is copied, and no skill file, model login, source URL, or structure-only setup check is evidence that PM behavior or delivery passed.
 
 ## CodeGraph identity and prerequisites
 
@@ -36,22 +122,18 @@ The installed npm shim can download a missing platform bundle automatically. The
 
 ## Initialize this checkout explicitly
 
-Inspect the root and the included `codegraph.json` before indexing. It excludes generated runtime data, generated website/manual projections, proof output, and local execution state. `.gitignore` also excludes the local graph. Declarations, foundation source, shared tests, and connector scripts remain visible. Excluding generated JSON from navigation does not exclude it from builds or validation.
-
-For a checkout without an index, run:
+The current candidate's exact checkout has already been initialized manually; it was not indexed through a workspace parent. For another checkout without an index, inspect its root and `codegraph.json`, then run from that checkout:
 
 ```sh
 CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph init .
 CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph status --json .
 ```
 
-`init` creates `.codegraph/` and builds the initial graph in the same command. Version 1.5.0 has no CLI init-only flag; `--index` is a deprecated compatibility option. An empty repository can therefore be initialized successfully while containing no Go symbols. Report that honestly and repeat the real-source check below after implementation begins. Do not insert dummy PM code just to produce a graph.
-
-Do not use `--force` to index a workspace parent or home. Do not invoke `install`, `uninit`, daemon controls, or an updater as part of a setup check. If `init` offers Git hooks or inclusion of ignored child repositories, keep explicit manual sync and the existing exclusions; those mutations are not required here.
+`init` creates `.codegraph/` and builds the initial graph in the same command. Version 1.5.0 has no CLI init-only flag; `--index` is a deprecated compatibility option. Keep explicit manual synchronization and the repository's exclusions if initialization offers Git hooks or ignored-child inclusion. Do not use `--force` on a workspace parent or home, and do not install hooks, start a daemon, or invoke an updater as a setup shortcut.
 
 ## Refresh and inspect real code
 
-From the intended checkout root, use:
+Use the intended checkout root explicitly:
 
 ```sh
 CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph sync .
@@ -59,50 +141,39 @@ CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph status --json .
 CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph explore "<real symbol names>" --path . --max-files 5
 ```
 
-Replace the angle-bracket text with symbols that actually exist. After changing exclusions, language mappings, or extraction versions, rebuild the graph explicitly:
+Replace the angle-bracket text with symbols that actually exist. After changing exclusions, language mappings, or extraction versions, rebuild explicitly:
 
 ```sh
 CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph index . --quiet
 ```
 
-Inspect `projectPath`, `indexPath`, `lastIndexed`, `languages`, counts, `worktreeMismatch`, and the nested `index` state/version fields. A version mismatch or incomplete extraction needs resolution before relying on relationships. A successful explicit sync plus inspection of a known changed symbol is stronger evidence than timestamp or pending-count checks alone.
+Inspect `projectPath`, `indexPath`, `lastIndexed`, languages, counts, `worktreeMismatch`, and the nested index and extraction versions. A successful explicit sync followed by inspection of a known changed symbol is stronger evidence than a timestamp or pending-change count. The current gate used explicit sync; it did not rely on a hook, daemon, or watcher.
 
-The MCP server can watch and synchronize files while a supported agent session is running. The fixture deliberately disabled watching and daemon use, so watcher behavior was not tested. CLI initialization alone is not evidence of a persistent watcher. Local source documents `CODEGRAPH_NO_WATCH=1` as an opt-out; initialization with it displayed a hook/manual-sync prompt. Do not bake this prompt-producing setting into unattended initialization.
-
-The authoritative [configuration documentation](https://github.com/colbymchenry/codegraph#configuration) identifies root `codegraph.json` and `.gitignore` as exclusion controls. In version 1.5.0, `exclude` also excludes tracked files; `.gitignore` alone is not sufficient for tracked generated content. Treat a malformed config warning as incomplete setup because the tool can continue after ignoring that file.
+The root `codegraph.json` and `.gitignore` exclude generated runtime data, generated website/manual projections, proof output, caches, and local execution state. CodeGraph 1.5.0's `exclude` also applies to tracked files. Treat a malformed configuration warning as incomplete setup because the tool can continue after ignoring the file.
 
 ## CodeGraph CLI versus development MCP
 
-The setup owner already has `codegraph_explore` exposed through MCP. No global reinstall is required. Use its explicit project path argument for this checkout. For another agent installation, this read-only command prints the installed tool's configuration snippet:
+CodeGraph's MCP exposure is optional developer navigation tooling. This read-only mode prints version 1.5.0's agent configuration snippet without changing global configuration:
 
 ```sh
 CODEGRAPH_TELEMETRY=0 CODEGRAPH_NO_DOWNLOAD=1 codegraph install --print-config codex
 ```
 
-It reports `command = "codegraph"` with `args = ["serve", "--mcp"]`. A developer can review and add the snippet through their agent's own MCP configuration process. The agent starts the MCP server; do not manually launch or manage a second service. The investigation tested snippet generation, not a new MCP session or global configuration changes.
+It reports a `codegraph serve --mcp` command for the developer to review through the agent's own configuration process. The current candidate gate used the CLI and did not install a hook, configure MCP, or test watcher behavior. Do not manually launch a second service or make MCP an application prerequisite. PM itself neither implements nor depends on MCP.
 
-This optional agent-side MCP exposure is navigation tooling only. PM itself neither implements nor depends on MCP, and application code must not acquire an MCP product path.
+## Current CodeGraph observation
 
-## Observed Go indexing limits
+CodeGraph 1.5.0 was manually initialized and explicitly synchronized at the exact candidate checkout, with no worktree mismatch. After source edits, explicit sync made the changed source available to exploration. An exploration of `CheckDependencies` resolved the implementation in `tools/dependency_policy.go`, its real CLI call from `tools/cmd/pm-dependency-check/main.go`, and the associated `tools/dependency_policy_test.go`; source inspection identified `TestResolvedDependencyPolicy` as the focused graph-policy test.
 
-A disposable external fixture contained `TestRun → Run → Normalize` across three `.go` files. CodeGraph indexed three files, seven nodes, and six edges, returned the call flow and source, and excluded three noise files through `codegraph.json` and `.gitignore`. After an edit introduced `Bump`, explicit sync reported one changed file and exploration returned `Run → Normalize → Bump`. A full reindex also completed. No fixture was added to this repository and no Go tests were executed.
+This establishes useful static navigation for the observed source. It does not establish complete dependency closure, runtime dispatch, cgo behavior, provider behavior, or complete test selection. No Git hook, persistent watcher, or daemon supplied freshness, so synchronize explicitly before relying on an edited symbol.
 
-Two observations constrain its use:
+## Retained fixture limits
 
-- `affected normalize.go --path . --json` returned an empty test list, although the graph exposed the known test call chain. Adding `--filter '**/*_test.go'` also returned an empty list. Neither result can authorize skipping tests.
-- In this non-Git fixture, `status` reported zero pending changes immediately after the edit; the following explicit sync found the edit. Do not infer that a graph is fresh from that count alone. This does not establish identical behavior in a Git checkout.
+The earlier disposable external fixture contained `TestRun → Run → Normalize` across three Go files. CodeGraph indexed three files, seven nodes, and six edges, returned the call flow and source, and excluded three noise files. After an edit introduced `Bump`, explicit sync reported one changed file and exploration returned `Run → Normalize → Bump`; a full reindex also completed. No fixture was added to this repository and no Go test was executed.
 
-Use file/package ownership, known consumers, declarations, and the change's causal risk to select tests. Graphs do not fully describe runtime JSON selection, scripts, reflection, dynamic dispatch, cgo, or provider behavior. Never use graph reachability alone to preserve old proof receipts.
+Two limits remain relevant:
 
-## Gate after real Go source exists
+- `affected normalize.go --path . --json` returned an empty test list although exploration exposed the known test call chain; adding `--filter '**/*_test.go'` also returned no tests. Neither result can authorize skipping tests.
+- In that non-Git fixture, `status` reported zero pending changes immediately after an edit, while the following explicit sync found it. Do not infer freshness from the pending count alone or assume identical behavior in every Git checkout.
 
-The implementation owner should record these observations once meaningful source has been added:
-
-1. Doctor reports the pinned Go/tool prerequisites; validate the C/DuckDB build separately.
-2. Initialize or sync this checkout and verify a nonzero Go graph at this exact path.
-3. Explore a real cross-file caller/callee pair and confirm source and relationships.
-4. Edit an owned real symbol, sync, and confirm the updated relationship/source.
-5. Confirm generated bundle/proof/runtime paths stay excluded from navigation.
-6. Select and run the implementation's focused behavioral checks independently of `affected`.
-
-These are future gates. The setup packet's fixture result cannot be substituted for them, and none establishes connector implementation or live certification.
+Use file and package ownership, known consumers, declarations, and causal risk to select checks. A graph does not fully describe runtime JSON selection, scripts, reflection, dynamic dispatch, cgo, or provider behavior, and graph reachability alone cannot preserve old proof receipts.

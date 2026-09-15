@@ -1,0 +1,39 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+exports_files([
+    "go.mod",
+    "go.sum",
+    "versions.json",
+])
+
+alias(
+    name = "oapi-codegen",
+    actual = "@tools_com_github_oapi_codegen_oapi_codegen_v2//cmd/oapi-codegen:oapi-codegen",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "staticcheck",
+    actual = "@tools_co_honnef_go_tools//cmd/staticcheck:staticcheck",
+    visibility = ["//visibility:public"],
+)
+
+alias(
+    name = "govulncheck",
+    actual = "@tools_org_golang_x_vuln//cmd/govulncheck:govulncheck",
+    visibility = ["//visibility:public"],
+)
+
+go_library(
+    name = "tools",
+    srcs = ["dependency_policy.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/tools",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "tools_test",
+    size = "large",
+    srcs = ["dependency_policy_test.go"],
+    embed = [":tools"],
+)

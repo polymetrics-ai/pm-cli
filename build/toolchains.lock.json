@@ -1,0 +1,199 @@
+{
+  "schema_version": "pm.toolchains/v1",
+  "go_version": "1.27.1",
+  "assets": [
+    {
+      "id": "bazel",
+      "version": "9.2.0",
+      "platform": "darwin-arm64",
+      "url": "https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-darwin-arm64",
+      "sha256": "dd466352a3e4d3581b8898740ee1ff208866ccbe25f8d367c5dcb950219587e6",
+      "kind": "binary",
+      "executable": "bazel"
+    },
+    {
+      "id": "bazel",
+      "version": "9.2.0",
+      "platform": "linux-amd64",
+      "url": "https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-linux-x86_64",
+      "sha256": "7668a95db1250f12c40407251e4e203b4ec8bf39bc495d2f485b2d8c99048694",
+      "kind": "binary",
+      "executable": "bazel"
+    },
+    {
+      "id": "bazel",
+      "version": "9.2.0",
+      "platform": "linux-arm64",
+      "url": "https://github.com/bazelbuild/bazel/releases/download/9.2.0/bazel-9.2.0-linux-arm64",
+      "sha256": "049dd21f40ad979db11c3ee68c96a42ce75f1185e69ac61ab20de1501427a410",
+      "kind": "binary",
+      "executable": "bazel"
+    },
+    {
+      "id": "bazelisk",
+      "version": "1.29.0",
+      "platform": "darwin-arm64",
+      "url": "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-darwin-arm64",
+      "sha256": "cee851f726789227d5561004e9904a52be45c3efb56f8b38b6993d6adbaa0409",
+      "kind": "binary",
+      "executable": "bazelisk"
+    },
+    {
+      "id": "bazelisk",
+      "version": "1.29.0",
+      "platform": "linux-amd64",
+      "url": "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-amd64",
+      "sha256": "5a408715e932c0250d28bd84555f12edbf70117de42f9181691c736eacc4a992",
+      "kind": "binary",
+      "executable": "bazelisk"
+    },
+    {
+      "id": "bazelisk",
+      "version": "1.29.0",
+      "platform": "linux-arm64",
+      "url": "https://github.com/bazelbuild/bazelisk/releases/download/v1.29.0/bazelisk-linux-arm64",
+      "sha256": "e20e8b0f4f240091b7a55bf17b9398bd4f40ee70ae0208dff95dd4c445fb4010",
+      "kind": "binary",
+      "executable": "bazelisk"
+    },
+    {
+      "id": "clang",
+      "version": "21.1.8",
+      "platform": "darwin-arm64",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-macOS-ARM64.tar.xz",
+      "sha256": "b95bdd32a33a81ee4d40363aaeb26728a26783fcef26a4d80f65457433ea4669",
+      "kind": "tar.xz",
+      "executable": "LLVM-21.1.8-macOS-ARM64/bin/clang",
+      "attestation": {
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-macOS-ARM64.tar.xz.jsonl",
+        "sha256": "03f5357eac8525470f5afee35c7715171719901476c853b45f7dfc897035151f"
+      }
+    },
+    {
+      "id": "clang",
+      "version": "21.1.8",
+      "platform": "linux-amd64",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz",
+      "sha256": "b3b7f2801d15d50736acea3c73982994d025b01c2f035b91ae3b49d1b575732b",
+      "kind": "tar.xz",
+      "executable": "LLVM-21.1.8-Linux-X64/bin/clang",
+      "attestation": {
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-X64.tar.xz.jsonl",
+        "sha256": "df57c1a0e37da617908b9cfc3fe217299e21e6e09f2a7864671abcfa957cb380"
+      }
+    },
+    {
+      "id": "clang",
+      "version": "21.1.8",
+      "platform": "linux-arm64",
+      "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-ARM64.tar.xz",
+      "sha256": "65ce0b329514e5643407db2d02a5bd34bf33d159055dafa82825c8385bd01993",
+      "kind": "tar.xz",
+      "executable": "LLVM-21.1.8-Linux-ARM64/bin/clang",
+      "attestation": {
+        "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-21.1.8/LLVM-21.1.8-Linux-ARM64.tar.xz.jsonl",
+        "sha256": "f04e1e056596a16e4c359cc1c863c8b4e112cce3b2ca1cfe8ba9b788780001d6"
+      }
+    },
+    {
+      "id": "go",
+      "version": "1.27.1",
+      "platform": "darwin-arm64",
+      "url": "https://go.dev/dl/go1.27.1.darwin-arm64.tar.gz",
+      "sha256": "ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12",
+      "kind": "tar.gz",
+      "executable": "go/bin/go"
+    },
+    {
+      "id": "go",
+      "version": "1.27.1",
+      "platform": "linux-amd64",
+      "url": "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz",
+      "sha256": "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
+      "kind": "tar.gz",
+      "executable": "go/bin/go"
+    },
+    {
+      "id": "go",
+      "version": "1.27.1",
+      "platform": "linux-arm64",
+      "url": "https://go.dev/dl/go1.27.1.linux-arm64.tar.gz",
+      "sha256": "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
+      "kind": "tar.gz",
+      "executable": "go/bin/go"
+    },
+    {
+      "id": "syft",
+      "version": "1.51.1",
+      "platform": "darwin-arm64",
+      "url": "https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_darwin_arm64.tar.gz",
+      "sha256": "ac063af3b9874769deb7ea1e6d76841e68f9e3bb50cd654226fc977de65532c1",
+      "kind": "tar.gz",
+      "executable": "syft"
+    },
+    {
+      "id": "syft",
+      "version": "1.51.1",
+      "platform": "linux-amd64",
+      "url": "https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_amd64.tar.gz",
+      "sha256": "8fcb33017a0dc1058298c923c436d19dfa68ae93968e0b423248542e3afb9fc3",
+      "kind": "tar.gz",
+      "executable": "syft"
+    },
+    {
+      "id": "syft",
+      "version": "1.51.1",
+      "platform": "linux-arm64",
+      "url": "https://github.com/anchore/syft/releases/download/v1.51.1/syft_1.51.1_linux_arm64.tar.gz",
+      "sha256": "a7fd2b784e6664acd44719270574f6cd8c6864fc2b1700bf9099bd1cccda7d7f",
+      "kind": "tar.gz",
+      "executable": "syft"
+    }
+  ],
+  "modules": [
+    {
+      "name": "gazelle",
+      "version": "0.54.0",
+      "integrity": "sha256-na6HwD6gaymQuINiVpCaGDZ+GR+IXVux0DDouoBJG0I=",
+      "url": "https://github.com/bazel-contrib/bazel-gazelle/releases/download/v0.54.0/bazel-gazelle-v0.54.0.tar.gz"
+    },
+    {
+      "name": "rules_go",
+      "version": "0.63.0",
+      "integrity": "sha256-w+JTI3EJqy4qjTywdWiLmKbm/OQ9hJhJZI6OOoTyDW8=",
+      "url": "https://github.com/bazel-contrib/rules_go/releases/download/v0.63.0/rules_go-v0.63.0.zip"
+    }
+  ],
+  "images": [
+    {
+      "name": "docker.io/library/caddy",
+      "version": "2.11.4",
+      "index_digest": "sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017",
+      "source_url": "https://hub.docker.com/_/caddy"
+    },
+    {
+      "name": "docker.io/chrislusf/seaweedfs",
+      "version": "4.46",
+      "index_digest": "sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62",
+      "source_url": "https://hub.docker.com/r/chrislusf/seaweedfs"
+    },
+    {
+      "name": "docker.io/library/postgres",
+      "version": "16.15",
+      "index_digest": "sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94",
+      "source_url": "https://hub.docker.com/_/postgres"
+    },
+    {
+      "name": "docker.io/temporalio/admin-tools",
+      "version": "1.31.2",
+      "index_digest": "sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107",
+      "source_url": "https://hub.docker.com/r/temporalio/admin-tools"
+    },
+    {
+      "name": "docker.io/temporalio/server",
+      "version": "1.31.2",
+      "index_digest": "sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da",
+      "source_url": "https://hub.docker.com/r/temporalio/server"
+    }
+  ]
+}

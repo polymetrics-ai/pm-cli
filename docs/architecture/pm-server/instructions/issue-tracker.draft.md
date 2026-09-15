@@ -1,6 +1,6 @@
 # Synchronized inactive projection: `docs/agents/issue-tracker.md`
 
-This file mirrors the intended issue/spec tracker for provenance and comparison. It is not an active instruction entrypoint, is not fresh-worker intake, and does not establish a landed BOOT baseline. Relative links in the projected body resolve from the target path named in `INSTRUCTION-TARGETS.json`.
+This file mirrors the current target `docs/agents/issue-tracker.md` below for provenance and comparison. It is not an active instruction entrypoint, is not fresh-worker intake, and does not establish current-candidate checks, review, CI, merge, application behavior, or full BOOT. Relative links in the projected body resolve from the target path named in `INSTRUCTION-TARGETS.json`.
 
 # Issue and specification tracker
 
@@ -67,10 +67,10 @@ Use `Closes #N` only when that candidate fully satisfies issue #N and is intende
 
 A stacked pull request that targets another feature branch must use `Refs #N`, record its actual base/parent PR and dependency, and identify which later default-branch candidate will carry closure after the full issue is satisfied. Keep that tracking current when a stack is rebased or regrouped. Do not put premature closure language on an intermediate stack member.
 
-This September 15 instruction cleanup is bounded issue #2 work with approved workflow amendments associated with #3 and #46; it closes none of them. Full BOOT requires the approved #46 publication to land, followed by BOOT-1 verification of that exact immutable default-branch revision. The cleanup candidate is not that landed baseline, does not complete BOOT-1–5, and does not authorize application implementation or CI/merge claims.
+PR #47's reviewed publication tree at `3516a84aef9eb9a880408e6b5ab56ab911276429` landed normally on `main` in merge commit `d8e84e1fc78561173feac8abfd64ce669f09f373`. BOOT-1 readback authenticated the approved original staging and verified that exact reviewed tree in the landed baseline. The historical outer manifest is not the digest of later transformed target bytes. Bounded Darwin foundation checks and fresh-worker discovery for the combined issue #2/#3 candidate are recorded in [developer setup](../development/setup.md); independent Standards/Spec review and genuine final-head CI remain separate completion obligations. Source presence or those local observations alone cannot close either issue or establish application, provider, or backend release qualification.
 
 ## Fresh-worker intake boundary
 
-Fresh workers use the active root `AGENTS.md`, this tracker, `docs/development/{setup.md,skills.md}`, `.agents/skills/pm-go/SKILL.md`, the active configuration ADR, the accepted issue envelope, and the canonical PM Server contracts. Files under `docs/architecture/pm-server/instructions/` are synchronized inactive projections only. Historical issue drafts, private setup/controller runbooks, transition evidence, transcripts, and operator configuration are excluded from instruction intake without deleting their retained evidence bytes.
+Fresh workers use the active [root instructions](../../AGENTS.md), this tracker, [skill routing](../development/skills.md), [skill provenance](../development/skill-provenance.md), [developer setup](../development/setup.md), the sole [PM Go router](../../.agents/skills/pm-go/SKILL.md), the active [configuration ADR](../decisions/0001-cli-configuration.md), the [architecture overview](../architecture/overview.md), and the canonical PM Server contracts. Files under `docs/architecture/pm-server/instructions/` are synchronized inactive projections only. Historical issue drafts, private setup/controller runbooks, transition evidence, transcripts, and operator configuration are excluded from instruction intake without deleting their retained evidence bytes.
 
 Under this guide, do not create, edit, comment on, label, assign, close, or publish issues; do not push or merge; and do not dispatch product work. Escalate only a genuinely missing accepted input or material unresolved product/security decision through the current task owner.

@@ -4,9 +4,9 @@ This bounded tree projects the accepted PM Server product contracts and still-un
 
 ## Publication and BOOT state
 
-The accepted-contract publication correction, including its digest-field disclosure follow-up, is locally committed at `3516a84aef9eb9a880408e6b5ab56ab911276429` on the retained publication branch. [PR #47](https://github.com/polymetrics-ai/pm-cli/pull/47) remains recorded as open and unmerged against `main`; its last observed remote head `fb80b101a28d573194cf13c293e7ba86e381cdaa` predates the local accepted-contract candidate. Publication-specific local checks and independent review do not establish remote CI, push, merge, or a default-branch baseline.
+The reviewed accepted-contract publication tree at `3516a84aef9eb9a880408e6b5ab56ab911276429` was merged normally by [PR #47](https://github.com/polymetrics-ai/pm-cli/pull/47) into `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, whose parents are `563adfd28b80101737ad41298aaa3af839eeacf6` and `3516a84aef9eb9a880408e6b5ab56ab911276429`. [CI run 34959292721](https://github.com/polymetrics-ai/pm-cli/actions/runs/34959292721) succeeded on runner 2 for that publication baseline. Those facts do not pre-certify this later combined candidate.
 
-The September 15 issue #2 instruction cleanup is a separate candidate, not a mutation of publication PR #47. It activates and reconciles the existing target entrypoints early, with approved workflow amendments associated with issues #3 and #46, but closes none of those issues. Full BOOT still requires the approved #46 publication to land, BOOT-1 to retrieve and verify that exact immutable default-branch revision, and the remaining BOOT-2–5 observations. No application implementation, generated connector bundle, passing application test, provider execution, live-effect proof, full CI, merge, or BOOT completion is claimed.
+BOOT-1 readback passed: approved original outer SHA-256 `ec1b366dcebad2ac2fa1c58c68d4cde54fa0ead571392d189c4498cce4de7656` authenticated all 43 original staged paths, accepted review/merge authenticated the amended descendant, and the landed tree matched the reviewed `3516a84aef9eb9a880408e6b5ab56ab911276429` tree with all 42 landed-baseline payload hashes plus its compact manifest verified. The historical outer authenticates original staging; it is not the digest of later transformed manifest bytes. Issue #2/#3 now has bounded local Darwin foundation checks and fresh-worker discovery evidence, described in [developer setup](../../development/setup.md). Those observations do not replace independent Standards/Spec review, genuine final-head CI, or required merge authorization. Remaining BOOT completion must bind those actual results. No PM service, connector, provider effect, or backend release qualification follows from documentation or local foundation checks.
 
 OMP is the sole project coordinator and integration owner under the September 15 workflow. Agent model/account routing remains operator-owned and outside application documents. The single [engineering and review policy](policy/ENGINEERING-REVIEW.md) owns validation, independent review, and delivery; no private controller/runbook is an application prerequisite.
 
@@ -15,8 +15,9 @@ OMP is the sole project coordinator and integration owner under the September 15
 Within this candidate, fresh workers use these actual target files:
 
 - repository [AGENTS.md](../../../AGENTS.md);
-- [developer setup](../../development/setup.md) and [focused skill routing](../../development/skills.md);
-- the sole local [PM Go router](../../../.agents/skills/pm-go/SKILL.md);
+- short [architecture overview](../../architecture/overview.md), [decision index](../../architecture/decisions.md), and [domain glossary](../../agents/domain.md);
+- [developer setup](../../development/setup.md), [testing](../../development/testing.md), [release](../../development/release.md), [focused skill routing](../../development/skills.md), and [skill provenance](../../development/skill-provenance.md);
+- the sole local [PM Go router](../../../.agents/skills/pm-go/SKILL.md) plus the bounded [connector-contract](../../../.agents/skills/pm-connector-contracts/SKILL.md), [durable-effects](../../../.agents/skills/pm-durable-effects/SKILL.md), and [release-recovery](../../../.agents/skills/pm-release-recovery/SKILL.md) procedures when their triggers apply;
 - [CLI and server configuration ADR](../../decisions/0001-cli-configuration.md);
 - [issue and specification tracker](../../agents/issue-tracker.md);
 - the shared [engineering and review policy](policy/ENGINEERING-REVIEW.md).

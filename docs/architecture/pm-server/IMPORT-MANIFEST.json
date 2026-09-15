@@ -1,25 +1,25 @@
 {
   "schema_version": "pm.context.import/v1",
-  "status": "PROPOSED_COMMITTED_UNPUBLISHED",
+  "status": "ACCEPTED_MERGED_BASELINE_WITH_ACTIVE_BOOTSTRAP_CANDIDATE",
   "target_repository": "polymetrics-ai/pm-cli",
-  "observed_target_head": "3516a84aef9eb9a880408e6b5ab56ab911276429",
+  "observed_target_head": "d8e84e1fc78561173feac8abfd64ce669f09f373",
   "publication_state": {
     "branch": "fm/pmcli-architecture-publication",
     "local_committed_candidate": "3516a84aef9eb9a880408e6b5ab56ab911276429",
-    "local_candidate_state": "COMMITTED_PUBLICATION_CORRECTIONS_UNPUBLISHED",
+    "local_candidate_state": "REVIEWED_PUBLICATION_TREE_MERGED_TO_MAIN",
     "pull_request": 47,
     "pull_request_base": "main",
-    "pull_request_state": "OPEN_UNMERGED",
-    "last_observed_remote_head": "fb80b101a28d573194cf13c293e7ba86e381cdaa",
-    "remote_relationship": "Earlier partial publication; the recorded committed publication correction candidate has not been pushed. Bounded issue #2 instruction cleanup is a separate candidate on that base.",
-    "publication_authority": "The September 13 grant permits import/publication of the identified package, necessary issue amendments, independent review, commits, push and PR creation; merge requires separate explicit acceptance.",
+    "pull_request_state": "MERGED",
+    "last_observed_remote_head": "3516a84aef9eb9a880408e6b5ab56ab911276429",
+    "remote_relationship": "PR #47 merged normally into main at d8e84e1fc78561173feac8abfd64ce669f09f373, with parents 563adfd28b80101737ad41298aaa3af839eeacf6 and 3516a84aef9eb9a880408e6b5ab56ab911276429. CI run 34959292721 succeeded on runner 2 for that publication baseline; it is not evidence for this later candidate.",
+    "publication_authority": "The reviewed publication tree was separately accepted and merged. BOOT-1 readback authenticated the original approved staging and exact reviewed landed descendant; current-candidate checks, review, CI and merge remain separate.",
     "delivery_owner": "OMP_ONLY_UNDER_SEPTEMBER_15_SUPERSESSION",
     "retired_controller_custody": "USER_OWNED_NO_CONTROLLER_OPERATION_PERMITTED"
   },
   "instruction_cleanup_state": {
     "branch": "omp/pmcli-bootstrap-cleanup",
-    "comparison_base": "3516a84aef9eb9a880408e6b5ab56ab911276429",
-    "scope": "Bounded issue #2 instruction activation and approved workflow amendments associated with #3 and #46; no full BOOT, application implementation, CI, push or merge completion."
+    "comparison_base": "d8e84e1fc78561173feac8abfd64ce669f09f373",
+    "scope": "Complete issue #2 bootstrap source plus the grouped bounded issue #3 build/toolchain foundation; no application services, connectors, provider effects, release qualification, current-candidate CI or merge completion is claimed from source."
   },
   "target_prefix": "docs/architecture/pm-server/",
   "files": [
@@ -224,36 +224,36 @@
       "target": "docs/architecture/pm-server/instructions/pm-go.draft.md",
       "source": "data/pm-cli/setup/.agents__skills__pm-go__SKILL.md.draft",
       "source_sha256": "b6c6ebb0969da193291830f216490dcc1125eaffa6947f86e730607cf9ed2b10",
-      "sha256": "40ae07d6fe3c23d153d6b7cc9d92cf145ced4e108731953356ddb7ff15b04450",
-      "transformation": "Reconciled the existing router with accepted server-first contracts and synchronized its inactive projection to the authorized issue #2 target; no third-party skill payload was copied."
+      "sha256": "7876b719b34619dcf8a46e46f442b5604a85a91987ac17da85ed02f94a9be0f6",
+      "transformation": "Reconciled the sole Go router with accepted server-first contracts, three bounded project procedures and current issue intake; synchronized its inactive projection without copying third-party skill payloads."
     },
     {
       "target": "docs/architecture/pm-server/instructions/skills.draft.md",
       "source": "data/pm-cli/setup/docs__development__skills.md.draft",
       "source_sha256": "188261257cba103ac7810d542e53a68211acfe417cf2d633d8580d2d7418fab3",
-      "sha256": "a0935fd3268c0948acb99f671d5736055e5befda3af8fc1997188dc4f2912300",
-      "transformation": "Reconciled focused routing with current accepted contracts and synchronized its inactive projection; retained upstream skill license observations without copying payloads."
+      "sha256": "d9add2bbd61092766f919fe1955c6a94e53db49e2fd7229561224f97e18368f7",
+      "transformation": "Reconciled routing for exactly four repository-original skills, installed-no-copy provenance, official fallbacks and current accepted contracts; synchronized the inactive projection."
     },
     {
       "target": "docs/architecture/pm-server/instructions/configuration-adr.draft.md",
       "source": "data/pm-cli/setup/docs__decisions__0001-cli-configuration.md.draft",
       "source_sha256": "5bff8fde8ffbd5f9830deac5686f4e944b25f964db10ec55e1db9628b1390dc8",
-      "sha256": "88df17bb949dbda03b2eb47d5cef767d30db1c894b804829dac5960aa3e5f8fd",
-      "transformation": "Reconciled client/server configuration boundaries with accepted contracts and synchronized the inactive projection to the authorized issue #2 ADR target."
+      "sha256": "82bb32bd88b1b00e131543751c4dd5bfd204378768bde40977ac48fde73f2f4a",
+      "transformation": "Reconciled client/server configuration boundaries and landed-baseline status with accepted contracts; synchronized the inactive projection to the authoritative issue #2 ADR."
     },
     {
       "target": "docs/architecture/pm-server/instructions/AGENTS.draft.md",
       "source": "data/pm-cli/setup/PMCLI-AGENTS-DRAFT.md",
       "source_sha256": "3089f5cb7ef30716a331b6e022c8c96795bcde6d4c932dd0fd1afa9a86b4d90d",
-      "sha256": "73cafb46d11bf7ddd3c2fc09c070aa997bb0eb0f95943907209d76ea9b8cd6ab",
-      "transformation": "Reconciled server-first product, fidelity, security and navigation requirements with accepted contracts; synchronized this inactive projection to the active root instructions and linked the single engineering policy."
+      "sha256": "041d1f8f38e3dc9c4c1e39185966b03a365720864916476bc2c3137db21c6d98",
+      "transformation": "Reconciled server-first product, fidelity, security, source-present/evidence and navigation requirements; synchronized this inactive projection to the active root instructions and retained the single engineering policy."
     },
     {
       "target": "docs/architecture/pm-server/instructions/issue-tracker.draft.md",
       "source": "data/pm-cli/setup/ISSUE-TRACKER-DRAFT.md",
       "source_sha256": "ec3f0cc0e351a270162b39e62dbf5453aceb921f84c8cbbea0ba96315798a955",
-      "sha256": "dad115a2c960899d2901ef45d6ec13b05e7ad975cb579d940bf06b1591d8bfa4",
-      "transformation": "Synchronized the inactive projection to the authorized issue #2 tracker, covering complete accepted issue recovery, exact review inputs, grouped and stacked linkage, and truthful BOOT boundaries."
+      "sha256": "f39723a53e55ce5be05bc628563c7b067a33be64a94f225758322233d37e524d",
+      "transformation": "Synchronized the inactive projection to the accepted issue #2 tracker, preserving its title and sections while updating landed-baseline, BOOT-1, review-input and active-navigation facts."
     },
     {
       "target": "docs/architecture/pm-server/proposals/admission-binding-gap.md",
@@ -286,8 +286,8 @@
     {
       "target": "docs/architecture/pm-server/README.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "e907b66d7a1e316d6c95925c9d8963a204cdc675180373700064e8a463af1c69",
-      "transformation": "Linked actual worker entrypoints, distinguished synchronized inactive projections, and recorded the committed publication correction base separately from bounded issue #2 cleanup and all remaining CI/merge/BOOT/proof gates."
+      "sha256": "e73273ccab41690357dbb66c96929d6afe8f74530330f132159e602418013148",
+      "transformation": "Recorded PR #47's reviewed tree, normal merge, baseline CI and BOOT-1 readback; distinguished bounded local foundation/discovery observations from independent review, final-head CI and required merge authority; linked authoritative bootstrap entrypoints and retained inactive-projection status."
     },
     {
       "target": "docs/architecture/pm-server/SEMANTIC-AMENDMENTS.md",
@@ -304,8 +304,8 @@
     {
       "target": "docs/architecture/pm-server/instructions/INSTRUCTION-TARGETS.json",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "8b239e5800e03373a62dc34ab5b08bce6a7d7ae97c7499a8148273fe80845936",
-      "transformation": "Mapped synchronized inactive projections to existing authorized issue #2 target entrypoints without claiming full BOOT completion."
+      "sha256": "ac54184217c31125a8cf8f80a1c75ff09da676354c06d892f4ebac2024b5bd55",
+      "transformation": "Mapped synchronized inactive projections to authoritative issue #2 target entrypoints while distinguishing the landed/verified baseline from pending current-candidate evidence."
     },
     {
       "target": "docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md",
@@ -349,5 +349,5 @@
     }
   ],
   "manifest_self": "Self-describing inventory; excluded from files[] hashes to avoid a recursive digest. Package file count includes IMPORT-MANIFEST.json.",
-  "approval": "Accepted public product decisions remain canonical documentation under the existing import/publication authority. The recorded committed publication correction candidate remains absent from the last observed remote PR head. This separate bounded issue #2 candidate activates instruction targets and the accepted workflow amendments without closing #2, #3 or #46. Full BOOT still requires approved landed #46 context and the remaining BOOT-1 through BOOT-5 observations. Actual final-candidate CI, authorized publication and separate explicit merge acceptance remain. No application implementation, generated connector artifact, provider execution or live-effect proof is claimed."
+  "approval": "The reviewed publication tree landed on main at d8e84e1fc78561173feac8abfd64ce669f09f373 through PR #47, and BOOT-1 readback authenticated the approved original staging plus exact reviewed landed descendant. The historical approved outer is not the digest of current transformed bytes. Bounded local Darwin foundation checks and fresh-worker discovery are recorded separately from independent Standards/Spec review, genuine final-head CI and required merge authorization. No application service, generated connector artifact, provider execution, live-effect proof, packaging or backend release qualification is claimed from documentation or local foundation checks."
 }

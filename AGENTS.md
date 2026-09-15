@@ -4,18 +4,21 @@
 
 PM (Polymetrics) is a remote-first Go application for declared connectors and reliable data movement. The `pm` CLI and future browser are thin clients of PM Server; they are not alternate execution engines.
 
-Within this candidate, [the PM Server plan](docs/architecture/pm-server/architecture/PLAN.md), its adjacent contracts, and the assigned accepted issue are the current product source. Application code, PM commands, generated bundles, tests, provider effects, and certification remain unimplemented until an authorized issue creates and exercises them. A local candidate is not a landed BOOT baseline. Full BOOT still requires the approved issue #46 publication to land and BOOT-1 to verify that immutable revision.
+The accepted PM Server context published through PR #47 is landed on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`. BOOT-1 readback authenticated the approved original staging and the exact reviewed tree that landed; see the [context index](docs/architecture/pm-server/README.md) for its evidence boundary. [Developer setup](docs/development/setup.md) records bounded local Darwin foundation checks and fresh-worker discovery. Independent candidate review, genuine final-head CI, and required merge authorization remain separate obligations; local observations alone cannot establish full BOOT or a merge.
+
+Only behavior present in source and actually exercised may be reported. A bounded build/toolchain foundation does not implement PM application services, client commands, generated bundles, connectors, provider effects, packaging, or certification.
 
 Implement only the explicitly authorized issue in its owned files. Preserve other work, first ownership, later integration rights, issue/case identities, and unresolved obligations. OMP is the sole project coordinator and integration owner. Agent model/account routing is operator-owned outside application documentation; do not encode a route here or make another delivery controller, private runbook, or host setup a worker prerequisite.
 
 ## Start with authoritative context
 
 1. Read [issue/spec lookup](docs/agents/issue-tracker.md), the complete assigned issue and accepted comments, and every accepted grouped-issue input supplied by the task.
-2. Read the relevant canonical design and ownership records under `docs/architecture/pm-server/`, especially `architecture/PLAN.md` and `implementation/FILE-OWNERSHIP.json`.
-3. Read [developer setup](docs/development/setup.md), [skill routing](docs/development/skills.md), and the sole local [PM Go router](.agents/skills/pm-go/SKILL.md) when doing Go work.
-4. Follow the single [engineering and review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md) for validation, review, and delivery.
+2. Read the short [architecture overview](docs/architecture/overview.md), [decision index](docs/architecture/decisions.md), and [domain glossary](docs/agents/domain.md), then the relevant canonical records under `docs/architecture/pm-server/`, especially `architecture/PLAN.md` and `implementation/FILE-OWNERSHIP.json`.
+3. Read [developer setup](docs/development/setup.md), [testing](docs/development/testing.md), [release](docs/development/release.md), [skill routing](docs/development/skills.md), and [skill provenance](docs/development/skill-provenance.md).
+4. For Go work, start with the sole local [PM Go router](.agents/skills/pm-go/SKILL.md). Add only the bounded procedure the behavior needs: [connector contracts](.agents/skills/pm-connector-contracts/SKILL.md), [durable effects](.agents/skills/pm-durable-effects/SKILL.md), or [release and recovery](.agents/skills/pm-release-recovery/SKILL.md).
+5. Follow the single [engineering and review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md) for validation, review, and delivery.
 
-Files under `docs/architecture/pm-server/instructions/` are synchronized, inactive projections of the actual entrypoints above. Do not load them as a second instruction tree. Historical issue drafts, private setup runbooks, controller records, transcripts, and operator paths are evidence, not fresh-worker instruction intake. Do not require them or copy them into the repository.
+Files under `docs/architecture/pm-server/instructions/` are synchronized, inactive projections of their mapped actual entrypoints. Do not load them as a second instruction tree. Historical issue drafts, private setup runbooks, controller records, transcripts, and operator paths are evidence, not fresh-worker instruction intake. Do not require them or copy them into the repository.
 
 ## Client, server, and worker boundary
 
@@ -51,4 +54,4 @@ If this checkout has `.codegraph/`, use the existing CodeGraph with this checkou
 
 Before production edits, identify the behavior, owner, consumers, and focused causal validation. Use the task's authorized checks and record actual results. All PM command lines, package paths, test names, deployment actions, and validation counts in planning documents are future until the owning implementation creates and runs them. Missing tools, skipped checks, local documentation success, an AI review, or a generated descriptor is not application proof.
 
-Review coherent dependency-ordered candidates rather than each todo. The issue tracker supplies the accepted base, complete grouped issue/comment inputs, and candidate identity; the shared policy owns independent review and delivery. Report exact changes, executed evidence, and remaining unproven scope without claiming CI, merge, BOOT completion, provider execution, or certification that did not occur.
+Review coherent dependency-ordered candidates rather than each todo. The issue tracker supplies the accepted base, complete grouped issue/comment inputs, and candidate identity; the shared policy owns independent review and delivery. Distinguish the landed PR #47 baseline and its CI from evidence for the current candidate. Report exact changes, executed evidence, and remaining unproven scope without claiming current-candidate CI, merge, full BOOT, provider execution, or certification that did not occur.

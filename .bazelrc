@@ -1,0 +1,27 @@
+startup --batch
+startup --host_jvm_args=-Xms128m
+startup --host_jvm_args=-Xmx1024m
+
+common --experimental_isolated_extension_usages
+common --enable_platform_specific_config
+
+build --jobs=2
+build --local_resources=cpu=2
+build --local_resources=memory=2048
+build --spawn_strategy=processwrapper-sandbox
+build --repo_env=CC
+build --repo_env=CXX
+build --action_env=CC
+build --action_env=CXX
+build --repo_env=SDKROOT
+build --action_env=SDKROOT
+build --repo_env=MACOSX_DEPLOYMENT_TARGET
+build --action_env=MACOSX_DEPLOYMENT_TARGET
+
+# Preserve native debug symbols with the Apple linker.
+build:macos --copt=-gdwarf-4
+build:macos --host_copt=-gdwarf-4
+
+test --test_env=PM_GO
+test --test_env=PM_REPO_ROOT
+test --test_env=GOWORK=off
