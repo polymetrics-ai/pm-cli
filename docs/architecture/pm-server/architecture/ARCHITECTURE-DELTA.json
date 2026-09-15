@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.plan.delta/v2",
-  "label": "Proposed/Recommended475; settled user direction and chosen engineering decisions",
+  "label": "Canonical475 architecture: accepted product amendments plus remaining planned/unexecuted implementation decisions",
   "rows": [
     {
       "id": "ADR475-01",
@@ -434,6 +434,146 @@
         "BRIEF475"
       ],
       "revisit_trigger": "Wrong effect/bytes/rows or invalidated old pass appears certified."
+    },
+    {
+      "id": "ADR475-17",
+      "subject": "Complete action result surface",
+      "context": "A fixed display subset and hidden pull-request filter lose source data and make pagination/result truth ambiguous.",
+      "considered_options": [
+        "Complete data by default plus shared typed optional selection/filtering",
+        "Fixed six-field default",
+        "Provider-specific or proof-only projection"
+      ],
+      "decision": "Accepted F02: complete action data by default; shared typed optional field selection and record filtering preserve nesting, presence, exact values, all source entries and truthful pagination.",
+      "evidence_ids": [
+        "V02",
+        "V29",
+        "V32",
+        "V67",
+        "P_direct_read"
+      ],
+      "falsifier": "An absent selector omits a valid source field/entry, a filter coerces types or runs after selection, or an empty filtered page is reported exhausted.",
+      "first_milestone": "M1 contract; M6 first GitHub consumer",
+      "revisit_trigger": "Only an explicit replacement product decision with migration semantics; provider display preferences are insufficient.",
+      "source_refs": [
+        "PM-ISSUE-27-ACCEPTED",
+        "GITHUB-REST-SPEC-ACCEPTED"
+      ],
+      "status": "accepted product contract; implementation and proof UNEXECUTED",
+      "supersedes": "The six-field GitHub default and hidden pull_request exclusion are rejected, not compatibility behavior.",
+      "tradeoffs_and_consequences": "Payloads can be larger; callers opt into typed selection/filtering while server and clients preserve source membership, continuation and exact values."
+    },
+    {
+      "id": "ADR475-18",
+      "subject": "Finite durable admission and recovery",
+      "context": "Unbounded or synthetic-only limits and replacement keys after uncertain commit can overload a deployment or create duplicate logical runs.",
+      "considered_options": [
+        "Finite deployment/workspace reservations with same-key recovery",
+        "Historical 1000/1h sample as default",
+        "Unlimited/zero-disable aliases or client-generated replacement keys"
+      ],
+      "decision": "Accepted F01: exact refusal table, development 32/8/2m and standard 256/32/10m, atomic PostgreSQL pending reservations and workspace-count/workspace-age-before-deployment precedence. The three-send/30s bound applies only to client-to-API recovery and never constrains provider/run-owned Retry-After or durable retry timing. Issue #14 proves the route and a controlled durable execution-start transition; #16 later proves actual-worker integration and #19/#21 own client recovery.",
+      "evidence_ids": [
+        "V09",
+        "R09",
+        "R10",
+        "R14"
+      ],
+      "falsifier": "202 precedes known commit, a replica multiplies budget, replay reserves again, age removes accepted work, or unresolved/used keys can execute as fresh intent.",
+      "first_milestone": "M4",
+      "revisit_trigger": "Measured capacity may change named finite values through an explicit compatible contract revision; never by silent unlimited fallback.",
+      "source_refs": [
+        "PM-DECISION-F01-AUTH",
+        "PM-ISSUE-14-ACCEPTED"
+      ],
+      "status": "accepted product contract; implementation and proof UNEXECUTED",
+      "supersedes": "Historical 1000 pending/1h and synthetic 3/2/30s are not production defaults; incomplete refusal bindings are closed.",
+      "tradeoffs_and_consequences": "Some overloads refuse new work while preserving accepted work. Clients retain secret-free intent journals and stable recovery guidance; provider/run retry timing remains independently durable."
+    },
+    {
+      "id": "ADR475-19",
+      "subject": "Revision-safe access mutation replay",
+      "context": "The six M3 access POST rows incorrectly inherited read cursor/ETag idempotency and could reissue one-time credential material or duplicate mutations.",
+      "considered_options": [
+        "Scoped mutation receipt plus If-Match",
+        "Read cursor/ETag as idempotency",
+        "Automatic stale-revision rebase or secret replay"
+      ],
+      "decision": "Accepted AUTH-MUTATION-PARITY: preserve explicit connection/operation/workspace/time ceilings and distinct auditable actor/effective-actor identities; six exact POST rows use current authorization, If-Match and workspace/principal/operation/target-scoped keys. Original grant/create is 201, revoke/unchanged is 200 and exact replay is 200 with the safe original result.",
+      "evidence_ids": [
+        "V14",
+        "R08",
+        "R14"
+      ],
+      "falsifier": "Replay bypasses current authorization, a grant exceeds its ceiling, actor attribution collapses, a stale/missing revision mutates, concurrent equal requests cause two effects, or service-account secret appears outside the original 201.",
+      "first_milestone": "M3",
+      "revisit_trigger": "Any change to identity/revision/key namespace or one-time credential lifecycle requires an explicit security/product decision.",
+      "source_refs": [
+        "PM-DECISION-F01-AUTH",
+        "PM-ISSUE-8-ACCEPTED",
+        "PM-ISSUE-12-ACCEPTED"
+      ],
+      "status": "accepted product contract; implementation and proof UNEXECUTED",
+      "supersedes": "Read-style mutation idempotency metadata and replay secret recovery are rejected.",
+      "tradeoffs_and_consequences": "Clients must retain keys and expected revisions, and a lost one-time credential requires explicit revoke/new create rather than recovery by replay."
+    },
+    {
+      "id": "ADR475-20",
+      "subject": "Connector source authority",
+      "context": "A moving documentation page or assumed OpenAPI cannot supply immutable schema fidelity for GitHub or native PostgreSQL.",
+      "considered_options": [
+        "Pinned official source/license and provider-native documentation",
+        "Moving docs page",
+        "Invented or assumed OpenAPI for PostgreSQL"
+      ],
+      "decision": "Accept the exact GitHub REST source/license identity and require official version-pinned PostgreSQL protocol/SQL/metadata sources; raw GitHub payload remains external to this bounded docs tree and source.lock stays with first owners.",
+      "evidence_ids": [
+        "V20",
+        "V21",
+        "V24"
+      ],
+      "falsifier": "Generated meaning comes from a different GitHub revision/hash, incomplete closure, moving page, or a fabricated PostgreSQL OpenAPI contract.",
+      "first_milestone": "M6 GitHub; M7 PostgreSQL",
+      "revisit_trigger": "Upstream correction or selected-version change requires a new exact source.lock and compatibility analysis.",
+      "source_refs": [
+        "GITHUB-REST-SPEC-ACCEPTED",
+        "GITHUB-REST-LICENSE-ACCEPTED",
+        "PM-ISSUE-28-ACCEPTED"
+      ],
+      "status": "accepted source authority; compiler, source.lock and live proof UNEXECUTED",
+      "supersedes": "WEB-GITHUB and WEB-PG remain historical observations, not the accepted immutable implementation inputs.",
+      "tradeoffs_and_consequences": "Source owners must capture full relevant definitions and attribution; the documentation package records identities without redistributing 12.9 MB of source."
+    },
+    {
+      "id": "ADR475-21",
+      "subject": "Bounded PostgreSQL mapped upsert and staged composition",
+      "context": "The reusable SQL foundation did not itself define safe destination identity, changed-column effects or when the narrow pg-wh-pg demonstration could be composed.",
+      "considered_options": [
+        "Approved keyed mapped insert-or-update through common settlement",
+        "Arbitrary SQL or blanket replacement",
+        "Demo-specific executor or wait for all-five M11 before any PostgreSQL composition"
+      ],
+      "decision": "Accept one bounded mapped insert-or-update owned by #34, with an explicit approved migration for any key/account/generation reset and retained old mapping audit. N13-PG is first-created by #41 after #28-#34; #28 first-owns source/semantics/lifecycle, #34 later updates those files, and full N13 later updates composition at M11.",
+      "evidence_ids": [
+        "V34",
+        "V40",
+        "V41",
+        "V42",
+        "V43",
+        "P_etl",
+        "P_reverse_etl"
+      ],
+      "falsifier": "A missing/ambiguous key reaches I/O, unchanged columns are assigned, unmapped fields change, identity resets without approved migration, confirmed rollback is treated as definitely unsent, desired rows are treated as an occurrence witness, unknown COMMIT is blindly retried, or early proof is counted as full N13/V74/P_sync_transport.",
+      "first_milestone": "M8 after M7/M8 prerequisites",
+      "revisit_trigger": "A new write mode/delete/schema effect or composition authority needs a separate accepted contract and ownership update.",
+      "source_refs": [
+        "PM-ISSUE-28-ACCEPTED",
+        "PM-ISSUE-34-ACCEPTED",
+        "PM-ISSUE-41-ACCEPTED"
+      ],
+      "status": "accepted bounded extension; implementation, fixture authority and proof UNEXECUTED",
+      "supersedes": "Stop-at-#28 staging and an M11-only first creation for PostgreSQL composition are superseded only for pg-wh-pg.",
+      "tradeoffs_and_consequences": "More metadata/readback, a declared sound occurrence witness and serialized file integration are required. Actual dispatch history and unknown charge remain until exact settlement; all broader #41 obligations stay open."
     }
   ],
   "settled": [
@@ -443,7 +583,12 @@
     "server provider secrets",
     "PM MIT",
     "initial five",
-    "seven lanes"
+    "seven lanes",
+    "complete action data with typed selection/filtering",
+    "finite durable admission and bounded recovery",
+    "revision-safe access mutations",
+    "pinned connector source authority",
+    "bounded PostgreSQL mapped upsert and N13-PG stage"
   ],
   "approval_scope": [
     "implementation start",

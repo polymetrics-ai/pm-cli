@@ -1,5 +1,5 @@
 {
-  "status": "VERIFIED_RETRIEVABLE_PROPOSAL; USER_ACCEPTANCE_PENDING; NOT_PROVIDER_PROOF",
+  "status": "ACCEPTED_IMMUTABLE_SOURCE_IDENTITY; RAW_SOURCE_NOT_COPIED; SOURCE_LOCK_COMPILER_AND_PROVIDER_PROOF_UNEXECUTED",
   "repository": "https://github.com/github/rest-api-description",
   "commit": "0a144e030abbe358000f0d32874e197b59a8f7ed",
   "path": "descriptions/api.github.com/api.github.com.json",
@@ -8,8 +8,8 @@
   "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/descriptions/api.github.com/api.github.com.json",
   "operation_pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get",
   "operation_id": "issues/list-for-repo",
-  "license": "MIT; exact upstream LICENSE.md supplied beside this closure",
-  "capture_kind": "Complete selected GET operation, selected identity/discriminator field facts and complete recursive reference-node inventory. Inventory nodes summarize type/required fields; they are not the full source bytes or a compiler input. Every pointer resolves in the pinned upstream JSON. Future source.lock capture must use that complete immutable input. No full raw source archive retained.",
+  "license": "MIT; Copyright (c) 2020 GitHub; same-commit LICENSE.md retained beside this closure",
+  "capture_kind": "The complete 12,939,686-byte immutable upstream source identity was accepted after full-byte verification against its Git blob and SHA-256. This file retains bounded operation/reference facts only; the raw 12.9 MB source is intentionally not copied into canonical docs and these normalized facts are not a compiler input.",
   "normalized_source_facts_sha256": "844ade4e90130296ffefe8938c7a38d3b0caec657e767a9404276f98f6a38855",
   "info": {
     "contact": {
@@ -697,5 +697,21 @@
       "created_at",
       "updated_at"
     ]
-  }
+  },
+  "upstream_sha256": "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2",
+  "license_identity": {
+    "path": "LICENSE.md",
+    "git_blob_sha1": "b50625eb63949013cae604b1cadd42cfa1eaf825",
+    "upstream_bytes": 1063,
+    "sha256": "3243761cbac07e6d169a5a2f4e7c25cc544da85248e735df74c3672e055cc87b",
+    "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/LICENSE.md"
+  },
+  "accepted_decision": {
+    "url": "https://github.com/polymetrics-ai/pm-cli/issues/27#issuecomment-5669069268",
+    "issue_revision_url": "https://github.com/polymetrics-ai/pm-cli/issues/27",
+    "issue_body_sha256": "6f671f9d39adb8390d82478b8fa5e44f43e98c0653bf1aa0146db8143958e764",
+    "issue_body_bytes": 43761
+  },
+  "accepted_result_contract": "Complete action data by default; optional shared typed field selection and record filtering; preserve nested values, absent/null/value, exact identifiers/numbers, every mixed issue/pull-request entry and truthful source pagination. The prior fixed six-field proposal is superseded.",
+  "remaining_work": "Issue #27 first-owns source.lock, complete recursive reference capture, NOTICE, compiler validation/generated inventories, causal controlled cases and separately authorized live provider proof."
 }

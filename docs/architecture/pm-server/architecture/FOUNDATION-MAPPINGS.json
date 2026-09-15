@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.plan.mappings/v2",
-  "label": "Proposed/Recommended475 DRAFT; all application validation UNEXECUTED; semantic audit pending",
+  "label": "Canonical requirement mapping with accepted F01/F02/F03/AUTH/PostgreSQL amendments; all implementation validation UNEXECUTED",
   "requirements": [
     {
       "id": "REQ-GH-ISSUE",
@@ -8,14 +8,14 @@
       "connector": "github",
       "operation": "GET /repos/{owner}/{repo}/issues; POST /repos/{owner}/{repo}/issues",
       "source": {
-        "source_id": "WEB-GITHUB",
-        "url": "https://docs.github.com/en/rest/issues/issues",
-        "sha256": "76453eb5d99f8596bf72b440f3a09b008b63a6a23e275830f65e536d769e1256",
-        "pointer": "list-repository-issues / create-an-issue",
-        "status": "official source selected facts inspected; NOT provider test"
+        "source_id": "GITHUB-REST-SPEC-ACCEPTED",
+        "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/descriptions/api.github.com/api.github.com.json",
+        "sha256": "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2",
+        "pointer": "github/rest-api-description commit 0a144e030abbe358000f0d32874e197b59a8f7ed; path descriptions/api.github.com/api.github.com.json; issues/list-for-repo; #/paths/~1repos~1{owner}~1{repo}~1issues/get; blob ed76b1371e381b078e50c8a698b890911031aeb2; 12,939,686 bytes",
+        "status": "accepted complete immutable source identity; raw payload intentionally not copied; source.lock/compiler/live proof future"
       },
-      "transport_encoding": "HTTP JSON; path owner/repo, body title, returned number/id; issue collection can include pull requests",
-      "field_bindings": "title UTF-8 string -> body.title; returned issue number exact integer + repository identity -> owned destination key; never use title as unique key",
+      "transport_encoding": "GET /repos/{owner}/{repo}/issues with exact pinned OpenAPI request/response variants, declared query serialization and source continuation; optional PM output selection/filter controls remain outside provider parameters. M6 activates only this read. Later owned direct-write coverage preserves the declared title/body request and returned issue id/number rather than inventing another transport.",
+      "field_bindings": "Complete action records by default; nested values and absent/null/value, false/zero/empty, exact integer/decimal/identifier fidelity. Optional shared typed selection/filtering; mixed issue and pull-request entries preserve pull_request presence. Later writes bind exact title/body and returned issue identity; title is not an idempotency or entity key. No fixed six-field default.",
       "foundation_refs": [
         {
           "id": "FND-01",
@@ -70,6 +70,10 @@
       ],
       "sync_dimensions": "full_scan conditional completeness; create_only; close-as-soft-delete only with explicit owned-resource action",
       "required_behavior": [
+        "Default output exposes complete action data and every returned entry, including pull-request-shaped issue-list entries; independent id/number/repository assertions remain mandatory but are not the full result contract.",
+        "Explicit shared typed field selection preserves nested selected values and presence. Explicit record filters distinguish absent/null/unlike types without coercion and evaluate the unprojected record before selection; malformed controls fail before provider I/O.",
+        "Provider page size differs from total record cap. Preserve effective wire limit, source continuation, unread page tail, provider completeness and fetched/returned/emitted counts; zero emitted matches do not imply exhaustion.",
+        "Official pinned full source and same-commit MIT license are accepted; issue #27 still first-owns source.lock, full reference closure, NOTICE, compiler validation/inventory and causal/live proof.",
         "source hash, pointer, dialect, license and recursive reference closure retained; no implicit network refs",
         "2.0 conversion explicit; preserve media/status variants, schema unions and source disagreements",
         "absent/null/empty/default distinct; exact numbers; no undocumented coercion",
@@ -94,11 +98,11 @@
       "admission": "Requires source fidelity, registered handler versions, schema/account/policy predicates. Failed/unknown requirement blocks only affected operation/lane/profile.",
       "durability_security_failure": {
         "common": "Bounded input/output/bytes, scoped authorization, secret-free public projection, account rate limits, fence-checked local commits; no provider effect guarantee from local locks.",
-        "specific": "Create is not generally safe to retry after response loss; persist intent before send, returned number on success; unknown without sound matching/readback",
+        "specific": "Create is not generally safe to retry after response loss; persist exact intent before send and returned id/number on success. Unknown occurrence settles only through a declared sound matching/readback witness for that exact intent, never desired fields alone.",
         "remote_contract": "Acceptance/grant/revocation in PG; one request per recorded attempt, Temporal owns safe retry timing; account permits shared across aliases; unknown effects retained."
       },
-      "existing_evidence": "Official documentation and historical inspected source only. New binaries not implemented.",
-      "missing_proof": "Source fidelity plus real Go CLI/browser->API->PG/Temporal worker path and exact scoped independent provider assertions. No old receipt certifies new binaries.",
+      "existing_evidence": "Accepted complete 12,939,686-byte source identity and 1,063-byte same-commit license with verified Git blob/SHA-256; bounded closure facts retained. No compiler or provider execution.",
+      "missing_proof": "Issue #27 source.lock/reference closure/compiler output plus actual registered PMCLI/API/worker direct_read, shared selection/filter parity, mixed-entry pagination cases and separately authorized live proof.",
       "test_ids": [
         "V02",
         "V14",
@@ -267,7 +271,7 @@
         "tools/atlas/main.go"
       ],
       "milestone": "M8",
-      "status": "planned",
+      "status": "accepted source/result contract; implementation and proof planned",
       "state_owner_ids": [
         "S03",
         "S05",
@@ -352,8 +356,8 @@
               "version": "1.1.0"
             }
           ],
-          "eligibility": "Evaluate exact operation behavior and account predicate; not all operations in aggregate row share CRUD relationships.",
-          "scope": "Knowledge-impact subset only. The compiler constructs exact runtime requirements from the selected typed operation and behavior; compiler/proof/operator foundations are never runtime admission gates."
+          "eligibility": "Only pinned issues/list-for-repo direct_read is activated in M6, with complete-default ActionResult, optional shared typed selection/filtering and truthful pagination. HTTP 200 or credentials alone do not certify it.",
+          "scope": "Exact M6 operation scope. Later GitHub writes/ETL/reverse remain separate owned consumers; the aggregate requirement remains an impact union."
         },
         {
           "lane": "direct_write",
@@ -485,7 +489,11 @@
           "scope": "Knowledge-impact subset only. The compiler constructs exact runtime requirements from the selected typed operation and behavior; compiler/proof/operator foundations are never runtime admission gates."
         }
       ],
-      "scope_kind": "operation_semantics"
+      "scope_kind": "operation_semantics",
+      "superseding_source_refs": [
+        "WEB-GITHUB"
+      ],
+      "first_slice": "M6 exact issues/list-for-repo direct_read only; later POST/effect/ETL/reverse consumers retain their owners."
     },
     {
       "id": "REQ-PG-REL",
@@ -493,14 +501,14 @@
       "connector": "postgres",
       "operation": "Discovered relation read and parameterized keyed apply",
       "source": {
-        "source_id": "WEB-PG",
-        "url": "https://www.postgresql.org/docs/18/infoschema-columns.html",
-        "sha256": "de857fc25276f8c41ece45f9b3dccdd4d0413cd60a29017459bd8bad86ac4d9c",
-        "pointer": "information_schema.columns; relation identity/OIDs and privileges",
-        "status": "official source selected facts inspected; NOT provider test"
+        "source_id": "PM-ISSUE-28-ACCEPTED",
+        "url": "https://github.com/polymetrics-ai/pm-cli/issues/28",
+        "sha256": "f5c87b726a3718de678af68d90b2c791659ad65d78d8a85fea7df1c28f6d1923",
+        "pointer": "Accepted PostgreSQL demo boundary: official protocol, SQL and metadata documentation for the selected supported version; source.lock remains issue #28 output",
+        "status": "accepted authority and scope; exact vendor-doc capture/hash, implementation and proof future"
       },
-      "transport_encoding": "SQL protocol; pgx values; discovered catalog/schema/table/column and constraints",
-      "field_bindings": "numeric(p,s) -> exact coefficient/scale -> DECIMAL if representable; int8 exact; timestamptz instant; timestamp without time zone stays local semantic type; nullable != absent",
+      "transport_encoding": "Native PostgreSQL protocol and parameterized SQL from pinned official protocol/SQL/metadata documentation; PostgreSQL is not assumed to expose OpenAPI. Discover and bind exact catalog/schema/table/column identities and usable constraints; quoted identifiers and bound typed values only.",
+      "field_bindings": "Preserve exact numeric(p,s), int8, date, timestamptz instant, timestamp-without-zone local wall time, nullable versus absent and other declared values. Bind an explicit stable unique key, verified usable constraint and approved writable-column mappings for the bounded mapped insert-or-update operation.",
       "foundation_refs": [
         {
           "id": "FND-03",
@@ -548,6 +556,11 @@
       ],
       "sync_dimensions": "snapshot first; polling conditional unique tie-breaker/late-commit policy; upsert requires actual constraint; WAL CDC deferred",
       "required_behavior": [
+        "Issue #28 pins complete relevant official PostgreSQL protocol, SQL and metadata definitions/attribution for the selected version; no OpenAPI assumption, demo executor or unrestricted SQL surface.",
+        "For the accepted mapped insert-or-update, reject missing/ambiguous/duplicate source keys and unusable constraints before effects; insert absent keys; update only changed approved writable columns; unchanged values cause zero assignments. Key/account/generation reset requires an explicit approved migration and retains the old mapping for audit.",
+        "Preserve unmapped fields and unrelated rows; forbid delete, DDL, blanket replacement, raw SQL escape and customer-ledger/schema workarounds.",
+        "Confirmed rollback permits only safely re-admitted work and is not proof of no physical dispatch. A possibly accepted COMMIT remains unknown and charged until a declared sound occurrence witness identifies the exact intent; desired key/type/mapped/unmapped rows or counts alone cannot identify which occurrence committed. Preserve actual dispatch history and never blind retry.",
+        "Issue #28 creates PostgreSQL source/semantics/lifecycle in M7; issue #34 later UPDATEs semantics/lifecycle in serialized M8 integration; issue #41 creates only pg-wh-pg composition after #28-#34 and later UPDATEs it at M11.",
         "absent/null/empty/default distinct; exact numbers; no undocumented coercion",
         "PM identity separated from provider values; all physical I/O guarded by scoped current authority",
         "discovered quoted identifiers and bound values; native SQL protocol; transaction errors retain ambiguity",
@@ -570,11 +583,11 @@
       "admission": "Requires source fidelity, registered handler versions, schema/account/policy predicates. Failed/unknown requirement blocks only affected operation/lane/profile.",
       "durability_security_failure": {
         "common": "Bounded input/output/bytes, scoped authorization, secret-free public projection, account rate limits, fence-checked local commits; no provider effect guarantee from local locks.",
-        "specific": "Known rollback retry differs from unknown COMMIT; same-transaction unit ledger only with authorized managed target; otherwise readback/reconcile",
+        "specific": "Confirmed rollback permits only safely re-admitted work and is not proof of no physical dispatch. A possibly accepted COMMIT remains unknown and charged until a declared sound occurrence witness identifies the exact intent; desired rows or ordinary readback alone cannot identify which occurrence committed. Preserve actual dispatch history and never blind retry.",
         "remote_contract": "Acceptance/grant/revocation in PG; one request per recorded attempt, Temporal owns safe retry timing; account permits shared across aliases; unknown effects retained."
       },
-      "existing_evidence": "Official documentation and historical inspected source only. New binaries not implemented.",
-      "missing_proof": "Source fidelity plus real Go CLI/browser->API->PG/Temporal worker path and exact scoped independent provider assertions. No old receipt certifies new binaries.",
+      "existing_evidence": "Accepted product decisions and prior official documentation observations; no exact future source.lock, SQL implementation, PM route execution or provider proof.",
+      "missing_proof": "First-owner exact source capture/attribution, reusable native transport, mapped-upsert lifecycle cases, actual PMCLI/API/worker source→warehouse→separate destination path, interruption/recovery and independently scoped live readback.",
       "test_ids": [
         "V02",
         "V08",
@@ -744,8 +757,8 @@
         "tools/atlas/main.go"
       ],
       "milestone": "M10",
-      "status": "planned",
-      "first_slice": "M6 metadata/read/ETL; M7 apply settlement",
+      "status": "accepted bounded PostgreSQL contract; implementation and proof planned",
+      "first_slice": "M7 reusable SQL transport/metadata plus first-owned source/semantics/lifecycle; M8 mapped upsert and N13-PG only after #28-#34; M11 remaining composition and denominator.",
       "state_owner_ids": [
         "S03",
         "S05",
@@ -841,8 +854,8 @@
               "version": "1.1.0"
             }
           ],
-          "eligibility": "Evaluate exact operation behavior and account predicate; not all operations in aggregate row share CRUD relationships.",
-          "scope": "Knowledge-impact subset only. The compiler constructs exact runtime requirements from the selected typed operation and behavior; compiler/proof/operator foundations are never runtime admission gates."
+          "eligibility": "Only an explicitly declared, approved keyed mapped insert-or-update with verified constraint/writable mapping is eligible; no delete, DDL, arbitrary SQL or blind retry.",
+          "scope": "Accepted M8 PostgreSQL operation subset and knowledge-impact projection. The compiler constructs exact runtime requirements from selected operation/source/destination bindings and behavior; compiler, proof and operator foundations are not runtime admission gates. Concrete lifecycle cases remain first-owner outputs, not invented intake facts."
         },
         {
           "lane": "etl",
@@ -915,8 +928,8 @@
               "version": "1.1.0"
             }
           ],
-          "eligibility": "Evaluate exact operation behavior and account predicate; not all operations in aggregate row share CRUD relationships.",
-          "scope": "Knowledge-impact subset only. The compiler constructs exact runtime requirements from the selected typed operation and behavior; compiler/proof/operator foundations are never runtime admission gates."
+          "eligibility": "Only an explicitly declared, approved keyed mapped insert-or-update with verified constraint/writable mapping is eligible; no delete, DDL, arbitrary SQL or blind retry.",
+          "scope": "Accepted M8 PostgreSQL operation subset and knowledge-impact projection. The compiler constructs exact runtime requirements from selected operation/source/destination bindings and behavior; compiler, proof and operator foundations are not runtime admission gates. Concrete lifecycle cases remain first-owner outputs, not invented intake facts."
         },
         {
           "lane": "sync_transport",
@@ -962,7 +975,10 @@
           "scope": "Knowledge-impact subset only. The compiler constructs exact runtime requirements from the selected typed operation and behavior; compiler/proof/operator foundations are never runtime admission gates."
         }
       ],
-      "scope_kind": "operation_semantics"
+      "scope_kind": "operation_semantics",
+      "superseding_source_refs": [
+        "WEB-PG"
+      ]
     },
     {
       "id": "REQ-GONG-POST",
@@ -4732,7 +4748,7 @@
         "path": "../reference/history/foundation-design-history/PLAN.md",
         "pointer": "Source/foundation design as scoped in RESEARCH-INVENTORY.json; not a new full semantic review"
       },
-      "transport_encoding": "Scoped account permit+deadline+known replay disposition -> one admissible physical attempt",
+      "transport_encoding": "Scoped account permit+known provider replay disposition -> one admissible physical attempt; separate bounded client-to-API recovery",
       "field_bindings": "Typed contract fields defined in CONTRACTS.json and PLAN.md; no implicit coercion",
       "foundation_refs": [
         {
@@ -4743,7 +4759,7 @@
       "lanes": [],
       "sync_dimensions": "Independent dimensions only when selected profile requires this foundation",
       "required_behavior": [
-        "one retry authority; account quota; Retry-After; bounded phases; no inferred effect certainty"
+        "One provider/run retry authority owns account quota, Retry-After and durable physical-attempt timing; unknown effects remain charged. Separately, F01 bounds client-to-API recovery to three sends in 30 seconds with deterministic 250ms/1s delays; that client deadline never truncates provider/run retry scheduling."
       ],
       "ownership": {
         "implementation": "runtime",
@@ -8394,10 +8410,239 @@
         }
       ],
       "scope_kind": "conditional_behavior_rule"
+    },
+    {
+      "id": "REQ-ADMISSION-F01",
+      "historical_aliases": [],
+      "connector": "shared",
+      "operation": "Durable run admission, bounded recovery and receipt retention",
+      "source": {
+        "source_id": "PM-DECISION-F01-AUTH",
+        "url": "https://github.com/polymetrics-ai/pm-cli/issues/14#issuecomment-5670702388",
+        "sha256": "608eddb50248b75a16df55911528fce20836df669645b0b5f300450d0120d6c0",
+        "pointer": "F01-v1 exact refusal table, finite pending-admission bounds, automatic client recovery and receipt retention; 16,655-byte accepted public decision body",
+        "status": "accepted public product decision; implementation and tests unexecuted"
+      },
+      "transport_encoding": "RFC 9457 HTTP errors plus durable 202/409/410 replay results; exact status/code/safe_retry_action table in CONTRACTS.AdmissionPolicy",
+      "field_bindings": "Named deployment profile, finite positive global/workspace pending counts, workspace maximum pending age, scoped idempotency key, canonical intent digest and stable outcome reference",
+      "foundation_refs": [
+        {
+          "id": "FND-03",
+          "version": "1.0.0"
+        },
+        {
+          "id": "FND-10",
+          "version": "2.0.0"
+        },
+        {
+          "id": "FND-16",
+          "version": "2.0.0"
+        }
+      ],
+      "lanes": [],
+      "sync_dimensions": "Cross-cutting accepted-run boundary; provider lane eligibility remains independent.",
+      "required_behavior": [
+        "Authenticate and authorize before replay disclosure; workspace pending-count and nonempty oldest-pending-reservation-age refusals (both 429) precede deployment overload (503) when predicates coincide.",
+        "Development 32/8/2m and standard 256/32/10m are finite deployment/workspace pending-count/age profiles; generated local development selects development; 3/2/30s is test-only and 1000/1h is not a production default.",
+        "Reserve pending capacity atomically with idempotency, RunSpec/grant/run, separate execution budgets, audit/event and outbox; 202 only after known commit; exact replay has no new reservation/dispatch/capacity decision; ambiguous commit reconciles same key only.",
+        "Pending lasts through queued/blocked/reconciling/awaiting-approval and Temporal acknowledgement until the controlled durable execution-start transition or known terminal pre-start failure; authoritative PostgreSQL age >= cap refuses a nonempty pending set without deleting accepted work. Issue #16 later proves actual-worker-start integration.",
+        "Clients persist a secret-free key/intent before first client-to-API send, use at most three such sends in 30 seconds with deterministic 250ms/1s backoff, and never auto-rebase revisions or resubmit expired receipts. A server Retry-After may delay only within the remaining client deadline; provider/run-owned Retry-After and durable retry scheduling remain independent.",
+        "Retain safe response at least seven days; unresolved guards never age out; compact resolved responses to immutable namespace-lifetime refusal guards."
+      ],
+      "ownership": {
+        "implementation": "app/store/config plus existing CLI/browser client owners",
+        "registration": "internal/app/admission.go:AcceptRun through actual HTTP route and PG transaction",
+        "configuration": "single typed server-configuration owner; no aliases or extra settings reader",
+        "client": "Generated Go/browser/CLI projection; no provider secret or direct-provider recovery",
+        "runtime_state": "S03 and S16"
+      },
+      "admission": "This requirement defines admission itself; all other capability/grant/schema checks retain their existing operation-local precedence and ownership.",
+      "durability_security_failure": {
+        "common": "No accepted 202 before known commit; no replacement key after uncertainty; no secret in key journals/receipts/logs/errors.",
+        "remote_contract": "PG transaction is acceptance truth; Temporal acknowledgement is not execution start; database refusal or unknown commit never becomes guessed success/failure."
+      },
+      "existing_evidence": "Accepted public decision body and approved issue revisions; no PM application execution.",
+      "missing_proof": "Issue #14 must prove the actual route, complete refusal/profile/count/age/ambiguous-commit table, retention and a controlled durable execution-start transition. Issue #16 later proves actual-worker-start integration, and #19/#21 later prove bounded CLI/browser client-to-API recovery; those consumers are not backward prerequisites.",
+      "test_ids": [
+        "V09",
+        "R09",
+        "R10",
+        "R14"
+      ],
+      "files": [
+        "api/pm.openapi.yaml",
+        "api/controls.json",
+        "internal/contract/error.go",
+        "internal/app/admission.go",
+        "internal/store/admission_test.go",
+        "internal/httpapi/runs.go",
+        "internal/config/server.go",
+        "internal/api/client.gen.go"
+      ],
+      "milestone": "M4",
+      "status": "accepted contract; implementation planned",
+      "state_owner_ids": [
+        "S03",
+        "S16"
+      ],
+      "registration": "internal/app/admission.go:AcceptRun through the authenticated HTTP route and atomic PG run/outbox/reservation transaction",
+      "evidence_scope": "Accepted product decision bytes only; all application validation remains UNEXECUTED.",
+      "domains": {
+        "1_evidence": [
+          "id",
+          "historical_aliases",
+          "source"
+        ],
+        "2_typed_source": [
+          "transport_encoding",
+          "field_bindings"
+        ],
+        "3_behavior": [
+          "required_behavior",
+          "lanes",
+          "sync_dimensions"
+        ],
+        "4_foundation": [
+          "foundation_refs",
+          "registration"
+        ],
+        "5_ownership": [
+          "ownership",
+          "state_owner_ids"
+        ],
+        "6_admission": [
+          "admission"
+        ],
+        "7_durability": [
+          "durability_security_failure"
+        ],
+        "8_acceptance": [
+          "evidence_scope",
+          "missing_proof",
+          "test_ids",
+          "files",
+          "milestone"
+        ]
+      },
+      "admission_scope": "Cross-cutting admission contract. TypedOperation capability requirements still choose operation/lane dependencies; this row does not make all foundations universal runtime gates.",
+      "lane_contracts": [],
+      "scope_kind": "cross_cutting_contract",
+      "lane_scope": "Applies at accepted-run/control boundaries, not as provider lane eligibility."
+    },
+    {
+      "id": "REQ-AUTH-MUTATION",
+      "historical_aliases": [],
+      "connector": "shared",
+      "operation": "Six membership, service-account and delegation mutations with revision-safe idempotency",
+      "source": {
+        "source_id": "PM-DECISION-F01-AUTH",
+        "url": "https://github.com/polymetrics-ai/pm-cli/issues/14#issuecomment-5670702388",
+        "sha256": "608eddb50248b75a16df55911528fce20836df669645b0b5f300450d0120d6c0",
+        "pointer": "AUTH-MUTATION-PARITY-v1 in 16,655-byte accepted public decision body; identity owner issue #12 and API owner issue #8",
+        "status": "accepted public product decision; implementation and tests unexecuted"
+      },
+      "transport_encoding": "Six existing M3 POST routes use current authorization, If-Match and scoped idempotency; exact replay returns HTTP 200 with explicit replay and original safe result/revision.",
+      "field_bindings": "Key scope = workspace + authenticated principal + operation + target resource/collection; canonical typed intent digest includes original expected revision.",
+      "foundation_refs": [
+        {
+          "id": "FND-03",
+          "version": "1.0.0"
+        },
+        {
+          "id": "FND-16",
+          "version": "2.0.0"
+        }
+      ],
+      "lanes": [],
+      "sync_dimensions": "Identity-control surface only; no provider operation lane or provider credential.",
+      "required_behavior": [
+        "Existing service-account and delegation grants retain explicit connection/operation/workspace/time ceilings; a delegation cannot broaden or create an unauthorized second hop, and actor/effective actor remain distinct and auditable. Current authentication and workspace/resource authorization precede replay metadata disclosure.",
+        "New mutation missing If-Match returns 428; stale returns 412; exact replay resolves before new-revision comparison; changed key input returns 409; all zero-effect where refused.",
+        "Grant/create original success is 201; revoke or already-revoked unchanged is 200; exact successful replay is 200 with original safe result/revision and explicit replay indication.",
+        "Effect, resource/collection revision and scoped receipt commit atomically; concurrent equal requests produce one logical mutation.",
+        "Only original successful service-account create may emit one-time PM automation credential material; never replay, retrieve, rotate or retain it. Lost response requires explicit revoke/new create."
+      ],
+      "ownership": {
+        "implementation": "Issue #12 identity owner through auth/app/store",
+        "registration": "existing authenticated identity routes; issue #8 shared DTO/error projection",
+        "configuration": "none beyond existing auth/session configuration",
+        "client": "Existing generated Go/CLI/browser owners; no silent stale-revision rebase",
+        "runtime_state": "S01"
+      },
+      "admission": "No extra review gate. Current authorization is required even for exact replay; the three GET list rows remain ordinary scoped reads.",
+      "durability_security_failure": {
+        "common": "No replay disclosure before authorization and no one-time secret in receipts/caches/logs/errors.",
+        "remote_contract": "Atomic PG identity effect, revision and receipt; response loss resolves by the same key, never secret reissue or duplicate mutation."
+      },
+      "existing_evidence": "Accepted public decision body and current issues #8/#12; no PM application execution.",
+      "missing_proof": "Actual six routes and all generated clients must demonstrate one logical effect, 201/200/replay/revision behavior, current authorization, safe metadata and absence of credential reissuance.",
+      "test_ids": [
+        "V14",
+        "R08",
+        "R14"
+      ],
+      "files": [
+        "api/pm.openapi.yaml",
+        "api/controls.json",
+        "internal/auth/grants.go",
+        "internal/app/service_accounts.go",
+        "internal/app/delegations.go",
+        "internal/httpapi/identity.go",
+        "internal/store/identities.go",
+        "internal/api/client.gen.go"
+      ],
+      "milestone": "M3",
+      "status": "accepted contract; implementation planned",
+      "state_owner_ids": [
+        "S01"
+      ],
+      "registration": "Issue #12 identity owner through existing authenticated identity routes; issue #8 projects shared wire contracts",
+      "evidence_scope": "Accepted product decision bytes only; all application validation remains UNEXECUTED.",
+      "domains": {
+        "1_evidence": [
+          "id",
+          "historical_aliases",
+          "source"
+        ],
+        "2_typed_source": [
+          "transport_encoding",
+          "field_bindings"
+        ],
+        "3_behavior": [
+          "required_behavior",
+          "lanes",
+          "sync_dimensions"
+        ],
+        "4_foundation": [
+          "foundation_refs",
+          "registration"
+        ],
+        "5_ownership": [
+          "ownership",
+          "state_owner_ids"
+        ],
+        "6_admission": [
+          "admission"
+        ],
+        "7_durability": [
+          "durability_security_failure"
+        ],
+        "8_acceptance": [
+          "evidence_scope",
+          "missing_proof",
+          "test_ids",
+          "files",
+          "milestone"
+        ]
+      },
+      "admission_scope": "Identity-control contract only. It does not transfer execution-grant, provider-effect or lane ownership.",
+      "lane_contracts": [],
+      "scope_kind": "control_mutation_contract",
+      "lane_scope": "No connector lane eligibility; six named access POST rows only."
     }
   ],
   "limitations": [
-    "41 design requirements are not a provider-operation parity census.",
+    "43 design requirements are not a provider-operation parity census.",
     "Historical reports retain original evidence scope and are not current implementation proofs.",
     "All source/field conflicts block exact affected bindings until resolved; no invented nullability or provider flags.",
     "Foundation-definition rows intentionally have no lane list; operation rows own eligibility. Per-row foundation unions/subsets are design impact data, never the runtime registry or complete admission closure."

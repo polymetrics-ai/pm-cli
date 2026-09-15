@@ -1,15 +1,15 @@
 {
   "schema_version": "pm.plan.state-ownership/v1",
-  "label": "Proposed/Recommended475; integrated Temporal handoff; application checks UNEXECUTED",
+  "label": "Canonical state ownership with accepted admission, auth and PostgreSQL amendments; implementation UNEXECUTED",
   "rows": [
     {
       "id": "S01",
-      "field_or_resource": "Organizations, users, workspace memberships, service accounts and delegation grants",
+      "field_or_resource": "Organizations, users, workspace memberships, login/device sessions, service accounts, delegation grants and run grants",
       "authority": "PM PostgreSQL",
       "owner": "auth",
-      "projection": "Temporal sees opaque run/scope/actor references only; clients see authorized safe projections",
-      "transaction_and_guard": "Session validity at acceptance/control only; durable run grant and current effect policy at dispatch, independent of logout/session expiry.",
-      "disagreement_recovery": "Explicit principal/run-grant or membership/service/connection/approval revocation stops future effects; immutable attribution retained. Restricted read-only reconciliation continues without new mutation permission."
+      "projection": "Temporal sees opaque run/scope/actor/effective-actor references only; clients see authorized safe projections",
+      "transaction_and_guard": "Current authorization and scope precede identity replay disclosure. Session, delegation and run grants carry explicit connection/operation/workspace/time ceilings; a delegation cannot broaden or create an unauthorized second hop, and actor/effective actor remain distinct and auditable. Six named access mutations atomically bind effect, collection/resource revision and workspace/principal/operation/target-scoped receipt; new mutations require If-Match.",
+      "disagreement_recovery": "Exact authorized replay returns the original safe result/revision with no new effect; changed intent conflicts. Explicit revocation stops future effects without rewriting immutable accepted-run attribution; only separately authorized narrower read-only reconciliation may continue. A one-time service-account credential exists only in the original successful create response; loss requires explicit revoke/new create, never replay or reissue."
     },
     {
       "id": "S02",
@@ -22,12 +22,12 @@
     },
     {
       "id": "S03",
-      "field_or_resource": "Immutable RunSpec, complete action set, profile/flow/workset/schema bindings and submission key",
+      "field_or_resource": "Immutable RunSpec, complete action set, profile/flow/workset/schema bindings, submission key, canonical intent digest, pending reservation and retained outcome guard",
       "authority": "PM PostgreSQL",
       "owner": "app/store",
-      "projection": "Temporal workflow coordinates by PM run ID and immutable safe refs, never copies bulk intent",
-      "transaction_and_guard": "Acceptance TX inserts RunSpec, admission reservation, outbox, audit/events before202",
-      "disagreement_recovery": "Lost response dedupes same scope/key/hash; changed hash409; workflow outage leaves durable pending handoff visible"
+      "projection": "Temporal coordinates by PM run ID and immutable safe refs, never bulk intent; an accepted pending run remains durably visible while Temporal is unavailable",
+      "transaction_and_guard": "One serialized PostgreSQL decision inserts idempotency/RunSpec, pending reservation, outbox and audit/events before 202. Admit only when post-reservation deployment and workspace pending counts are <= caps. When predicates coincide, refuse workspace pending count first with 429, then nonempty oldest workspace pending-reservation accepted_at age >= its cap with 429, and deployment pending count last with 503; an empty backlog has no oldest-age refusal.",
+      "disagreement_recovery": "A lost/unknown response reconciles the same scope/key/hash; exact replay performs no second reservation, dispatch or capacity check, while changed hash is 409. The pending reservation releases only at the controlled durable execution-start transition or known terminal pre-start; Temporal acceptance, outbox acknowledgement and pre-start projections do not release it, and issue #16 owns actual-worker integration. Active-run, account, run-window and effect budgets remain distinct. An unresolved guard never expires; a resolved safe response compacts after >=7d to a namespace-lifetime refusal guard."
     },
     {
       "id": "S04",
@@ -44,8 +44,8 @@
       "authority": "PM PostgreSQL",
       "owner": "sync/store",
       "projection": "Temporal carries safe receipt IDs/dispositions, not request bodies or provider tokens",
-      "transaction_and_guard": "Persist exact dispatch/member intent and reserve capacity before I/O; settle per member with CAS/fence",
-      "disagreement_recovery": "Remote acceptance without durable ack => unknown; fences block stale commits, cannot unsend external requests"
+      "transaction_and_guard": "Persist exact dispatch/member intent, reserve result/readback/member/byte capacity and apply per-member CAS/fences before I/O. PostgreSQL mapped upsert seals stable key/constraint, mapped values and changed-column set; assign only changed approved columns and settle equal rows unchanged with zero assignments.",
+      "disagreement_recovery": "Confirmed rollback permits only safely re-admitted work and does not prove that no physical dispatch occurred. A possibly accepted COMMIT or remote acknowledgement remains unknown and charged until a declared sound occurrence witness identifies the exact intent; desired rows, counts or ordinary readback alone cannot identify which occurrence committed. Preserve actual dispatch history, unmapped values and unrelated rows; a local fence cannot unsend an external effect. No blind retry, customer ledger, DDL/delete or blanket replacement."
     },
     {
       "id": "S06",
@@ -143,8 +143,8 @@
       "authority": "Versioned strict operator configuration and release manifest",
       "owner": "config/packaging",
       "projection": "Same selected backend stack in dev, one host and many hosts; endpoints/replicas differ",
-      "transaction_and_guard": "Explicit operator launcher/provisioning; no HTTP/CLI private DB or workflow autostart",
-      "disagreement_recovery": "Missing dependency yields safe readiness/degraded policy; no hidden SQLite/in-memory/local product fallback"
+      "transaction_and_guard": "Only the explicit operator launcher starts declared dependencies; HTTP/API/CLI processes never fork or autostart a private database or workflow engine. Resolve one explicit development or standard admission profile plus finite positive typed overrides through one configuration registry; workspace <= global and replicas share one durable deployment budget. Reject unknown/obsolete aliases.",
+      "disagreement_recovery": "Missing, incompatible or unready dependencies surface explicit readiness/degraded state and safe refusal. No SQLite, in-memory, process-local queue or local-only fallback substitutes for PostgreSQL, Temporal or shared object storage. Development is selected by generated local setup; historical 1000/1h and synthetic 3/2/30s are never production defaults."
     },
     {
       "id": "S17",

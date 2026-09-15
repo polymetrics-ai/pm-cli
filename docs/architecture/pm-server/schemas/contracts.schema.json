@@ -88,6 +88,9 @@
             },
             "temporal": {
               "type": "string"
+            },
+            "admission": {
+              "type": "string"
             }
           },
           "required": [
@@ -97,7 +100,8 @@
             "pg",
             "schema",
             "secrets",
-            "temporal"
+            "temporal",
+            "admission"
           ],
           "additionalProperties": false
         },
@@ -495,6 +499,559 @@
             "temporal"
           ],
           "additionalProperties": false
+        },
+        "ActionResult": {
+          "type": "object",
+          "properties": {
+            "default_projection": {
+              "type": "string"
+            },
+            "field_selection": {
+              "type": "string"
+            },
+            "record_filter": {
+              "type": "string"
+            },
+            "preflight": {
+              "type": "string"
+            },
+            "value_fidelity": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "source_membership": {
+              "type": "string"
+            },
+            "identity_assertions": {
+              "type": "string"
+            },
+            "pagination": {
+              "type": "object",
+              "properties": {
+                "provider_page_size": {
+                  "type": "string"
+                },
+                "total_record_cap": {
+                  "type": "string"
+                },
+                "continuation": {
+                  "type": "string"
+                },
+                "counts": {
+                  "type": "string"
+                },
+                "filtering_effect": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "provider_page_size",
+                "total_record_cap",
+                "continuation",
+                "counts",
+                "filtering_effect"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "default_projection",
+            "field_selection",
+            "record_filter",
+            "preflight",
+            "value_fidelity",
+            "source_membership",
+            "identity_assertions",
+            "pagination"
+          ],
+          "additionalProperties": false
+        },
+        "AdmissionPolicy": {
+          "type": "object",
+          "properties": {
+            "error_precedence": {
+              "type": "string"
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "condition": {
+                    "type": "string"
+                  },
+                  "http_status": {
+                    "type": "integer"
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "safe_retry_action": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "condition",
+                  "http_status",
+                  "code",
+                  "safe_retry_action"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "profiles": {
+              "type": "object",
+              "properties": {
+                "development": {
+                  "type": "object",
+                  "properties": {
+                    "global_pending": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "workspace_pending": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "workspace_max_pending_age": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "global_pending",
+                    "workspace_pending",
+                    "workspace_max_pending_age"
+                  ],
+                  "additionalProperties": false
+                },
+                "standard": {
+                  "type": "object",
+                  "properties": {
+                    "global_pending": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "workspace_pending": {
+                      "type": "integer",
+                      "minimum": 1
+                    },
+                    "workspace_max_pending_age": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "global_pending",
+                    "workspace_pending",
+                    "workspace_max_pending_age"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "development",
+                "standard"
+              ],
+              "additionalProperties": false
+            },
+            "profile_resolution": {
+              "type": "string"
+            },
+            "test_fixture": {
+              "type": "object",
+              "properties": {
+                "global_pending": {
+                  "type": "integer"
+                },
+                "workspace_pending": {
+                  "type": "integer"
+                },
+                "workspace_max_pending_age": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "global_pending",
+                "workspace_pending",
+                "workspace_max_pending_age",
+                "scope"
+              ],
+              "additionalProperties": false
+            },
+            "rejected_defaults": {
+              "type": "string"
+            },
+            "reservation": {
+              "type": "object",
+              "properties": {
+                "ownership": {
+                  "type": "string"
+                },
+                "not_start": {
+                  "type": "string"
+                },
+                "decision": {
+                  "type": "string"
+                },
+                "age": {
+                  "type": "string"
+                },
+                "atomicity": {
+                  "type": "string"
+                },
+                "separation": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ownership",
+                "not_start",
+                "decision",
+                "age",
+                "atomicity",
+                "separation"
+              ],
+              "additionalProperties": false
+            },
+            "idempotency": {
+              "type": "object",
+              "properties": {
+                "precommit": {
+                  "type": "string"
+                },
+                "replay": {
+                  "type": "string"
+                },
+                "conflict": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "precommit",
+                "replay",
+                "conflict"
+              ],
+              "additionalProperties": false
+            },
+            "client_recovery": {
+              "type": "object",
+              "properties": {
+                "journal": {
+                  "type": "string"
+                },
+                "budget": {
+                  "type": "string"
+                },
+                "after_budget": {
+                  "type": "string"
+                },
+                "controls": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "journal",
+                "budget",
+                "after_budget",
+                "controls"
+              ],
+              "additionalProperties": false
+            },
+            "retention": {
+              "type": "object",
+              "properties": {
+                "safe_response": {
+                  "type": "string"
+                },
+                "unresolved": {
+                  "type": "string"
+                },
+                "compaction": {
+                  "type": "string"
+                },
+                "namespace": {
+                  "type": "string"
+                },
+                "secret_boundary": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "safe_response",
+                "unresolved",
+                "compaction",
+                "namespace",
+                "secret_boundary"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "error_precedence",
+            "errors",
+            "profiles",
+            "profile_resolution",
+            "test_fixture",
+            "rejected_defaults",
+            "reservation",
+            "idempotency",
+            "client_recovery",
+            "retention"
+          ],
+          "additionalProperties": false
+        },
+        "AuthorizationMutation": {
+          "type": "object",
+          "properties": {
+            "operations": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "parity_row": {
+                    "type": "string"
+                  },
+                  "endpoint": {
+                    "type": "string"
+                  },
+                  "revision_target": {
+                    "type": "string"
+                  },
+                  "new_status": {
+                    "type": "integer"
+                  },
+                  "unchanged_status": {
+                    "type": [
+                      "integer",
+                      "null"
+                    ]
+                  },
+                  "creation_secret": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "parity_row",
+                  "endpoint",
+                  "revision_target",
+                  "new_status",
+                  "unchanged_status",
+                  "creation_secret"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "reads": {
+              "type": "string"
+            },
+            "preconditions": {
+              "type": "string"
+            },
+            "key_scope": {
+              "type": "string"
+            },
+            "replay": {
+              "type": "string"
+            },
+            "atomicity": {
+              "type": "string"
+            },
+            "one_time_credential": {
+              "type": "string"
+            },
+            "ownership": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "operations",
+            "reads",
+            "preconditions",
+            "key_scope",
+            "replay",
+            "atomicity",
+            "one_time_credential",
+            "ownership"
+          ],
+          "additionalProperties": false
+        },
+        "ConnectorSourceAuthority": {
+          "type": "object",
+          "properties": {
+            "github": {
+              "type": "object",
+              "properties": {
+                "repository": {
+                  "type": "string"
+                },
+                "commit": {
+                  "type": "string"
+                },
+                "path": {
+                  "type": "string"
+                },
+                "operation_id": {
+                  "type": "string"
+                },
+                "pointer": {
+                  "type": "string"
+                },
+                "git_blob_sha1": {
+                  "type": "string"
+                },
+                "bytes": {
+                  "type": "integer"
+                },
+                "sha256": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "string"
+                },
+                "license": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "license": {
+                      "type": "string"
+                    },
+                    "copyright": {
+                      "type": "string"
+                    },
+                    "git_blob_sha1": {
+                      "type": "string"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "license",
+                    "copyright",
+                    "git_blob_sha1",
+                    "bytes",
+                    "sha256",
+                    "url"
+                  ],
+                  "additionalProperties": false
+                },
+                "capture_scope": {
+                  "type": "string"
+                },
+                "remaining_work": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "repository",
+                "commit",
+                "path",
+                "operation_id",
+                "pointer",
+                "git_blob_sha1",
+                "bytes",
+                "sha256",
+                "url",
+                "license",
+                "capture_scope",
+                "remaining_work"
+              ],
+              "additionalProperties": false
+            },
+            "postgres": {
+              "type": "object",
+              "properties": {
+                "authority": {
+                  "type": "string"
+                },
+                "official_documentation": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "openapi_assumption": {
+                  "type": "boolean"
+                },
+                "remaining_work": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "authority",
+                "official_documentation",
+                "openapi_assumption",
+                "remaining_work"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "github",
+            "postgres"
+          ],
+          "additionalProperties": false
+        },
+        "PostgresMappedUpsert": {
+          "type": "object",
+          "properties": {
+            "operation": {
+              "type": "string"
+            },
+            "prerequisites": {
+              "type": "string"
+            },
+            "preflight": {
+              "type": "string"
+            },
+            "insert": {
+              "type": "string"
+            },
+            "update": {
+              "type": "string"
+            },
+            "unchanged": {
+              "type": "string"
+            },
+            "preservation": {
+              "type": "string"
+            },
+            "transaction": {
+              "type": "string"
+            },
+            "readback": {
+              "type": "string"
+            },
+            "ownership": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "operation",
+            "prerequisites",
+            "preflight",
+            "insert",
+            "update",
+            "unchanged",
+            "preservation",
+            "transaction",
+            "readback",
+            "ownership"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -514,7 +1071,12 @@
         "ServerEvent",
         "Task",
         "TypedOperation",
-        "Value"
+        "Value",
+        "ActionResult",
+        "AdmissionPolicy",
+        "AuthorizationMutation",
+        "ConnectorSourceAuthority",
+        "PostgresMappedUpsert"
       ],
       "additionalProperties": false
     },
@@ -582,7 +1144,7 @@
     },
     "schema_version": {
       "type": "string",
-      "const": "pm.plan.contracts/v3"
+      "const": "pm.plan.contracts/v4"
     },
     "session_and_run_grant_policy": {
       "type": "string"
@@ -669,12 +1231,6 @@
         "limits": {
           "type": "object",
           "properties": {
-            "admission_backlog_max_age": {
-              "type": "string"
-            },
-            "admission_backlog_runs": {
-              "type": "integer"
-            },
             "event_buffer": {
               "type": "integer"
             },
@@ -704,8 +1260,6 @@
             }
           },
           "required": [
-            "admission_backlog_max_age",
-            "admission_backlog_runs",
             "event_buffer",
             "metadata_deadline",
             "query_child_deadline",
@@ -778,6 +1332,45 @@
             "task_queues"
           ],
           "additionalProperties": false
+        },
+        "admission": {
+          "type": "object",
+          "properties": {
+            "profile": {
+              "type": "string"
+            },
+            "resolved_limits": {
+              "type": "object",
+              "properties": {
+                "global_pending": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "workspace_pending": {
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "workspace_max_pending_age": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "global_pending",
+                "workspace_pending",
+                "workspace_max_pending_age"
+              ],
+              "additionalProperties": false
+            },
+            "field_spelling_owner": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "profile",
+            "resolved_limits",
+            "field_spelling_owner"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
@@ -790,7 +1383,8 @@
         "postgres",
         "public_origin",
         "schema_version",
-        "temporal"
+        "temporal",
+        "admission"
       ],
       "additionalProperties": false
     }

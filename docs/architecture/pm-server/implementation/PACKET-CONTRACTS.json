@@ -1,6 +1,6 @@
 {
-  "schema_version": "pm.context.packet-contracts/v1",
-  "label": "Derived complete substantive contracts of the original 44 packets; bounded recorded F06 ownership/handoff amendment only; no content, import or implementation approval inferred",
+  "schema_version": "pm.context.packet-contracts/v2",
+  "label": "Projection of all 44 original packet contracts plus disclosed accepted F01/F02/F03/AUTH/PostgreSQL amendments and prior F06 handoff; implementation, generated artifacts, provider proof and publication are not inferred",
   "source_sha256": "9ecc107c39976504d43b892a6c8f1e351c6a5adea1128bfc1cb0ca1c27eb20a9",
   "issues": [
     {
@@ -2855,15 +2855,34 @@
             "isolated generator fixture; no services"
           ],
           "status": "UNEXECUTED"
+        },
+        {
+          "id": "API-ACCEPTED-CONTROLS",
+          "assertion": "Generated Go/Gin/browser shapes retain complete-default ActionResult, typed optional selection/filtering, exact F01 status/code/safe_retry_action rows and six revision/idempotency mutation request/result shapes without secret-bearing replay fields.",
+          "environment": [
+            "isolated generated contract; packet-scoped acceptance, no provider/service"
+          ],
+          "status": "UNEXECUTED"
         }
       ],
       "validation_ids": [
         "V05"
       ],
-      "requirements": [],
-      "parity_ids": [],
+      "requirements": [
+        "REQ-ADMISSION-F01",
+        "REQ-AUTH-MUTATION"
+      ],
+      "parity_ids": [
+        "CP15",
+        "CP-memberships-grant",
+        "CP-memberships-revoke",
+        "CP-service-accounts-create",
+        "CP-service-accounts-revoke",
+        "CP-delegations-create",
+        "CP-delegations-revoke"
+      ],
       "state_ownership_ids": [],
-      "stage_contract": "Initial acceptance covers only the named pure contract/generation/prelaunch boundary. Actual CLI/API/worker and provider I/O integration belongs to named later owners; a fixture or schema pass is not that integration.",
+      "stage_contract": "Issue #8 projects the accepted complete-default ActionResult/shared typed controls, F01 problem/retry table and six AUTH mutation DTOs. It does not take admission/store/identity/client-consumer ownership or add a second runtime authority.",
       "integration_edits": [
         {
           "paths": [
@@ -4628,7 +4647,7 @@
         {
           "id": "pm-api-lifecycle-gin-V13",
           "test_id": "V13",
-          "assertion": "Strict config rejects unknown keys, default secrets, unsupported schema, incompatible dependency identity and impossible budgets; API never forks PostgreSQL/Temporal. Readiness distinguishes admission and dispatch degradation.",
+          "assertion": "Strict config rejects unknown keys, default secrets, unsupported schema, incompatible dependency identity and impossible budgets; API and CLI never fork or autostart PostgreSQL/Temporal, and readiness distinguishes admission from dispatch degradation. Resolve exactly one development (global pending 32, workspace pending 8, workspace age 2m) or standard (256/32/10m) profile or finite valid overrides; replicas share the durable deployment budget.",
           "command": "set -eu\ngo test ./internal/config -run '^TestTypedServerStartup$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -5993,13 +6012,21 @@
         {
           "id": "pm-human-agent-auth-R08",
           "test_id": "R08",
-          "assertion": "Service account/delegation cannot exceed explicit connection/operation/workspace/time grant; actor and effective actor remain distinct and auditable.",
+          "assertion": "Service accounts and delegations cannot exceed explicit connection, operation, workspace or time grant ceilings; expired/broader/second-hop delegation is denied, and actor and effective actor remain distinct and auditable. Across the six named membership/service-account/delegation POST rows, current authorization precedes replay disclosure; missing/stale If-Match is 428/412 with zero effect; equal concurrent requests commit one mutation; exact replay is 200 with the original safe result/revision; one-time service-account credential appears only on the original 201.",
           "command": "set -eu\ngo test ./internal/auth -run '^TestServiceAndDelegationScope$' -count=1 -timeout 10m",
           "environment": [
             "same_stack_integration"
           ],
           "status": "UNEXECUTED",
           "validation_id": "R08"
+        },
+        {
+          "id": "AUTH-MUTATION-PARITY",
+          "assertion": "Through all six existing M3 POST routes, current auth precedes replay disclosure; new mutation requires If-Match and scoped key; original grant/create is 201, revoke/unchanged 200, exact replay 200 with original safe result/revision, changed intent 409, and only original service-account create can emit one-time PM credential material.",
+          "environment": [
+            "same_stack_integration; no provider credentials/effects"
+          ],
+          "status": "UNEXECUTED"
         }
       ],
       "validation_ids": [
@@ -6010,7 +6037,8 @@
         "R08"
       ],
       "requirements": [
-        "REQ-REMOTE-TENANCY"
+        "REQ-REMOTE-TENANCY",
+        "REQ-AUTH-MUTATION"
       ],
       "parity_ids": [
         "CP02",
@@ -6048,7 +6076,7 @@
           "authority": "UPDATE after first owner merged; preserve its contract and serialize any overlapping integration edit."
         }
       ],
-      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
+      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership. The accepted AUTH mutation correction remains with this identity owner; issue #8 owns shared wire projection and existing clients consume it. No new manual gate or replay authority.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
       "non_goals": [
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
@@ -7018,7 +7046,7 @@
         {
           "id": "pm-durable-admission-api-V09",
           "test_id": "V09",
-          "assertion": "Crash after DB commit but before response, then resubmit the same key: return the same run. Precommit failure never returns202; changed input with the same key returns409.",
+          "assertion": "Crash after the atomic idempotency/RunSpec/outbox/pending-reservation commit but before 202 response, then resubmit the same authorized key: return the same run with no second reservation, dispatch or capacity check. Precommit failure or refusal never returns 202; changed input with the same key returns 409; unknown commit reconciles only with that same key.",
           "command": "set -eu\ngo test ./internal/store -run '^TestDurableAcceptedBefore202$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -7038,13 +7066,24 @@
             "qualified same-stack fixture after prerequisites"
           ],
           "status": "UNEXECUTED"
+        },
+        {
+          "id": "F01-ACCEPTED",
+          "assertion": "The actual authenticated issue #14 route implements the exact F01 refusal table and workspace-count/workspace-age-429-before-deployment-503 precedence; finite development/standard profiles and overrides; atomic pending-backlog count/age reservation until a controlled durable execution-start transition; same-key uncertain-commit recovery; and durable response/guard retention without deleting accepted work. Workspace pending count is checked first, nonempty oldest workspace pending-reservation accepted_at age >= its cap second, and deployment pending count last when predicates coincide; an empty backlog has no age refusal. Temporal acceptance, outbox acknowledgement and pre-start projections do not release a reservation, while active-run, account, run-window and effect budgets remain separate. Issue #16 later proves actual worker integration and #19/#21 later prove client-to-API recovery; neither is issue #14 acceptance.",
+          "environment": [
+            "foundation_fixture",
+            "same_stack_integration",
+            "synthetic 3/2/30s only for boundary cases"
+          ],
+          "status": "UNEXECUTED"
         }
       ],
       "validation_ids": [
         "V09"
       ],
       "requirements": [
-        "REQ-REACH"
+        "REQ-REACH",
+        "REQ-ADMISSION-F01"
       ],
       "parity_ids": [
         "CP15",
@@ -7091,7 +7130,8 @@
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
-      ]
+      ],
+      "stage_contract": "Issue #14 owns actual admission/route; #9 owns durable primitives; #8 owns DTO projection; #17 budgets/grants remain separate. No 202 before known commit, no replacement key after uncertainty and no reservation release on Temporal acknowledgement."
     },
     {
       "id": "pm-temporal-handoff-projection",
@@ -10103,7 +10143,7 @@
         {
           "id": "pm-browser-client-parity-R14",
           "test_id": "R14",
-          "assertion": "Same principal/workspace/input/idempotency on generated Go CLI and browser harness yields same endpoint, authorization, RunSpec, error and effect; no CLI-only policy or public admin secret route.",
+          "assertion": "For the same authorized principal, workspace, typed input and idempotency key, generated Go CLI and browser yield the same endpoint, authorization, RunSpec, complete/default or selected ActionResult, typed filter/pagination, F01 error/retry behavior, AUTH replay result and eventual effect. No CLI-only parser/policy, replacement key, stale-revision rebase or public admin-secret route.",
           "command": "set -eu\ngo test ./tests/client-parity -run '^TestCLIAndBrowserEquivalentUseCases$' -count=1 -timeout 10m",
           "environment": [
             "same_stack_integration"
@@ -12283,7 +12323,7 @@
         {
           "id": "pm-http-direct-execution-V29",
           "test_id": "V29",
-          "assertion": "A known larger fixture proves exact page count, sent size and navigation. Unsent size never implies complete; raw/PM navigation conflicts fail.",
+          "assertion": "Across mixed and filtered pages, an independently known larger source fixture proves exact page count, actual wire/sent page size, continuation, unread tail and fetched/returned/emitted counts. Provider total/completeness remains distinct; zero emitted matches never imply exhaustion; raw/PM navigation conflicts fail.",
           "command": "set -eu\ngo test ./internal/runtime -run '^TestReturnedCountsAndCompleteness$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -12295,7 +12335,7 @@
         {
           "id": "pm-http-direct-execution-V67",
           "test_id": "V67",
-          "assertion": "Gong POST read has no invented limit wire field; a truncated page retains unread rows behind a server continuation rather than losing them or reporting EOF.",
+          "assertion": "The Gong POST read has no invented limit wire field. Provider page size is not total record cap; local truncation retains unread rows behind a server continuation rather than losing them or reporting EOF. Filtering cannot consume or hide source continuation.",
           "command": "set -eu\ngo test ./internal/runtime -run '^TestRecordLimitIsNotPageSize$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -13315,7 +13355,7 @@
         {
           "id": "pm-github-direct-slice-V32",
           "test_id": "V32",
-          "assertion": "HTTP200 with the wrong record/effect and credential presence do not prove success. Persist independent passes despite another failure; retain owned cleanup diagnostics.",
+          "assertion": "HTTP 200 with the wrong record/effect, credential presence, count-only success or a six-field subset cannot prove the GitHub action. Independently compare complete records and destination readback, preserve independent passes despite another failure and retain owned cleanup diagnostics.",
           "command": "set -eu\ngo test ./internal/proof -run '^TestFalseSuccessAndIndependentCases$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -13327,7 +13367,7 @@
         {
           "id": "pm-github-direct-slice-P_direct_read",
           "test_id": "P_direct_read",
-          "assertion": "Exact provider record and pagecounts/next navigation Bind the exact owned lifecycle/composition case IDs and server-configured controlled account/connection before dispatch. Use no raw provider credentials in the CLI. This command executes the declared inventory, not an arbitrary fabricated operation; unsupported or missing source eligibility remains a failed/blocked proof, not certification.",
+          "assertion": "Through actual PMCLI/API/worker and the pinned issues/list-for-repo source, independently assert exact provider records, repository/id/number, complete mixed issue/PR entries, nested/presence/exact values, typed selection/filter behavior, malformed-control zero-send, exact page counts, effective sent wire size, unread tail, next navigation, continuation and truthful counts/completeness. Bind the exact source, server-configured account/connection and scope; no raw provider credentials enter the CLI, and missing source eligibility blocks rather than certifies proof.",
           "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane direct_read --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
           "environment": [
             "controlled_fake",
@@ -13341,10 +13381,34 @@
         },
         {
           "id": "GH-READ-PUBLIC",
-          "assertion": "Through real pm/API/worker, list GET /repos/{owner}/{repo}/issues using controlled GitHub-compatible responses. Assert exact owner/repo path and declared query serialization, two-page navigation and independent returned id/number/repository identity. Reject wrong workspace, wrong records, malformed continuation and missing required fields before unsafe I/O. Preserve possible pull-request entries under an explicit projection rule. No title-based identity or create capability is inferred.",
+          "assertion": "Through real PMCLI/API/worker, issue the pinned owner/repo/query request and independently assert id/number/repository plus complete mixed issue/PR data, optional typed controls and source pagination. Wrong scope/record/type/continuation or hidden filtering fails; no title identity or write eligibility is inferred.",
           "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane direct_read --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
           "environment": [
             "selected same-stack fixture after dependency qualification"
+          ],
+          "status": "UNEXECUTED"
+        },
+        {
+          "id": "F02-COMPLETE-ACTION",
+          "assertion": "With controls absent, independently compare complete mixed issue/PR action data across worker, server, PMCLI and browser; preserve nested objects/arrays, absent/null/value, false/zero/empty, exact integers/decimals/identifiers and fields beyond the former six.",
+          "environment": [
+            "controlled_fake through common runner; separately authorized live proof remains required"
+          ],
+          "status": "UNEXECUTED"
+        },
+        {
+          "id": "F02-OPTIONAL-CONTROLS",
+          "assertion": "Explicit shared typed selection preserves selected nested values/presence; typed filtering distinguishes absent/null/unlike types and runs before selection; no filter retains all entries; malformed controls fail before provider I/O with no alternate parser.",
+          "environment": [
+            "controlled_fake through common runner; separately authorized live proof remains required"
+          ],
+          "status": "UNEXECUTED"
+        },
+        {
+          "id": "F02-PAGINATION",
+          "assertion": "Across mixed/filtered pages preserve actual wire page size, source continuation, unread page tail, provider total/completeness and fetched/returned/emitted counts; empty filtered page is not source exhaustion.",
+          "environment": [
+            "controlled_fake through common runner; separately authorized live proof remains required"
           ],
           "status": "UNEXECUTED"
         }
@@ -13354,13 +13418,15 @@
         "V32",
         "P_direct_read"
       ],
-      "requirements": [],
+      "requirements": [
+        "REQ-GH-ISSUE"
+      ],
       "referenced_requirement_ids": [
         "REQ-GH-ISSUE"
       ],
       "parity_ids": [],
       "state_ownership_ids": [],
-      "stage_contract": "This M6 slice activates only the exact direct_read contract. REQ-GH-ISSUE is an impact union: POST/effects/ETL/reverse requirements are later consumers, not read prerequisites. The aggregate requirement and full composition remain owned by initial-five-composition-proof.",
+      "stage_contract": "M6 activates only accepted pinned issues/list-for-repo direct_read. Default output is complete action data; optional selection/filtering uses shared typed controls; all mixed issue/PR entries, nested/presence/exact values and truthful source pagination are preserved. Aggregate/later-lane ownership remains unchanged.",
       "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
       "non_goals": [
@@ -13368,7 +13434,29 @@
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
-      ]
+      ],
+      "accepted_source": {
+        "repository": "https://github.com/github/rest-api-description",
+        "commit": "0a144e030abbe358000f0d32874e197b59a8f7ed",
+        "path": "descriptions/api.github.com/api.github.com.json",
+        "operation_id": "issues/list-for-repo",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get",
+        "git_blob_sha1": "ed76b1371e381b078e50c8a698b890911031aeb2",
+        "bytes": 12939686,
+        "sha256": "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2",
+        "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/descriptions/api.github.com/api.github.com.json",
+        "license": {
+          "path": "LICENSE.md",
+          "license": "MIT",
+          "copyright": "Copyright (c) 2020 GitHub",
+          "git_blob_sha1": "b50625eb63949013cae604b1cadd42cfa1eaf825",
+          "bytes": 1063,
+          "sha256": "3243761cbac07e6d169a5a2f4e7c25cc544da85248e735df74c3672e055cc87b",
+          "url": "https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/LICENSE.md"
+        },
+        "capture_scope": "Complete raw source identity verified; the 12.9 MB payload is intentionally not duplicated in this documentation tree.",
+        "remaining_work": "Issue #27 still first-owns source.lock, complete reference closure, NOTICE, compiler validation, generated inventories and causal/live proof. Capture evidence is not connector certification."
+      }
     },
     {
       "id": "pm-postgres-transport",
@@ -13548,9 +13636,9 @@
           "owner": "connector-data",
           "process": "Build input",
           "milestone": "M7",
-          "action": "CREATE",
+          "action": "CREATE at M7; serialized UPDATE by pm-reverse-etl-settlement at M8",
           "kind": "authored",
-          "responsibility": "Connector-local semantics.json for postgres: minimal source-linked semantics/scenario declarations; common runner owns execution",
+          "responsibility": "Issue #28 first creates official-source-linked reusable PostgreSQL declarations; after merge, issue #34 updates only accepted mapped-upsert semantics/lifecycle. Common generator/runner remains owner.",
           "interfaces": [],
           "dependencies": [],
           "test_ids": [
@@ -13568,7 +13656,9 @@
           "group_responsibility": "Pinnedsource/licensing/behavior; no perSaaS Go; optionalcapturedsource paths enumerated by lock",
           "allowed_internal_dependencies": [],
           "import_activation": [],
-          "subsequent_wiring_milestones": []
+          "subsequent_wiring_milestones": [
+            "M8"
+          ]
         },
         {
           "path": "connectors/postgres/scenarios/lifecycle.json",
@@ -13577,9 +13667,9 @@
           "owner": "connector-data",
           "process": "Build input",
           "milestone": "M7",
-          "action": "CREATE",
+          "action": "CREATE at M7; serialized UPDATE by pm-reverse-etl-settlement at M8",
           "kind": "authored",
-          "responsibility": "Connector-local lifecycle.json for postgres: minimal source-linked semantics/scenario declarations; common runner owns execution",
+          "responsibility": "Issue #28 first creates official-source-linked reusable PostgreSQL declarations; after merge, issue #34 updates only accepted mapped-upsert semantics/lifecycle. Common generator/runner remains owner.",
           "interfaces": [],
           "dependencies": [],
           "test_ids": [
@@ -13597,7 +13687,9 @@
           "group_responsibility": "Pinnedsource/licensing/behavior; no perSaaS Go; optionalcapturedsource paths enumerated by lock",
           "allowed_internal_dependencies": [],
           "import_activation": [],
-          "subsequent_wiring_milestones": []
+          "subsequent_wiring_milestones": [
+            "M8"
+          ]
         },
         {
           "path": "connectors/postgres/NOTICE",
@@ -14080,7 +14172,7 @@
         {
           "id": "pm-postgres-transport-V34",
           "test_id": "V34",
-          "assertion": "Quoted qualified identifiers and bound values resist injection; numeric/time/null values round-trip exactly. Public input has no raw DSN secret.",
+          "assertion": "Quoted qualified identifiers and bound values resist injection; exact numeric/integer/decimal/time/null values round-trip. The reusable transport admits only bounded keyed/mapped-column plans needed by declared operations, not public DSN secrets or arbitrary SQL.",
           "command": "set -eu\ngo test ./internal/runtime -run '^TestLosslessParameterizedSQL$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -14162,7 +14254,18 @@
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
-      ]
+      ],
+      "stage_contract": "Issue #28 keeps M7 first ownership of official PostgreSQL source.lock/NOTICE/semantics/lifecycle and reusable native protocol/metadata/TLS/cancellation/grant capability, including bounded keyed/mapped-column support. After first-owner merge, #34 may serialized-UPDATE semantics/lifecycle for mapped upsert; no arbitrary SQL, sync/demo executor or OpenAPI assumption.",
+      "source_authority": {
+        "authority": "Pinned official PostgreSQL protocol, SQL and metadata documentation for the selected supported version, with complete relevant definitions and attribution.",
+        "official_documentation": [
+          "https://www.postgresql.org/docs/16/protocol.html",
+          "https://www.postgresql.org/docs/16/sql.html",
+          "https://www.postgresql.org/docs/16/information-schema.html"
+        ],
+        "openapi_assumption": false,
+        "remaining_work": "Issue #28 first-owns the exact versioned source.lock capture, hashes, attribution and reusable SQL transport/metadata semantics. No OpenAPI source or arbitrary SQL executor is implied."
+      }
     },
     {
       "id": "pm-schema-snapshots",
@@ -18338,7 +18441,7 @@
         {
           "id": "pm-reverse-etl-settlement-V40",
           "test_id": "V40",
-          "assertion": "Changed mapping, rows, relevant schema or account invalidates approval. Reserve per-run/window caps atomically; unknown effects retain budget.",
+          "assertion": "Seal destination identity, stable key/verified constraint, writable mappings, mapped values, relevant schema, complete effects and cardinality. Any mapping, row, relevant schema or account change invalidates approval; missing/ambiguous/duplicate keys fail before I/O. Reserve per-run and window caps atomically; unknown effects retain capacity and budget.",
           "command": "set -eu\ngo test ./internal/sync -run '^TestSealedWorksetAndRecurringCaps$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -18350,7 +18453,7 @@
         {
           "id": "pm-reverse-etl-settlement-V41",
           "test_id": "V41",
-          "assertion": "The same logical source key across new worksets/nonidentity revisions creates nothing again. Key/account/generation reset requires explicit approved migration.",
+          "assertion": "The same logical stable source key across new worksets/nonidentity revisions maps to one destination entity and creates nothing again. An absent key inserts once; approved changed mapped values update that entity; exact replay or equal-value repeat creates no row and performs zero assignments. Any key, account or generation reset requires an explicit approved migration, and the old mapping remains auditable.",
           "command": "set -eu\ngo test ./internal/sync -run '^TestStableCreateMappingAcrossRevisions$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -18362,7 +18465,7 @@
         {
           "id": "pm-reverse-etl-settlement-V42",
           "test_id": "V42",
-          "assertion": "Two source rows produce exactly the two intended effects through returned IDs; correct counts with wrong values fail. Per-row failure and unknown remain distinct.",
+          "assertion": "Two source rows produce exactly the two intended effects through returned IDs. Independently read back exact destination keys, typed mapped values and pre-seeded unmapped sentinels for every intended row. Correct counts/SQL exit zero or correct mapped values with altered unmapped fields fail; unrelated rows remain unchanged, and per-row failure/rejection and unknown remain distinct.",
           "command": "set -eu\ngo test ./internal/sync -run '^TestExactRowsAndReadback$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -18446,7 +18549,7 @@
         {
           "id": "pm-reverse-etl-settlement-P_direct_write",
           "test_id": "P_direct_write",
-          "assertion": "Actual writeeffect plus independentlyexpectedfield/value readback using returnedID Bind the exact owned lifecycle/composition case IDs and server-configured controlled account/connection before dispatch. Use no raw provider credentials in the CLI. This command executes the declared inventory, not an arbitrary fabricated operation; unsupported or missing source eligibility remains a failed/blocked proof, not certification.",
+          "assertion": "Actual declared write effect plus independently expected exact field/value readback using the returned ID. The PostgreSQL extension uses only the accepted keyed mapped insert-or-update, preserves unmapped fields and unrelated rows, and distinguishes confirmed rollback from unknown COMMIT; the original GitHub proof remains mandatory.",
           "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane direct_write --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
           "environment": [
             "controlled_fake",
@@ -18461,7 +18564,7 @@
         {
           "id": "pm-reverse-etl-settlement-P_reverse_etl",
           "test_id": "P_reverse_etl",
-          "assertion": "Savedmapping, sealedcardinality/approval, exactperrow provider effects and readback Bind the exact owned lifecycle/composition case IDs and server-configured controlled account/connection before dispatch. Use no raw provider credentials in the CLI. This command executes the declared inventory, not an arbitrary fabricated operation; unsupported or missing source eligibility remains a failed/blocked proof, not certification.",
+          "assertion": "Saved mapping, sealed cardinality/approval and exact per-row provider effects/readback remain mandatory. The PostgreSQL extension also seals key/constraint, performs initial insert or changed-mapped update at stable identity, preserves unmapped values on equal repeat and never blindly retries an unknown COMMIT.",
           "command": "set -eu\n: \"${PM_PROOF_SERVER:?Set the selected test server endpoint}\"\n: \"${PM_PROOF_WORKSPACE:?Set the authorized test workspace}\"\nscripts/prove.sh --connector github --lane reverse_etl --mode all --server \"$PM_PROOF_SERVER\" --workspace \"$PM_PROOF_WORKSPACE\"",
           "environment": [
             "controlled_fake",
@@ -18476,7 +18579,7 @@
         {
           "id": "pm-reverse-etl-settlement-V43",
           "test_id": "V43",
-          "assertion": "Persist intent, let provider act, then crash before acknowledgement: restart reconciles through a declared witness, never blindly recreates or claims zero effect.",
+          "assertion": "Persist exact dispatch/member intent, let the provider act, then lose reply or crash; for PostgreSQL a possibly accepted COMMIT remains unknown and charged. Confirmed rollback permits only safely re-admitted work and is not proof that no physical dispatch occurred. Restart preserves actual dispatch history and reconciles only through a declared sound occurrence witness for this exact intent; desired key/type/mapped/unmapped rows or counts alone cannot identify which occurrence committed. Never blind-retry, recreate or claim zero effect.",
           "command": "set -eu\ngo test ./internal/app -run '^TestCrashAfterRemoteAccept$' -count=1 -timeout 5m",
           "environment": [
             "foundation_fixture",
@@ -18487,6 +18590,14 @@
           "historical_acceptance_aliases": [
             "pm-effect-approvals-worksets-V43"
           ]
+        },
+        {
+          "id": "PG-MAPPED-UPSERT",
+          "assertion": "Through actual PMCLI/API/worker and a persisted approved workset, prove initial inserts, subsequent approved mapped-value updates and safe equal-value repetition using stable keys and verified constraints. Reject missing/ambiguous/duplicate keys before I/O; assign only changed approved columns; preserve unmapped fields/unrelated rows. Confirmed rollback permits only safely re-admitted work; possible COMMIT remains unknown and charged until a declared sound occurrence witness identifies this exact intent, and desired rows alone are insufficient. Independently read back exact keys/types/values.",
+          "environment": [
+            "same_stack_integration through common runner; live effects require separate owned fixture authority"
+          ],
+          "status": "UNEXECUTED"
         }
       ],
       "validation_ids": [
@@ -18508,7 +18619,8 @@
         "REQ-HIDDEN-DELETE",
         "REQ-FND-14",
         "REQ-FND-15",
-        "REQ-FND-17"
+        "REQ-FND-17",
+        "REQ-PG-REL"
       ],
       "parity_ids": [],
       "state_ownership_ids": [
@@ -18529,6 +18641,14 @@
           ],
           "reason": "Complete full V43 with actual provider acceptance, crash, replay and declared readback after write/settlement handlers exist. Do not reuse the prerequisite admission test as effect proof.",
           "authority": "UPDATE only after first owner merged; do not redefine its contract"
+        },
+        {
+          "paths": [
+            "connectors/postgres/semantics.json",
+            "connectors/postgres/scenarios/lifecycle.json"
+          ],
+          "reason": "After issue #28 first-owner merge, add only accepted stable-key mapped insert-or-update eligibility and lifecycle cases under the common generated bundle/runner.",
+          "authority": "Serialized UPDATE in M8; preserve issue #28 first ownership, official source lock and all unrelated semantics/cases."
         }
       ],
       "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
@@ -18538,7 +18658,8 @@
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
-      ]
+      ],
+      "stage_contract": "Additional PostgreSQL scope only: issue #34 consumes #28 reusable SQL and existing #29-#33 owners to implement one approved stable-key mapped insert-or-update. It later serialized-UPDATEs PostgreSQL semantics/lifecycle, but does not replace GitHub cases, create a new executor or own #41 composition."
     },
     {
       "id": "pm-flows-schedules-recovery",
@@ -22167,7 +22288,8 @@
       ],
       "group_ids": [
         "N13",
-        "F42"
+        "F42",
+        "N13-PG"
       ],
       "files": [
         {
@@ -22243,28 +22365,29 @@
         },
         {
           "path": "connectors/postgres/scenarios/composition.json",
-          "group_id": "N13",
+          "group_id": "N13-PG",
           "prior_group_id": "N13",
           "owner": "proof",
           "process": "Proof runner",
-          "milestone": "M11",
-          "action": "CREATE",
+          "milestone": "M8",
+          "action": "CREATE after #28-#34; UPDATE at M11",
           "kind": "authored",
-          "responsibility": "Connector-local composition.json for postgres: minimal source-linked semantics/scenario declarations; common runner owns execution",
+          "responsibility": "Issue #41 first creates pg-wh-pg plus wrong-value/ambiguous variants after M8 prerequisites; the same issue later updates this file for remaining full composition/transport cases.",
           "interfaces": [],
           "dependencies": [],
           "test_ids": [
-            "P_sync_transport",
             "P_etl",
             "P_reverse_etl"
           ],
           "generator": null,
           "go_package": null,
           "assignment_owner": "proof",
-          "group_responsibility": "Four real-client/server source-to-warehouse-to-destination combinations, including independent reopen, readback, checkpoint and schedule reentry",
+          "group_responsibility": "N13-PG narrow stage only; not full issue #41/V74/P_sync_transport/all-five closure.",
           "allowed_internal_dependencies": [],
           "import_activation": [],
-          "subsequent_wiring_milestones": []
+          "subsequent_wiring_milestones": [
+            "M11"
+          ]
         }
       ],
       "acceptance": [
@@ -22306,6 +22429,14 @@
           "historical_acceptance_aliases": [
             "pm-connector-proof-runner-P_sync_transport"
           ]
+        },
+        {
+          "id": "PG-DEMO-SCOPED",
+          "assertion": "Actual PMCLI → authenticated server → registered worker reads owned PostgreSQL source, publishes/queries persisted warehouse rows, maps/previews/approves, and mapped-upserts into a separate owned PostgreSQL destination with insert/update/repeat, exact typed/presence/filter/pagination, checkpoint interruption and unknown-COMMIT cases. Earns N13-PG only.",
+          "environment": [
+            "same_stack integration; separate source/destination fixtures and effect authority required"
+          ],
+          "status": "UNEXECUTED"
         }
       ],
       "validation_ids": [
@@ -22313,17 +22444,28 @@
         "P_sync_transport"
       ],
       "requirements": [
-        "REQ-GH-ISSUE"
+        "REQ-GH-ISSUE",
+        "REQ-PG-REL"
       ],
       "parity_ids": [],
       "state_ownership_ids": [],
-      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
+      "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership. The accepted N13-PG stage preserves #41 as first composition owner while separating post-M8 first creation from M11 updates; early evidence cannot close the full packet.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
       "non_goals": [
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
+      ],
+      "stage_contract": "N13-PG: after #28-#34 actual capabilities are implemented and proved, issue #41 first creates only connectors/postgres/scenarios/composition.json for pg-wh-pg plus wrong-value/ambiguous variants through common PMCLI/API/worker/proof runner. Full #41 remains M11 and later UPDATEs the same file; other compositions, all-five/seven-lane, V74, P_sync_transport and generated docs stay open.",
+      "stage_dependencies": [
+        "pm-postgres-transport",
+        "pm-shared-object-publication",
+        "pm-schema-snapshots",
+        "pm-warehouse-query-child",
+        "pm-etl-checkpoint-publication",
+        "pm-effect-approvals-worksets",
+        "pm-reverse-etl-settlement"
       ]
     },
     {
@@ -23898,6 +24040,62 @@
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
       ]
+    }
+  ],
+  "source_identity_scope": "source_sha256 identifies the original 44-packet ISSUE-RECORDS input only; each transformed packet and this projection are hashed separately by IMPORT-MANIFEST.",
+  "accepted_amendment_sources": [
+    {
+      "scope": "F01 and AUTH-MUTATION-PARITY",
+      "url": "https://github.com/polymetrics-ai/pm-cli/issues/14#issuecomment-5670702388",
+      "sha256": "608eddb50248b75a16df55911528fce20836df669645b0b5f300450d0120d6c0",
+      "bytes": 16655
+    },
+    {
+      "scope": "Issues #8/#12/#14 current accepted bodies",
+      "sources": [
+        {
+          "url": "https://github.com/polymetrics-ai/pm-cli/issues/8",
+          "sha256": "3d116b3dff914bb76a8b46659289e5e611b75326a2976cc9ee3c854f469bec8f",
+          "bytes": 20735
+        },
+        {
+          "url": "https://github.com/polymetrics-ai/pm-cli/issues/12",
+          "sha256": "dc5650b2753b3e4909d9e338e4def09a74e95f07a37fc23410181677fdc39404",
+          "bytes": 26987
+        },
+        {
+          "url": "https://github.com/polymetrics-ai/pm-cli/issues/14",
+          "sha256": "b8603a9862b9fc1cc9d4a8eeb7880b6b19d39b7ad9070b0fda514bc407200412",
+          "bytes": 41695
+        }
+      ]
+    },
+    {
+      "scope": "GitHub F02/F03",
+      "url": "https://github.com/polymetrics-ai/pm-cli/issues/27",
+      "sha256": "6f671f9d39adb8390d82478b8fa5e44f43e98c0653bf1aa0146db8143958e764",
+      "bytes": 43761,
+      "decision_url": "https://github.com/polymetrics-ai/pm-cli/issues/27#issuecomment-5669069268"
+    },
+    {
+      "scope": "PostgreSQL foundation/demo",
+      "url": "https://github.com/polymetrics-ai/pm-cli/issues/28",
+      "sha256": "f5c87b726a3718de678af68d90b2c791659ad65d78d8a85fea7df1c28f6d1923",
+      "bytes": 26781,
+      "decision_url": "https://github.com/polymetrics-ai/pm-cli/issues/28#issuecomment-5669099222"
+    },
+    {
+      "scope": "PostgreSQL mapped upsert",
+      "url": "https://github.com/polymetrics-ai/pm-cli/issues/34",
+      "sha256": "0f5713b31d62a9bdd4543b4e1c10792f596d4ccaf1a34a116b8a511e0fdaea60",
+      "bytes": 43443,
+      "decision_url": "https://github.com/polymetrics-ai/pm-cli/issues/34#issuecomment-5669559504"
+    },
+    {
+      "scope": "N13-PG staging",
+      "url": "https://github.com/polymetrics-ai/pm-cli/issues/41",
+      "sha256": "842c7b6c65ff00aed9f866c31d5284344c799b6e28db9d5a7cd932de6451080c",
+      "bytes": 26094
     }
   ]
 }

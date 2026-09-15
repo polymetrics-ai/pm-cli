@@ -1,6 +1,6 @@
 # Architecture decisions475
 
-Proposed/Recommended. These16 decisions belong to the single implementation plan. All application falsifiers remain UNEXECUTED.
+These 21 decisions belong to one implementation plan. ADR475-17 through ADR475-21 are accepted product/source contracts; every application falsifier, generated artifact and provider proof remains UNEXECUTED.
 
 ## ADR475-01 — One remote stack
 
@@ -289,3 +289,93 @@ Supersedes: No batch authority, stale pass resurrection or inherited certificati
 Revisit trigger: Wrong effect/bytes/rows or invalidated old pass appears certified.
 
 First milestone: M11.
+
+## ADR475-17 — Complete action result surface
+
+Context: A fixed display subset and hidden pull-request filter lose source data and make result/pagination truth ambiguous.
+
+Considered: Complete data by default plus shared typed optional selection/filtering; fixed six-field default; provider-specific or proof-only projection.
+
+Choice: Accepted F02 returns complete action data by default. Shared typed optional field selection and record filtering preserve nesting, absent/null/value, exact values, every source entry and truthful pagination.
+
+Evidence: PM-ISSUE-27-ACCEPTED and GITHUB-REST-SPEC-ACCEPTED in SOURCE-LEDGER.json; V02, V29, V32, V67 and P_direct_read remain UNEXECUTED.
+
+Tradeoffs and consequences: Payloads can be larger; callers may explicitly select/filter while server and every generated client preserve source membership, continuation and exact values.
+
+Supersedes: The six-field GitHub default and hidden `pull_request` exclusion are rejected, not compatibility behavior.
+
+Revisit trigger: An absent selector omits valid source data, filtering coerces types/runs after selection, or an empty filtered page is reported exhausted.
+
+First milestone: M1 contract; M6 first GitHub consumer.
+
+## ADR475-18 — Finite durable admission and recovery
+
+Context: Unbounded or synthetic-only limits and replacement keys after uncertain commit can overload a deployment or create duplicate logical runs.
+
+Considered: Finite deployment/workspace reservations with same-key recovery; historical 1000/1h sample as default; unlimited aliases or client-generated replacement keys.
+
+Choice: Accepted F01 uses the exact refusal table, development 32/8/2m and standard 256/32/10m, atomic PostgreSQL pending reservations and workspace-count/workspace-age-before-deployment refusal precedence. Its bounded three-send/30-second policy is client-to-API recovery only and never constrains provider/run-owned `Retry-After` or durable retry scheduling. Issue #14 proves the actual route and a controlled durable execution-start transition; issue #16 later proves actual-worker integration, while #19/#21 own client recovery.
+
+Evidence: PM-DECISION-F01-AUTH and PM-ISSUE-14-ACCEPTED in SOURCE-LEDGER.json; V09, R09, R10 and R14 remain UNEXECUTED.
+
+Tradeoffs and consequences: Overload refuses new work while retaining accepted work; clients keep secret-free intent journals and expose stable recovery guidance.
+
+Supersedes: Historical 1000 pending/1h and synthetic 3/2/30s are not production defaults; incomplete refusal bindings are closed.
+
+Revisit trigger: 202 precedes known commit, a replica multiplies budget, replay reserves again, age removes accepted work, or a used/unresolved key executes fresh intent.
+
+First milestone: M4.
+
+## ADR475-19 — Revision-safe access mutation replay
+
+Context: Six M3 access POST rows incorrectly inherited read cursor/ETag idempotency and could duplicate mutations or reissue one-time credential material.
+
+Considered: Scoped mutation receipt plus `If-Match`; read cursor/ETag as idempotency; automatic stale-revision rebase or secret replay.
+
+Choice: Accepted AUTH-MUTATION-PARITY requires current authorization, `If-Match` and workspace/principal/operation/target-scoped keys. It preserves explicit connection/operation/workspace/time ceilings on service/delegation grants and distinct auditable actor/effective-actor identities. Original grant/create is 201, revoke/unchanged is 200, and exact replay is 200 with the original safe result/revision.
+
+Evidence: PM-DECISION-F01-AUTH, PM-ISSUE-8-ACCEPTED and PM-ISSUE-12-ACCEPTED in SOURCE-LEDGER.json; V14, R08 and R14 remain UNEXECUTED.
+
+Tradeoffs and consequences: Clients retain keys and expected revisions; a lost one-time service-account credential requires explicit revoke/new create instead of replay recovery.
+
+Supersedes: Read-style mutation idempotency metadata, automatic revision rebasing and replay secret recovery are rejected.
+
+Revisit trigger: Replay bypasses current authorization, a grant exceeds its ceiling, actor attribution collapses, a refused revision mutates, equal concurrent requests create two effects, or credential material appears outside the original successful create.
+
+First milestone: M3.
+
+## ADR475-20 — Connector source authority
+
+Context: A moving documentation page or assumed OpenAPI cannot provide immutable schema fidelity for GitHub or native PostgreSQL.
+
+Considered: Pinned official source/license and provider-native documentation; moving docs pages; invented or assumed PostgreSQL OpenAPI.
+
+Choice: Accept the exact GitHub REST source/license identity and require version-pinned official PostgreSQL protocol, SQL and metadata sources. The bounded docs tree records identities without copying 12.9 MB; source.lock remains with each first owner.
+
+Evidence: GITHUB-REST-SPEC-ACCEPTED, GITHUB-REST-LICENSE-ACCEPTED and PM-ISSUE-28-ACCEPTED in SOURCE-LEDGER.json; V20, V21 and V24 remain UNEXECUTED.
+
+Tradeoffs and consequences: Source owners must retain complete relevant definitions, attribution and reference closure before compilation; recorded identity alone does not certify a connector.
+
+Supersedes: WEB-GITHUB and WEB-PG remain historical observations, not accepted immutable implementation inputs.
+
+Revisit trigger: Generated meaning uses another revision/hash, incomplete closure, a moving page or fabricated PostgreSQL OpenAPI.
+
+First milestone: M6 GitHub; M7 PostgreSQL.
+
+## ADR475-21 — Bounded PostgreSQL mapped upsert and staged composition
+
+Context: Reusable SQL transport did not itself define safe destination identity, changed-column effects or when the narrow `pg-wh-pg` demonstration could be composed.
+
+Considered: Approved keyed mapped insert-or-update through common settlement; arbitrary SQL/blanket replacement; demo executor; waiting for full all-five M11 before any PostgreSQL composition.
+
+Choice: Issue #34 adds one bounded mapped insert-or-update through existing approval/settlement, requires an explicit approved migration for any key/account/generation reset and retains the old mapping for audit. Issue #28 first-creates source/semantics/lifecycle, #34 later updates those declarations, and issue #41 first-creates only N13-PG after #28–#34 before updating the same composition file for full N13 at M11.
+
+Evidence: PM-ISSUE-28-ACCEPTED, PM-ISSUE-34-ACCEPTED and PM-ISSUE-41-ACCEPTED in SOURCE-LEDGER.json; V34, V40, V41, V42, V43, P_etl and P_reverse_etl remain UNEXECUTED.
+
+Tradeoffs and consequences: Stable-key/constraint metadata, changed-column calculation, independent unmapped-field readback, a declared sound occurrence witness for unknown COMMIT and serialized file integration are required. Desired rows alone do not identify which occurrence committed; broader issue #41 obligations stay open.
+
+Supersedes: Stop-at-#28 staging and M11-only first creation of PostgreSQL composition are superseded only for `pg-wh-pg`.
+
+Revisit trigger: A missing/ambiguous key reaches I/O, unchanged columns are assigned, unmapped fields change, key/account/generation identity resets without approved migration, confirmed rollback is treated as definitely unsent, unknown COMMIT is inferred from desired rows or blindly retried, or N13-PG is counted as full V74/P_sync_transport/five-by-seven proof.
+
+First milestone: M8 after M7/M8 prerequisites.

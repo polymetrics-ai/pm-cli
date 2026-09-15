@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.plan.files/v2",
-  "label": "Proposed/Recommended475 DRAFT; application checks UNEXECUTED; artifact audit pending",
+  "label": "Canonical first-owner and serialized integration map with accepted PostgreSQL staging; implementation UNEXECUTED",
   "entries": [
     {
       "id": "F01",
@@ -1550,7 +1550,7 @@
         "SemanticOverlay",
         "Scenario"
       ],
-      "data_owned": "Pinnedsource/licensing/behavior; no perSaaS Go; optionalcapturedsource paths enumerated by lock",
+      "data_owned": "Accepted pinned GitHub source/license identity, source.lock/ref closure, NOTICE and source-linked behavior; complete action default and typed controls remain shared contract ownership; no per-SaaS Go.",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
       "imports": [],
       "test_ids": [
@@ -1564,7 +1564,7 @@
       ],
       "sequence_within_milestone": 1,
       "prior_group_id": "C_github",
-      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
+      "review_state": "accepted F02/F03 contract projected; source.lock/compiler/provider proof UNEXECUTED"
     },
     {
       "id": "B_github",
@@ -1647,7 +1647,7 @@
         "SemanticOverlay",
         "Scenario"
       ],
-      "data_owned": "Pinnedsource/licensing/behavior; no perSaaS Go; optionalcapturedsource paths enumerated by lock",
+      "data_owned": "Issue #28 first-owns pinned official PostgreSQL protocol/SQL/metadata source.lock, attribution, reusable semantics and lifecycle; no assumed OpenAPI or per-provider executor.",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
       "imports": [],
       "test_ids": [
@@ -1661,7 +1661,8 @@
       ],
       "sequence_within_milestone": 1,
       "prior_group_id": "C_postgres",
-      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
+      "review_state": "accepted PostgreSQL foundation/staging contract projected; source capture, implementation and proof UNEXECUTED",
+      "lifecycle": "CREATE source.lock/semantics/lifecycle/NOTICE in M7 under issue #28. After that merge, issue #34 has serialized M8 UPDATE rights only for accepted mapped-upsert semantics/lifecycle; first ownership and common generator remain unchanged."
     },
     {
       "id": "B_postgres",
@@ -4390,19 +4391,45 @@
       "review_state": "planning_semantics_audited; implementation UNEXECUTED"
     },
     {
+      "id": "N13-PG",
+      "first_milestone": "M8",
+      "action": "CREATE after all #28-#34 prerequisites; UPDATE at M11 by the same #41 first owner",
+      "paths": [
+        "connectors/postgres/scenarios/composition.json"
+      ],
+      "package": "proof",
+      "process_owner": "Proof runner",
+      "public_interfaces": [
+        "PostgresWarehousePostgresScenario"
+      ],
+      "data_owned": "Only accepted pg-wh-pg case plus wrong-value and ambiguous-outcome variants through the common registered PMCLI/API/worker and proof runner.",
+      "must_not_own": "Transport, source/semantics/lifecycle, ETL/checkpoint, warehouse/query, preview/approval, settlement, arbitrary SQL, direct-provider shortcuts, V74/P_sync_transport or full all-five/seven-lane closure.",
+      "imports": [
+        "api",
+        "contract"
+      ],
+      "test_ids": [
+        "P_etl",
+        "P_reverse_etl"
+      ],
+      "sequence_within_milestone": 3,
+      "prior_group_id": "N13",
+      "review_state": "accepted narrow stage projected; implementation/fixture authority/proof UNEXECUTED",
+      "lifecycle": "Issue #41 first creates only the PostgreSQL composition after #28-#34 capabilities are implemented and proved. M11 later UPDATEs the same file for remaining N13 compositions; early evidence cannot close full #41, V74 or P_sync_transport."
+    },
+    {
       "id": "N13",
       "first_milestone": "M11",
-      "action": "CREATE",
+      "action": "CREATE GitHub composition at M11; full #41 later UPDATEs the N13-PG-owned PostgreSQL composition",
       "paths": [
-        "connectors/github/scenarios/composition.json",
-        "connectors/postgres/scenarios/composition.json"
+        "connectors/github/scenarios/composition.json"
       ],
       "package": "proof",
       "process_owner": "Proof runner",
       "public_interfaces": [
         "FourLegCompositionScenario"
       ],
-      "data_owned": "Four real-client/server source-to-warehouse-to-destination combinations, including independent reopen, readback, checkpoint and schedule reentry",
+      "data_owned": "Four real-client/server source-to-warehouse-to-destination combinations, including independent reopen, readback, checkpoint and schedule reentry. This row owns the remaining full issue #41 composition declarations and all-five/seven-lane denominator, including M11 updates to the earlier PostgreSQL composition file; it owns no transport, ETL, approval or settlement implementation.",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
       "imports": [
         "api",
@@ -4415,7 +4442,8 @@
       ],
       "sequence_within_milestone": 2,
       "prior_group_id": "N13",
-      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED",
+      "lifecycle": "Issue #41 remains the single composition first owner. N13-PG creates the PostgreSQL file after M8 prerequisites; N13 at M11 creates GitHub composition and UPDATEs that same PostgreSQL file for remaining compositions/transport cases."
     },
     {
       "id": "R01",
@@ -13542,9 +13570,9 @@
       "owner": "connector-data",
       "process": "Build input",
       "milestone": "M7",
-      "action": "CREATE",
+      "action": "CREATE at M7; serialized UPDATE at M8",
       "kind": "authored",
-      "responsibility": "Connector-local semantics.json for postgres: minimal source-linked semantics/scenario declarations; common runner owns execution",
+      "responsibility": "Issue #28 first creates pinned PostgreSQL foundation declarations; issue #34 later updates only the accepted keyed mapped-upsert semantics/lifecycle after first-owner merge. Common generator/runner ownership is unchanged.",
       "interfaces": [],
       "dependencies": [],
       "test_ids": [
@@ -13562,7 +13590,9 @@
       "group_responsibility": "Pinnedsource/licensing/behavior; no perSaaS Go; optionalcapturedsource paths enumerated by lock",
       "allowed_internal_dependencies": [],
       "import_activation": [],
-      "subsequent_wiring_milestones": []
+      "subsequent_wiring_milestones": [
+        "M8"
+      ]
     },
     {
       "path": "connectors/postgres/scenarios/lifecycle.json",
@@ -13571,9 +13601,9 @@
       "owner": "connector-data",
       "process": "Build input",
       "milestone": "M7",
-      "action": "CREATE",
+      "action": "CREATE at M7; serialized UPDATE at M8",
       "kind": "authored",
-      "responsibility": "Connector-local lifecycle.json for postgres: minimal source-linked semantics/scenario declarations; common runner owns execution",
+      "responsibility": "Issue #28 first creates pinned PostgreSQL foundation declarations; issue #34 later updates only the accepted keyed mapped-upsert semantics/lifecycle after first-owner merge. Common generator/runner ownership is unchanged.",
       "interfaces": [],
       "dependencies": [],
       "test_ids": [
@@ -13591,7 +13621,9 @@
       "group_responsibility": "Pinnedsource/licensing/behavior; no perSaaS Go; optionalcapturedsource paths enumerated by lock",
       "allowed_internal_dependencies": [],
       "import_activation": [],
-      "subsequent_wiring_milestones": []
+      "subsequent_wiring_milestones": [
+        "M8"
+      ]
     },
     {
       "path": "connectors/postgres/NOTICE",
@@ -20163,28 +20195,29 @@
     },
     {
       "path": "connectors/postgres/scenarios/composition.json",
-      "group_id": "N13",
+      "group_id": "N13-PG",
       "prior_group_id": "N13",
       "owner": "proof",
       "process": "Proof runner",
-      "milestone": "M11",
-      "action": "CREATE",
+      "milestone": "M8",
+      "action": "CREATE after #28-#34; UPDATE at M11",
       "kind": "authored",
-      "responsibility": "Connector-local composition.json for postgres: minimal source-linked semantics/scenario declarations; common runner owns execution",
+      "responsibility": "Issue #41 first creates only pg-wh-pg plus wrong-value/ambiguous variants after M8 prerequisites; the same owner later updates this file for remaining full N13 obligations.",
       "interfaces": [],
       "dependencies": [],
       "test_ids": [
-        "P_sync_transport",
         "P_etl",
         "P_reverse_etl"
       ],
       "generator": null,
       "go_package": null,
       "assignment_owner": "proof",
-      "group_responsibility": "Four real-client/server source-to-warehouse-to-destination combinations, including independent reopen, readback, checkpoint and schedule reentry",
+      "group_responsibility": "N13-PG narrow PostgreSQL source→warehouse/query/mapping→separate destination mapped-upsert composition through the common runner; not full #41 closure.",
       "allowed_internal_dependencies": [],
       "import_activation": [],
-      "subsequent_wiring_milestones": []
+      "subsequent_wiring_milestones": [
+        "M11"
+      ]
     },
     {
       "path": "internal/config/config.go",
@@ -28234,7 +28267,7 @@
     "Old review or batch proof authority",
     "Per-connector Go test wrappers"
   ],
-  "note": "No target file created by this planning script. CREATE means future new application file; setup-existing files require bounded update after approval.",
-  "composition_rule": "Final dependency permissions are not imports required at creation. import_activation and subsequent_wiring_milestones explicitly schedule wiring. Ports live in pure contracts first; absence means unavailable capability. No empty/local substitute foundation.",
+  "note": "No target file is created by this planning document. CREATE means a future new application file; setup-existing files require a bounded update after approval. Accepted amendments change only recorded source/result/admission/auth/PostgreSQL ownership and staging boundaries; no implementation, provider effect or proof is asserted.",
+  "composition_rule": "Final dependency permissions are not imports required at creation; import_activation and subsequent_wiring_milestones schedule wiring. Ports live in pure contracts first, absence means unavailable capability and no empty/local substitute foundation is permitted. PostgreSQL source/semantics/lifecycle are first-created by #28 at M7 and serialized-updated by #34 at M8; N13-PG is first-created by #41 only after #28-#34 and later updated by the same #41 owner at M11. No duplicate executor, source or composition authority.",
   "provider_io_rule": "All provider HTTP/SQL/binary/discovery I/O executes in admitted worker activities. API synchronous reads access PM metadata only. Provider direct reads return202 RunRef; CLI may wait and render one page. API admin encrypts credentials but never receives worker ResolveForEffect capability."
 }

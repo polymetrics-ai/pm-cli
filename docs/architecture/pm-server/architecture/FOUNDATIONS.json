@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.plan.foundations/v2",
-  "label": "Proposed/Recommended475 DRAFT; application checks UNEXECUTED; artifact audit pending",
+  "label": "Canonical foundation contracts with accepted product amendments; implementation and evidence remain UNEXECUTED",
   "authority": "Planning contract map only. Actual executable registration is owned by app/activities.",
   "foundations": [
     {
@@ -30,7 +30,7 @@
       ],
       "interface": "ImmutableSourceSet -> pinned capture/ref closure",
       "invariants": [
-        "source hash, pointer, dialect, license and recursive reference closure retained; no implicit network refs"
+        "Exact repository/commit/path/pointer/blob/byte/SHA/license identity and recursive reference closure; raw source need not be duplicated in documentation; no implicit network refs or moving-page substitution."
       ],
       "dependencies": [],
       "registration_point": "internal/compile/source.go:CaptureSource in cmd/pmgen pipeline",
@@ -46,7 +46,7 @@
       "evidence_status": "unexecuted",
       "historical_aliases": [],
       "prior_version": "1.0.0",
-      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "contract_change": "Accepted GitHub full-source identity is authoritative while source.lock/compiler/live proof remain first-owner future work; PostgreSQL authority is pinned official protocol/SQL/metadata, never assumed OpenAPI.",
       "registration_kind": "build-time",
       "first_milestone": "M6",
       "ready_milestone": "M6",
@@ -143,7 +143,7 @@
       ],
       "interface": "TypedValue -> lossless request/Parquet/API value",
       "invariants": [
-        "absent/null/empty/default distinct; exact numbers; no undocumented coercion"
+        "Complete action data by default is distinct from explicit typed selection; preserve nested objects/arrays, absent/null/value, false/zero/empty and exact integers/decimals/identifiers. Optional projection never coerces or flattens."
       ],
       "dependencies": [],
       "registration_point": "internal/contract/value.go:Value with runtime/inputs.go and analytics/values.go serializers",
@@ -160,7 +160,7 @@
       "evidence_status": "unexecuted",
       "historical_aliases": [],
       "prior_version": "1.0.0",
-      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "contract_change": "F02 accepts complete-default action results plus optional shared typed selection/filtering across API/Go/CLI/browser; implementation remains unexecuted.",
       "registration_kind": "pure-value-and-serializer-composition",
       "first_milestone": "M1",
       "ready_milestone": "M11",
@@ -427,9 +427,9 @@
         "internal/runtime/response.go",
         "internal/runtime/retry.go"
       ],
-      "interface": "Declared pagination+effective request size -> honest page/continuation",
+      "interface": "Declared pagination+effective request size -> honest page/continuation; page retrieval is not durable incrementality",
       "invariants": [
-        "record budget differs from page size; page != durable incrementality; unread tails retained"
+        "Provider page size differs from total record cap; filtering precedes selection; preserve source continuation, unread tails, completeness and fetched/returned/emitted counts; an empty filtered page is not exhaustion. A page boundary alone never claims a durable checkpoint or incremental-publication boundary."
       ],
       "dependencies": [
         "FND-06"
@@ -447,7 +447,7 @@
       "evidence_status": "unexecuted",
       "historical_aliases": [],
       "prior_version": "1.0.0",
-      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "contract_change": "F02 fixes complete-default results and truthful continuation through optional typed selection/filtering without rewriting provider pagination.",
       "registration_kind": "runtime-consumer",
       "first_milestone": "M6",
       "ready_milestone": "M6",
@@ -557,9 +557,9 @@
         "internal/store/provider_accounts.go",
         "internal/store/secrets.go"
       ],
-      "interface": "Scoped account permit+deadline+known replay disposition -> one admissible physical attempt",
+      "interface": "Scoped account permit+known provider replay disposition -> one admissible physical attempt; separate client-to-API recovery policy",
       "invariants": [
-        "one retry authority; account quota; Retry-After; bounded phases; no inferred effect certainty"
+        "One provider/run retry authority owns physical attempts, account quota, provider Retry-After and durable workflow timing; unknown effect or commit remains charged. Separately, F01 permits at most three client-to-API sends within 30 seconds using the same key and deterministic 250ms/1s delays, applying a server Retry-After only when it fits the remaining client deadline. The client budget never truncates or otherwise governs provider/run retry scheduling."
       ],
       "dependencies": [
         "FND-16"
@@ -578,7 +578,7 @@
       "evidence_status": "unexecuted",
       "historical_aliases": [],
       "prior_version": "1.0.0",
-      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "contract_change": "F01 accepts development 32/8/2m, standard 256/32/10m and deployment-shared pending-reservation authority; its bounded three-send/30s client-to-API recovery is separate from provider/run-owned Retry-After and durable retry timing. The 3/2/30s profile remains test-only.",
       "registration_kind": "runtime-consumer",
       "first_milestone": "M4",
       "ready_milestone": "M4",
@@ -811,7 +811,7 @@
       ],
       "interface": "Approved exact action/member set -> per-member outcomes and readback",
       "invariants": [
-        "correlated individual outcomes; unknown retained; action readback and pre-I/O capacity; stable replay"
+        "Correlated individual outcomes; unknown retained; action readback and pre-I/O capacity; stable replay. PostgreSQL mapped upsert assigns only changed approved writable columns and unchanged input performs zero assignments; a possible COMMIT settles only through a declared sound occurrence witness for the exact intent, never desired rows alone."
       ],
       "dependencies": [
         "FND-03",
@@ -837,7 +837,7 @@
       "evidence_status": "unexecuted",
       "historical_aliases": [],
       "prior_version": "1.0.0",
-      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "contract_change": "Accepted M8 PostgreSQL extension uses the common approval/dispatch/settlement path; no separate executor, arbitrary SQL, delete or schema workaround.",
       "registration_kind": "runtime-consumer",
       "first_milestone": "M8",
       "ready_milestone": "M8",
@@ -873,7 +873,7 @@
       ],
       "interface": "Saved mapping+snapshot -> immutable desired workset and approved effects",
       "invariants": [
-        "typed field mapping, owned-record identity and immutable desired-state revisions"
+        "Typed field mapping, verified stable unique-key constraint, owned-record identity, immutable desired-state revisions, duplicate source-key rejection and preservation of unmapped destination fields. Any key, account or generation reset requires an explicit approved migration, with the old mapping retained for audit."
       ],
       "dependencies": [
         "FND-09",
@@ -895,7 +895,7 @@
       "evidence_status": "unexecuted",
       "historical_aliases": [],
       "prior_version": "1.0.0",
-      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "contract_change": "Accepted PostgreSQL mapping seals key/constraint/mapped values/schema/effects/cardinality and invalidates approval on relevant change.",
       "registration_kind": "runtime-consumer",
       "first_milestone": "M8",
       "ready_milestone": "M8",
@@ -965,7 +965,7 @@
       ],
       "interface": "PG accepted intent -> durable Temporal coordination; PG effect ledger authoritative",
       "invariants": [
-        "202 only after run/task/outbox commit; fences block stale local commits, not external effects"
+        "202 only after atomic idempotency/run/outbox/pending-reservation commit; exact replay creates no second reservation or dispatch. The reservation lasts to a controlled durable actual-execution-start transition or known terminal pre-start; Temporal acceptance, outbox acknowledgement and pre-start projections do not release it, and issue #16 owns actual-worker integration. PostgreSQL/Temporal leases and fences order local state only and cannot erase a possibly accepted external effect; unresolved receipts never age out."
       ],
       "dependencies": [
         "FND-03"
@@ -985,7 +985,7 @@
       "evidence_status": "unexecuted",
       "historical_aliases": [],
       "prior_version": "1.0.0",
-      "contract_change": "Remote PG/Temporal/shared-object ownership replaces local assumptions; semantic source/value contracts preserved where version unchanged.",
+      "contract_change": "F01 exact admission/recovery/retention table supersedes synthetic 1000/1h default assumptions while preserving PG acceptance and Temporal coordination ownership.",
       "registration_kind": "runtime-consumer",
       "first_milestone": "M4",
       "ready_milestone": "M4",
@@ -1148,7 +1148,7 @@
       ],
       "interface": "Case+independent oracle -> sanitized immutable proof receipt",
       "invariants": [
-        "public binary/server path, independent oracle; missing evidence operation-local; no self-certified descriptor"
+        "Public binary/server path and independent oracle compare complete/selected output, exact values, source membership/pagination and destination readback; missing evidence remains operation-local; no self-certified descriptor."
       ],
       "dependencies": [
         "FND-04",

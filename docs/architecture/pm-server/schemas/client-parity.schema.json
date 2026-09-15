@@ -129,7 +129,7 @@
     },
     "schema_version": {
       "type": "string",
-      "const": "pm.plan.client-parity/v1"
+      "const": "pm.plan.client-parity/v2"
     },
     "shared_rules": {
       "type": "object",
@@ -194,6 +194,21 @@
         },
         "workspace": {
           "type": "string"
+        },
+        "action_results": {
+          "type": "string"
+        },
+        "admission": {
+          "type": "string"
+        },
+        "client_recovery": {
+          "type": "string"
+        },
+        "mutation_replay": {
+          "type": "string"
+        },
+        "receipt_retention": {
+          "type": "string"
         }
       },
       "required": [
@@ -204,7 +219,12 @@
         "events",
         "exit_codes",
         "pagination",
-        "workspace"
+        "workspace",
+        "action_results",
+        "admission",
+        "client_recovery",
+        "mutation_replay",
+        "receipt_retention"
       ],
       "additionalProperties": false
     }

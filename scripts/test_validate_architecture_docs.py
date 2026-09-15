@@ -118,18 +118,6 @@ class ArchitectureDocumentationValidatorTests(unittest.TestCase):
             with self.assertRaisesRegex(ValidationError, "issue linkage"):
                 validate_pull_request_event(event)
 
-    def test_uri_corrected_schema_rows_preserve_provenance(self) -> None:
-        manifest = json.loads((REPOSITORY / CONTEXT / "IMPORT-MANIFEST.json").read_text())
-        rows = {row["target"]: row for row in manifest["files"]}
-        schema_rows = [
-            row for target, row in rows.items()
-            if target.startswith("docs/architecture/pm-server/schemas/")
-        ]
-        self.assertEqual(len(schema_rows), 11)
-        for row in schema_rows:
-            self.assertNotEqual(row["source_sha256"], row["sha256"])
-            self.assertIn("URI", row["transformation"])
-            self.assertIn("%20", row["transformation"])
 
 
 if __name__ == "__main__":

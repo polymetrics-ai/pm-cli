@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.plan.milestones/v2",
-  "label": "Proposed/Recommended475; fourteen dependency milestones, all UNEXECUTED",
+  "label": "Canonical milestone plan with accepted product amendments; all implementation/proof gates remain UNEXECUTED",
   "milestones": [
     {
       "id": "M0",
@@ -130,8 +130,8 @@
     {
       "id": "M1",
       "title": "Define versioned contracts and tenant identity",
-      "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "Authored OpenAPI3.1, exact values/presence, org/workspace/actor/run/grant contracts, generated strict Gin/Go/browser type shape and seven-lane schemas.",
+      "label": "Accepted product contract boundary; implementation UNEXECUTED",
+      "objective": "Authored OpenAPI3.1 exact values/presence and complete-default ActionResult with shared typed selection/filtering; org/workspace/actor/run/grant/admission/auth contracts; generated strict Gin/Go/browser type shapes and seven-lane schemas.",
       "prerequisites": [
         "M0"
       ],
@@ -243,7 +243,7 @@
       ],
       "implementation_sequence": [
         "Define org/workspace/actor, durable execution grant, operation/value/plan/effect/task/event and workflow/object refs in pure contracts.",
-        "Author one public OpenAPI3.1 and separate admin schema; specify reserved controls and route-specific auth exceptions.",
+        "Author one public OpenAPI3.1 and separate admin schema; include exact F01 error/retry DTOs, complete-default ActionResult, shared typed selection/filter controls and route-specific auth exceptions.",
         "Generate strict Gin/Go DTO/client and browser type shape; reject duplicate/allOf/null/precision loss with independent schema fixtures.",
         "Freeze semantic IDs, schema versions, exact-number/presence rules and seven-lane inventory schema before downstream imports."
       ],
@@ -281,7 +281,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; Authored OpenAPI3.1, exact values/presence, org/workspace/actor/run/grant contracts, generated strict Gin/Go/browser type shape and seven-lane schemas.",
+      "acceptance": "All listed gates show actual causal observations for the exact authored OpenAPI3.1, exact value/presence, org/workspace/actor/run/grant contracts, generated strict Gin/Go/browser type shape and seven-lane schema scope, including nested/presence/exact ActionResult parity, malformed-control preflight with zero provider I/O and the accepted admission/auth error DTO table. Contract acceptance does not claim generated implementation.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -462,8 +462,8 @@
     {
       "id": "M3",
       "title": "Serve authenticated API and administration",
-      "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "Gin strict validation/error/context/proxy rules; identity/device/browser/service flows, explicit workspace resources and isolated provider-secret administration.",
+      "label": "Accepted AUTH mutation boundary; implementation UNEXECUTED",
+      "objective": "Gin strict validation/error/context/proxy boundaries; identity/device/browser/service flows; explicit workspace resources, isolated provider-secret administration and six revision-safe idempotent membership/service-account/delegation POST mutations.",
       "prerequisites": [
         "M2"
       ],
@@ -567,7 +567,7 @@
       "implementation_sequence": [
         "Compose only available Gin/config/store/auth services; Temporal/provider runtime wiring is explicitly deferred to its later phase.",
         "Implement OIDC/browser and device/service identity paths with issuer/state/nonce/PKCE/CSRF and one-time exchange rules.",
-        "Implement resource membership/delegation authorization and server-admin encryption ingress under operator wrapping-key refs.",
+        "Implement resource membership/delegation authorization, server-admin encryption ingress under operator wrapping-key refs and six exact POST mutation receipts with current authorization, If-Match, scoped keys, 201/200/replay semantics and a one-time service-account credential only on original create.",
         "Override strict decoding/proxy/recovery/problem handling and test zero provider I/O plus no secret leakage on every denial."
       ],
       "validation_ids": [
@@ -622,7 +622,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; Gin strict validation/error/context/proxy rules; identity/device/browser/service flows, explicit workspace resources and isolated provider-secret administration.",
+      "acceptance": "All listed gates show actual causal observations for Gin strict validation/error/context/proxy rules, identity/device/browser/service flows, explicit workspace resources and isolated provider-secret administration. Packet-scoped AUTH-MUTATION-PARITY cases additionally observe current authorization before replay, one logical effect, 428/412/409 zero-effect refusals, original/replay safe metadata and no credential reissuance; R08 preserves connection/operation/workspace/time grant ceilings and distinct auditable actor/effective actor. No new manual gate is introduced.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -649,8 +649,8 @@
     {
       "id": "M4",
       "title": "Make accepted runs durable across PG and Temporal",
-      "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "RunSpec/budget/audit/outbox commit before202, actual workflow/activity registration, command outbox, projection repair, durable events and truthful unknown effects.",
+      "label": "Accepted F01 durable admission boundary; implementation UNEXECUTED",
+      "objective": "Exact F01 refusal table with finite deployment/workspace pending count and age reservations distinct from immutable per-run/account budgets; atomic RunSpec/grant/idempotency/audit/event/StartRun outbox before 202; controlled #14 route and durable execution-start transition, command outbox, projection repair, durable events and truthful unknown outcomes. Actual provider-worker integration remains #16.",
       "prerequisites": [
         "M3"
       ],
@@ -750,11 +750,12 @@
         "internal/store/migrations/postgres/0003_workflow_outbox.sql"
       ],
       "implementation_sequence": [
-        "Persist independent run grant, immutable intent/budgets/audit/event/StartRun outbox before202; add migration0003 workflow bindings.",
-        "Register deterministic run/scheduled coordinator shell and actual activity interfaces; provider capabilities remain unavailable until their foundation is wired.",
+        "Resolve one finite development or standard profile; under one PG transaction enforce post-reservation workspace/deployment pending counts and nonempty oldest pending-reservation accepted_at age, with both workspace refusals preceding deployment overload when predicates coincide; preserve separate immutable per-run/account budgets, then persist the independent run grant, immutable intent/budgets, pending reservation, audit/event and StartRun outbox before 202; add migration0003 workflow bindings.",
+        "Register deterministic run/scheduled coordinator shells and actual activity interfaces, and prove #14 through the actual route plus a controlled durable execution-start transition; provider capabilities and actual provider-worker integration remain unavailable until #16 and their later foundation.",
         "Implement stable workflow start/binding repair, command outbox, idempotent final projection and retained/absent-history branches.",
         "Allocate per-run event sequence under run-row lock; prove replay/rollover and both PG/Temporal crash windows using controlled activity fixtures.",
-        "Wire current grant checks/account permits before any later provider activity; do not tie execution to login-session expiry."
+        "Wire current grant checks/account permits before any later provider activity; do not tie execution to login-session expiry.",
+        "Implement server-side idempotency receipt retention: retain safe responses for at least 7 days after known resolution and keep unresolved outcomes plus namespace-lifetime secret-free refusal guards without expiry."
       ],
       "validation_ids": [
         "V09",
@@ -796,7 +797,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; RunSpec/budget/audit/outbox commit before202, actual workflow/activity registration, command outbox, projection repair, durable events and truthful unknown effects.",
+      "acceptance": "All listed gates show actual causal observations for the original RunSpec/budget/audit/outbox-before-202, command-outbox, projection-repair, durable-event and truthful-unknown scope. Packet-scoped F01 cases additionally observe workspace-count/workspace-age-before-deployment status/code/retry precedence, final-slot/count/age/concurrency boundaries, replay without a second pending reservation, release only at the controlled durable execution-start transition or terminal pre-start failure, database refusal/unknown-commit recovery and durable retention. Temporal acknowledgement or pre-start presence does not release capacity, accepted work is never discarded by age pressure, and actual provider-worker integration remains #16.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -827,7 +828,7 @@
       "id": "M5",
       "title": "Deliver thin CLI and browser API parity",
       "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "Explicit workspace commands, PM session OS storage, profile negotiation, generated browser wrapper and equivalent use-case harness.",
+      "objective": "Explicit workspace commands, PM session OS storage, profile negotiation, generated browser wrapper and equivalent use-case harness, including bounded same-key client-to-API recovery independent of provider/run retry scheduling.",
       "prerequisites": [
         "M4"
       ],
@@ -907,7 +908,8 @@
         "Implement strict PM profile/session settings, OS token storage and explicit workspace/member/service-account commands over generated Go client.",
         "Implement run/task/event/artifact views and structured exit semantics; close viewing independently from durable run cancellation.",
         "Generate browser client/types and isolated Playwright harness with actual cookie/origin/CSRF context.",
-        "Submit shared fixtures through CLI and browser to same stack, compare authorization/idempotency/errors/RunSpecs and validate concurrent workspace selection."
+        "Submit shared fixtures through CLI and browser to the same stack, compare authorization/idempotency/errors/RunSpecs and validate concurrent workspace selection.",
+        "Implement at most three same-key client-to-API sends inside 30 seconds with deterministic 250ms/1s backoff, server Retry-After only within the remaining client deadline, no stale-revision rebase or 410 resubmit and no replacement key after uncertainty; keep provider/run retry scheduling independent."
       ],
       "validation_ids": [
         "V12",
@@ -961,7 +963,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; Explicit workspace commands, PM session OS storage, profile negotiation, generated browser wrapper and equivalent use-case harness.",
+      "acceptance": "All listed gates show actual causal observations for explicit workspace commands, PM session OS storage, profile negotiation, generated browser wrapper and the equivalent use-case harness. The #19/#21 client paths additionally prove persisted secret-free same-key recovery across reconnect/restart, the three-send/30-second bound, deterministic 250ms/1s backoff, server Retry-After constrained by the remaining client deadline and independence from provider/run retry scheduling.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -986,8 +988,8 @@
     {
       "id": "M6",
       "title": "Compile sources and prove the first GitHub read",
-      "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "Source capture/ref/dialect/fidelity compiler, safe command catalog, HTTP typed transport and one-page reads through real remote API/worker; seven inventories and common proof runner.",
+      "label": "Accepted F02/F03 GitHub boundary; implementation/proof UNEXECUTED",
+      "objective": "Capture and compile the accepted complete GitHub REST source/license identity with ref/dialect/fidelity preservation, a safe command catalog, HTTP typed transport and truthful one-page reads through the real remote API/worker; expose complete action data with optional shared typed selection/filtering and emit seven inventories plus the common proof runner.",
       "prerequisites": [
         "M5"
       ],
@@ -1144,10 +1146,11 @@
         "docs/foundations/traceability.schema.json"
       ],
       "implementation_sequence": [
-        "Implement pinned capture/ref/dialect normalization, exact field/response fidelity and bounded sparse semantic amendments.",
+        "First create issue #27 source.lock/NOTICE from the accepted github/rest-api-description commit/path/blob/SHA/license identity; capture its complete reference closure without copying the 12.9 MB source into canonical docs, then implement pinned ref/dialect normalization, exact field/response fidelity, typed source requirements and bounded sparse semantic amendments with no silent coercion.",
         "Emit stable operation IDs, deterministic PM/provider flag aliases, runtime bundle and seven lane inventories; add real catalog/CLI wiring now.",
         "Register shared HTTP/pagination and physical-attempt admission with controlled transport retry/redirect behavior.",
-        "Run actual GitHub direct-read case through client/API/Temporal/worker, then create common proof runner/oracle/currentness and generated lane wrappers."
+        "Run actual GitHub direct-read case through client/API/Temporal/worker, then create common proof runner/oracle/currentness and generated lane wrappers.",
+        "Exercise mixed issue/pull-request pages with complete-default results, nested/presence/exact values, explicit shared typed controls, malformed-control zero-send, unread tails and truthful continuation/counts across actual clients."
       ],
       "validation_ids": [
         "V20",
@@ -1255,7 +1258,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; Source capture/ref/dialect/fidelity compiler, safe command catalog, HTTP typed transport and one-page reads through real remote API/worker; seven inventories and common proof runner.",
+      "acceptance": "All listed gates show actual causal observations for source capture/ref/dialect/fidelity compilation, safe catalog and CLI wiring, typed HTTP transport, one-page reads through the real remote API/worker, seven inventories and the common proof runner. F02-COMPLETE-ACTION, F02-OPTIONAL-CONTROLS and F02-PAGINATION additionally preserve complete records, nesting, presence, exact values, explicit shared controls, zero provider I/O on malformed controls, unread tails and truthful continuation/counts. Source identity is accepted, but source.lock/compiler output, controlled fake proof and separately authorized live evidence remain required before certification.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -1294,8 +1297,8 @@
     {
       "id": "M7",
       "title": "Publish shared data and admit PostgreSQL transport",
-      "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "Unique S3 objects, PG manifest/checkpoint TX, immutable Parquet and restricted query child; typed PostgreSQL metadata/TLS/read and initial dynamic schema contracts.",
+      "label": "Accepted PostgreSQL foundation boundary; implementation/proof UNEXECUTED",
+      "objective": "Unique S3 objects, PostgreSQL manifest/checkpoint transactions, immutable Parquet and restricted query child; reusable typed PostgreSQL protocol, complete dynamic catalog/schema metadata, strict TLS/read and bounded keyed/mapped-column capability sourced from pinned official protocol/SQL/metadata documentation, never assumed OpenAPI.",
       "prerequisites": [
         "M6"
       ],
@@ -1437,7 +1440,7 @@
         "internal/store/migrations/postgres/0004_warehouse_schema.sql"
       ],
       "implementation_sequence": [
-        "Add migration0004 warehouse/schema state and typed native PostgreSQL metadata/TLS/read adapter with separate customer identity.",
+        "Add migration0004 warehouse/schema state, then first create issue #28 official PostgreSQL source.lock/NOTICE/semantics/lifecycle and the reusable native metadata/TLS/read plus bounded keyed/mapped-column transport with separate customer identity; no arbitrary SQL or sync/demo executor.",
         "Implement S3 reservations/unique attempt upload/integrity verification, then PG manifest/checkpoint publication and reference-aware GC.",
         "Implement restricted pm-query child protocol and analytics-only DuckDB import; preserve exact values/presence in Parquet/query results.",
         "Wire ETL page/ack/continuation semantics and account-scoped complete metadata snapshots; prove cross-host rows and every publication crash window."
@@ -1542,7 +1545,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; Unique S3 objects, PG manifest/checkpoint TX, immutable Parquet and restricted query child; typed PostgreSQL metadata/TLS/read and initial dynamic schema contracts.",
+      "acceptance": "All listed gates show actual causal observations for unique S3 publication, PG manifest/checkpoint transactions, immutable Parquet/restricted query isolation, ETL page/ack/continuation, complete account-scoped dynamic catalog/schema snapshots and strict PostgreSQL protocol/type/TLS/read behavior. These are reusable object/schema/warehouse/ETL and PostgreSQL transport foundations only; they do not prove user-accessible reverse ETL, mapped upsert or N13-PG, and issue #28 first ownership precedes serialized issue #34 updates.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -1573,8 +1576,8 @@
     {
       "id": "M8",
       "title": "Implement approved direct and reverse effects",
-      "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "Sealed worksets/mappings, full action approval, exact entity/effect/dispatch/member identities, capacity reservation, readback and ambiguity recovery through real activities.",
+      "label": "Accepted PostgreSQL mapped-upsert and N13-PG stage; implementation/proof UNEXECUTED",
+      "objective": "Sealed worksets/mappings, full primary and secondary action approval, exact entity/effect/dispatch/member identities, atomic capacity reservation, returned-ID readback and ambiguity recovery through real activities, including bounded PostgreSQL keyed mapped insert-or-update; after #28-#34 capabilities, issue #41 first-creates only the pg-wh-pg composition through the actual shared client/server/worker path.",
       "prerequisites": [
         "M7"
       ],
@@ -1594,7 +1597,8 @@
         "T_V71",
         "T_V72",
         "T_V81",
-        "N06"
+        "N06",
+        "N13-PG"
       ],
       "files": [
         "internal/app/action_approval_test.go",
@@ -1625,7 +1629,10 @@
         "internal/sync/settlement.go",
         "internal/sync/settlement_test.go",
         "internal/sync/workset.go",
-        "internal/sync/write.go"
+        "internal/sync/write.go",
+        "connectors/postgres/semantics.json",
+        "connectors/postgres/scenarios/lifecycle.json",
+        "connectors/postgres/scenarios/composition.json"
       ],
       "interfaces": [
         "PlanWrite",
@@ -1645,16 +1652,19 @@
         "TestPreDispatchCapacity",
         "TestSealedWorksetAndRecurringCaps",
         "TestStableCreateMappingAcrossRevisions",
-        "WriteRows"
+        "WriteRows",
+        "PostgresMappedUpsert",
+        "PostgresWarehousePostgresScenario"
       ],
       "schemas_and_migrations": [
         "internal/store/migrations/postgres/0005_profiles_approvals.sql"
       ],
       "implementation_sequence": [
         "Add migration0005 profile/approval/entity/effect state and immutable workset/mapping revisions.",
-        "Implement preview and complete primary/secondary action approval hashes with request/result/readback capacity reservation.",
-        "Register direct/apply/reverse handlers, persist exact dispatch/member intent before physical calls and settle independently correlated outcomes.",
-        "Prove returned-ID field readback,28-member partial/unknown responses, empty replacement/already-absent behavior and worker death after remote acceptance."
+        "Implement preview and complete primary/secondary action approval hashes over request, result, readback and atomic per-run/window capacity reservations.",
+        "Register direct/apply/reverse handlers and settle independently correlated outcomes; for PostgreSQL reject missing/ambiguous/duplicate keys before I/O, insert absent keys, assign only changed approved writable columns, preserve unmapped fields and persist exact dispatch/member intent before physical calls.",
+        "Prove returned-ID field readback,28-member partial/unknown responses, empty replacement/already-absent behavior and worker death after remote acceptance.",
+        "After #28-#34 are implemented and proved, issue #41 creates connectors/postgres/scenarios/composition.json for pg-wh-pg insertion/update/repeat, checkpoint interruption and ambiguous COMMIT variants through the common proof runner; confirmed rollback may re-admit safely, while an unknown COMMIT remains charged until an exact occurrence witness of the declared intent resolves it."
       ],
       "validation_ids": [
         "V40",
@@ -1732,7 +1742,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; Sealed worksets/mappings, full action approval, exact entity/effect/dispatch/member identities, capacity reservation, readback and ambiguity recovery through real activities.",
+      "acceptance": "All listed settlement gates show actual causal observations for sealed revisions, complete action approval, exact entity/effect/dispatch/member identities, atomic capacity, returned-ID readback, independently correlated partial/unknown outcomes, empty replacement/already-absent behavior and worker death after remote acceptance. Packet-scoped PG-MAPPED-UPSERT and PG-DEMO-SCOPED additionally observe exact keys/types/mapped and unmapped values, zero assignments when unchanged, no duplicate row, checkpoint recovery and no blind unknown-COMMIT retry; desired rows alone are not an occurrence witness and actual dispatch history remains auditable. This earns only N13-PG; full #41/V74/P_sync_transport remain open.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -1748,7 +1758,9 @@
         "internal/activities/register.go",
         "internal/app/capabilities.go",
         "internal/httpapi/routes.go",
-        "internal/server/server.go"
+        "internal/server/server.go",
+        "connectors/postgres/semantics.json",
+        "connectors/postgres/scenarios/lifecycle.json"
       ],
       "technology_dependency_ids": [
         "TD09",
@@ -1976,8 +1988,8 @@
     {
       "id": "M11",
       "title": "Activate all five connectors and seven real lane inventories",
-      "label": "Proposed/Recommended; UNEXECUTED",
-      "objective": "GitHub/PostgreSQL/Gong/Pylon/HubSpot declarations and minimal scenarios; binary and sync transport active only with exact shared semantics and actual proof; four warehouse composition paths.",
+      "label": "Full N13/five-by-seven boundary remains planned and UNEXECUTED",
+      "objective": "Complete GitHub/PostgreSQL/Gong/Pylon/HubSpot declarations, minimal source-linked scenarios and all seven lane dispositions; activate binary/sync transport only with exact shared semantics and actual proof, complete all four warehouse compositions and update the earlier PostgreSQL composition without treating N13-PG as full certification.",
       "prerequisites": [
         "M10"
       ],
@@ -2077,7 +2089,7 @@
       "implementation_sequence": [
         "Capture/attribute and compile complete five-connector sources; generate every operation into seven exact lane inventories.",
         "Wire shared binary and sync_transport handlers only for supported shapes, with real bytes/delivery/ack/checkpoint semantics.",
-        "Add minimal source-linked lifecycle/composition scenarios and prove HTTP declaration-only extension where foundations suffice.",
+        "Add minimal source-linked lifecycle/composition scenarios and prove HTTP declaration-only extension where foundations suffice; create the GitHub composition and UPDATE the N13-PG-owned PostgreSQL composition for other paths/transport cases while preserving the same #41 authority.",
         "Run selected connector/lane scripts independently in retry/all/unimplemented modes; retain live/fake/blocked distinctions and all four warehouse composition paths."
       ],
       "validation_ids": [
@@ -2144,7 +2156,7 @@
           "status": "UNEXECUTED"
         }
       ],
-      "acceptance": "All listed gates show actual causal observations for exact scope; GitHub/PostgreSQL/Gong/Pylon/HubSpot declarations and minimal scenarios; binary and sync transport active only with exact shared semantics and actual proof; four warehouse composition paths.",
+      "acceptance": "All listed gates show actual causal observations for all five connector declarations and minimal scenarios, seven exact lane dispositions, binary and sync transport with real shared semantics, independently exercised retry/all/unimplemented modes and all four warehouse composition paths. The full issue #41 denominator remains mandatory, including other compositions, V74, P_sync_transport and generated documentation; earlier PG-DEMO-SCOPED evidence cannot satisfy or shrink it.",
       "evidence_required": [
         "Clean/dirty source baseline and actual PM component hashes",
         "Actual RED/fault and GREEN observations with command, exit and timestamp",
@@ -2160,7 +2172,8 @@
         "internal/activities/register.go",
         "internal/app/capabilities.go",
         "internal/httpapi/routes.go",
-        "internal/server/server.go"
+        "internal/server/server.go",
+        "connectors/postgres/scenarios/composition.json"
       ],
       "technology_dependency_ids": [
         "TD05",

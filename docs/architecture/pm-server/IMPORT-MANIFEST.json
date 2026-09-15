@@ -1,65 +1,65 @@
 {
   "schema_version": "pm.context.import/v1",
-  "status": "PROPOSED_COMMITTED_UNPUBLISHED",
+  "status": "ACCEPTED_PRODUCT_CONTRACT_PROJECTION_UNCOMMITTED",
   "target_repository": "polymetrics-ai/pm-cli",
-  "observed_target_head": "563adfd28b80101737ad41298aaa3af839eeacf6",
+  "observed_target_head": "a084d1af8204c1713939380686558e08f015d3b6",
   "target_prefix": "docs/architecture/pm-server/",
   "files": [
     {
       "target": "docs/architecture/pm-server/architecture/PLAN.md",
       "source": "data/pm-cli/architecture/PLAN.md",
       "source_sha256": "6d153d808841269207a7a4c840551ebbfce8649a118b92a7b8eb0d4b353925e3",
-      "sha256": "6d153d808841269207a7a4c840551ebbfce8649a118b92a7b8eb0d4b353925e3",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "40591de8c04a6ff2e6bdba210f6cf86dc5d81795c452b7aa56e4aa300c9830a3",
+      "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; implementation remains unexecuted."
     },
     {
       "target": "docs/architecture/pm-server/architecture/ADRS.md",
       "source": "data/pm-cli/architecture/ADRS.md",
       "source_sha256": "7fb4e36f03a7e509808f1906da20cacb0233cefd1a43632673b4c185140bbd07",
-      "sha256": "7fb4e36f03a7e509808f1906da20cacb0233cefd1a43632673b4c185140bbd07",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "5ca6feb2ce7d99034f149031aa7759eb54cbb8f7332f107c5f1beaac64028b4a",
+      "transformation": "Appended accepted ADR475-17 through ADR475-21 for complete results, admission, auth mutations, source authority and PostgreSQL mapped upsert/composition ordering."
     },
     {
       "target": "docs/architecture/pm-server/architecture/ARCHITECTURE-DELTA.json",
       "source": "data/pm-cli/architecture/ARCHITECTURE-DELTA.json",
       "source_sha256": "e9fe81658c6e0267c57a0ee75bd63bd27e71a13171049780d7ac1591421d8e8e",
-      "sha256": "e9fe81658c6e0267c57a0ee75bd63bd27e71a13171049780d7ac1591421d8e8e",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "d21cd467769821f16997af9667cfe8e35c4e9f96518352ab89e8b98ca5e51a62",
+      "transformation": "Appended machine-readable accepted decisions ADR475-17 through ADR475-21; retained earlier decisions."
     },
     {
       "target": "docs/architecture/pm-server/architecture/CLIENT-PARITY.json",
       "source": "data/pm-cli/architecture/CLIENT-PARITY.json",
       "source_sha256": "4aefc27cf4e4ef39a11e986455055cd981b33552597540b657f176347007160c",
-      "sha256": "4aefc27cf4e4ef39a11e986455055cd981b33552597540b657f176347007160c",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "ae7eab12ef27d15d453f2a9e6d22f8f1b48e05c679b155bbb3ed83199b9af8d7",
+      "transformation": "Projected accepted complete-result controls, F01 recovery, exact six AUTH mutation rows and M8 saved-ETL phase ownership."
     },
     {
       "target": "docs/architecture/pm-server/architecture/CONTRACTS.json",
       "source": "data/pm-cli/architecture/CONTRACTS.json",
       "source_sha256": "fafdda5003e3f9cd0223f5c3ecc5dd37a5b704a1cc59cbfacbce376e27fcaa47",
-      "sha256": "fafdda5003e3f9cd0223f5c3ecc5dd37a5b704a1cc59cbfacbce376e27fcaa47",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "4c37319f3d7410846ac793f44f062bdff9269e3a9e18995015e817954dfac7ee",
+      "transformation": "Advanced canonical contract schema to v4 with ActionResult, AdmissionPolicy, AuthorizationMutation, ConnectorSourceAuthority and PostgresMappedUpsert."
     },
     {
       "target": "docs/architecture/pm-server/architecture/FOUNDATION-MAPPINGS.json",
       "source": "data/pm-cli/architecture/FOUNDATION-MAPPINGS.json",
       "source_sha256": "5a9780e77a8f471a0bcd5ad2164a669c47b107229cba1e913587166d9336f94a",
-      "sha256": "5a9780e77a8f471a0bcd5ad2164a669c47b107229cba1e913587166d9336f94a",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "132c4b7cf91734650eb2ca25871164597276fe76a50cb09788a9f2d770c5c2fc",
+      "transformation": "Added F01/AUTH traceability requirements and projected accepted GitHub/PostgreSQL bindings; 43 requirements total."
     },
     {
       "target": "docs/architecture/pm-server/architecture/FOUNDATIONS.json",
       "source": "data/pm-cli/architecture/FOUNDATIONS.json",
       "source_sha256": "75cbcdbcdfe87877d37c5135fec5e1bb9134b681199d24e9f8006d417c6ff6ea",
-      "sha256": "75cbcdbcdfe87877d37c5135fec5e1bb9134b681199d24e9f8006d417c6ff6ea",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "604739ad815c1aecbbff49120e533e0b092d3b8a9df8c6173d7a71e8ba06f7aa",
+      "transformation": "Versioned affected reusable foundations for accepted result, admission, source and PostgreSQL semantics without adding a duplicate mechanism."
     },
     {
       "target": "docs/architecture/pm-server/architecture/STATE-OWNERSHIP.json",
       "source": "data/pm-cli/architecture/STATE-OWNERSHIP.json",
       "source_sha256": "5ab501834319e66d4df954a7683aae458c5862014110520551857d8c82ee7a53",
-      "sha256": "5ab501834319e66d4df954a7683aae458c5862014110520551857d8c82ee7a53",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "e095064a650ae4ca04f8ad8efa1ac4a4b3fb53e9c3bc9ab3ebb2d35d2cab9d3c",
+      "transformation": "Projected durable admission, auth replay/credential, source authority and mapped-upsert state ownership."
     },
     {
       "target": "docs/architecture/pm-server/architecture/TECHNOLOGY.json",
@@ -72,22 +72,22 @@
       "target": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
       "source": "data/pm-cli/implementation/FILE-OWNERSHIP.json",
       "source_sha256": "5c5b461dda1f81f10a63a7234e07792f54a9996d11df8a5d7cd88ca5f83f7411",
-      "sha256": "5c5b461dda1f81f10a63a7234e07792f54a9996d11df8a5d7cd88ca5f83f7411",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "abeb3ff1b6b370995705d9f6ee55b33085c07f664e9b38da54d1df5e500be980",
+      "transformation": "Added N13-PG and serialized PostgreSQL #28-create/#34-update/#41-composition ownership while retaining disjoint owners."
     },
     {
       "target": "docs/architecture/pm-server/implementation/MILESTONES.json",
       "source": "data/pm-cli/implementation/MILESTONES.json",
       "source_sha256": "99286dffffbd2d7930dfcda31833ba6b4e36d0392a44499a8d5fe1c9807eba45",
-      "sha256": "99286dffffbd2d7930dfcda31833ba6b4e36d0392a44499a8d5fe1c9807eba45",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "7f98c66f8bd991c565f88c3dd269f4d228f5cd9f7e1c1e9038229d1119d1af86",
+      "transformation": "Projected accepted boundaries into M1/M3/M4/M6/M7/M8/M11 and moved saved ETL route ownership to M8/F33."
     },
     {
       "target": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
       "source": "data/pm-cli/implementation/VALIDATION-MATRIX.json",
       "source_sha256": "4b727491d7e3ad972637182ddd626e14a6ed99d61020f40b8d305090166e4dca",
-      "sha256": "4b727491d7e3ad972637182ddd626e14a6ed99d61020f40b8d305090166e4dca",
-      "transformation": "Canonical authored document; byte-preserving copy"
+      "sha256": "9ae0f874ab4d49e9e5d847a8ffb2c8ed3c95e827d4e9c4025f5a9937adf7f26b",
+      "transformation": "Updated existing causal checks and packet-scoped proofs for accepted contracts; kept 114 global rows and every status UNEXECUTED."
     },
     {
       "target": "docs/architecture/pm-server/schemas/architecture-delta.schema.json",
@@ -100,15 +100,15 @@
       "target": "docs/architecture/pm-server/schemas/client-parity.schema.json",
       "source": "data/pm-cli/schemas/client-parity.schema.json",
       "source_sha256": "260c542dca9cbac18897de6b1d96328c5cf63ae04226eebc1161b0bc710f08f1",
-      "sha256": "5fda6d580c8ff0900d52c61011a31c976ba01ba3fc01544d4803e78973273d23",
-      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
+      "sha256": "63b6b4719e0150dee2ccb8aba98a76754cd1352be213450dca1cada2417f1000",
+      "transformation": "Canonical authored document with URI literal-space identifiers percent-encoded as %20; source provenance and validation constraints preserved; advanced companion schema to validate the v2 parity/shared-rule shape."
     },
     {
       "target": "docs/architecture/pm-server/schemas/contracts.schema.json",
       "source": "data/pm-cli/schemas/contracts.schema.json",
       "source_sha256": "ce6bb57646bbb41bf351611cf13826d72cc312151049c7b98fbf8cbb043ff6fd",
-      "sha256": "00ba1e08ca9eb6ee13cde3f1a06a3eebda8660606e4754fe46022f442782dac8",
-      "transformation": "Canonical authored document with URI literal-space identifier percent-encoded as %20; source provenance and validation constraints preserved"
+      "sha256": "af0fdaac35e734d2cdc4b8ac0391a0bfcb8d6de75ec4dc6cdff66832661942b3",
+      "transformation": "Canonical authored document with URI literal-space identifiers percent-encoded as %20; source provenance and validation constraints preserved; advanced companion schema to validate the v4 accepted product-contract shape."
     },
     {
       "target": "docs/architecture/pm-server/schemas/file-ownership.schema.json",
@@ -191,15 +191,15 @@
       "target": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
       "source": "baseline ISSUE-RECORDS.json",
       "source_sha256": "9ecc107c39976504d43b892a6c8f1e351c6a5adea1128bfc1cb0ca1c27eb20a9",
-      "sha256": "6235a9b3b3a3aeb454806f79f503842188691dd36ecb5c4b56d81fbc2ca44454",
-      "transformation": "Project all original packet contracts; omit duplicate context, review policy and private preparation metadata; apply only the recorded F06 ownership/handoff amendment to bootstrap README first-creation/update responsibility, BOOT-1 verification and its administrative dependency; preserve all 44 identities and unrelated contracts"
+      "sha256": "2409352e6bacd8dec8c723ff68e1e68d50dc0ca8ff1a2832c01da0df0c0e69ee",
+      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41."
     },
     {
       "target": "docs/architecture/pm-server/reference/SOURCE-LEDGER.json",
       "source": "data/pm-cli/reference/SOURCE-LEDGER.json",
       "source_sha256": "6ef2d5fa29226558d4767ceedbe2b2784179f9b9e075560031769744c361417f",
-      "sha256": "30f24137b90767ecfceaed14aebad461ad7d7b8fcd4486ca4127f00f61b1b211",
-      "transformation": "Retain all 204 source entries with approved metadata fields; omit local locators, flow-history inventories and operational status; mark access gaps"
+      "sha256": "d64c0c66ff25b133e6e51e0def6a24c5e0725f802aa4dd758ab475dc17f69ff4",
+      "transformation": "Preserved 204 original evidence identities and appended 10 accepted public decision/issue identities; no private operator paths."
     },
     {
       "target": "docs/architecture/pm-server/instructions/pm-go.draft.md",
@@ -240,22 +240,22 @@
       "target": "docs/architecture/pm-server/proposals/admission-binding-gap.md",
       "source": "data/setup-evidence/bdd-preparation/references/admission-binding-gap.md",
       "source_sha256": "e08c0bb813219916864f7c8fff3032f609c149fc302776fae67d93e78a01afd4",
-      "sha256": "e08c0bb813219916864f7c8fff3032f609c149fc302776fae67d93e78a01afd4",
-      "transformation": "Inactive binding proposal or bounded MIT source facts/license; no accepted contract amendment or full upstream source input"
+      "sha256": "d77654bd65b2e9145b1252ea02e80807f068da091754ba94410e889f66bf6f3e",
+      "transformation": "Retained as a closed historical proposal pointing to the accepted F01/AUTH normative contracts."
     },
     {
       "target": "docs/architecture/pm-server/proposals/github-binding-proposal.md",
       "source": "data/setup-evidence/bdd-preparation/references/github-binding-proposal.md",
       "source_sha256": "a117c758f02f7da82c82bc43b1b2b121d62dabdd5fa583bf304642d6f0cb787f",
-      "sha256": "a117c758f02f7da82c82bc43b1b2b121d62dabdd5fa583bf304642d6f0cb787f",
-      "transformation": "Inactive binding proposal or bounded MIT source facts/license; no accepted contract amendment or full upstream source input"
+      "sha256": "95886e0466fed117e501ee333fc12b43f9d63ef79790997b32320047c0c4ec78",
+      "transformation": "Retained as a closed historical proposal pointing to accepted F02/F03 authority and remaining implementation proof."
     },
     {
       "target": "docs/architecture/pm-server/proposals/github-operation-closure.json",
       "source": "data/setup-evidence/bdd-preparation/references/github-operation-closure.json",
       "source_sha256": "86685c4be574ce2ff84804204e0057d1bf70a8d64f0597a489d0ec427a1e42e3",
-      "sha256": "86685c4be574ce2ff84804204e0057d1bf70a8d64f0597a489d0ec427a1e42e3",
-      "transformation": "Inactive binding proposal or bounded MIT source facts/license; no accepted contract amendment or full upstream source input"
+      "sha256": "e62bbf68a8cf0a223066da6193319573527cffdcd070b712af8c5abc6f61422c",
+      "transformation": "Closed the former GitHub source/result decision with exact accepted source/license identity and explicit remaining implementation/proof ownership."
     },
     {
       "target": "docs/architecture/pm-server/proposals/github-source-LICENSE.md",
@@ -267,20 +267,20 @@
     {
       "target": "docs/architecture/pm-server/README.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "dd1cae20dc6ace564e1e45c6bbe90dccc8faf46765c861f3b07a763aa950fd58",
-      "transformation": "Original documentation proposal with manifest-owned candidate state and recorded F06 ownership/handoff disclosure; no upstream source payload"
+      "sha256": "bc0c0c19b575f0ca270166fa8c65a13083e466702dc9dc12a8543a9f7d8deae5",
+      "transformation": "Reframed the package as the canonical accepted-contract projection with public decision links and future implementation/proof boundary."
     },
     {
       "target": "docs/architecture/pm-server/SEMANTIC-AMENDMENTS.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "76916ea3d06fc5e22e71cdb517ca082f8d6f42eb0ebf3d4e9283b0cb1af62ce3",
-      "transformation": "Original disclosure/policy with recorded F06 ownership/handoff amendment and a pointer to manifest-owned authority; no upstream source payload"
+      "sha256": "28d016281ec7ba65ddc69735c44f8dbbf0756d917f81fcfb7f834a9748d47a49",
+      "transformation": "Recorded the accepted F01/F02/F03/AUTH/PostgreSQL semantic amendments and serialized issue ownership."
     },
     {
       "target": "docs/architecture/pm-server/SOURCE-ACCESS.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "a72ce44e27561e1bdae82f029372145fea7480b05e31627034756b4835efed02",
-      "transformation": "Original documentation proposal; no upstream source payload"
+      "sha256": "e6f58365ba84e0850d6e35060d45e151e53791460d461603214aa462bb8677dd",
+      "transformation": "Replaced preparation-machine provenance with public-source authority and future capture/attribution rules."
     },
     {
       "target": "docs/architecture/pm-server/instructions/INSTRUCTION-TARGETS.json",
@@ -329,6 +329,6 @@
       "reason": "Not in explicit canonical inclusion; no implicit copying"
     }
   ],
-  "manifest_self": "IMPORT-MANIFEST.json generated from this inventory; its hash is in the outer manifest",
-  "approval": "Historical preparation record: no PM checkout write had occurred when this inventory was assembled. September 13 authority permits import/publication of the identified package, necessary issue amendments, independent review, commits, push, and PR creation. This manifest identifies the current candidate snapshot; its exact bytes still require the recorded verification and independent review, and separate explicit merge acceptance. It does not claim publication, BOOT completion, or an accepted merged baseline."
+  "manifest_self": "Self-describing inventory; excluded from files[] hashes to avoid a recursive digest. Package file count includes IMPORT-MANIFEST.json.",
+  "approval": "Accepted public product decisions are projected as canonical documentation. Application implementation, generated connector artifacts, provider proof, publication, merge and release validation remain outside this artifact; coherent-slice review replaces per-checklist approval gates."
 }
