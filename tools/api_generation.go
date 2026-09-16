@@ -294,7 +294,7 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 	}
 	openAPIObjectMaps := map[string]bool{
 		"callbacks": true, "content": true, "encoding": true, "headers": true,
-		"links": true, "paths": true, "responses": true, "variables": true, "webhooks": true,
+		"links": true, "variables": true, "webhooks": true,
 	}
 	forbiddenProperties := map[string]bool{
 		"access_token": true, "api_key": true, "client_secret": true,
@@ -308,6 +308,7 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 		componentsObjectRole
 		componentNameMapRole
 		namedOpenAPIObjectMapRole
+		extensibleOpenAPIObjectMapRole
 		schemaObjectRole
 		namedSchemaMapRole
 		propertyMapRole
@@ -333,7 +334,7 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 				childPath := appendPath(path, key)
 				objectField := role == openAPIObjectRole || role == componentsObjectRole ||
 					role == schemaObjectRole || role == exampleObjectRole
-				if objectField && strings.HasPrefix(strings.ToLower(key), "x-") {
+				if (objectField || role == extensibleOpenAPIObjectMapRole) && strings.HasPrefix(strings.ToLower(key), "x-") {
 					continue
 				}
 				if role == schemaObjectRole && unsupportedKeywords[key] {
@@ -359,7 +360,7 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 
 				childRole := openAPIObjectRole
 				switch role {
-				case componentNameMapRole, namedOpenAPIObjectMapRole:
+				case componentNameMapRole, namedOpenAPIObjectMapRole, extensibleOpenAPIObjectMapRole:
 					childRole = openAPIObjectRole
 				case namedSchemaMapRole, propertyMapRole:
 					childRole = schemaObjectRole
@@ -397,6 +398,8 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 						childRole = literalDataRole
 					case key == "mapping" || key == "scopes" || key == "security":
 						childRole = literalDataRole
+					case key == "paths" || key == "responses":
+						childRole = extensibleOpenAPIObjectMapRole
 					case openAPIObjectMaps[key]:
 						childRole = namedOpenAPIObjectMapRole
 					}

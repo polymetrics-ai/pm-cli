@@ -743,17 +743,17 @@ func TestGeneratedContractBoundary(t *testing.T) {
 			safeSchemaRef       = "#/components/schemas/ServerInfo"
 			credentialSchemaRef = "#/components/schemas/ServiceAccountCreationResponse"
 		)
-		fixture := func(schemaRef string) []byte {
+		fixture := func(componentName, schemaRef string) []byte {
 			return openAPIFixture(t, root, func(document map[string]any) {
 				paths := fixtureObject(t, document, "paths")
 				info := fixtureObject(t, paths, "/v1/info")
 				get := fixtureObject(t, info, "get")
 				responses := fixtureObject(t, get, "responses")
-				responses["200"] = map[string]any{"$ref": "#/components/responses/value"}
+				responses["200"] = map[string]any{"$ref": "#/components/responses/" + componentName}
 
 				components := fixtureObject(t, document, "components")
 				componentResponses := fixtureObject(t, components, "responses")
-				componentResponses["value"] = map[string]any{
+				componentResponses[componentName] = map[string]any{
 					"description": "Synthetic ordinary response reuse witness",
 					"content": map[string]any{
 						"application/json": map[string]any{
@@ -777,20 +777,56 @@ func TestGeneratedContractBoundary(t *testing.T) {
 				}
 			})
 		}
+		for _, componentName := range []string{"value", "x-audit"} {
+			t.Run(componentName, func(t *testing.T) {
 
-		safePath := filepath.Join(t.TempDir(), "named-response-safe.openapi.json")
-		if err := os.WriteFile(safePath, fixture(safeSchemaRef), 0o600); err != nil {
-			t.Fatalf("write safe named-response source: %v", err)
-		}
-		runGenerator(t, generator, root, filepath.Join(t.TempDir(), "named-response-safe"), false, safePath)
+				safePath := filepath.Join(t.TempDir(), "named-response-safe.openapi.json")
+				if err := os.WriteFile(safePath, fixture(componentName, safeSchemaRef), 0o600); err != nil {
+					t.Fatalf("write safe named-response source: %v", err)
+				}
+				runGenerator(t, generator, root, filepath.Join(t.TempDir(), "named-response-safe"), false, safePath)
 
-		forbiddenPath := filepath.Join(t.TempDir(), "named-response-forbidden.openapi.json")
-		if err := os.WriteFile(forbiddenPath, fixture(credentialSchemaRef), 0o600); err != nil {
-			t.Fatalf("write forbidden named-response source: %v", err)
+				forbiddenPath := filepath.Join(t.TempDir(), "named-response-forbidden.openapi.json")
+				if err := os.WriteFile(forbiddenPath, fixture(componentName, credentialSchemaRef), 0o600); err != nil {
+					t.Fatalf("write forbidden named-response source: %v", err)
+				}
+				command := exec.Command(generator, "--root", root, "--spec", forbiddenPath, "--output-root", filepath.Join(t.TempDir(), "named-response-forbidden"))
+				if result, err := command.CombinedOutput(); err == nil {
+					t.Fatalf("named response reused the one-time credential schema: %s", result)
+				}
+			})
 		}
-		command := exec.Command(generator, "--root", root, "--spec", forbiddenPath, "--output-root", filepath.Join(t.TempDir(), "named-response-forbidden"))
-		if result, err := command.CombinedOutput(); err == nil {
-			t.Fatalf("named response reused the one-time credential schema: %s", result)
+	})
+
+	t.Run("literal_extensions_on_openapi_object_maps_remain_opaque", func(t *testing.T) {
+		const credentialSchemaRef = "#/components/schemas/ServiceAccountCreationResponse"
+		source := openAPIFixture(t, root, func(document map[string]any) {
+			paths := fixtureObject(t, document, "paths")
+			paths["x-audit"] = map[string]any{"$ref": credentialSchemaRef}
+			info := fixtureObject(t, paths, "/v1/info")
+			get := fixtureObject(t, info, "get")
+			responses := fixtureObject(t, get, "responses")
+			responses["x-notes"] = map[string]any{"$ref": credentialSchemaRef}
+		})
+		path := filepath.Join(t.TempDir(), "literal-map-extensions.openapi.json")
+		if err := os.WriteFile(path, source, 0o600); err != nil {
+			t.Fatalf("write literal map extensions: %v", err)
+		}
+		output := filepath.Join(t.TempDir(), "literal-map-extensions")
+		runGenerator(t, generator, root, output, false, path)
+		var published map[string]any
+		if err := json.Unmarshal(readFile(t, filepath.Join(output, "api", "pm.openapi.json")), &published); err != nil {
+			t.Fatalf("decode published literal map extensions: %v", err)
+		}
+		paths := fixtureObject(t, published, "paths")
+		if fixtureObject(t, paths, "x-audit")["$ref"] != credentialSchemaRef {
+			t.Fatal("published Paths extension lost its literal reference value")
+		}
+		info := fixtureObject(t, paths, "/v1/info")
+		get := fixtureObject(t, info, "get")
+		responses := fixtureObject(t, get, "responses")
+		if fixtureObject(t, responses, "x-notes")["$ref"] != credentialSchemaRef {
+			t.Fatal("published Responses extension lost its literal reference value")
 		}
 	})
 
