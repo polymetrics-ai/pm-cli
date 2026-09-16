@@ -48,4 +48,6 @@ build:macos --host_copt=-gdwarf-4
 
 test --test_env=PM_GO
 test --test_env=PM_REPO_ROOT
+test --test_env=GOCACHE
+test --test_env=GOMODCACHE
 test --test_env=GOWORK=off

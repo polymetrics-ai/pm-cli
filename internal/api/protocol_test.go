@@ -738,6 +738,114 @@ func TestGeneratedContractBoundary(t *testing.T) {
 		}
 	})
 
+	t.Run("named_response_component_cannot_hide_one_time_credential_reuse", func(t *testing.T) {
+		const (
+			safeSchemaRef       = "#/components/schemas/ServerInfo"
+			credentialSchemaRef = "#/components/schemas/ServiceAccountCreationResponse"
+		)
+		fixture := func(schemaRef string) []byte {
+			return openAPIFixture(t, root, func(document map[string]any) {
+				paths := fixtureObject(t, document, "paths")
+				info := fixtureObject(t, paths, "/v1/info")
+				get := fixtureObject(t, info, "get")
+				responses := fixtureObject(t, get, "responses")
+				responses["200"] = map[string]any{"$ref": "#/components/responses/value"}
+
+				components := fixtureObject(t, document, "components")
+				componentResponses := fixtureObject(t, components, "responses")
+				componentResponses["value"] = map[string]any{
+					"description": "Synthetic ordinary response reuse witness",
+					"content": map[string]any{
+						"application/json": map[string]any{
+							"schema": map[string]any{"$ref": schemaRef},
+						},
+					},
+				}
+				examples := map[string]any{}
+				if existing, present := components["examples"]; present {
+					var ok bool
+					examples, ok = existing.(map[string]any)
+					if !ok {
+						t.Fatalf("canonical OpenAPI components.examples = %T; want object", existing)
+					}
+				} else {
+					components["examples"] = examples
+				}
+				examples["credential_reference_literal"] = map[string]any{
+					"summary": "A reference-shaped literal example",
+					"value":   map[string]any{"$ref": credentialSchemaRef},
+				}
+			})
+		}
+
+		safePath := filepath.Join(t.TempDir(), "named-response-safe.openapi.json")
+		if err := os.WriteFile(safePath, fixture(safeSchemaRef), 0o600); err != nil {
+			t.Fatalf("write safe named-response source: %v", err)
+		}
+		runGenerator(t, generator, root, filepath.Join(t.TempDir(), "named-response-safe"), false, safePath)
+
+		forbiddenPath := filepath.Join(t.TempDir(), "named-response-forbidden.openapi.json")
+		if err := os.WriteFile(forbiddenPath, fixture(credentialSchemaRef), 0o600); err != nil {
+			t.Fatalf("write forbidden named-response source: %v", err)
+		}
+		command := exec.Command(generator, "--root", root, "--spec", forbiddenPath, "--output-root", filepath.Join(t.TempDir(), "named-response-forbidden"))
+		if result, err := command.CombinedOutput(); err == nil {
+			t.Fatalf("named response reused the one-time credential schema: %s", result)
+		}
+	})
+
+	t.Run("property_map_wire_names_are_not_schema_keywords", func(t *testing.T) {
+		source := openAPIFixture(t, root, func(document map[string]any) {
+			components := fixtureObject(t, document, "components")
+			schemas := fixtureObject(t, components, "schemas")
+			schemas["E04PropertyMapRole"] = map[string]any{
+				"type":                 "object",
+				"additionalProperties": false,
+				"required":             []string{"properties"},
+				"properties": map[string]any{
+					"properties": map[string]any{
+						"type":                 "object",
+						"additionalProperties": false,
+						"required":             []string{"if"},
+						"properties": map[string]any{
+							"if": map[string]any{"type": "string"},
+						},
+					},
+				},
+			}
+		})
+		path := filepath.Join(t.TempDir(), "property-map-role.openapi.json")
+		if err := os.WriteFile(path, source, 0o600); err != nil {
+			t.Fatalf("write property-map role source: %v", err)
+		}
+		output := filepath.Join(t.TempDir(), "property-map-role")
+		runGenerator(t, generator, root, output, false, path)
+		schema := compileJSONSchema(
+			t,
+			filepath.Join(output, "api", "pm.openapi.json"),
+			"#/components/schemas/E04PropertyMapRole",
+		)
+		for _, fixture := range []struct {
+			name     string
+			document string
+			valid    bool
+		}{
+			{name: "exact_wire_names", document: `{"properties":{"if":"retained"}}`, valid: true},
+			{name: "nested_type_is_preserved", document: `{"properties":{"if":false}}`, valid: false},
+		} {
+			t.Run(fixture.name, func(t *testing.T) {
+				document, err := jsonschema.UnmarshalJSON(strings.NewReader(fixture.document))
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = schema.Validate(document)
+				if (err == nil) != fixture.valid {
+					t.Fatalf("generated schema validation error = %v; valid = %t", err, fixture.valid)
+				}
+			})
+		}
+	})
+
 	t.Run("PresentValue_presence_discriminators_are_exact", func(t *testing.T) {
 		schema := compileJSONSchema(
 			t,
@@ -983,6 +1091,35 @@ func readFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return content
+}
+
+func openAPIFixture(t *testing.T, root string, mutate func(map[string]any)) []byte {
+	t.Helper()
+	var document map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(readFile(t, filepath.Join(root, "api", "pm.openapi.json"))))
+	decoder.UseNumber()
+	if err := decoder.Decode(&document); err != nil {
+		t.Fatalf("decode canonical OpenAPI projection: %v", err)
+	}
+	mutate(document)
+	source, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		t.Fatalf("encode OpenAPI fixture: %v", err)
+	}
+	return append(source, '\n')
+}
+
+func fixtureObject(t *testing.T, parent map[string]any, field string) map[string]any {
+	t.Helper()
+	value, present := parent[field]
+	if !present {
+		t.Fatalf("canonical OpenAPI fixture has no %q field", field)
+	}
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("canonical OpenAPI fixture field %q = %T; want object", field, value)
+	}
+	return object
 }
 
 func compileJSONSchema(t *testing.T, path, pointer string) *jsonschema.Schema {

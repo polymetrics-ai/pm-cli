@@ -288,14 +288,40 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 		"additionalProperties": true, "allOf": true, "anyOf": true,
 		"items": true, "not": true, "oneOf": true,
 	}
+	componentMaps := map[string]bool{
+		"callbacks": true, "headers": true, "links": true, "parameters": true,
+		"pathItems": true, "requestBodies": true, "responses": true, "securitySchemes": true,
+	}
+	openAPIObjectMaps := map[string]bool{
+		"callbacks": true, "content": true, "encoding": true, "headers": true,
+		"links": true, "paths": true, "responses": true, "variables": true, "webhooks": true,
+	}
 	forbiddenProperties := map[string]bool{
 		"access_token": true, "api_key": true, "client_secret": true,
 		"credential_value": true, "password": true, "pm_automation_credential": true,
 		"provider_credential": true, "provider_secret": true, "refresh_token": true, "secret": true,
 	}
+
+	type nodeRole uint8
+	const (
+		openAPIObjectRole nodeRole = iota
+		componentsObjectRole
+		componentNameMapRole
+		namedOpenAPIObjectMapRole
+		schemaObjectRole
+		namedSchemaMapRole
+		propertyMapRole
+		exampleNameMapRole
+		exampleObjectRole
+		literalDataRole
+	)
+
 	credentialRefs := make([]string, 0, 1)
-	var walk func(any, []string, bool) error
-	walk = func(value any, path []string, schema bool) error {
+	var walk func(any, []string, nodeRole) error
+	walk = func(value any, path []string, role nodeRole) error {
+		if role == literalDataRole {
+			return nil
+		}
 		switch typed := value.(type) {
 		case map[string]any:
 			keys := make([]string, 0, len(typed))
@@ -305,52 +331,90 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 			sort.Strings(keys)
 			for _, key := range keys {
 				childPath := appendPath(path, key)
-				namedSchemaMember := len(path) != 0 && (path[len(path)-1] == "properties" || path[len(path)-1] == "schemas")
-				if !namedSchemaMember && (strings.HasPrefix(strings.ToLower(key), "x-") || (!schema && (key == "example" || key == "value"))) {
+				objectField := role == openAPIObjectRole || role == componentsObjectRole ||
+					role == schemaObjectRole || role == exampleObjectRole
+				if objectField && strings.HasPrefix(strings.ToLower(key), "x-") {
 					continue
 				}
-				if schema && unsupportedKeywords[key] {
+				if role == schemaObjectRole && unsupportedKeywords[key] {
 					return fmt.Errorf("%s uses schema keyword %q that the selected generator does not project losslessly", strings.Join(childPath, "."), key)
 				}
-				if schema && literalSchemaKeywords[key] {
+				if role == schemaObjectRole && literalSchemaKeywords[key] {
 					if key == "const" && typed[key] == nil {
 						return fmt.Errorf("%s: explicit null const cannot be projected losslessly", strings.Join(childPath, "."))
 					}
 					continue
 				}
-				if len(path) != 0 && path[len(path)-1] == "properties" && forbiddenProperties[strings.ToLower(key)] {
+				if role == propertyMapRole && forbiddenProperties[strings.ToLower(key)] {
 					allowed := equalPath(childPath, []string{"components", "schemas", "ServiceAccountCreationResponse", "properties", "pm_automation_credential"})
 					if !allowed {
 						return fmt.Errorf("%s exposes forbidden secret-bearing public field %q", strings.Join(childPath, "."), key)
 					}
 				}
-				if key == "$ref" {
+				if objectField && key == "$ref" {
 					if reference, ok := typed[key].(string); ok && reference == "#/components/schemas/ServiceAccountCreationResponse" {
 						credentialRefs = append(credentialRefs, strings.Join(childPath, "."))
 					}
 				}
-				childIsSchema := namedSchemaMember
-				if !childIsSchema {
-					if schema {
-						childIsSchema = schemaChildren[key]
-					} else {
-						childIsSchema = key == "schema"
+
+				childRole := openAPIObjectRole
+				switch role {
+				case componentNameMapRole, namedOpenAPIObjectMapRole:
+					childRole = openAPIObjectRole
+				case namedSchemaMapRole, propertyMapRole:
+					childRole = schemaObjectRole
+				case exampleNameMapRole:
+					childRole = exampleObjectRole
+				case componentsObjectRole:
+					switch {
+					case key == "schemas":
+						childRole = namedSchemaMapRole
+					case key == "examples":
+						childRole = exampleNameMapRole
+					case componentMaps[key]:
+						childRole = componentNameMapRole
+					}
+				case schemaObjectRole:
+					switch {
+					case key == "properties":
+						childRole = propertyMapRole
+					case schemaChildren[key]:
+						childRole = schemaObjectRole
+					}
+				case exampleObjectRole:
+					if key == "value" {
+						childRole = literalDataRole
+					}
+				case openAPIObjectRole:
+					switch {
+					case key == "components":
+						childRole = componentsObjectRole
+					case key == "schema":
+						childRole = schemaObjectRole
+					case key == "examples":
+						childRole = exampleNameMapRole
+					case key == "example" || key == "default" || key == "enum":
+						childRole = literalDataRole
+					case key == "mapping" || key == "scopes" || key == "security":
+						childRole = literalDataRole
+					case openAPIObjectMaps[key]:
+						childRole = namedOpenAPIObjectMapRole
 					}
 				}
-				if err := walk(typed[key], childPath, childIsSchema); err != nil {
+				if err := walk(typed[key], childPath, childRole); err != nil {
 					return err
 				}
 			}
 		case []any:
 			for index, child := range typed {
-				if err := walk(child, appendPath(path, strconv.Itoa(index)), schema); err != nil {
+				if err := walk(child, appendPath(path, strconv.Itoa(index)), role); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if err := walk(source, nil, false); err != nil {
+	if err := walk(source, nil, openAPIObjectRole); err != nil {
 		return err
 	}
 	paths, ok := source["paths"].(map[string]any)

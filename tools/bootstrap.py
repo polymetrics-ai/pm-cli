@@ -51,6 +51,9 @@ MAX_ARCHIVE_TOTAL_BYTES = 12_000_000_000
 CHUNK_BYTES = 1024 * 1024
 BAZEL_BASE_URL = "https://github.com/bazelbuild/bazel/releases/download"
 BAZEL_VERSION = "9.2.0"
+BAZEL_GO_CACHE_COMMANDS = {"coverage", "test"}
+GO_CACHE_ENVIRONMENT_KEYS = ("GOCACHE", "GOMODCACHE")
+MAX_GO_CACHE_VALUE_BYTES = 4096
 EXPECTED_ASSET_VERSIONS = {
     "bazel": "9.2.0",
     "bazelisk": "1.29.0",
@@ -2234,6 +2237,69 @@ def _prepare_bazelisk_cache(
     return home
 
 
+def _bazel_command(arguments: Sequence[str]) -> str | None:
+    for argument in arguments:
+        if not argument.startswith("-"):
+            return argument
+    return None
+
+
+def _selected_go_cache_environment(
+    go: Path, environment: Mapping[str, str]
+) -> dict[str, str]:
+    query_environment = dict(environment)
+    query_environment.update(
+        {
+            "GOTOOLCHAIN": "local",
+            "GOWORK": "off",
+            "GOROOT": str(go.parent.parent),
+            "PATH": str(go.parent)
+            + os.pathsep
+            + query_environment.get("PATH", ""),
+        }
+    )
+    try:
+        result = subprocess.run(
+            [str(go), "env", "-json", *GO_CACHE_ENVIRONMENT_KEYS],
+            env=query_environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=15,
+        )
+    except (OSError, subprocess.SubprocessError, UnicodeError) as exc:
+        raise BootstrapError(
+            f"cannot resolve selected Go cache environment: {exc}"
+        ) from exc
+    try:
+        values = json.loads(
+            result.stdout,
+            object_pairs_hook=_reject_duplicate_keys,
+        )
+    except (UnicodeError, json.JSONDecodeError, BootstrapError) as exc:
+        raise BootstrapError(
+            f"selected Go returned invalid cache environment JSON: {exc}"
+        ) from exc
+    if not isinstance(values, dict) or set(values) != set(GO_CACHE_ENVIRONMENT_KEYS):
+        raise BootstrapError("selected Go returned unexpected cache environment keys")
+    resolved: dict[str, str] = {}
+    for name in GO_CACHE_ENVIRONMENT_KEYS:
+        value = values[name]
+        if not isinstance(value, str) or not value or "\0" in value:
+            raise BootstrapError(f"selected Go returned an invalid {name}")
+        try:
+            encoded_size = len(value.encode("utf-8"))
+        except UnicodeError as exc:
+            raise BootstrapError(
+                f"selected Go returned an invalid {name}"
+            ) from exc
+        if encoded_size > MAX_GO_CACHE_VALUE_BYTES:
+            raise BootstrapError(f"selected Go returned an oversized {name}")
+        resolved[name] = value
+    return resolved
+
+
 def _bazelisk_environment(
     lock: Mapping[str, object],
     selected_platform: str,
@@ -2424,6 +2490,10 @@ def _exec_tool(
             lock, selected_platform, cache, native
         )
         environment.update(additions)
+        if _bazel_command(arguments) in BAZEL_GO_CACHE_COMMANDS:
+            environment.update(
+                _selected_go_cache_environment(Path(additions["PM_GO"]), environment)
+            )
         environment.pop("BAZELISK_FORMAT_URL", None)
         argv = [
             str(executable),
