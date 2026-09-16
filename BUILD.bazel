@@ -5,6 +5,10 @@ load("@gazelle//:def.bzl", "gazelle")
 exports_files([
     "go.mod",
     "go.sum",
+    "packaging/install-manifest.schema.json",
+    "packaging/release-pair.schema.json",
+    "scripts/generate.sh",
+    "scripts/install.sh",
 ])
 
 gazelle(name = "gazelle")

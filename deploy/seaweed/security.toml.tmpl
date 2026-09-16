@@ -1,0 +1,53 @@
+[filer.expose_directory_metadata]
+enabled = false
+
+[jwt.signing]
+key = {{VOLUME_JWT_WRITE}}
+expires_after_seconds = 30
+
+[jwt.signing.read]
+key = {{VOLUME_JWT_READ}}
+expires_after_seconds = 30
+
+[jwt.filer_signing]
+key = {{FILER_JWT_WRITE}}
+expires_after_seconds = 30
+
+[jwt.filer_signing.read]
+key = {{FILER_JWT_READ}}
+expires_after_seconds = 30
+
+[grpc]
+ca = "/run/secrets/artifact-ca.pem"
+allowed_wildcard_domain = ".pm-stack.internal"
+
+[grpc.master]
+cert = "/run/secrets/artifact-server.pem"
+key = "/run/secrets/artifact-server-key.pem"
+client_cert = "/run/secrets/artifact-server.pem"
+client_key = "/run/secrets/artifact-server-key.pem"
+
+[grpc.volume]
+cert = "/run/secrets/artifact-server.pem"
+key = "/run/secrets/artifact-server-key.pem"
+client_cert = "/run/secrets/artifact-server.pem"
+client_key = "/run/secrets/artifact-server-key.pem"
+
+[grpc.filer]
+cert = "/run/secrets/artifact-server.pem"
+key = "/run/secrets/artifact-server-key.pem"
+client_cert = "/run/secrets/artifact-server.pem"
+client_key = "/run/secrets/artifact-server-key.pem"
+
+[grpc.s3]
+cert = "/run/secrets/artifact-server.pem"
+key = "/run/secrets/artifact-server-key.pem"
+client_cert = "/run/secrets/artifact-server.pem"
+client_key = "/run/secrets/artifact-server-key.pem"
+
+[grpc.client]
+cert = "/run/secrets/artifact-server.pem"
+key = "/run/secrets/artifact-server-key.pem"
+
+[s3.sse]
+key = {{SSE_KEY}}

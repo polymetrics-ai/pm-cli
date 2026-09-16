@@ -1,0 +1,287 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.polymetrics.dev/pm/install-manifest/v1",
+  "title": "PM Install Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "release_id",
+    "arrangement",
+    "platform",
+    "release_pair",
+    "files"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "pm.install-manifest/v1"
+    },
+    "release_id": {
+      "$ref": "#/$defs/releaseID"
+    },
+    "arrangement": {
+      "enum": ["client-only", "backend-only", "full"]
+    },
+    "platform": {
+      "type": "string",
+      "maxLength": 64,
+      "pattern": "^(?:any|[a-z0-9]+-[a-z0-9_]+)$"
+    },
+    "release_pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 4096,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/file"
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "arrangement": {
+            "const": "client-only"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "files": {
+            "contains": {
+              "properties": {
+                "role": {
+                  "const": "cli"
+                }
+              },
+              "required": ["role"]
+            },
+            "items": {
+              "allOf": [
+                {
+                  "$ref": "#/$defs/file"
+                },
+                {
+                  "properties": {
+                    "role": {
+                      "enum": ["cli", "public_schema", "license", "notice"]
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "arrangement": {
+            "enum": ["backend-only", "full"]
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "files": {
+            "allOf": [
+              {
+                "contains": {
+                  "properties": {
+                    "role": {
+                      "const": "api"
+                    }
+                  },
+                  "required": ["role"]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "role": {
+                      "const": "worker"
+                    }
+                  },
+                  "required": ["role"]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "role": {
+                      "const": "query_helper"
+                    }
+                  },
+                  "required": ["role"]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "role": {
+                      "const": "public_schema"
+                    }
+                  },
+                  "required": ["role"]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "role": {
+                      "const": "server_config_schema"
+                    }
+                  },
+                  "required": ["role"]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "role": {
+                      "const": "stack_launcher"
+                    }
+                  },
+                  "required": ["role"]
+                }
+              },
+              {
+                "contains": {
+                  "properties": {
+                    "role": {
+                      "const": "server_config_example"
+                    }
+                  },
+                  "required": ["role"]
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "arrangement": {
+            "const": "backend-only"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "files": {
+            "items": {
+              "not": {
+                "properties": {
+                  "role": {
+                    "const": "cli"
+                  }
+                },
+                "required": ["role"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "arrangement": {
+            "const": "full"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "files": {
+            "contains": {
+              "properties": {
+                "role": {
+                  "const": "cli"
+                }
+              },
+              "required": ["role"]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "releaseID": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^[^/\\\\]+(?:/[^/\\\\]+)*$",
+      "not": {
+        "pattern": "(^|/)\\.{1,2}(/|$)"
+      }
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "role": {
+      "enum": [
+        "cli",
+        "api",
+        "worker",
+        "query_helper",
+        "public_schema",
+        "server_config_schema",
+        "stack_launcher",
+        "server_config_example",
+        "license",
+        "notice",
+        "image_lock",
+        "connector_bundle",
+        "migration"
+      ]
+    },
+    "file": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source", "destination", "sha256", "mode", "role"],
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "destination": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "mode": {
+          "enum": ["0644", "0755"]
+        },
+        "role": {
+          "$ref": "#/$defs/role"
+        }
+      }
+    }
+  }
+}

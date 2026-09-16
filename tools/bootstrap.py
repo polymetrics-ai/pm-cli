@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Resolve and execute the repository's exact, digest-pinned build tools."""
+"""Resolve and execute the repository's exact, digest-pinned build and operator tools."""
 
 from __future__ import annotations
 
@@ -40,7 +40,7 @@ SUPPORTED_PLATFORMS = {
     ("linux", "arm64"): "linux-arm64",
     ("linux", "aarch64"): "linux-arm64",
 }
-REQUIRED_ASSETS = {"bazel", "bazelisk", "clang", "go", "syft"}
+REQUIRED_ASSETS = {"bazel", "bazelisk", "clang", "docker-compose", "go", "syft"}
 REQUIRED_MODULES = {"gazelle", "rules_go"}
 SUPPORTED_KINDS = {"binary", "tar.gz", "tar.xz", "zip"}
 MAX_LOCK_BYTES = 4 * 1024 * 1024
@@ -55,6 +55,7 @@ EXPECTED_ASSET_VERSIONS = {
     "bazel": "9.2.0",
     "bazelisk": "1.29.0",
     "clang": "21.1.8",
+    "docker-compose": "5.5.1",
     "go": "1.27.1",
     "syft": "1.51.1",
 }
@@ -2286,10 +2287,12 @@ def _print_environment(
         bazel, str(bazel_asset["sha256"]), selected_platform, cache
     )
     syft_asset, syft = _resolve_tool(lock, "syft", selected_platform, cache)
+    compose_asset, compose = _resolve_tool(lock, "docker-compose", selected_platform, cache)
     selected = [
         bazel_asset,
         bazelisk_asset,
         clang_asset,
+        compose_asset,
         go_asset,
         syft_asset,
     ]
@@ -2313,6 +2316,7 @@ def _print_environment(
         "AR": native.environment.get("AR"),
         "BAZELISK": str(bazelisk),
         "SYFT": str(syft),
+        "DOCKER_COMPOSE": str(compose),
         "ASSET_ROOTS": [source["path"] for source in asset_sources],
         "ASSET_SOURCES": asset_sources,
         "native_environment": native.environment,
@@ -2324,6 +2328,10 @@ def _print_environment(
             "clang": {
                 "version": clang_asset["version"],
                 "sha256": clang_asset["sha256"],
+            },
+            "docker-compose": {
+                "version": compose_asset["version"],
+                "sha256": compose_asset["sha256"],
             },
             "bazelisk": {
                 "version": bazelisk_asset["version"],
@@ -2459,7 +2467,9 @@ def _parser() -> argparse.ArgumentParser:
     execute = subparsers.add_parser(
         "exec", help="replace this process with a locked tool"
     )
-    execute.add_argument("tool", choices=("go", "bazelisk", "clang", "clang++", "syft"))
+    execute.add_argument(
+        "tool", choices=("go", "bazelisk", "clang", "clang++", "docker-compose", "syft")
+    )
     execute.add_argument("arguments", nargs=argparse.REMAINDER, metavar="-- ARGS")
     subparsers.add_parser("print-env", help="print resolved paths and identities as JSON")
     return parser

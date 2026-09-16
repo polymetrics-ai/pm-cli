@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "source": "build/toolchains.lock.json",
+  "images": {
+    "caddy": {
+      "repository": "docker.io/library/caddy",
+      "tag": "2.11.4",
+      "index_digest": "sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017"
+    },
+    "postgres": {
+      "repository": "docker.io/library/postgres",
+      "tag": "16.15",
+      "index_digest": "sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94"
+    },
+    "seaweedfs": {
+      "repository": "docker.io/chrislusf/seaweedfs",
+      "tag": "4.46",
+      "index_digest": "sha256:08d516132314207d10c8e37cbffc1f32b147d870169688734cc61c6231625b62"
+    },
+    "temporal-admin-tools": {
+      "repository": "docker.io/temporalio/admin-tools",
+      "tag": "1.31.2",
+      "index_digest": "sha256:dbc5fcd6ee8f0f4d808bf765af9a87dea9d8a283abfdcfbd2fc148496ba66107"
+    },
+    "temporal-server": {
+      "repository": "docker.io/temporalio/server",
+      "tag": "1.31.2",
+      "index_digest": "sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da"
+    }
+  }
+}

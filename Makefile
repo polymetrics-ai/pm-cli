@@ -3,17 +3,27 @@ TOOLS = $(PYTHON) tools/bootstrap.py
 GO = $(TOOLS) exec go --
 BAZEL = $(TOOLS) exec bazelisk --
 
-.PHONY: all build test test-tools test-native test-setup test-docs vet boundaries bazel-build bazel-test gazelle benchmark check
+.PHONY: all build build-api-generator generate check-generated test test-tools test-native test-setup test-docs vet boundaries bazel-build bazel-test gazelle benchmark check
 
 all: build
 
-build:
+build: build-api-generator
 	mkdir -p .cache/bin
 	CGO_ENABLED=1 $(GO) build -o .cache/bin/nativeprobe ./build/nativeprobe
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/pm-dependency-check ./cmd/pm-dependency-check
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/staticcheck honnef.co/go/tools/cmd/staticcheck
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/govulncheck golang.org/x/vuln/cmd/govulncheck
+
+build-api-generator:
+	mkdir -p .cache/bin
+	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate
+
+generate: build-api-generator
+	sh scripts/generate.sh
+
+check-generated: build-api-generator
+	sh scripts/generate.sh --check
 
 test: test-tools test-native
 
@@ -26,6 +36,7 @@ test-native:
 test-setup:
 	$(PYTHON) -I -B scripts/ci/check-setup.py --root . --policy scripts/ci/setup-policy.json
 	$(PYTHON) -I -B scripts/ci/test_setup.py
+	$(PYTHON) -I -B scripts/ci/test_stack_fixture.py
 	$(PYTHON) -I -B tools/test_bootstrap.py
 
 test-docs:
@@ -51,4 +62,4 @@ gazelle:
 benchmark:
 	$(PYTHON) scripts/ci/benchmark.py
 
-check: test-setup test-docs build test vet boundaries bazel-build bazel-test
+check: test-setup test-docs build check-generated test vet boundaries bazel-build bazel-test

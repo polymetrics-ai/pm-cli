@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polymetrics.ai/schemas/workflow-ref.schema.json",
+  "title": "PM stable run to Temporal execution-chain binding",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["run_id", "origin", "workflow_id", "adopted", "generation", "observations"],
+  "properties": {
+    "run_id": { "$ref": "#/$defs/identity" },
+    "origin": { "enum": ["api", "schedule", "recovery"] },
+    "workflow_id": { "$ref": "#/$defs/identity" },
+    "adopted": { "type": "boolean" },
+    "generation": { "type": "integer", "minimum": 1, "maximum": 18446744073709551615 },
+    "observations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/observation" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "origin": { "const": "api" } },
+        "required": ["origin"]
+      },
+      "then": {
+        "properties": {
+          "run_id": { "$ref": "#/$defs/uuid" },
+          "workflow_id": {
+            "type": "string",
+            "pattern": "^pm/run/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+          },
+          "adopted": { "const": false }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "origin": { "const": "schedule" } },
+        "required": ["origin"]
+      },
+      "then": {
+        "properties": {
+          "adopted": { "const": true },
+          "observations": { "minItems": 1 }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": { "origin": { "const": "recovery" } },
+        "required": ["origin"]
+      },
+      "then": {
+        "properties": {
+          "adopted": { "const": false },
+          "generation": { "minimum": 2 }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?:\\S|\\S.*\\S)$"
+    },
+    "utcInstant": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "uuid": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["temporal_run_id", "observed_at"],
+      "properties": {
+        "temporal_run_id": { "$ref": "#/$defs/identity" },
+        "observed_at": { "$ref": "#/$defs/utcInstant" }
+      }
+    }
+  }
+}

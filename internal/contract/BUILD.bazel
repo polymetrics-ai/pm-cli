@@ -1,0 +1,49 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "contract",
+    srcs = [
+        "approval.go",
+        "capability.go",
+        "command.go",
+        "compatibility.go",
+        "credential.go",
+        "digest.go",
+        "dispatch.go",
+        "effect.go",
+        "error.go",
+        "event.go",
+        "field_binding.go",
+        "flow.go",
+        "foundation.go",
+        "identity.go",
+        "object.go",
+        "operation.go",
+        "policy.go",
+        "principal.go",
+        "profile.go",
+        "run.go",
+        "schedule.go",
+        "schema.go",
+        "settlement.go",
+        "task.go",
+        "tenant.go",
+        "value.go",
+        "workflow.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/contract",
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "contract_test",
+    srcs = [
+        "digest_test.go",
+        "schema_test.go",
+        "state_test.go",
+        "value_test.go",
+    ],
+    data = ["//schemas:contract_schemas"],
+    embed = [":contract"],
+    deps = ["@com_github_santhosh_tekuri_jsonschema_v6//:jsonschema"],
+)

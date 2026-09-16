@@ -1,0 +1,15 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library")
+
+go_library(
+    name = "pm-stack_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/cmd/pm-stack",
+    visibility = ["//visibility:private"],
+    deps = ["//internal/stack"],
+)
+
+go_binary(
+    name = "pm-stack",
+    embed = [":pm-stack_lib"],
+    visibility = ["//visibility:public"],
+)

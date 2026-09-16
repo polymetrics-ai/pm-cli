@@ -1,0 +1,53 @@
+{
+  "schema_version": "1",
+  "deployment_id": "pm-standard",
+  "public_origin": "https://pm.example.invalid",
+  "postgres": {
+    "ownership": "managed",
+    "database": "pm_app",
+    "endpoint_ref": "secret://operator/pm-standard-postgres-dsn"
+  },
+  "temporal": {
+    "ownership": "managed",
+    "endpoint": "temporal.example.invalid:7233",
+    "namespace": "pm-standard",
+    "client_identity_ref": "secret://operator/pm-standard-temporal-mtls",
+    "retention": "720h",
+    "task_queues": [
+      "pm-control",
+      "pm-read",
+      "pm-effect",
+      "pm-binary-query"
+    ]
+  },
+  "artifacts": {
+    "ownership": "managed",
+    "driver": "s3",
+    "endpoint": "https://objects.example.invalid",
+    "bucket": "pm-standard-artifacts",
+    "credential_ref": "secret://operator/pm-standard-object-access",
+    "attempt_key_policy": "unique_immutable"
+  },
+  "identity": {
+    "issuer": "https://identity.example.invalid",
+    "client_id": "pm-server",
+    "client_secret_ref": "secret://operator/pm-standard-oidc"
+  },
+  "encryption": {
+    "wrapping_key_ref": "secret://operator/pm-standard-wrap"
+  },
+  "admission": {
+    "profile": "standard"
+  },
+  "limits": {
+    "workspace_active_runs": 32,
+    "workflow_payload_bytes": 65536,
+    "workflow_fanout": 32,
+    "event_buffer": 1024,
+    "query_children": 2,
+    "query_child_memory_bytes": 4294967296,
+    "query_child_deadline": "5m",
+    "request_bytes": 1048576,
+    "metadata_deadline": "5s"
+  }
+}

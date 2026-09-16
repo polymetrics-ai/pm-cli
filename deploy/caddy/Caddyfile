@@ -1,0 +1,15 @@
+{
+	admin off
+	auto_https off
+}
+
+:9443 {
+	tls /run/secrets/artifact-server.pem /run/secrets/artifact-server-key.pem
+	reverse_proxy https://seaweed-s3-a:8333 https://seaweed-s3-b:8333 {
+		lb_policy round_robin
+		transport http {
+			tls_trust_pool file /run/secrets/artifact-ca.pem
+			tls_server_name seaweed-s3.pm-stack.internal
+		}
+	}
+}

@@ -1,0 +1,288 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polymetrics.ai/schemas/proof.schema.json",
+  "title": "PM connector qualification proof",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "proof_version",
+    "connector_id",
+    "lane",
+    "operation_id",
+    "behavior_id",
+    "case_id",
+    "run_id",
+    "source_hashes",
+    "bundle_hash",
+    "schema_hash",
+    "assertion_hash",
+    "pm_client_hash",
+    "pm_api_hash",
+    "pm_worker_hash",
+    "query_helper_hash_if_used",
+    "handler_versions",
+    "workspace_account_scope_hash",
+    "command",
+    "request",
+    "response",
+    "assertions",
+    "effect",
+    "status",
+    "started_at",
+    "finished_at",
+    "provenance"
+  ],
+  "properties": {
+    "proof_version": {"const": "pm.proof/v1"},
+    "connector_id": {"$ref": "#/$defs/identity"},
+    "lane": {"$ref": "#/$defs/lane"},
+    "operation_id": {"$ref": "#/$defs/identity"},
+    "behavior_id": {"$ref": "#/$defs/identity"},
+    "case_id": {"$ref": "#/$defs/identity"},
+    "run_id": {"$ref": "#/$defs/nullableIdentity"},
+    "source_hashes": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/hash"}
+    },
+    "bundle_hash": {"$ref": "#/$defs/nullableHash"},
+    "schema_hash": {"$ref": "#/$defs/nullableHash"},
+    "assertion_hash": {"$ref": "#/$defs/hash"},
+    "pm_client_hash": {"$ref": "#/$defs/nullableHash"},
+    "pm_api_hash": {"$ref": "#/$defs/nullableHash"},
+    "pm_worker_hash": {"$ref": "#/$defs/nullableHash"},
+    "query_helper_hash_if_used": {"$ref": "#/$defs/nullableHash"},
+    "handler_versions": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "propertyNames": {"$ref": "#/$defs/identity"},
+          "additionalProperties": {"$ref": "#/$defs/identity"}
+        }
+      ]
+    },
+    "workspace_account_scope_hash": {"$ref": "#/$defs/nullableHash"},
+    "command": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"type": "string", "maxLength": 4096}
+    },
+    "request": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/requestObservation"}
+      ]
+    },
+    "response": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/responseObservation"}
+      ]
+    },
+    "assertions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {"$ref": "#/$defs/assertionObservation"}
+    },
+    "effect": {"$ref": "#/$defs/effect"},
+    "status": {"enum": ["unproven", "blocked", "failed", "passed_fake", "passed_live"]},
+    "started_at": {"$ref": "#/$defs/nullableInstant"},
+    "finished_at": {"$ref": "#/$defs/nullableInstant"},
+    "provenance": {"$ref": "#/$defs/provenance"}
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {"enum": ["passed_fake", "passed_live"]}
+        }
+      },
+      "then": {
+        "properties": {
+          "run_id": {"$ref": "#/$defs/identity"},
+          "bundle_hash": {"$ref": "#/$defs/hash"},
+          "schema_hash": {"$ref": "#/$defs/hash"},
+          "pm_client_hash": {"$ref": "#/$defs/hash"},
+          "pm_api_hash": {"$ref": "#/$defs/hash"},
+          "pm_worker_hash": {"$ref": "#/$defs/hash"},
+          "handler_versions": {"type": "object", "minProperties": 1},
+          "workspace_account_scope_hash": {"$ref": "#/$defs/hash"},
+          "request": {"$ref": "#/$defs/requestObservation"},
+          "response": {"$ref": "#/$defs/responseObservation"},
+          "started_at": {"type": "string", "format": "date-time"},
+          "finished_at": {"type": "string", "format": "date-time"}
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "passed_fake"}
+        }
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "execution_kind": {"const": "fake"}
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {"const": "passed_live"}
+        }
+      },
+      "then": {
+        "properties": {
+          "provenance": {
+            "properties": {
+              "execution_kind": {"const": "live"}
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(\\S|\\S.*\\S)$"
+    },
+    "nullableIdentity": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/identity"}
+      ]
+    },
+    "hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "nullableHash": {
+      "oneOf": [
+        {"type": "null"},
+        {"$ref": "#/$defs/hash"}
+      ]
+    },
+    "nullableInstant": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "string", "format": "date-time"}
+      ]
+    },
+    "lane": {
+      "enum": [
+        "direct_read",
+        "direct_write",
+        "etl",
+        "reverse_etl",
+        "binary_download",
+        "binary_upload",
+        "sync_transport"
+      ]
+    },
+    "requestObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["method", "target", "media_type", "sanitized_fields", "redactions"],
+      "properties": {
+        "method": {"type": "string", "minLength": 1, "maxLength": 64},
+        "target": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "media_type": {"type": "string", "maxLength": 512},
+        "body_sha256": {"$ref": "#/$defs/hash"},
+        "sanitized_fields": {"$ref": "#/$defs/sanitizedObject"},
+        "redactions": {"$ref": "#/$defs/redactions"}
+      }
+    },
+    "responseObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status", "media_type", "sanitized_fields", "redactions"],
+      "properties": {
+        "status": {"type": "integer", "minimum": 100, "maximum": 599},
+        "media_type": {"type": "string", "maxLength": 512},
+        "body_sha256": {"$ref": "#/$defs/hash"},
+        "sanitized_fields": {"$ref": "#/$defs/sanitizedObject"},
+        "redactions": {"$ref": "#/$defs/redactions"}
+      }
+    },
+    "redactions": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["pointer", "replacement"],
+        "properties": {
+          "pointer": {"type": "string", "pattern": "^(/([^~]|~[01])*)*$"},
+          "replacement": {"enum": ["hash", "scoped_reference", "excluded"]}
+        }
+      }
+    },
+    "assertionObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["assertion_id", "expected", "observed", "passed"],
+      "properties": {
+        "assertion_id": {"$ref": "#/$defs/identity"},
+        "expected": {"$ref": "#/$defs/sanitizedValue"},
+        "observed": {"$ref": "#/$defs/sanitizedValue"},
+        "passed": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["state", "receipt_refs", "owned_object_refs"],
+      "properties": {
+        "state": {"enum": ["unsent", "succeeded", "unchanged", "rejected", "unknown"]},
+        "receipt_refs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identity"}
+        },
+        "owned_object_refs": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/identity"}
+        }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["execution_kind", "host_class", "original_run_id", "reused"],
+      "properties": {
+        "execution_kind": {"enum": ["planned", "fake", "live"]},
+        "host_class": {"$ref": "#/$defs/nullableIdentity"},
+        "original_run_id": {"$ref": "#/$defs/nullableIdentity"},
+        "reused": {
+          "type": ["boolean", "null"]
+        }
+      }
+    },
+    "sanitizedObject": {
+      "type": "object",
+      "propertyNames": {"type": "string", "minLength": 1, "maxLength": 1024},
+      "additionalProperties": {"$ref": "#/$defs/sanitizedValue"}
+    },
+    "sanitizedValue": {
+      "oneOf": [
+        {"type": "null"},
+        {"type": "boolean"},
+        {"type": "number"},
+        {"type": "string", "maxLength": 16384},
+        {"type": "array", "items": {"$ref": "#/$defs/sanitizedValue"}},
+        {"$ref": "#/$defs/sanitizedObject"}
+      ]
+    }
+  }
+}

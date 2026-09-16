@@ -1,0 +1,7 @@
+exports_files([
+    "controls.json",
+    "generated.sha256",
+    "oapi-codegen.yaml",
+    "pm.openapi.json",
+    "pm.openapi.yaml",
+])
