@@ -469,7 +469,18 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 
 func TestGeneratedContractBoundary(t *testing.T) {
 	root := repositoryRoot(t)
-	generator := generatorBinary(t, root)
+	generator := generatorLauncher(t, root)
+	toolPath := t.TempDir()
+	for _, name := range []string{"python3", "sh", "dirname"} {
+		executable, err := exec.LookPath(name)
+		if err != nil {
+			t.Fatalf("resolve declared generation helper %s: %v", name, err)
+		}
+		if err := os.Symlink(executable, filepath.Join(toolPath, name)); err != nil {
+			t.Fatalf("bind declared generation helper %s: %v", name, err)
+		}
+	}
+	t.Setenv("PATH", toolPath)
 	outputs := []string{
 		"api/generated.sha256",
 		"api/pm.openapi.json",
@@ -1090,7 +1101,7 @@ func repositoryRoot(t *testing.T) string {
 	return root
 }
 
-func generatorBinary(t *testing.T, root string) string {
+func generatorLauncher(t *testing.T, root string) string {
 	t.Helper()
 	path := os.Getenv("PM_API_GENERATE")
 	if path == "" {
@@ -1102,7 +1113,8 @@ func generatorBinary(t *testing.T, root string) string {
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("required generated-contract tool %s is unavailable: %v", path, err)
 	}
-	return path
+	t.Setenv("PM_API_GENERATE", path)
+	return filepath.Join(root, "scripts", "generate.sh")
 }
 
 func runGenerator(t *testing.T, generator, root, outputRoot string, check bool, spec string) {
