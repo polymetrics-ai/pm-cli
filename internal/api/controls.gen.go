@@ -103,45 +103,46 @@ var operationIDsByRoute = map[string]string{
 type JSONFieldControl struct {
 	AllowedFields  []string
 	RequiredFields []string
+	Nullable       bool
 }
 
 var operationObjectControls = map[string]map[string]JSONFieldControl{
 	"createDelegation": {
-		"":            {AllowedFields: []string{"delegation", "protocol"}, RequiredFields: []string{"delegation", "protocol"}},
-		"/delegation": {AllowedFields: []string{"connection_scopes", "effective_actor_ref", "expires_at", "operation_scopes", "requested_actor_ref", "workspace_scopes"}, RequiredFields: []string{"connection_scopes", "effective_actor_ref", "expires_at", "operation_scopes", "requested_actor_ref", "workspace_scopes"}},
-		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}},
+		"":            {AllowedFields: []string{"delegation", "protocol"}, RequiredFields: []string{"delegation", "protocol"}, Nullable: false},
+		"/delegation": {AllowedFields: []string{"connection_scopes", "effective_actor_ref", "expires_at", "operation_scopes", "requested_actor_ref", "workspace_scopes"}, RequiredFields: []string{"connection_scopes", "effective_actor_ref", "expires_at", "operation_scopes", "requested_actor_ref", "workspace_scopes"}, Nullable: false},
+		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
 	},
 	"createServiceAccount": {
-		"":                 {AllowedFields: []string{"protocol", "service_account"}, RequiredFields: []string{"protocol", "service_account"}},
-		"/protocol":        {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}},
-		"/service_account": {AllowedFields: []string{"connection_scopes", "display_name", "expires_at", "operation_scopes", "workspace_scopes"}, RequiredFields: []string{"connection_scopes", "display_name", "expires_at", "operation_scopes", "workspace_scopes"}},
+		"":                 {AllowedFields: []string{"protocol", "service_account"}, RequiredFields: []string{"protocol", "service_account"}, Nullable: false},
+		"/protocol":        {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
+		"/service_account": {AllowedFields: []string{"connection_scopes", "display_name", "expires_at", "operation_scopes", "workspace_scopes"}, RequiredFields: []string{"connection_scopes", "display_name", "expires_at", "operation_scopes", "workspace_scopes"}, Nullable: false},
 	},
 	"grantMembership": {
-		"":            {AllowedFields: []string{"membership", "protocol"}, RequiredFields: []string{"membership", "protocol"}},
-		"/membership": {AllowedFields: []string{"expires_at", "principal_ref", "resource_grants", "role"}, RequiredFields: []string{"expires_at", "principal_ref", "resource_grants", "role"}},
-		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}},
+		"":            {AllowedFields: []string{"membership", "protocol"}, RequiredFields: []string{"membership", "protocol"}, Nullable: false},
+		"/membership": {AllowedFields: []string{"expires_at", "principal_ref", "resource_grants", "role"}, RequiredFields: []string{"expires_at", "principal_ref", "resource_grants", "role"}, Nullable: false},
+		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
 	},
 	"revokeDelegation": {
-		"":            {AllowedFields: []string{"delegation", "protocol"}, RequiredFields: []string{"delegation", "protocol"}},
-		"/delegation": {AllowedFields: []string{"delegation_ref", "effective_actor_ref", "expires_at", "requested_actor_ref", "scope_digest"}, RequiredFields: []string{"delegation_ref", "effective_actor_ref", "expires_at", "requested_actor_ref", "scope_digest"}},
-		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}},
+		"":            {AllowedFields: []string{"delegation", "protocol"}, RequiredFields: []string{"delegation", "protocol"}, Nullable: false},
+		"/delegation": {AllowedFields: []string{"delegation_ref", "effective_actor_ref", "expires_at", "requested_actor_ref", "scope_digest"}, RequiredFields: []string{"delegation_ref", "effective_actor_ref", "expires_at", "requested_actor_ref", "scope_digest"}, Nullable: false},
+		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
 	},
 	"revokeMembership": {
-		"":            {AllowedFields: []string{"membership", "protocol"}, RequiredFields: []string{"membership", "protocol"}},
-		"/membership": {AllowedFields: []string{"bound_scope_digest", "expires_at", "membership_ref"}, RequiredFields: []string{"bound_scope_digest", "expires_at", "membership_ref"}},
-		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}},
+		"":            {AllowedFields: []string{"membership", "protocol"}, RequiredFields: []string{"membership", "protocol"}, Nullable: false},
+		"/membership": {AllowedFields: []string{"bound_scope_digest", "expires_at", "membership_ref"}, RequiredFields: []string{"bound_scope_digest", "expires_at", "membership_ref"}, Nullable: false},
+		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
 	},
 	"revokeServiceAccount": {
-		"":                 {AllowedFields: []string{"protocol", "service_account"}, RequiredFields: []string{"protocol", "service_account"}},
-		"/protocol":        {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}},
-		"/service_account": {AllowedFields: []string{"expires_at", "grant_revision", "service_account_ref"}, RequiredFields: []string{"expires_at", "grant_revision", "service_account_ref"}},
+		"":                 {AllowedFields: []string{"protocol", "service_account"}, RequiredFields: []string{"protocol", "service_account"}, Nullable: false},
+		"/protocol":        {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
+		"/service_account": {AllowedFields: []string{"expires_at", "grant_revision", "service_account_ref"}, RequiredFields: []string{"expires_at", "grant_revision", "service_account_ref"}, Nullable: false},
 	},
 	"submitInvocation": {
-		"":                           {AllowedFields: []string{"approval_ref", "connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"}, RequiredFields: []string{"connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"}},
-		"/protocol":                  {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}},
-		"/result_controls":           {AllowedFields: []string{"filter", "selection"}, RequiredFields: []string{}},
-		"/result_controls/filter":    {AllowedFields: []string{"operator", "path", "value"}, RequiredFields: []string{"operator", "path"}},
-		"/result_controls/selection": {AllowedFields: []string{"paths"}, RequiredFields: []string{"paths"}},
+		"":                           {AllowedFields: []string{"approval_ref", "connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"}, RequiredFields: []string{"connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"}, Nullable: false},
+		"/protocol":                  {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
+		"/result_controls":           {AllowedFields: []string{"filter", "selection"}, RequiredFields: []string{}, Nullable: false},
+		"/result_controls/filter":    {AllowedFields: []string{"operator", "path", "value"}, RequiredFields: []string{"operator", "path"}, Nullable: false},
+		"/result_controls/selection": {AllowedFields: []string{"paths"}, RequiredFields: []string{"paths"}, Nullable: false},
 	},
 }
 

@@ -281,14 +281,21 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 		"prefixItems": true, "propertyNames": true, "then": true,
 		"unevaluatedItems": true, "unevaluatedProperties": true,
 	}
+	literalSchemaKeywords := map[string]bool{
+		"const": true, "default": true, "enum": true, "example": true, "examples": true,
+	}
+	schemaChildren := map[string]bool{
+		"additionalProperties": true, "allOf": true, "anyOf": true,
+		"items": true, "not": true, "oneOf": true,
+	}
 	forbiddenProperties := map[string]bool{
 		"access_token": true, "api_key": true, "client_secret": true,
 		"credential_value": true, "password": true, "pm_automation_credential": true,
 		"provider_credential": true, "provider_secret": true, "refresh_token": true, "secret": true,
 	}
 	credentialRefs := make([]string, 0, 1)
-	var walk func(any, []string) error
-	walk = func(value any, path []string) error {
+	var walk func(any, []string, bool) error
+	walk = func(value any, path []string, schema bool) error {
 		switch typed := value.(type) {
 		case map[string]any:
 			keys := make([]string, 0, len(typed))
@@ -299,8 +306,17 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 			for _, key := range keys {
 				childPath := appendPath(path, key)
 				namedSchemaMember := len(path) != 0 && (path[len(path)-1] == "properties" || path[len(path)-1] == "schemas")
-				if unsupportedKeywords[key] && !namedSchemaMember {
+				if !namedSchemaMember && (strings.HasPrefix(strings.ToLower(key), "x-") || (!schema && (key == "example" || key == "value"))) {
+					continue
+				}
+				if schema && unsupportedKeywords[key] {
 					return fmt.Errorf("%s uses schema keyword %q that the selected generator does not project losslessly", strings.Join(childPath, "."), key)
+				}
+				if schema && literalSchemaKeywords[key] {
+					if key == "const" && typed[key] == nil {
+						return fmt.Errorf("%s: explicit null const cannot be projected losslessly", strings.Join(childPath, "."))
+					}
+					continue
 				}
 				if len(path) != 0 && path[len(path)-1] == "properties" && forbiddenProperties[strings.ToLower(key)] {
 					allowed := equalPath(childPath, []string{"components", "schemas", "ServiceAccountCreationResponse", "properties", "pm_automation_credential"})
@@ -313,20 +329,28 @@ func validateAuthoringSpecNode(node *yaml.Node) error {
 						credentialRefs = append(credentialRefs, strings.Join(childPath, "."))
 					}
 				}
-				if err := walk(typed[key], childPath); err != nil {
+				childIsSchema := namedSchemaMember
+				if !childIsSchema {
+					if schema {
+						childIsSchema = schemaChildren[key]
+					} else {
+						childIsSchema = key == "schema"
+					}
+				}
+				if err := walk(typed[key], childPath, childIsSchema); err != nil {
 					return err
 				}
 			}
 		case []any:
 			for index, child := range typed {
-				if err := walk(child, appendPath(path, strconv.Itoa(index))); err != nil {
+				if err := walk(child, appendPath(path, strconv.Itoa(index)), schema); err != nil {
 					return err
 				}
 			}
 		}
 		return nil
 	}
-	if err := walk(source, nil); err != nil {
+	if err := walk(source, nil, false); err != nil {
 		return err
 	}
 	paths, ok := source["paths"].(map[string]any)
@@ -896,7 +920,7 @@ func generateControlsSource(controls apiControls, document *openapi3.T) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	source.WriteString("type JSONFieldControl struct {\n\tAllowedFields []string\n\tRequiredFields []string\n}\n\n")
+	source.WriteString("type JSONFieldControl struct {\n\tAllowedFields []string\n\tRequiredFields []string\n\tNullable bool\n}\n\n")
 	source.WriteString("var operationObjectControls = map[string]map[string]JSONFieldControl{\n")
 	for _, operation := range controls.Operations {
 		source.WriteString("\t" + strconv.Quote(operation.OperationID) + ": {\n")
@@ -907,7 +931,7 @@ func generateControlsSource(controls apiControls, document *openapi3.T) ([]byte,
 		sort.Strings(pointers)
 		for _, pointer := range pointers {
 			control := objectControls[operation.OperationID][pointer]
-			fmt.Fprintf(&source, "\t\t%q: {AllowedFields: %#v, RequiredFields: %#v},\n", pointer, control.Allowed, control.Required)
+			fmt.Fprintf(&source, "\t\t%q: {AllowedFields: %#v, RequiredFields: %#v, Nullable: %t},\n", pointer, control.Allowed, control.Required, control.Nullable)
 		}
 		source.WriteString("\t},\n")
 	}
@@ -985,6 +1009,7 @@ func ginRoutePath(path string) string {
 type generatedObjectControl struct {
 	Allowed  []string
 	Required []string
+	Nullable bool
 }
 
 func collectOperationObjectControls(document *openapi3.T, controls apiControls) (map[string]map[string]generatedObjectControl, error) {
@@ -1032,7 +1057,8 @@ func collectSchemaObjectControls(reference *openapi3.SchemaRef, pointer string, 
 	defer delete(visiting, visitKey)
 
 	schema := reference.Value
-	if len(schema.Properties) != 0 {
+	objectSchema := len(schema.Properties) != 0 || (schema.Type != nil && schema.Type.Includes(openapi3.TypeObject))
+	if objectSchema {
 		allowed := make([]string, 0, len(schema.Properties))
 		for name := range schema.Properties {
 			allowed = append(allowed, name)
@@ -1040,7 +1066,7 @@ func collectSchemaObjectControls(reference *openapi3.SchemaRef, pointer string, 
 		sort.Strings(allowed)
 		required := append([]string(nil), schema.Required...)
 		sort.Strings(required)
-		mergeGeneratedObjectControl(result, pointer, allowed, required)
+		mergeGeneratedObjectControl(result, pointer, allowed, required, schemaAllowsNull(schema))
 		for _, name := range allowed {
 			collectSchemaObjectControls(schema.Properties[name], pointer+"/"+escapeJSONPointer(name), result, visiting)
 		}
@@ -1050,8 +1076,37 @@ func collectSchemaObjectControls(reference *openapi3.SchemaRef, pointer string, 
 	}
 }
 
-func mergeGeneratedObjectControl(result map[string]generatedObjectControl, pointer string, allowed, required []string) {
-	existing := result[pointer]
+func schemaAllowsNull(schema *openapi3.Schema) bool {
+	if schema == nil {
+		return false
+	}
+	if schema.Always != nil {
+		return *schema.Always
+	}
+	if !schema.Nullable && schema.Type != nil && !schema.Type.IncludesNull() {
+		return false
+	}
+	if schema.Const != nil {
+		return false
+	}
+	if len(schema.Enum) != 0 {
+		for _, value := range schema.Enum {
+			if value == nil {
+				return true
+			}
+		}
+		return false
+	}
+	return true
+}
+
+func mergeGeneratedObjectControl(result map[string]generatedObjectControl, pointer string, allowed, required []string, nullable bool) {
+	existing, present := result[pointer]
+	if !present {
+		existing.Nullable = nullable
+	} else {
+		existing.Nullable = existing.Nullable && nullable
+	}
 	existing.Allowed = unionSortedStrings(existing.Allowed, allowed)
 	existing.Required = unionSortedStrings(existing.Required, required)
 	result[pointer] = existing

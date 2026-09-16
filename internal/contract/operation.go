@@ -124,7 +124,11 @@ func (o Operation) Validate(supported []FoundationContract) error {
 		return contractError(ErrInvalidContract, "inputs", "must be explicitly declared, even when empty")
 	}
 	seenFieldIDs := make(map[string]struct{}, len(o.Inputs))
-	seenWireLocations := make(map[string]struct{}, len(o.Inputs))
+	type wireLocation struct {
+		location FieldLocation
+		address  string
+	}
+	seenWireLocations := make(map[wireLocation]struct{}, len(o.Inputs))
 	for _, input := range o.Inputs {
 		if err := input.Validate(); err != nil {
 			return err
@@ -133,9 +137,14 @@ func (o Operation) Validate(supported []FoundationContract) error {
 			return contractError(ErrDuplicateField, "inputs.field_id", "stable field ID is duplicated")
 		}
 		seenFieldIDs[input.FieldID] = struct{}{}
-		wireKey := string(input.Location) + "\x00" + input.WireName
+		address := input.WireName
+		switch input.Location {
+		case FieldLocationBody, FieldLocationRecord, FieldLocationMetadata:
+			address = input.JSONPointer
+		}
+		wireKey := wireLocation{location: input.Location, address: address}
 		if _, duplicate := seenWireLocations[wireKey]; duplicate {
-			return contractError(ErrDuplicateField, "inputs.wire_name", "wire name is duplicated at one location")
+			return contractError(ErrDuplicateField, "inputs", "wire location is duplicated")
 		}
 		seenWireLocations[wireKey] = struct{}{}
 	}

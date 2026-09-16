@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -100,6 +101,9 @@ func TestSelectedPostgresTemporalQualification(t *testing.T) {
 		t.Setenv("COMPOSE_DISABLE_ENV_FILE", "false")
 		t.Setenv("COMPOSE_ENV_FILES", filepath.Join(t.TempDir(), "must-not-read.env"))
 		runOperator(t, ctx, fixture.configPath, "up")
+	})
+	t.Run("cancelled changed-config contender preserves fenced deployment inputs", func(t *testing.T) {
+		qualifyDeploymentInputFence(t, fixture)
 	})
 
 	start := make(chan struct{})
@@ -239,6 +243,142 @@ func runOperator(t *testing.T, ctx context.Context, configPath string, action st
 	if err := stackoperator.Run(ctx, []string{action, "--config", configPath}, nil, &stdout, &stderr); err != nil {
 		t.Fatalf("pm-stack %s failed: %v", action, err)
 	}
+}
+
+func qualifyDeploymentInputFence(t *testing.T, fixture selectedStackFixture) {
+	t.Helper()
+	stateDir := requiredEnvironment(t, "PM_STACK_STATE_DIR")
+	lock, err := os.OpenFile(filepath.Join(stateDir, "operation.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatalf("open deployment fence: %v", err)
+	}
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		_ = lock.Close()
+		t.Fatalf("acquire deployment fence: %v", err)
+	}
+	defer func() {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}()
+
+	inputNames := []string{"bootstrap.sql", "temporal.yaml", "filer.toml", "security.toml", "s3.json"}
+	holderInputs := make(map[string][]byte, len(inputNames))
+	for _, name := range inputNames {
+		value, err := os.ReadFile(filepath.Join(stateDir, name))
+		if err != nil {
+			t.Fatalf("read holder deployment input %q: %v", name, err)
+		}
+		holderInputs[name] = value
+	}
+
+	contenderConfig := writeFencedContenderProjection(t, fixture.configPath)
+	clonedRoot, clonedPostgres, clonedArtifacts := cloneSelectedSecretRoot(t, fixture)
+	suffix := uniqueSuffix(t)
+	for _, replacement := range []struct {
+		directory string
+		name      string
+		value     string
+	}{
+		{clonedPostgres, "temporal-runtime-password", "contender-temporal-" + suffix},
+		{clonedPostgres, "temporal-visibility-runtime-password", "contender-visibility-" + suffix},
+		{clonedPostgres, "objects-runtime-password", "contender-objects-" + suffix},
+		{clonedArtifacts, "access-key", "contender-access-" + suffix},
+		{clonedArtifacts, "secret-key", "contender-secret-" + suffix},
+		{clonedArtifacts, "volume-jwt-write", "contender-volume-write-" + suffix},
+		{clonedArtifacts, "volume-jwt-read", "contender-volume-read-" + suffix},
+		{clonedArtifacts, "filer-jwt-write", "contender-filer-write-" + suffix},
+		{clonedArtifacts, "filer-jwt-read", "contender-filer-read-" + suffix},
+		{clonedArtifacts, "sse-key", "contender-sse-" + suffix},
+	} {
+		if err := os.WriteFile(filepath.Join(replacement.directory, replacement.name), []byte(replacement.value), 0o600); err != nil {
+			t.Fatalf("write contender secret %q: %v", replacement.name, err)
+		}
+	}
+	t.Setenv("PM_STACK_SECRETS_DIR", clonedRoot)
+
+	for _, action := range []string{"up", "migrate"} {
+		t.Run(action, func(t *testing.T) {
+			contenderCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			var stdout, stderr bytes.Buffer
+			contenderErr := stackoperator.Run(
+				contenderCtx,
+				[]string{action, "--config", contenderConfig},
+				nil,
+				&stdout,
+				&stderr,
+			)
+
+			for _, name := range inputNames {
+				value, err := os.ReadFile(filepath.Join(stateDir, name))
+				if err != nil {
+					t.Fatalf("read deployment input %q after cancelled contender: %v", name, err)
+				}
+				if !bytes.Equal(value, holderInputs[name]) {
+					t.Fatalf("cancelled changed-config %s contender replaced holder deployment input %q", action, name)
+				}
+			}
+			if !errors.Is(contenderErr, context.DeadlineExceeded) {
+				t.Fatalf("same-deployment %s contender was not cancelled while blocked by the deployment fence: %v", action, contenderErr)
+			}
+		})
+	}
+}
+
+func writeFencedContenderProjection(t *testing.T, configPath string) string {
+	t.Helper()
+	contents, err := os.ReadFile(configPath)
+	if err != nil {
+		t.Fatalf("read holder stack configuration: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(contents, &document); err != nil {
+		t.Fatalf("decode holder stack configuration: %v", err)
+	}
+	artifacts, ok := document["artifacts"].(map[string]any)
+	if !ok {
+		t.Fatal("holder stack configuration does not contain an artifacts object")
+	}
+	artifacts["bucket"] = "pm-fenced-contender-" + uniqueSuffix(t)
+	contents, err = json.Marshal(document)
+	if err != nil {
+		t.Fatalf("encode changed contender stack configuration: %v", err)
+	}
+	path := filepath.Join(t.TempDir(), "contender-stack.json")
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatalf("write changed contender stack configuration: %v", err)
+	}
+	return path
+}
+
+func cloneSelectedSecretRoot(t *testing.T, fixture selectedStackFixture) (string, string, string) {
+	t.Helper()
+	originalRoot := requiredEnvironment(t, "PM_STACK_SECRETS_DIR")
+	originalRoot, err := filepath.EvalSymlinks(originalRoot)
+	if err != nil {
+		t.Fatalf("resolve PM_STACK_SECRETS_DIR: %v", err)
+	}
+	clonedRoot := t.TempDir()
+	var clonedPostgres, clonedArtifacts string
+	for _, bundle := range []struct {
+		source      string
+		destination *string
+	}{
+		{fixture.postgresSecrets, &clonedPostgres},
+		{fixture.temporalSecrets, nil},
+		{fixture.artifactSecrets, &clonedArtifacts},
+	} {
+		relative, err := filepath.Rel(originalRoot, bundle.source)
+		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			t.Fatal("selected secret bundle is outside PM_STACK_SECRETS_DIR")
+		}
+		destination := filepath.Join(clonedRoot, relative)
+		copyFlatSecretBundle(t, bundle.source, destination)
+		if bundle.destination != nil {
+			*bundle.destination = destination
+		}
+	}
+	return clonedRoot, clonedPostgres, clonedArtifacts
 }
 
 func newS3Client(t *testing.T, fixture selectedStackFixture, endpoint string) *s3.Client {
@@ -714,25 +854,7 @@ func assertPostgresTemporalTopology(t *testing.T, ctx context.Context, fixture s
 func assertWrongSchemaRejected(t *testing.T, ctx context.Context, fixture selectedStackFixture) {
 	t.Helper()
 	t.Run("operator rejects an endpoint with the wrong schema", func(t *testing.T) {
-		originalRoot := requiredEnvironment(t, "PM_STACK_SECRETS_DIR")
-		originalRoot, err := filepath.EvalSymlinks(originalRoot)
-		if err != nil {
-			t.Fatalf("resolve PM_STACK_SECRETS_DIR: %v", err)
-		}
-		clonedRoot := t.TempDir()
-		bundles := []string{fixture.postgresSecrets, fixture.temporalSecrets, fixture.artifactSecrets}
-		var clonedPostgres string
-		for _, source := range bundles {
-			relative, err := filepath.Rel(originalRoot, source)
-			if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-				t.Fatal("selected secret bundle is outside PM_STACK_SECRETS_DIR")
-			}
-			destination := filepath.Join(clonedRoot, relative)
-			copyFlatSecretBundle(t, source, destination)
-			if source == fixture.postgresSecrets {
-				clonedPostgres = destination
-			}
-		}
+		clonedRoot, clonedPostgres, _ := cloneSelectedSecretRoot(t, fixture)
 		pmAppEndpoint, err := os.ReadFile(filepath.Join(fixture.postgresSecrets, "pm-app-endpoint"))
 		if err != nil {
 			t.Fatalf("read pm_app endpoint for wrong-schema projection: %v", err)

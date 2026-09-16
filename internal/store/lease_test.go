@@ -178,23 +178,34 @@ func TestLeaseFenceAndClaimCAS(t *testing.T) {
 
 func testDispatch(t *testing.T, runID string) contract.Dispatch {
 	t.Helper()
-	entity, err := contract.NewEntityKey("account-witness-1", "issue", "42", "generation-1")
+	return testDispatchFor(t, runID, "1")
+}
+
+func testDispatchFor(t *testing.T, runID, suffix string) contract.Dispatch {
+	t.Helper()
+	entityID := "42-" + suffix
+	payload := []byte("payload-" + suffix)
+	if suffix == "1" {
+		entityID = "42"
+		payload = []byte("payload")
+	}
+	entity, err := contract.NewEntityKey("account-witness-"+suffix, "issue", entityID, "generation-"+suffix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	effect, err := contract.NewEffectKey(entity, "occurrence-1", "effect-revision-1")
+	effect, err := contract.NewEffectKey(entity, "occurrence-"+suffix, "effect-revision-"+suffix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	dispatchID, err := contract.NewDispatchID("dispatch-1")
+	dispatchID, err := contract.NewDispatchID("dispatch-" + suffix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	memberID, err := contract.NewMemberID("member-1")
+	memberID, err := contract.NewMemberID("member-" + suffix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	attemptID, err := contract.NewAttemptID("attempt-1")
+	attemptID, err := contract.NewAttemptID("attempt-" + suffix)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,9 +214,9 @@ func testDispatch(t *testing.T, runID string) contract.Dispatch {
 		EffectKey:          effect,
 		DispatchID:         dispatchID,
 		OrderedMemberIDs:   []contract.MemberID{memberID},
-		PayloadHash:        contract.NewPayloadHash([]byte("payload")),
-		RequestArtifactRef: "artifact-request-1",
-		OperationRevision:  "operation-revision-1",
+		PayloadHash:        contract.NewPayloadHash(payload),
+		RequestArtifactRef: "artifact-request-" + suffix,
+		OperationRevision:  "operation-revision-" + suffix,
 		AccountWitness:     entity.AccountWitness,
 		GrantEpoch:         1,
 		CapacityReservation: contract.CapacityReservation{

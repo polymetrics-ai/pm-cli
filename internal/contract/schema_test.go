@@ -3,6 +3,7 @@ package contract
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -342,6 +343,58 @@ func TestStrictContractShape(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			if _, err := DecodeOperation(test.document, test.foundations); err == nil {
 				t.Fatal("DecodeOperation accepted an invalid contract")
+			}
+		})
+	}
+}
+
+func TestOperationWireLocations(t *testing.T) {
+	operation := decodeOperationForTest(t, validOperationDocumentForTest())
+	source := operation.Inputs[0]
+	source.FieldID = "source-id"
+	source.WireName = "id"
+	source.Location = FieldLocationBody
+	source.JSONPointer = "/source/id"
+	source.Style = "json"
+	destination := source
+	destination.FieldID = "destination-id"
+	destination.JSONPointer = "/destination/id"
+
+	samePointer := destination
+	samePointer.WireName = "other-id"
+	samePointer.JSONPointer = source.JSONPointer
+	querySource, queryDestination := source, destination
+	querySource.Location, queryDestination.Location = FieldLocationQuery, FieldLocationQuery
+	querySource.Style, queryDestination.Style = "form", "form"
+
+	for _, test := range []struct {
+		name          string
+		inputs        []FieldBinding
+		wantDuplicate bool
+	}{
+		{"distinct_nested_locations", []FieldBinding{source, destination}, false},
+		{"same_json_location", []FieldBinding{source, samePointer}, true},
+		{"duplicate_transport_name", []FieldBinding{querySource, queryDestination}, true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := operation
+			candidate.Inputs = test.inputs
+			document, err := json.Marshal(candidate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeOperation(document, supportedFoundationsForTest())
+			if test.wantDuplicate {
+				if !errors.Is(err, ErrDuplicateField) {
+					t.Fatalf("ambiguous wire location error = %v; want duplicate field", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("distinct nested wire locations rejected: %v", err)
+			}
+			if !reflect.DeepEqual(decoded.Inputs, test.inputs) {
+				t.Fatalf("nested binding locations changed: got %#v; want %#v", decoded.Inputs, test.inputs)
 			}
 		})
 	}

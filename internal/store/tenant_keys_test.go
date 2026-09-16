@@ -58,7 +58,7 @@ func TestCompositeTenantReferences(t *testing.T) {
 		cleanupTestScope(t, credentials, alphaScope, betaScope)
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	alpha := newCompositeTenantFixture(t, alphaScope, "alpha")
 	beta := newCompositeTenantFixture(t, betaScope, "beta")
@@ -241,6 +241,10 @@ func TestCompositeTenantReferences(t *testing.T) {
 		testCheckpointPublication(t, ctx, pool, alpha)
 	})
 
+	t.Run("task_lease_cannot_cross_equal_tenant_identity", func(t *testing.T) {
+		testCrossScopeTaskLease(t, ctx, pool, alpha, beta)
+	})
+
 	t.Run("workspace_tombstone_retains_and_refuses_the_key_namespace", func(t *testing.T) {
 		if err := WithinScope(ctx, pool, alphaScope, testActor(alphaScope), func(ctx context.Context, tx *Transaction) error {
 			return RetireWorkspace(ctx, tx, alpha.workspace)
@@ -278,6 +282,225 @@ func TestCompositeTenantReferences(t *testing.T) {
 			t.Fatalf("new mutation in retired namespace = %v; want ErrWorkspaceRetired", err)
 		}
 	})
+}
+
+func testCrossScopeTaskLease(t *testing.T, ctx context.Context, pool *Pool, alpha, beta compositeTenantFixture) {
+	t.Helper()
+	taskRef := TaskRef{RunID: compositeRunID, TaskID: compositeTaskID}
+	var alphaLease Lease
+	if err := WithinScope(ctx, pool, alpha.workspace.Scope, testActor(alpha.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		var err error
+		alphaLease, err = LoadLease(ctx, tx, taskRef)
+		if err != nil {
+			return err
+		}
+		alphaLease, err = RenewLease(ctx, tx, alphaLease, 2*time.Minute)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var betaLease Lease
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		var err error
+		betaLease, err = ClaimTask(ctx, tx, ClaimRequest{
+			Task: taskRef, OwnerID: alphaLease.OwnerID, ExpectedFence: 0, TTL: time.Minute,
+		})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if betaLease.OwnerID != alphaLease.OwnerID || betaLease.Fence != alphaLease.Fence {
+		t.Fatalf("tenant leases do not share the intended owner/fence collision: alpha=%#v beta=%#v", alphaLease, betaLease)
+	}
+
+	unexpectedAcceptance := errors.New("foreign task lease unexpectedly accepted")
+	expectScopeMismatch := func(name string, operation func(context.Context, *Transaction) error) {
+		t.Run(name, func(t *testing.T) {
+			err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+				if err := operation(ctx, tx); err != nil {
+					return err
+				}
+				return unexpectedAcceptance
+			})
+			if errors.Is(err, unexpectedAcceptance) {
+				t.Fatal("foreign task lease reached the tenant-local operation")
+			}
+			if !errors.Is(err, ErrScopeMismatch) {
+				t.Fatalf("foreign task lease error = %v; want ErrScopeMismatch", err)
+			}
+		})
+	}
+	expectScopeMismatch("require_current", func(ctx context.Context, tx *Transaction) error {
+		return requireCurrentLease(ctx, tx, alphaLease)
+	})
+	expectScopeMismatch("renew", func(ctx context.Context, tx *Transaction) error {
+		_, err := RenewLease(ctx, tx, alphaLease, 5*time.Minute)
+		return err
+	})
+	var loadedBetaLease Lease
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		var err error
+		loadedBetaLease, err = LoadLease(ctx, tx, taskRef)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loadedBetaLease, betaLease) {
+		t.Fatalf("foreign renewal changed beta lease: got %#v want %#v", loadedBetaLease, betaLease)
+	}
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		var err error
+		betaLease, err = RenewLease(ctx, tx, betaLease, 2*time.Minute)
+		return err
+	}); err != nil {
+		t.Fatalf("renew own-scope lease: %v", err)
+	}
+
+	running, err := beta.task.ObserveOrchestration(contract.OrchestrationRunning, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	running.State = contract.RunStateRunning
+	if err := running.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	transition := TaskTransitionCommit{
+		Lease:   alphaLease,
+		Task:    running,
+		Receipt: testReceipt("receipt-beta-running", "task_transition", compositeRunID),
+		Audit:   testAudit("audit-beta-running", "task_running", compositeRunID),
+		Event:   testEvent("event-beta-running", "task_running", compositeRunID),
+		Outbox:  testOutbox("outbox-beta-running", "project_task", compositeRunID),
+	}
+	expectScopeMismatch("task_transition", func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitTaskTransition(ctx, tx, transition)
+		return err
+	})
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		stored, err := LoadTask(ctx, tx, taskRef)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(stored, beta.task) {
+			t.Fatalf("foreign transition changed beta task: %#v", stored)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	transition.Lease = betaLease
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitTaskTransition(ctx, tx, transition)
+		return err
+	}); err != nil {
+		t.Fatalf("commit own-scope task transition: %v", err)
+	}
+
+	foreignDispatch := testDispatchFor(t, compositeRunID, "foreign-lease")
+	expectScopeMismatch("effect_prepare", func(ctx context.Context, tx *Transaction) error {
+		return PrepareDispatch(ctx, tx, alphaLease, foreignDispatch)
+	})
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := LoadDispatch(ctx, tx, taskRef, foreignDispatch.DispatchID)
+		return err
+	}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign lease retained beta dispatch = %v; want ErrNotFound", err)
+	}
+
+	dispatch := testDispatchFor(t, compositeRunID, "beta-settlement")
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		return PrepareDispatch(ctx, tx, betaLease, dispatch)
+	}); err != nil {
+		t.Fatalf("prepare own-scope effect: %v", err)
+	}
+	outcome := contract.MemberOutcome{
+		MemberID: dispatch.OrderedMemberIDs[0], EffectKey: dispatch.EffectKey,
+		DispatchID: dispatch.DispatchID, State: contract.OutcomeSucceeded,
+		ObservedAt: time.Now().UTC(), AssertionRefs: []string{},
+	}
+	succeeded, err := running.ApplyEffectSummary(contract.EffectSummary{Succeeded: 1}, false, "", outcome.ObservedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settlement := SettlementCommit{
+		Lease: alphaLease, DispatchID: dispatch.DispatchID, Outcomes: []contract.MemberOutcome{outcome}, Task: succeeded,
+		Receipt: testReceipt("receipt-beta-settlement", "settlement", compositeRunID),
+		Audit:   testAudit("audit-beta-settlement", "dispatch_settled", compositeRunID),
+		Event:   testEvent("event-beta-settlement", "dispatch_settled", compositeRunID),
+		Outbox:  testOutbox("outbox-beta-settlement", "project_task", compositeRunID),
+	}
+	expectScopeMismatch("settlement", func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitSettlement(ctx, tx, settlement)
+		return err
+	})
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		stored, err := LoadTask(ctx, tx, taskRef)
+		if err != nil {
+			return err
+		}
+		if !reflect.DeepEqual(stored, running) {
+			t.Fatalf("foreign settlement changed beta task: %#v", stored)
+		}
+		outcomes, err := ListMemberOutcomes(ctx, tx, taskRef, dispatch.DispatchID)
+		if err != nil {
+			return err
+		}
+		if len(outcomes) != 0 {
+			t.Fatalf("foreign settlement retained beta outcomes: %#v", outcomes)
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	settlement.Lease = betaLease
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitSettlement(ctx, tx, settlement)
+		return err
+	}); err != nil {
+		t.Fatalf("commit own-scope settlement: %v", err)
+	}
+
+	verified, err := NewPreverifiedObjectRef(beta.artifact, ObjectVerification{
+		ObservedSHA256: beta.artifact.SHA256, ObservedByteLength: beta.artifact.ByteLength,
+		ObservedBackendGeneration: beta.artifact.BackendGeneration,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := ManifestCheckpointCAS{
+		Next: CheckpointIdentity{
+			ConnectionID: compositeConnectionID, ResourceID: "lease-scope-checkpoint",
+			SourceGeneration: "lease-scope-generation", SchemaFingerprint: testDigest("lease-scope-schema"),
+			Partition: "lease-scope-partition",
+			Continuation: CheckpointContinuation{
+				Present: true, Kind: "cursor", Opaque: []byte{},
+			},
+		},
+		Manifest: ManifestCAS{ResourceID: "lease-scope-manifest", Object: verified},
+		Lease:    alphaLease,
+	}
+	expectScopeMismatch("checkpoint", func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitManifestCheckpoint(ctx, tx, checkpoint)
+		return err
+	})
+	var checkpointErr, manifestErr error
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		_, checkpointErr = LoadCheckpoint(ctx, tx, checkpoint.Next.ConnectionID, checkpoint.Next.ResourceID)
+		_, manifestErr = LoadManifest(ctx, tx, checkpoint.Manifest.ResourceID)
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !errors.Is(checkpointErr, ErrNotFound) || !errors.Is(manifestErr, ErrNotFound) {
+		t.Fatalf("foreign lease retained beta publication: checkpoint=%v manifest=%v; want ErrNotFound", checkpointErr, manifestErr)
+	}
+	checkpoint.Lease = betaLease
+	if err := WithinScope(ctx, pool, beta.workspace.Scope, testActor(beta.workspace.Scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitManifestCheckpoint(ctx, tx, checkpoint)
+		return err
+	}); err != nil {
+		t.Fatalf("commit own-scope checkpoint: %v", err)
+	}
 }
 
 func newCompositeTenantFixture(t *testing.T, scope contract.Scope, label string) compositeTenantFixture {

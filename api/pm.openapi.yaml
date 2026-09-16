@@ -961,7 +961,7 @@ components:
           required: [presence]
           properties:
             presence:
-              const: null
+              const: "null"
         - type: object
           additionalProperties: false
           required: [presence, type, text]

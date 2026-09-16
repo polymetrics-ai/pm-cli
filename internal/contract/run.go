@@ -443,7 +443,7 @@ func (r RunRecord) ReconcileEffects(effects []EffectRecord, policyBlocked bool, 
 		})
 		updated.State = target
 	} else {
-		updated.History = append([]RunTransition(nil), r.History...)
+		updated.History = slices.Clone(r.History)
 	}
 	if err := updated.Validate(); err != nil {
 		return r, err

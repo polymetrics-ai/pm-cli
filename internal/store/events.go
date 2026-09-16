@@ -127,8 +127,8 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	if err != nil {
 		return contract.ServerEvent{}, err
 	}
-	if commit.Run.Revision != stored.Revision+1 || !reflect.DeepEqual(commit.Run.Spec, stored.Spec) {
-		return contract.ServerEvent{}, ErrCASConflict
+	if err := validateRunProjectionUpdate(stored, commit.Run); err != nil {
+		return contract.ServerEvent{}, err
 	}
 	committedAt, err := readDatabaseTime(ctx, tx)
 	if err != nil {
@@ -305,6 +305,42 @@ func loadRunForUpdate(ctx context.Context, tx *Transaction, runID string) (contr
 		return contract.RunRecord{}, fmt.Errorf("decode locked run: %w", err)
 	}
 	return run, nil
+}
+
+func validateRunProjectionUpdate(stored, proposed contract.RunRecord) error {
+	if proposed.Revision != stored.Revision+1 || !reflect.DeepEqual(proposed.Spec, stored.Spec) {
+		return ErrCASConflict
+	}
+	if len(proposed.History) < len(stored.History) ||
+		!reflect.DeepEqual(proposed.History[:len(stored.History)], stored.History) {
+		return ErrCASConflict
+	}
+	if terminalStoreRunState(stored.State) && proposed.State != stored.State {
+		return ErrCASConflict
+	}
+	switch len(proposed.History) - len(stored.History) {
+	case 0:
+		if proposed.State != stored.State {
+			return ErrCASConflict
+		}
+	case 1:
+		appended := proposed.History[len(stored.History)]
+		if appended.From != stored.State || appended.To != proposed.State {
+			return ErrCASConflict
+		}
+	default:
+		return ErrCASConflict
+	}
+	return nil
+}
+
+func terminalStoreRunState(state contract.RunState) bool {
+	switch state {
+	case contract.RunStateSucceeded, contract.RunStatePartial, contract.RunStateFailed, contract.RunStateCancelled:
+		return true
+	default:
+		return false
+	}
 }
 
 func sameTaskIdentity(left, right contract.Task) bool {

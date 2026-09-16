@@ -26,6 +26,26 @@ func TestAllowedTransitions(t *testing.T) {
 	}
 	task := taskForIdentityTest(spec, base)
 	effect := effectForIdentityTest(t, spec)
+	t.Run("accepted_run_reconciliation_preserves_explicit_empty_history", func(t *testing.T) {
+		observedAt := base.Add(time.Second)
+		updated, err := record.ReconcileEffects([]EffectRecord{}, false, "", observedAt)
+		if err != nil {
+			t.Fatal(err)
+		}
+		encoded, err := json.Marshal(updated)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var restored RunRecord
+		if err := json.Unmarshal(encoded, &restored); err != nil {
+			t.Fatalf("reconciled record cannot be restored: %v", err)
+		}
+		if restored.State != RunStateAccepted || restored.History == nil || len(restored.History) != 0 ||
+			!restored.ProjectionObservedAt.Equal(observedAt) {
+			t.Fatalf("reconciliation lost accepted state, empty history, or observation: %+v", restored)
+		}
+	})
+
 	t.Run("undispatched_effect_preserves_explicit_empty_attempts", func(t *testing.T) {
 		settled, err := effect.Transition(OutcomeUnchanged, "already_satisfied", base.Add(time.Second))
 		if err != nil {

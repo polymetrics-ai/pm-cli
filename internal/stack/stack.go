@@ -188,7 +188,7 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 // CheckStack verifies the selected PostgreSQL schemas and roles, the
 // authenticated Temporal namespace, and authenticated S3 bucket access.
 func CheckStack(ctx context.Context, configuration config.Configuration, stdout, stderr io.Writer) error {
-	rt, err := newRuntime(configuration, stdout, stderr, false)
+	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -323,11 +323,8 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	if len(selected) == 0 {
 		return CheckStack(ctx, configuration, stdout, stderr)
 	}
-	rt, err := newRuntime(configuration, stdout, stderr, true)
+	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
-		return err
-	}
-	if err := rt.validateCompose(ctx, configuration); err != nil {
 		return err
 	}
 	lock, err := acquireDeploymentLock(ctx, rt.stateDir)
@@ -335,6 +332,12 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 		return err
 	}
 	defer releaseDeploymentLock(lock)
+	if err := rt.render(configuration); err != nil {
+		return err
+	}
+	if err := rt.validateCompose(ctx, configuration); err != nil {
+		return err
+	}
 
 	if selected[config.DependencyPostgres] {
 		if err := rt.compose(ctx, configuration, "up", "-d", "--wait", "postgres"); err != nil {
@@ -387,11 +390,8 @@ func migrateStack(ctx context.Context, configuration config.Configuration, selec
 	if len(selected) == 0 {
 		return CheckStack(ctx, configuration, stdout, stderr)
 	}
-	rt, err := newRuntime(configuration, stdout, stderr, true)
+	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
-		return err
-	}
-	if err := rt.validateCompose(ctx, configuration); err != nil {
 		return err
 	}
 	lock, err := acquireDeploymentLock(ctx, rt.stateDir)
@@ -399,6 +399,12 @@ func migrateStack(ctx context.Context, configuration config.Configuration, selec
 		return err
 	}
 	defer releaseDeploymentLock(lock)
+	if err := rt.render(configuration); err != nil {
+		return err
+	}
+	if err := rt.validateCompose(ctx, configuration); err != nil {
+		return err
+	}
 	if err := migrateUnderLock(ctx, configuration, selected, rt); err != nil {
 		return err
 	}
@@ -430,7 +436,7 @@ func drainStack(ctx context.Context, configuration config.Configuration, selecte
 		_, err := fmt.Fprintln(stdout, "pm-stack: no bundled services selected; managed dependencies were left untouched")
 		return err
 	}
-	rt, err := newRuntime(configuration, stdout, stderr, false)
+	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -458,7 +464,7 @@ func drainStack(ctx context.Context, configuration config.Configuration, selecte
 	return err
 }
 
-func newRuntime(configuration config.Configuration, stdout, stderr io.Writer, render bool) (*runtime, error) {
+func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*runtime, error) {
 	root, err := repositoryRoot()
 	if err != nil {
 		return nil, err
@@ -523,11 +529,6 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer, re
 	rt.uid = strconv.Itoa(os.Getuid())
 	rt.gid = strconv.Itoa(os.Getgid())
 
-	if render {
-		if err := rt.render(configuration); err != nil {
-			return nil, err
-		}
-	}
 	return rt, nil
 }
 

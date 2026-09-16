@@ -132,6 +132,13 @@ func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCom
 			return contract.ServerEvent{}, ErrCASConflict
 		}
 	}
+	summary, err := summarizeDurableTaskEffects(ctx, tx, commit.Lease.Task)
+	if err != nil {
+		return contract.ServerEvent{}, err
+	}
+	if commit.Task.EffectSummary != summary {
+		return contract.ServerEvent{}, fmt.Errorf("%w: task effect summary does not match durable effects", ErrCASConflict)
+	}
 	taskJSON, err := json.Marshal(commit.Task)
 	if err != nil {
 		return contract.ServerEvent{}, fmt.Errorf("encode settled task: %w", err)
@@ -214,6 +221,44 @@ func ListMemberOutcomes(ctx context.Context, tx *Transaction, task TaskRef, disp
 		return nil, fmt.Errorf("iterate member outcomes: %w", err)
 	}
 	return outcomes, nil
+}
+
+func summarizeDurableTaskEffects(ctx context.Context, tx *Transaction, task TaskRef) (contract.EffectSummary, error) {
+	scope, err := tx.requireScope()
+	if err != nil {
+		return contract.EffectSummary{}, err
+	}
+	if err := task.validate(); err != nil {
+		return contract.EffectSummary{}, err
+	}
+	var unsent, succeeded, unchanged, rejected, unknown int64
+	err = tx.queryRow(ctx, `
+		WITH locked_effects AS MATERIALIZED (
+			SELECT state
+			FROM pm.effects
+			WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND task_id = $4
+			FOR UPDATE
+		)
+		SELECT
+			count(*) FILTER (WHERE state = 'unsent'),
+			count(*) FILTER (WHERE state = 'succeeded'),
+			count(*) FILTER (WHERE state = 'unchanged'),
+			count(*) FILTER (WHERE state = 'rejected'),
+			count(*) FILTER (WHERE state = 'unknown')
+		FROM locked_effects
+	`, scope.OrgID, scope.WorkspaceID, task.RunID, task.TaskID).Scan(
+		&unsent, &succeeded, &unchanged, &rejected, &unknown,
+	)
+	if err != nil {
+		return contract.EffectSummary{}, fmt.Errorf("summarize durable task effects: %w", err)
+	}
+	return contract.EffectSummary{
+		Unsent:    uint64(unsent),
+		Succeeded: uint64(succeeded),
+		Unchanged: uint64(unchanged),
+		Rejected:  uint64(rejected),
+		Unknown:   uint64(unknown),
+	}, nil
 }
 
 func settleEffectRecord(effect contract.EffectRecord, outcomes []contract.MemberOutcome) (contract.EffectRecord, bool, error) {

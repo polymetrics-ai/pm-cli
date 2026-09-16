@@ -698,7 +698,9 @@
           {
             "additionalProperties": false,
             "properties": {
-              "presence": {}
+              "presence": {
+                "const": "null"
+              }
             },
             "required": [
               "presence"

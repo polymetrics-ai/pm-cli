@@ -357,8 +357,14 @@ func validateOperationObjectFields(operationID string, root map[string]json.RawM
 		if err != nil {
 			return err
 		}
-		if !present || bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+		if !present {
 			continue
+		}
+		if bytes.Equal(bytes.TrimSpace(value), []byte("null")) {
+			if control.Nullable {
+				continue
+			}
+			return ErrMalformedEnvelope
 		}
 		var object map[string]json.RawMessage
 		if err := json.Unmarshal(value, &object); err != nil || object == nil {
@@ -386,6 +392,9 @@ func rawValueAtPointer(root map[string]json.RawMessage, pointer string) (json.Ra
 		}
 		if index == len(parts)-1 {
 			return raw, true, nil
+		}
+		if bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+			return nil, false, nil
 		}
 		if err := json.Unmarshal(raw, &current); err != nil || current == nil {
 			return nil, false, ErrMalformedEnvelope
@@ -574,28 +583,19 @@ func requireResponseFields(object map[string]json.RawMessage, required []string)
 }
 
 func safeAdditiveFields(object map[string]json.RawMessage, known []string) (map[string]json.RawMessage, error) {
+	if err := rejectForbiddenFields(object, false); err != nil {
+		return nil, err
+	}
 	knownSet := stringSet(known)
 	additions := make(map[string]json.RawMessage)
 	for name, value := range object {
 		if _, exists := knownSet[name]; exists {
 			continue
 		}
-		if isForbiddenPublicField(name) {
-			return nil, fmt.Errorf("%w: %s", ErrForbiddenSecretField, name)
-		}
 		for exact := range knownSet {
 			if strings.EqualFold(name, exact) {
 				return nil, fmt.Errorf("%w: %s", ErrWrongCaseMetadataField, name)
 			}
-		}
-		var decoded any
-		decoder := json.NewDecoder(bytes.NewReader(value))
-		decoder.UseNumber()
-		if err := decoder.Decode(&decoded); err != nil {
-			return nil, ErrMalformedEnvelope
-		}
-		if err := rejectForbiddenFields(decoded, false); err != nil {
-			return nil, err
 		}
 		additions[name] = append(json.RawMessage(nil), value...)
 	}

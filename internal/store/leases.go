@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
 type ClaimRequest struct {
@@ -17,6 +18,7 @@ type ClaimRequest struct {
 }
 
 type Lease struct {
+	Scope     contract.Scope
 	Task      TaskRef
 	OwnerID   string
 	Fence     uint64
@@ -25,6 +27,9 @@ type Lease struct {
 }
 
 func (lease Lease) validate() error {
+	if err := lease.Scope.Validate(); err != nil {
+		return err
+	}
 	if err := lease.Task.validate(); err != nil {
 		return err
 	}
@@ -49,8 +54,7 @@ func ClaimTask(ctx context.Context, tx *Transaction, request ClaimRequest) (Leas
 	if microseconds <= 0 {
 		return Lease{}, errors.New("lease TTL must be at least one microsecond")
 	}
-	var lease Lease
-	lease.Task = request.Task
+	lease := Lease{Scope: scope, Task: request.Task}
 	err = tx.queryRow(ctx, `
 		WITH lease_clock AS (
 			SELECT clock_timestamp() AS claimed_at
@@ -103,27 +107,33 @@ func ClaimTask(ctx context.Context, tx *Transaction, request ClaimRequest) (Leas
 }
 
 func RenewLease(ctx context.Context, tx *Transaction, lease Lease, ttl time.Duration) (Lease, error) {
-	if _, err := tx.requireScope(); err != nil {
+	scope, err := tx.requireScope()
+	if err != nil {
 		return Lease{}, err
 	}
 	if err := lease.validate(); err != nil {
 		return Lease{}, err
+	}
+	if !scope.Equal(lease.Scope) {
+		return Lease{}, ErrScopeMismatch
 	}
 	microseconds := ttl.Microseconds()
 	if microseconds <= 0 {
 		return Lease{}, errors.New("lease TTL must be at least one microsecond")
 	}
 	var renewed Lease
+	renewed.Scope = lease.Scope
 	renewed.Task = lease.Task
-	err := tx.queryRow(ctx, `
+	err = tx.queryRow(ctx, `
 		UPDATE pm.task_leases
-		SET lease_expires_at = clock_timestamp() + make_interval(secs => $5::double precision / 1000000.0)
-		WHERE run_id = $1 AND task_id = $2 AND owner_id = $3 AND fence = $4
-		  AND lease_expires_at > clock_timestamp()
+		SET lease_expires_at = clock_timestamp() + make_interval(secs => $7::double precision / 1000000.0)
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND task_id = $4
+		  AND owner_id = $5 AND fence = $6 AND lease_expires_at > clock_timestamp()
 		RETURNING owner_id, fence, claimed_at, lease_expires_at
-	`, lease.Task.RunID, lease.Task.TaskID, lease.OwnerID, lease.Fence, microseconds).Scan(
-		&renewed.OwnerID, &renewed.Fence, &renewed.ClaimedAt, &renewed.ExpiresAt,
-	)
+	`,
+		lease.Scope.OrgID, lease.Scope.WorkspaceID, lease.Task.RunID, lease.Task.TaskID,
+		lease.OwnerID, lease.Fence, microseconds,
+	).Scan(&renewed.OwnerID, &renewed.Fence, &renewed.ClaimedAt, &renewed.ExpiresAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, ErrStaleFence
 	}
@@ -136,18 +146,21 @@ func RenewLease(ctx context.Context, tx *Transaction, lease Lease, ttl time.Dura
 }
 
 func LoadLease(ctx context.Context, tx *Transaction, ref TaskRef) (Lease, error) {
-	if _, err := tx.requireScope(); err != nil {
+	scope, err := tx.requireScope()
+	if err != nil {
 		return Lease{}, err
 	}
 	if err := ref.validate(); err != nil {
 		return Lease{}, err
 	}
-	lease := Lease{Task: ref}
-	err := tx.queryRow(ctx, `
+	lease := Lease{Scope: scope, Task: ref}
+	err = tx.queryRow(ctx, `
 		SELECT owner_id, fence, claimed_at, lease_expires_at
 		FROM pm.task_leases
-		WHERE run_id = $1 AND task_id = $2
-	`, ref.RunID, ref.TaskID).Scan(&lease.OwnerID, &lease.Fence, &lease.ClaimedAt, &lease.ExpiresAt)
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND task_id = $4
+	`, scope.OrgID, scope.WorkspaceID, ref.RunID, ref.TaskID).Scan(
+		&lease.OwnerID, &lease.Fence, &lease.ClaimedAt, &lease.ExpiresAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Lease{}, ErrNotFound
 	}
@@ -160,20 +173,27 @@ func LoadLease(ctx context.Context, tx *Transaction, ref TaskRef) (Lease, error)
 }
 
 func requireCurrentLease(ctx context.Context, tx *Transaction, lease Lease) error {
-	if _, err := tx.requireScope(); err != nil {
+	scope, err := tx.requireScope()
+	if err != nil {
 		return err
 	}
 	if err := lease.validate(); err != nil {
 		return err
 	}
+	if !scope.Equal(lease.Scope) {
+		return ErrScopeMismatch
+	}
 	var exists bool
-	err := tx.queryRow(ctx, `
+	err = tx.queryRow(ctx, `
 		SELECT true
 		FROM pm.task_leases
-		WHERE run_id = $1 AND task_id = $2 AND owner_id = $3 AND fence = $4
-		  AND lease_expires_at > clock_timestamp()
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND task_id = $4
+		  AND owner_id = $5 AND fence = $6 AND lease_expires_at > clock_timestamp()
 		FOR UPDATE
-	`, lease.Task.RunID, lease.Task.TaskID, lease.OwnerID, lease.Fence).Scan(&exists)
+	`,
+		lease.Scope.OrgID, lease.Scope.WorkspaceID, lease.Task.RunID, lease.Task.TaskID,
+		lease.OwnerID, lease.Fence,
+	).Scan(&exists)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrStaleFence
 	}

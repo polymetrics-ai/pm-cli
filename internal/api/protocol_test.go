@@ -203,8 +203,8 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 		}
 	})
 
-	t.Run("safe_additions_survive_but_secret_additions_fail", func(t *testing.T) {
-		safe := appendProblemAddition(t, problemFixture(409, "idempotency_conflict", "new_key_for_new_intent"), "future_safe", json.RawMessage(`{"exact":"9007199254740993"}`))
+	t.Run("safe_additions_survive_but_known_and_additive_secrets_fail", func(t *testing.T) {
+		safe := setJSONField(t, problemFixture(409, "idempotency_conflict", "new_key_for_new_intent"), "future_safe", json.RawMessage(`{"exact":"9007199254740993"}`))
 		decoded, err := DecodeProblem(409, "application/problem+json", safe)
 		if err != nil {
 			t.Fatalf("safe addition: %v", err)
@@ -212,9 +212,13 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 		if !bytes.Contains(decoded.AdditiveFields["future_safe"], []byte("9007199254740993")) {
 			t.Fatal("safe additive problem field did not survive exactly")
 		}
-		unsafe := appendProblemAddition(t, problemFixture(409, "idempotency_conflict", "new_key_for_new_intent"), "provider_secret", json.RawMessage(`"must-not-cross"`))
+		unsafe := setJSONField(t, problemFixture(409, "idempotency_conflict", "new_key_for_new_intent"), "provider_secret", json.RawMessage(`"must-not-cross"`))
 		if _, err := DecodeProblem(409, "application/problem+json", unsafe); !errors.Is(err, ErrForbiddenSecretField) {
 			t.Fatalf("secret-bearing problem error = %v; want %v", err, ErrForbiddenSecretField)
+		}
+		knownUnsafe := setJSONField(t, problemFixture(409, "idempotency_conflict", "new_key_for_new_intent"), "outcome_reference", json.RawMessage(`{"kind":"run","ref":"run-01","provider_secret":"must-not-cross"}`))
+		if _, err := DecodeProblem(409, "application/problem+json", knownUnsafe); !errors.Is(err, ErrForbiddenSecretField) {
+			t.Fatalf("secret nested in known problem field error = %v; want %v", err, ErrForbiddenSecretField)
 		}
 	})
 
@@ -260,6 +264,79 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 		}
 	})
 
+	t.Run("controlled_request_object_nullability", func(t *testing.T) {
+		for _, fixture := range []struct {
+			name        string
+			operationID string
+			objectField string
+		}{
+			{name: "membership", operationID: "grantMembership", objectField: "membership"},
+			{name: "service_account", operationID: "createServiceAccount", objectField: "service_account"},
+			{name: "delegation", operationID: "createDelegation", objectField: "delegation"},
+		} {
+			t.Run(fixture.name+"_rejects_null", func(t *testing.T) {
+				document := controlledObjectFixture(fixture.objectField, json.RawMessage("null"))
+				if err := ValidateIncomingJSON(fixture.operationID, document); !errors.Is(err, ErrMalformedEnvelope) {
+					t.Fatalf("null %s error = %v; want %v", fixture.objectField, err, ErrMalformedEnvelope)
+				}
+			})
+		}
+
+		optionalNull := bytes.Replace(
+			invocationFixture(`"required_features":[]`),
+			[]byte(`"result_controls":{}`),
+			[]byte(`"result_controls":{"selection":null}`),
+			1,
+		)
+		if err := ValidateIncomingJSON("submitInvocation", optionalNull); !errors.Is(err, ErrMalformedEnvelope) {
+			t.Fatalf("null nonnullable optional object error = %v; want %v", err, ErrMalformedEnvelope)
+		}
+
+		const operationID = "testNullableObjectControl"
+		operationControls[operationID] = OperationControl{
+			OperationID:        operationID,
+			RequiredBodyFields: []string{"protocol"},
+			OptionalBodyFields: []string{"options"},
+		}
+		operationObjectControls[operationID] = map[string]JSONFieldControl{
+			"": {
+				AllowedFields:  []string{"options", "protocol"},
+				RequiredFields: []string{"protocol"},
+			},
+			"/options": {
+				AllowedFields:  []string{"child"},
+				RequiredFields: []string{"child"},
+				Nullable:       true,
+			},
+			"/options/child": {
+				AllowedFields:  []string{"value"},
+				RequiredFields: []string{"value"},
+			},
+		}
+		t.Cleanup(func() {
+			delete(operationControls, operationID)
+			delete(operationObjectControls, operationID)
+		})
+		for _, fixture := range []struct {
+			name     string
+			document []byte
+		}{
+			{name: "optional_absent", document: controlledObjectFixture("", nil)},
+			{name: "nullable_parent", document: controlledObjectFixture("options", json.RawMessage("null"))},
+			{name: "present_descendant", document: controlledObjectFixture("options", json.RawMessage(`{"child":{"value":true}}`))},
+		} {
+			t.Run(fixture.name, func(t *testing.T) {
+				if err := ValidateIncomingJSON(operationID, fixture.document); err != nil {
+					t.Fatalf("ValidateIncomingJSON: %v", err)
+				}
+			})
+		}
+		invalidDescendant := controlledObjectFixture("options", json.RawMessage(`{"child":null}`))
+		if err := ValidateIncomingJSON(operationID, invalidDescendant); !errors.Is(err, ErrMalformedEnvelope) {
+			t.Fatalf("null nonnullable descendant error = %v; want %v", err, ErrMalformedEnvelope)
+		}
+	})
+
 	t.Run("provider_owned_field_names_remain_exact", func(t *testing.T) {
 		for _, name := range []string{"MiXeD.Provider_Field", "password"} {
 			t.Run(name, func(t *testing.T) {
@@ -280,6 +357,29 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 				}
 			})
 		}
+
+		t.Run("explicit_null", func(t *testing.T) {
+			document := invocationFixtureWithProviderValue("provider_secret", `{"presence":"null"}`)
+			if err := ValidateIncomingJSON("submitInvocation", document); err != nil {
+				t.Fatalf("provider-owned explicit null rejected: %v", err)
+			}
+			var request InvocationRequest
+			if err := json.Unmarshal(document, &request); err != nil {
+				t.Fatal(err)
+			}
+			encoded, err := json.Marshal(request)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var roundTrip InvocationRequest
+			if err := json.Unmarshal(encoded, &roundTrip); err != nil {
+				t.Fatal(err)
+			}
+			fields, ok := roundTrip.Input.Fields()
+			if !ok || fields["provider_secret"].Presence() != contract.PresenceNull {
+				t.Fatalf("provider-owned explicit null was not preserved: %#v", roundTrip.Input)
+			}
+		})
 	})
 
 	t.Run("metadata_only_replay_and_one_time_credential_boundary", func(t *testing.T) {
@@ -293,7 +393,7 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 		if _, err := DecodeMutationReplayResponse(replay); err != nil {
 			t.Fatalf("metadata-only replay: %v", err)
 		}
-		secretReplay := appendProblemAddition(t, replay, "pm_automation_credential", json.RawMessage(`"one-time-only"`))
+		secretReplay := setJSONField(t, replay, "pm_automation_credential", json.RawMessage(`"one-time-only"`))
 		if _, err := DecodeMutationReplayResponse(secretReplay); !errors.Is(err, ErrForbiddenSecretField) {
 			t.Fatalf("secret-bearing replay error = %v; want %v", err, ErrForbiddenSecretField)
 		}
@@ -507,22 +607,11 @@ func TestGeneratedContractBoundary(t *testing.T) {
 		runGenerator(t, generator, root, supportedOutput, false, supportedPath)
 		compileProjection := func(output, pointer string) *jsonschema.Schema {
 			t.Helper()
-			path := filepath.Join(output, "api", "pm.openapi.json")
-			document, err := jsonschema.UnmarshalJSON(bytes.NewReader(readFile(t, path)))
-			if err != nil {
-				t.Fatal(err)
-			}
-			compiler := jsonschema.NewCompiler()
-			compiler.DefaultDraft(jsonschema.Draft2020)
-			compiler.UseLoader(jsonschema.SchemeURLLoader{})
-			if err := compiler.AddResource(path, document); err != nil {
-				t.Fatal(err)
-			}
-			schema, err := compiler.Compile(path + "#/components/schemas/E03FidelityFixture" + pointer)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return schema
+			return compileJSONSchema(
+				t,
+				filepath.Join(output, "api", "pm.openapi.json"),
+				"#/components/schemas/E03FidelityFixture"+pointer,
+			)
 		}
 		mutations := []struct {
 			name             string
@@ -613,6 +702,96 @@ func TestGeneratedContractBoundary(t *testing.T) {
 		}
 	})
 
+	t.Run("explicit_null_const_is_rejected_instead_of_dropped", func(t *testing.T) {
+		canonical := string(readFile(t, filepath.Join(root, "api", "pm.openapi.yaml")))
+		literalSource := canonical + `
+    E03LiteralNullConst:
+      type: object
+      properties:
+        default:
+          type: string
+        enum:
+          type: string
+        const:
+          type: object
+          additionalProperties: true
+          example:
+            const: null
+`
+		literalPath := filepath.Join(t.TempDir(), "literal-null-const.openapi.yaml")
+		if err := os.WriteFile(literalPath, []byte(literalSource), 0o600); err != nil {
+			t.Fatalf("write literal null const source: %v", err)
+		}
+		runGenerator(t, generator, root, filepath.Join(t.TempDir(), "literal-null-const"), false, literalPath)
+
+		source := canonical + `
+    E03ExplicitNullConst:
+      const: null
+`
+		path := filepath.Join(t.TempDir(), "null-const.openapi.yaml")
+		if err := os.WriteFile(path, []byte(source), 0o600); err != nil {
+			t.Fatalf("write null const source: %v", err)
+		}
+		command := exec.Command(generator, "--root", root, "--spec", path, "--output-root", filepath.Join(t.TempDir(), "null-const"))
+		if result, err := command.CombinedOutput(); err == nil {
+			t.Fatalf("explicit null const was silently projected: %s", result)
+		}
+	})
+
+	t.Run("PresentValue_presence_discriminators_are_exact", func(t *testing.T) {
+		schema := compileJSONSchema(
+			t,
+			filepath.Join(root, "api", "pm.openapi.json"),
+			"#/components/schemas/PresentValue",
+		)
+		valid := []struct {
+			name     string
+			document string
+		}{
+			{name: "absent", document: `{"presence":"absent"}`},
+			{name: "null", document: `{"presence":"null"}`},
+			{name: "string", document: `{"presence":"value","type":"string","text":""}`},
+			{name: "boolean_false", document: `{"presence":"value","type":"bool","boolean":false}`},
+			{name: "exact_integer", document: `{"presence":"value","type":"integer","exact":"0","precision":1,"scale":0}`},
+			{name: "array", document: `{"presence":"value","type":"array","elements":[{"presence":"absent"},{"presence":"null"}]}`},
+			{name: "object", document: `{"presence":"value","type":"object","fields":{"provider_secret":{"presence":"null"}}}`},
+			{name: "union", document: `{"presence":"value","type":"union","variant":"known","member":{"presence":"absent"}}`},
+			{name: "binary_ref", document: `{"presence":"value","type":"binary_ref","binary":{"org_id":"org-01","workspace_id":"workspace-01","artifact_id":"artifact-01","object_attempt_key":"attempt-01","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","byte_length":0,"media_type":"application/octet-stream","backend_generation":"generation-01"}}`},
+		}
+		for _, fixture := range valid {
+			t.Run("valid_"+fixture.name, func(t *testing.T) {
+				value, err := jsonschema.UnmarshalJSON(strings.NewReader(fixture.document))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := schema.Validate(value); err != nil {
+					t.Fatalf("valid PresentValue rejected: %v", err)
+				}
+			})
+		}
+		invalid := []struct {
+			name     string
+			document string
+		}{
+			{name: "unknown_presence", document: `{"presence":"nil"}`},
+			{name: "JSON_null_presence", document: `{"presence":null}`},
+			{name: "missing_value_shape", document: `{"presence":"value"}`},
+			{name: "absent_with_value_fields", document: `{"presence":"absent","type":"string","text":"unexpected"}`},
+			{name: "unknown_value_type", document: `{"presence":"value","type":"unknown","text":"unexpected"}`},
+		}
+		for _, fixture := range invalid {
+			t.Run("invalid_"+fixture.name, func(t *testing.T) {
+				value, err := jsonschema.UnmarshalJSON(strings.NewReader(fixture.document))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := schema.Validate(value); err == nil {
+					t.Fatal("invalid PresentValue was accepted")
+				}
+			})
+		}
+	})
+
 	t.Run("E02_C06_admin_or_secret_schema_cannot_enter_ordinary_output", func(t *testing.T) {
 		source := string(readFile(t, filepath.Join(root, "api", "pm.openapi.yaml")))
 		adminPath := strings.Replace(source, "paths:\n", "paths:\n  /admin/v1/leak:\n    get:\n      operationId: leakAdminSecret\n      responses:\n        '204':\n          description: forbidden\n", 1)
@@ -690,7 +869,7 @@ func problemFixture(status int, code, retryAction string) []byte {
 	}`, code, status, code, retryAction))
 }
 
-func appendProblemAddition(t *testing.T, document []byte, name string, value json.RawMessage) []byte {
+func setJSONField(t *testing.T, document []byte, name string, value json.RawMessage) []byte {
 	t.Helper()
 	var object map[string]json.RawMessage
 	if err := json.Unmarshal(document, &object); err != nil {
@@ -722,6 +901,10 @@ func invocationFixture(extraMetadata string) []byte {
 }
 
 func invocationFixtureWithProviderField(name string) []byte {
+	return invocationFixtureWithProviderValue(name, `{"presence":"value","type":"string","text":"kept"}`)
+}
+
+func invocationFixtureWithProviderValue(name, value string) []byte {
 	return []byte(`{
 		"protocol":{
 			"wire_version":"pm.api/v1",
@@ -733,8 +916,24 @@ func invocationFixtureWithProviderField(name string) []byte {
 		"connection_ref":"connection-01",
 		"operation_ref":"operation-01@revision-01",
 		"lane":"direct_read",
-		"input":{"presence":"value","type":"object","fields":{` + fmt.Sprintf("%q", name) + `:{"presence":"value","type":"string","text":"kept"}}},
+		"input":{"presence":"value","type":"object","fields":{` + fmt.Sprintf("%q", name) + `:` + value + `}},
 		"result_controls":{}
+	}`)
+}
+
+func controlledObjectFixture(name string, value json.RawMessage) []byte {
+	field := ""
+	if name != "" {
+		field = fmt.Sprintf(",%q:%s", name, value)
+	}
+	return []byte(`{
+		"protocol":{
+			"wire_version":"pm.api/v1",
+			"required_features":[],
+			"request_key":"request-01",
+			"intent_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			"expected_revision":"revision-01"
+		}` + field + `
 	}`)
 }
 
@@ -784,6 +983,25 @@ func readFile(t *testing.T, path string) []byte {
 		t.Fatalf("read %s: %v", path, err)
 	}
 	return content
+}
+
+func compileJSONSchema(t *testing.T, path, pointer string) *jsonschema.Schema {
+	t.Helper()
+	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(readFile(t, path)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	compiler.UseLoader(jsonschema.SchemeURLLoader{})
+	if err := compiler.AddResource(path, document); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile(path + pointer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return schema
 }
 
 func collectJSONPropertyLocations(t *testing.T, schemas map[string]json.RawMessage, property string) []string {
