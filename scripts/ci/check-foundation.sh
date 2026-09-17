@@ -5,6 +5,8 @@ repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 : "${RUNNER_TEMP:?GitHub runner job temporary directory required}"
 : "${GITHUB_EVENT_PATH:?Actual pull-request event required}"
+: "${GITHUB_RUN_ID:?Actual workflow run identity required}"
+: "${GITHUB_RUN_ATTEMPT:?Actual workflow attempt required}"
 export PATH="/opt/pmcli-tools/venv/bin:/opt/pmcli-tools/bin:$PATH"
 export PM_TOOLS_CACHE=/cache/pm-tools
 mkdir -p "$PM_TOOLS_CACHE/tmp"
@@ -26,6 +28,7 @@ export PYTHONPATH="$RUNNER_TEMP/foundation-docs-deps"
 # Invoke the existing entrypoints directly; the runner does not require make.
 python3 -I -B scripts/ci/check-setup.py --root . --policy scripts/ci/setup-policy.json
 python3 -I -B scripts/ci/test_setup.py
+python3 -I -B scripts/ci/test_stack_fixture.py
 python3 -I -B tools/test_bootstrap.py
 python3 -B scripts/test_validate_architecture_docs.py
 python3 -B scripts/validate_architecture_docs.py
@@ -42,6 +45,10 @@ python3 tools/bootstrap.py exec bazelisk -- --batch version
 mkdir -p .cache/bin
 CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- build -o .cache/bin/nativeprobe ./build/nativeprobe
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-dependency-check ./cmd/pm-dependency-check
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack ./cmd/pm-stack
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-stack-fixture ./cmd/pm-stack-fixture
+sh scripts/generate.sh --check
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/staticcheck honnef.co/go/tools/cmd/staticcheck
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/govulncheck golang.org/x/vuln/cmd/govulncheck
@@ -55,7 +62,11 @@ CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools vet ./...
 python3 scripts/ci/check-native.py
 sh scripts/check-boundaries.sh
 python3 tools/bootstrap.py exec bazelisk -- --batch build //...
-python3 tools/bootstrap.py exec bazelisk -- --batch test //... --test_output=errors --cache_test_results=no
+# Physical targets declare exclusive execution for their shared schema/roles.
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test //... \
+  --test_output=errors --cache_test_results=no
 
 # Selected artifacts only: historical caches are not the active tool graph.
 python3 scripts/ci/check-dependencies.py --evidence-dir "$RUNNER_TEMP/foundation-sboms"

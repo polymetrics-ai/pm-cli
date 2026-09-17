@@ -1,0 +1,20 @@
+load("@rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
+
+go_library(
+    name = "pm-stack-fixture_lib",
+    srcs = ["main.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/tools/cmd/pm-stack-fixture",
+    visibility = ["//visibility:private"],
+)
+
+go_binary(
+    name = "pm-stack-fixture",
+    embed = [":pm-stack-fixture_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "pm-stack-fixture_test",
+    srcs = ["main_test.go"],
+    embed = [":pm-stack-fixture_lib"],
+)

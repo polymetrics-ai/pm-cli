@@ -1,0 +1,8 @@
+#!/bin/sh
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+ROOT=$(CDPATH= cd -- "$SCRIPT_DIR/.." && pwd)
+export PM_STACK_ROOT="$ROOT"
+cd "$ROOT"
+exec python3 "$ROOT/tools/bootstrap.py" exec go -- run -mod=readonly ./cmd/pm-stack "$@"

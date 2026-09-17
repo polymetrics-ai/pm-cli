@@ -276,16 +276,24 @@ def workflow_check(path, actionlint):
             "runner routing changed")
     require(job["timeout-minutes"] == "30", "job timeout changed")
     steps = job["steps"]
-    require(isinstance(steps, list) and len(steps) == 2, "unexpected step membership")
-    checkout, check = steps
+    require(isinstance(steps, list) and len(steps) == 3, "unexpected step membership")
+    checkout, check, cleanup = steps
     require(set(checkout) == {"name", "uses", "with"}, "unapproved checkout capability")
     require(checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "checkout is not the reviewed full action pin")
     require(checkout["with"] == {"persist-credentials": "false", "fetch-depth": "1",
             "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
             "checkout capabilities changed")
-    require(check == {"name": "Build and test the foundation", "run": "sh scripts/ci/check-foundation.sh"},
-            "unapproved executable step")
+    require(check == {"name": "Build and test the foundation", "timeout-minutes": "25",
+            "run": "sh scripts/ci/check-foundation.sh"}, "unapproved executable step")
+    require(cleanup == {
+        "name": "Clean up the job-owned dependency fixture",
+        "if": "always()",
+        "timeout-minutes": "4",
+        "run": 'export PATH="/opt/pmcli-tools/venv/bin:/opt/pmcli-tools/bin:$PATH"\n'
+               'python3 scripts/ci/with-stack-fixture.py \\\n'
+               '  --cleanup "$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n',
+    }, "unapproved fixture cleanup step")
     config = Path(__file__).with_name("actionlint.yaml")
     command([actionlint, "-no-color", "-config-file", str(config), str(path)], path.parent)
 

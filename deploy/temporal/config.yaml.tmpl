@@ -1,0 +1,142 @@
+# enable-template
+log:
+  stdout: true
+  level: info
+
+persistence:
+  numHistoryShards: 4
+  defaultStore: default
+  visibilityStore: visibility
+  datastores:
+    default:
+      sql:
+        pluginName: postgres12_pgx
+        databaseName: temporal
+        connectAddr: {{POSTGRES_ADDRESS}}
+        connectProtocol: tcp
+        user: {{TEMPORAL_USER}}
+        password: {{TEMPORAL_PASSWORD}}
+        maxConns: 8
+        maxIdleConns: 4
+        maxConnLifetime: 1h
+        tls:
+          enabled: true
+          caFile: /run/secrets/postgres-ca.pem
+          enableHostVerification: true
+          serverName: {{POSTGRES_SERVER_NAME}}
+    visibility:
+      sql:
+        pluginName: postgres12_pgx
+        databaseName: temporal_visibility
+        connectAddr: {{POSTGRES_ADDRESS}}
+        connectProtocol: tcp
+        user: {{VISIBILITY_USER}}
+        password: {{VISIBILITY_PASSWORD}}
+        maxConns: 4
+        maxIdleConns: 2
+        maxConnLifetime: 1h
+        tls:
+          enabled: true
+          caFile: /run/secrets/postgres-ca.pem
+          enableHostVerification: true
+          serverName: {{POSTGRES_SERVER_NAME}}
+
+global:
+  membership:
+    maxJoinDuration: 30s
+    broadcastAddress: "{{ env "TEMPORAL_BROADCAST_ADDRESS" }}"
+  pprof:
+    port: 0
+  tls:
+    refreshInterval: 0s
+    internode:
+      server:
+        requireClientAuth: true
+        certFile: /run/secrets/temporal-server.pem
+        keyFile: /run/secrets/temporal-server-key.pem
+        clientCaFiles:
+          - /run/secrets/temporal-ca.pem
+      client:
+        serverName: temporal.pm-stack.internal
+        disableHostVerification: false
+        rootCaFiles:
+          - /run/secrets/temporal-ca.pem
+    frontend:
+      server:
+        requireClientAuth: true
+        certFile: /run/secrets/temporal-server.pem
+        keyFile: /run/secrets/temporal-server-key.pem
+        clientCaFiles:
+          - /run/secrets/temporal-ca.pem
+      client:
+        serverName: temporal.pm-stack.internal
+        disableHostVerification: false
+        rootCaFiles:
+          - /run/secrets/temporal-ca.pem
+    systemWorker:
+      certFile: /run/secrets/temporal-client.pem
+      keyFile: /run/secrets/temporal-client-key.pem
+      client:
+        serverName: temporal.pm-stack.internal
+        disableHostVerification: false
+        rootCaFiles:
+          - /run/secrets/temporal-ca.pem
+
+services:
+  frontend:
+    rpc:
+      grpcPort: 7233
+      membershipPort: 6933
+      bindOnIP: 0.0.0.0
+      httpPort: 7243
+  matching:
+    rpc:
+      grpcPort: 7235
+      membershipPort: 6935
+      bindOnIP: 0.0.0.0
+  history:
+    rpc:
+      grpcPort: 7234
+      membershipPort: 6934
+      bindOnIP: 0.0.0.0
+  worker:
+    rpc:
+      grpcPort: 7239
+      membershipPort: 6939
+      bindOnIP: 0.0.0.0
+
+clusterMetadata:
+  enableGlobalNamespace: false
+  failoverVersionIncrement: 10
+  masterClusterName: active
+  currentClusterName: active
+  clusterInformation:
+    active:
+      enabled: true
+      initialFailoverVersion: 1
+      rpcName: frontend
+      rpcAddress: temporal:7233
+      httpAddress: temporal:7243
+
+publicClient:
+  hostPort: temporal:7233
+
+dcRedirectionPolicy:
+  policy: noop
+
+archival:
+  history:
+    state: disabled
+  visibility:
+    state: disabled
+
+namespaceDefaults:
+  archival:
+    history:
+      state: disabled
+    visibility:
+      state: disabled
+
+dynamicConfigClient:
+  filepath: /etc/temporal/dynamicconfig.yaml
+  pollInterval: 60s

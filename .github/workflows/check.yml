@@ -27,4 +27,12 @@ jobs:
           set-safe-directory: false
           submodules: false
       - name: Build and test the foundation
+        timeout-minutes: 25
         run: sh scripts/ci/check-foundation.sh
+      - name: Clean up the job-owned dependency fixture
+        if: always()
+        timeout-minutes: 4
+        run: |
+          export PATH="/opt/pmcli-tools/venv/bin:/opt/pmcli-tools/bin:$PATH"
+          python3 scripts/ci/with-stack-fixture.py \
+            --cleanup "$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"

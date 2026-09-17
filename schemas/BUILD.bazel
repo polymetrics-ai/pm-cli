@@ -1,0 +1,25 @@
+filegroup(
+    name = "contract_schemas",
+    srcs = [
+        "field-binding.schema.json",
+        "foundation.schema.json",
+        "identity.schema.json",
+        "workflow-ref.schema.json",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+filegroup(
+    name = "authoring_schemas",
+    srcs = [
+        "atlas.schema.json",
+        "bundle.schema.json",
+        "proof.schema.json",
+        "scenario.schema.json",
+        "semantics.schema.json",
+        "source.schema.json",
+    ],
+    visibility = ["//visibility:public"],
+)
+
+exports_files(["server-config.schema.json"])

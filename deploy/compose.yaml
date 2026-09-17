@@ -1,0 +1,329 @@
+services:
+  postgres:
+    image: ${PM_STACK_IMAGE_POSTGRES:?}
+    restart: unless-stopped
+    init: true
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: pm_stack_admin
+      POSTGRES_PASSWORD_FILE: /run/pm-stack-secrets/superuser-password
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256 --auth-local=scram-sha-256
+    entrypoint:
+      - /bin/sh
+      - -eu
+      - -c
+    command:
+      - |
+        install -d -m 0700 -o postgres -g postgres /var/lib/postgresql/pm-stack-secrets
+        for secret in pm-app-migrator-password pm-app-runtime-password temporal-migrator-password temporal-runtime-password temporal-visibility-migrator-password temporal-visibility-runtime-password objects-migrator-password objects-runtime-password denied-password; do
+          install -m 0600 -o postgres -g postgres "/run/pm-stack-secrets/$$secret" "/var/lib/postgresql/pm-stack-secrets/$$secret"
+        done
+        install -m 0600 -o postgres -g postgres /run/pm-stack-secrets/server-key.pem /var/lib/postgresql/server-key.pem
+        install -m 0644 -o postgres -g postgres /run/pm-stack-secrets/server.pem /var/lib/postgresql/server.pem
+        exec docker-entrypoint.sh postgres \
+          -c ssl=on \
+          -c ssl_cert_file=/var/lib/postgresql/server.pem \
+          -c ssl_key_file=/var/lib/postgresql/server-key.pem \
+          -c password_encryption=scram-sha-256
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U pm_stack_admin -d postgres"]
+      interval: 2s
+      timeout: 3s
+      retries: 60
+      start_period: 5s
+    ports:
+      - "127.0.0.1:${PM_STACK_POSTGRES_PORT:?}:5432"
+    volumes:
+      - ${PM_STACK_DATA_DIR:?}/postgres:/var/lib/postgresql/data
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/superuser-password:/run/pm-stack-secrets/superuser-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-migrator-password:/run/pm-stack-secrets/pm-app-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-runtime-password:/run/pm-stack-secrets/pm-app-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-migrator-password:/run/pm-stack-secrets/temporal-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-runtime-password:/run/pm-stack-secrets/temporal-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-visibility-migrator-password:/run/pm-stack-secrets/temporal-visibility-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-visibility-runtime-password:/run/pm-stack-secrets/temporal-visibility-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/objects-migrator-password:/run/pm-stack-secrets/objects-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/objects-runtime-password:/run/pm-stack-secrets/objects-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/denied-password:/run/pm-stack-secrets/denied-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/server.pem:/run/pm-stack-secrets/server.pem:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/server-key.pem:/run/pm-stack-secrets/server-key.pem:ro
+    networks: [stack-private]
+    cpus: 1.0
+    mem_limit: 768m
+    pids_limit: 256
+
+  postgres-bootstrap:
+    image: ${PM_STACK_IMAGE_POSTGRES:?}
+    restart: "no"
+    init: true
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGDATABASE: postgres
+      PGUSER: pm_stack_admin
+      PGSSLMODE: verify-full
+      PGSSLROOTCERT: /run/pm-stack-secrets/ca.pem
+    entrypoint: [/bin/sh, -eu, -c]
+    command:
+      - |
+        export PGPASSWORD="$$(cat /run/pm-stack-secrets/superuser-password)"
+        exec psql --no-psqlrc --file=/etc/pm-stack/bootstrap.sql
+    volumes:
+      - ${PM_STACK_STATE_DIR:?}/bootstrap.sql:/etc/pm-stack/bootstrap.sql:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/superuser-password:/run/pm-stack-secrets/superuser-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-migrator-password:/run/pm-stack-secrets/pm-app-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-runtime-password:/run/pm-stack-secrets/pm-app-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-migrator-password:/run/pm-stack-secrets/temporal-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-runtime-password:/run/pm-stack-secrets/temporal-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-visibility-migrator-password:/run/pm-stack-secrets/temporal-visibility-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-visibility-runtime-password:/run/pm-stack-secrets/temporal-visibility-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/objects-migrator-password:/run/pm-stack-secrets/objects-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/objects-runtime-password:/run/pm-stack-secrets/objects-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/denied-password:/run/pm-stack-secrets/denied-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/ca.pem:/run/pm-stack-secrets/ca.pem:ro
+    networks: [stack-private]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+
+  temporal-schema:
+    image: ${PM_STACK_IMAGE_TEMPORAL_ADMIN:?}
+    restart: "no"
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    environment:
+      PM_STACK_MIGRATION_FENCE: held-by-pm-stack
+      PM_STACK_POSTGRES_HOST: postgres
+      PM_STACK_POSTGRES_PORT: "5432"
+      PM_STACK_SQL_SERVER_NAME: postgres
+    entrypoint: [/bin/sh, /etc/pm-stack/schema-init.sh]
+    volumes:
+      - ${PM_STACK_ROOT:?}/deploy/temporal/schema-init.sh:/etc/pm-stack/schema-init.sh:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-migrator-password:/run/pm-stack-secrets/temporal-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-visibility-migrator-password:/run/pm-stack-secrets/temporal-visibility-migrator-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/ca.pem:/run/secrets/postgres-ca.pem:ro
+    networks: [stack-private]
+    cpus: 0.5
+    mem_limit: 384m
+    pids_limit: 128
+
+  temporal:
+    image: ${PM_STACK_IMAGE_TEMPORAL_SERVER:?}
+    restart: unless-stopped
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    environment:
+      USER: pm-stack
+      TEMPORAL_SERVER_CONFIG_FILE_PATH: /etc/temporal/pm-stack.yaml
+      BIND_ON_IP: "0.0.0.0"
+    volumes:
+      - ${PM_STACK_STATE_DIR:?}/temporal.yaml:/etc/temporal/pm-stack.yaml:ro
+      - ${PM_STACK_ROOT:?}/deploy/temporal/dynamicconfig.yaml:/etc/temporal/dynamicconfig.yaml:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/ca.pem:/run/secrets/postgres-ca.pem:ro
+      - ${PM_STACK_TEMPORAL_SECRET_DIR:?}/ca.pem:/run/secrets/temporal-ca.pem:ro
+      - ${PM_STACK_TEMPORAL_SECRET_DIR:?}/server.pem:/run/secrets/temporal-server.pem:ro
+      - ${PM_STACK_TEMPORAL_SECRET_DIR:?}/server-key.pem:/run/secrets/temporal-server-key.pem:ro
+      - ${PM_STACK_TEMPORAL_SECRET_DIR:?}/client.pem:/run/secrets/temporal-client.pem:ro
+      - ${PM_STACK_TEMPORAL_SECRET_DIR:?}/client-key.pem:/run/secrets/temporal-client-key.pem:ro
+    ports:
+      - "127.0.0.1:${PM_STACK_TEMPORAL_PORT:?}:7233"
+    networks: [stack-private]
+    cpus: 1.0
+    mem_limit: 1g
+    pids_limit: 512
+    stop_grace_period: 45s
+
+  seaweed-master:
+    image: ${PM_STACK_IMAGE_SEAWEEDFS:?}
+    restart: unless-stopped
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    # Keep the operator-selected identity; the image wrapper otherwise changes
+    # rootless container UID 0 to 1000 and loses access to private bind mounts.
+    entrypoint: [/usr/bin/weed, -logtostderr=true]
+    environment:
+      GODEBUG: fips140=on
+      WEED_CONFIG_DIR: /etc/seaweedfs
+      # Grow one volume at a time so the default collection cannot consume
+      # the artifact bucket's bounded slot during a fresh deployment.
+      WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
+    command:
+      - master
+      - -ip=seaweed-master
+      - -port=9333
+      - -port.grpc=19333
+      - -mdir=/data
+      - -volumeSizeLimitMB=256
+    volumes:
+      - ${PM_STACK_DATA_DIR:?}/seaweed-master:/data
+      - ${PM_STACK_STATE_DIR:?}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/ca.pem:/run/secrets/artifact-ca.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server.pem:/run/secrets/artifact-server.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server-key.pem:/run/secrets/artifact-server-key.pem:ro
+    networks: [stack-private]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+
+  seaweed-volume:
+    image: ${PM_STACK_IMAGE_SEAWEEDFS:?}
+    restart: unless-stopped
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    entrypoint: [/usr/bin/weed, -logtostderr=true]
+    environment:
+      GODEBUG: fips140=on
+      WEED_CONFIG_DIR: /etc/seaweedfs
+    command:
+      - volume
+      - -mserver=seaweed-master:9333
+      - -ip=seaweed-volume
+      - -port=8080
+      - -port.grpc=18080
+      - -dir=/data
+      # One default metadata collection and one configured artifact bucket.
+      - -max=2
+    volumes:
+      - ${PM_STACK_DATA_DIR:?}/seaweed-volume:/data
+      - ${PM_STACK_STATE_DIR:?}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/ca.pem:/run/secrets/artifact-ca.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server.pem:/run/secrets/artifact-server.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server-key.pem:/run/secrets/artifact-server-key.pem:ro
+    networks: [stack-private]
+    cpus: 0.75
+    mem_limit: 384m
+    pids_limit: 192
+
+  seaweed-filer:
+    image: ${PM_STACK_IMAGE_SEAWEEDFS:?}
+    restart: unless-stopped
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    entrypoint: [/usr/bin/weed, -logtostderr=true]
+    environment:
+      GODEBUG: fips140=on
+      WEED_CONFIG_DIR: /etc/seaweedfs
+    command:
+      - filer
+      - -master=seaweed-master:9333
+      - -ip=seaweed-filer
+      - -port=8888
+      - -port.grpc=18888
+    volumes:
+      - ${PM_STACK_DATA_DIR:?}/seaweed-filer:/data
+      - ${PM_STACK_STATE_DIR:?}/filer.toml:/etc/seaweedfs/filer.toml:ro
+      - ${PM_STACK_STATE_DIR:?}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/ca.pem:/run/secrets/postgres-ca.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/ca.pem:/run/secrets/artifact-ca.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server.pem:/run/secrets/artifact-server.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server-key.pem:/run/secrets/artifact-server-key.pem:ro
+    networks: [stack-private]
+    cpus: 0.75
+    mem_limit: 512m
+    pids_limit: 192
+
+  seaweed-s3-a:
+    image: ${PM_STACK_IMAGE_SEAWEEDFS:?}
+    restart: unless-stopped
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    entrypoint: [/usr/bin/weed, -logtostderr=true]
+    environment:
+      GODEBUG: fips140=on
+      WEED_CONFIG_DIR: /etc/seaweedfs
+    command:
+      - s3
+      - -filer=seaweed-filer:8888
+      - -ip.bind=0.0.0.0
+      - -port=8333
+      - -port.grpc=18333
+      - -port.iceberg=0
+      - -port.lance=0
+      - -config=/etc/seaweedfs/s3.json
+      - -cert.file=/run/secrets/artifact-server.pem
+      - -key.file=/run/secrets/artifact-server-key.pem
+      - -cacert.file=/run/secrets/artifact-ca.pem
+      - -tlsVerifyClientCert=false
+      - -autoCreateBucket=false
+      - -allowDeleteBucketNotEmpty=false
+    ports:
+      - "127.0.0.1:${PM_STACK_S3_PRIMARY_PORT:?}:8333"
+    volumes:
+      - ${PM_STACK_DATA_DIR:?}/seaweed-s3-a:/data
+      - ${PM_STACK_STATE_DIR:?}/s3.json:/etc/seaweedfs/s3.json:ro
+      - ${PM_STACK_STATE_DIR:?}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/ca.pem:/run/secrets/artifact-ca.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server.pem:/run/secrets/artifact-server.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server-key.pem:/run/secrets/artifact-server-key.pem:ro
+    networks: [stack-private]
+    cpus: 0.5
+    mem_limit: 384m
+    pids_limit: 160
+
+  seaweed-s3-b:
+    image: ${PM_STACK_IMAGE_SEAWEEDFS:?}
+    restart: unless-stopped
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    entrypoint: [/usr/bin/weed, -logtostderr=true]
+    environment:
+      GODEBUG: fips140=on
+      WEED_CONFIG_DIR: /etc/seaweedfs
+    command:
+      - s3
+      - -filer=seaweed-filer:8888
+      - -ip.bind=0.0.0.0
+      - -port=8333
+      - -port.grpc=18333
+      - -port.iceberg=0
+      - -port.lance=0
+      - -config=/etc/seaweedfs/s3.json
+      - -cert.file=/run/secrets/artifact-server.pem
+      - -key.file=/run/secrets/artifact-server-key.pem
+      - -cacert.file=/run/secrets/artifact-ca.pem
+      - -tlsVerifyClientCert=false
+      - -autoCreateBucket=false
+      - -allowDeleteBucketNotEmpty=false
+    ports:
+      - "127.0.0.1:${PM_STACK_S3_SECONDARY_PORT:?}:8333"
+    volumes:
+      - ${PM_STACK_DATA_DIR:?}/seaweed-s3-b:/data
+      - ${PM_STACK_STATE_DIR:?}/s3.json:/etc/seaweedfs/s3.json:ro
+      - ${PM_STACK_STATE_DIR:?}/security.toml:/etc/seaweedfs/security.toml:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/ca.pem:/run/secrets/artifact-ca.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server.pem:/run/secrets/artifact-server.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server-key.pem:/run/secrets/artifact-server-key.pem:ro
+    networks: [stack-private]
+    cpus: 0.5
+    mem_limit: 384m
+    pids_limit: 160
+
+  caddy:
+    image: ${PM_STACK_IMAGE_CADDY:?}
+    restart: unless-stopped
+    init: true
+    user: "${PM_STACK_UID:?}:${PM_STACK_GID:?}"
+    read_only: true
+    environment:
+      XDG_CONFIG_HOME: /tmp/caddy-config
+      XDG_DATA_HOME: /tmp/caddy-data
+    command: [caddy, run, --config, /etc/caddy/Caddyfile, --adapter, caddyfile]
+    ports:
+      - "127.0.0.1:${PM_STACK_PUBLIC_PORT:?}:9443"
+    volumes:
+      - ${PM_STACK_ROOT:?}/deploy/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/ca.pem:/run/secrets/artifact-ca.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server.pem:/run/secrets/artifact-server.pem:ro
+      - ${PM_STACK_ARTIFACT_SECRET_DIR:?}/server-key.pem:/run/secrets/artifact-server-key.pem:ro
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+    networks: [stack-private]
+    cpus: 0.5
+    mem_limit: 256m
+    pids_limit: 128
+
+networks:
+  stack-private:
+    driver: bridge
+    labels:
+      ai.polymetrics.pm-stack: "true"

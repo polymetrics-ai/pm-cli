@@ -1,0 +1,369 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polymetrics.ai/schemas/field-binding.schema.json",
+  "title": "PM typed field binding",
+  "$ref": "#/$defs/fieldBinding",
+  "$defs": {
+    "fieldBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "field_id",
+        "wire_name",
+        "location",
+        "json_pointer",
+        "required",
+        "nullable",
+        "style",
+        "explode",
+        "allow_reserved",
+        "sensitivity",
+        "schema"
+      ],
+      "properties": {
+        "field_id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?:\\S|\\S.*\\S)$"},
+        "wire_name": {"type": "string"},
+        "location": {
+          "enum": ["path", "query", "header", "cookie", "body", "record", "metadata"]
+        },
+        "json_pointer": {"type": "string", "pattern": "^(?:/(?:[^~]|~[01])*)?$"},
+        "required": {"type": "boolean"},
+        "nullable": {"type": "boolean"},
+        "style": {
+          "enum": ["simple", "label", "matrix", "form", "spaceDelimited", "pipeDelimited", "deepObject", "json", "binary"]
+        },
+        "explode": {"type": "boolean"},
+        "allow_reserved": {"type": "boolean"},
+        "sensitivity": {"enum": ["public", "secret"]},
+        "schema": {"$ref": "#/$defs/schema"},
+        "source_default": {"$ref": "#/$defs/presentValue"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"location": {"enum": ["path", "query", "header", "cookie"]}}},
+          "then": {"properties": {"wire_name": {"minLength": 1}}}
+        },
+        {
+          "if": {"properties": {"location": {"const": "path"}}},
+          "then": {
+            "properties": {
+              "required": {"const": true},
+              "nullable": {"const": false},
+              "style": {"enum": ["simple", "label", "matrix"]},
+              "allow_reserved": {"const": false}
+            }
+          }
+        },
+        {
+          "if": {"properties": {"location": {"const": "query"}}},
+          "then": {"properties": {"style": {"enum": ["form", "spaceDelimited", "pipeDelimited", "deepObject"]}}}
+        },
+        {
+          "if": {"properties": {"location": {"const": "header"}}},
+          "then": {"properties": {"style": {"const": "simple"}, "allow_reserved": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"location": {"const": "cookie"}}},
+          "then": {"properties": {"style": {"const": "form"}, "allow_reserved": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"location": {"enum": ["body", "record", "metadata"]}}},
+          "then": {"properties": {"style": {"enum": ["json", "binary"]}, "allow_reserved": {"const": false}}}
+        },
+        {
+          "if": {"properties": {"sensitivity": {"const": "secret"}}},
+          "then": {"not": {"required": ["source_default"]}}
+        },
+        {
+          "if": {"properties": {"nullable": {"const": true}}},
+          "then": {
+            "properties": {
+              "schema": {
+                "required": ["nullable"],
+                "properties": {"nullable": {"const": true}}
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"nullable": {"const": false}}},
+          "then": {
+            "properties": {
+              "schema": {
+                "not": {
+                  "required": ["nullable"],
+                  "properties": {"nullable": {"const": true}}
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "enum": ["string", "bool", "integer", "decimal", "date", "timestamp_instant", "timestamp_local", "array", "object", "union", "binary_ref"]
+        },
+        "nullable": {"type": "boolean"},
+        "required": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"type": "string"}
+        },
+        "properties": {
+          "type": "object",
+          "additionalProperties": {"$ref": "#/$defs/schema"}
+        },
+        "items": {"$ref": "#/$defs/schema"},
+        "oneOf": {
+          "type": "array",
+          "minItems": 2,
+          "items": {"$ref": "#/$defs/schema"}
+        },
+        "allOf": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/schema"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "required": ["nullable"],
+            "properties": {"nullable": {"const": true}}
+          },
+          "then": {
+            "properties": {
+              "allOf": {
+                "items": {
+                  "required": ["nullable"],
+                  "properties": {"nullable": {"const": true}}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "not": {
+              "required": ["nullable"],
+              "properties": {"nullable": {"const": true}}
+            }
+          },
+          "then": {
+            "properties": {
+              "allOf": {
+                "items": {
+                  "not": {
+                    "required": ["nullable"],
+                    "properties": {"nullable": {"const": true}}
+                  }
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "object"}}},
+          "then": {
+            "properties": {
+              "allOf": {
+                "items": {"properties": {"type": {"const": "object"}}}
+              }
+            },
+            "not": {"anyOf": [{"required": ["items"]}, {"required": ["oneOf"]}]}
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "array"}}},
+          "then": {
+            "required": ["items"],
+            "not": {"anyOf": [{"required": ["properties"]}, {"required": ["required"]}, {"required": ["oneOf"]}, {"required": ["allOf"]}]}
+          }
+        },
+        {
+          "if": {"properties": {"type": {"const": "union"}}},
+          "then": {
+            "required": ["oneOf"],
+            "not": {"anyOf": [{"required": ["properties"]}, {"required": ["required"]}, {"required": ["items"]}, {"required": ["allOf"]}]}
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "enum": ["string", "bool", "integer", "decimal", "date", "timestamp_instant", "timestamp_local", "binary_ref"]
+              }
+            }
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["properties"]},
+                {"required": ["required"]},
+                {"required": ["items"]},
+                {"required": ["oneOf"]},
+                {"required": ["allOf"]}
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "presentValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence"],
+          "properties": {"presence": {"const": "absent"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence"],
+          "properties": {"presence": {"const": "null"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "text"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "string"},
+            "text": {"type": "string"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "text"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "date"},
+            "text": {"type": "string", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])$"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "text"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "timestamp_instant"},
+            "text": {"type": "string", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]+)?(?:Z|[+-](?:[01][0-9]|2[0-3]):[0-5][0-9])$"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "text"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "timestamp_local"},
+            "text": {"type": "string", "pattern": "^[0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01])T(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9](?:\\.[0-9]{1,9})?$"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "boolean"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "bool"},
+            "boolean": {"type": "boolean"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "exact", "precision", "scale"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "integer"},
+            "exact": {"type": "string", "pattern": "^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$"},
+            "precision": {"type": "integer", "minimum": 1},
+            "scale": {"const": 0}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "exact", "precision", "scale"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "decimal"},
+            "exact": {"type": "string", "pattern": "^-?(?:0|[1-9][0-9]*)\\.[0-9]+$", "not": {"pattern": "^-0\\.0+$"}},
+            "precision": {"type": "integer", "minimum": 1},
+            "scale": {"type": "integer", "minimum": 1}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "elements"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "array"},
+            "elements": {
+              "type": "array",
+              "items": {"$ref": "#/$defs/presentValue"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "fields"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "object"},
+            "fields": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/$defs/presentValue"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "variant", "member"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "union"},
+            "variant": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?:\\S|\\S.*\\S)$"},
+            "member": {"$ref": "#/$defs/presentValue"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "binary"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "binary_ref"},
+            "binary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["org_id", "workspace_id", "artifact_id", "object_attempt_key", "sha256", "byte_length", "media_type", "backend_generation"],
+              "properties": {
+                "org_id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?:\\S|\\S.*\\S)$"},
+                "workspace_id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?:\\S|\\S.*\\S)$"},
+                "artifact_id": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?:\\S|\\S.*\\S)$"},
+                "object_attempt_key": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?:\\S|\\S.*\\S)$"},
+                "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+                "byte_length": {"type": "integer", "minimum": 0},
+                "media_type": {"type": "string", "minLength": 1},
+                "backend_generation": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^(?:\\S|\\S.*\\S)$"}
+              }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

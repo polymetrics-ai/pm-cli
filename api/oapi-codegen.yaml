@@ -1,0 +1,10 @@
+package: api
+output: internal/api/types.gen.go
+generate:
+  models: true
+compatibility:
+  disable-required-readonly-as-pointer: true
+  preserve-original-operation-id-casing-in-embedded-spec: true
+output-options:
+  skip-prune: true
+  nullable-type: true

@@ -1,0 +1,38 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "api",
+    srcs = [
+        "client.gen.go",
+        "controls.gen.go",
+        "protocol.go",
+        "types.gen.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/api",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/contract",
+        "@com_github_oapi_codegen_nullable//:nullable",
+        "@com_github_oapi_codegen_runtime//:runtime",
+    ],
+)
+
+go_test(
+    name = "api_test",
+    size = "medium",
+    srcs = ["protocol_test.go"],
+    data = [
+        "//:scripts/generate.sh",
+        "//api:controls.json",
+        "//api:oapi-codegen.yaml",
+        "//api:pm.openapi.json",
+        "//api:pm.openapi.yaml",
+        "//tools/cmd/pm-api-generate",
+    ],
+    embed = [":api"],
+    env = {"PM_API_GENERATE": "$(rootpath //tools/cmd/pm-api-generate)"},
+    deps = [
+        "//internal/contract",
+        "@com_github_santhosh_tekuri_jsonschema_v6//:jsonschema",
+    ],
+)

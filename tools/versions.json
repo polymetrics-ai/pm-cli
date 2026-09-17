@@ -58,6 +58,12 @@
         "source_url": "https://github.com/jackc/pgx/tree/5e583fa7aabfa88b796292f849fc9d7d75ac159d"
       },
       {
+        "path": "github.com/oapi-codegen/nullable",
+        "version": "v1.1.0",
+        "license": "Apache-2.0",
+        "source_url": "https://github.com/oapi-codegen/nullable/tree/5c8aab1f58cdf062d9fc3c9169af229c7c9d1d09"
+      },
+      {
         "path": "github.com/oapi-codegen/runtime",
         "version": "v1.7.0",
         "license": "Apache-2.0",
@@ -176,6 +182,12 @@
         "version": "v0.16.0",
         "license": "BSD-3-Clause",
         "source_url": "https://go.googlesource.com/time/+/fb013b3d305a26f5ef5350a6eaffc7c87a200383"
+      },
+      {
+        "path": "google.golang.org/protobuf",
+        "version": "v1.36.12",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/protobuf/+/cdd4c5f7406e82462949c7a65defa9f3029c162d"
       }
     ],
     "tools": [

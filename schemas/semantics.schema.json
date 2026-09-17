@@ -1,0 +1,178 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polymetrics.ai/schemas/semantics.schema.json",
+  "title": "PM source-linked connector semantics",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "connector_id",
+    "source_digest",
+    "revision",
+    "operations"
+  ],
+  "properties": {
+    "schema_version": {"const": "pm.semantics/v1"},
+    "connector_id": {"$ref": "#/$defs/identity"},
+    "source_digest": {"$ref": "#/$defs/digest"},
+    "revision": {"$ref": "#/$defs/digest"},
+    "operations": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/operationSemantics"}
+    }
+  },
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1024,
+      "pattern": "^(\\S|\\S.*\\S)$"
+    },
+    "digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "jsonPointer": {
+      "type": "string",
+      "pattern": "^(/([^~]|~[01])*)*$"
+    },
+    "sourceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["source_id", "pointer"],
+      "properties": {
+        "source_id": {"$ref": "#/$defs/identity"},
+        "pointer": {"type": "string", "maxLength": 4096}
+      }
+    },
+    "operationSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "source_refs", "lanes"],
+      "properties": {
+        "operation_id": {"$ref": "#/$defs/identity"},
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sourceRef"}
+        },
+        "record_extraction": {"$ref": "#/$defs/recordExtraction"},
+        "pagination": {"$ref": "#/$defs/pagination"},
+        "retry": {"$ref": "#/$defs/retry"},
+        "lanes": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/laneSemantics"}
+        }
+      }
+    },
+    "recordExtraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["records_pointer", "witness"],
+      "properties": {
+        "records_pointer": {"$ref": "#/$defs/jsonPointer"},
+        "next_pointer": {"$ref": "#/$defs/jsonPointer"},
+        "witness": {"$ref": "#/$defs/witness"}
+      }
+    },
+    "pagination": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cursor_request_field", "cursor_response_pointer", "witness"],
+          "properties": {
+            "kind": {"const": "cursor"},
+            "cursor_request_field": {"$ref": "#/$defs/identity"},
+            "cursor_response_pointer": {"$ref": "#/$defs/jsonPointer"},
+            "witness": {"$ref": "#/$defs/witness"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "offset_request_field", "limit_request_field", "witness"],
+          "properties": {
+            "kind": {"const": "offset"},
+            "offset_request_field": {"$ref": "#/$defs/identity"},
+            "limit_request_field": {"$ref": "#/$defs/identity"},
+            "total_response_pointer": {"$ref": "#/$defs/jsonPointer"},
+            "witness": {"$ref": "#/$defs/witness"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "page_request_field", "witness"],
+          "properties": {
+            "kind": {"const": "page"},
+            "page_request_field": {"$ref": "#/$defs/identity"},
+            "last_page_response_pointer": {"$ref": "#/$defs/jsonPointer"},
+            "witness": {"$ref": "#/$defs/witness"}
+          }
+        }
+      ]
+    },
+    "retry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "witness"],
+      "properties": {
+        "classification": {"enum": ["safe", "unsafe", "conditional"]},
+        "condition": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "witness": {"$ref": "#/$defs/witness"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"classification": {"const": "conditional"}}},
+          "then": {"required": ["condition"]},
+          "else": {"not": {"required": ["condition"]}}
+        }
+      ]
+    },
+    "laneSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["lane", "classification", "source_refs"],
+      "properties": {
+        "lane": {
+          "enum": [
+            "direct_read",
+            "direct_write",
+            "etl",
+            "reverse_etl",
+            "binary_download",
+            "binary_upload",
+            "sync_transport"
+          ]
+        },
+        "classification": {"enum": ["eligible", "unsupported", "not_applicable", "blocked", "unproven"]},
+        "reason": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sourceRef"}
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"classification": {"enum": ["blocked", "unproven"]}}},
+          "then": {"required": ["reason"]}
+        }
+      ]
+    },
+    "witness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proof_id", "source_refs"],
+      "properties": {
+        "proof_id": {"$ref": "#/$defs/identity"},
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sourceRef"}
+        }
+      }
+    }
+  }
+}

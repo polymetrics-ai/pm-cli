@@ -1,0 +1,17 @@
+[postgres2]
+enabled = true
+hostname = {{POSTGRES_HOST}}
+port = {{POSTGRES_PORT}}
+username = {{POSTGRES_USER}}
+password = {{POSTGRES_PASSWORD}}
+database = "pm_objects_meta"
+schema = "pm_objects"
+sslmode = "verify-full"
+sslrootcert = "/run/secrets/postgres-ca.pem"
+enableUpsert = true
+connection_max_idle = 2
+connection_max_open = 2
+connection_max_lifetime_seconds = 300
+
+[leveldb2]
+enabled = false

@@ -8,18 +8,21 @@ The repository contains a digest-pinned bootstrap, application and tools Go modu
 
 ### Resolve and run pinned tools
 
-`tools/bootstrap.py` is the public entry point for the locked Go, LLVM/Clang, Bazelisk/Bazel, and Syft assets in `build/toolchains.lock.json`:
+`tools/bootstrap.py` is the public entry point for the locked Go, LLVM/Clang, Bazelisk/Bazel, Syft, and Docker Compose assets in `build/toolchains.lock.json`:
 
 ```sh
 python3 tools/bootstrap.py print-env
 python3 tools/bootstrap.py exec go -- version
 python3 tools/bootstrap.py exec clang -- --version
 python3 tools/bootstrap.py exec bazelisk -- --batch version
+python3 tools/bootstrap.py exec docker-compose -- version --short
 ```
 
 The literal `--` before tool arguments is required. On a cache miss the bootstrap downloads only locked assets for the selected host platform, verifies each locked SHA-256, and installs them into a persistent local cache. The default is `.cache/pm-tools`; set `PM_TOOLS_CACHE` to another persistent directory when needed. The bootstrap rejects caches under `/tmp` and `/private/tmp`. When the default repository-local tool cache is used, Bazel's output-user root is placed in the platform user cache because Bazel does not permit its repository-contents cache inside the source workspace.
 
-Bootstrap environment changes apply only to the process it executes. In particular, the pinned Go directory is prepended only to that child process's `PATH`; the parent shell, global `PATH`, and globally installed tools are not changed. Go and Bazel execution force `GOTOOLCHAIN=local` and `GOWORK=off`, so an ambient workspace or Go's automatic toolchain selection cannot replace the locked inputs.
+Bootstrap environment changes apply only to the process it executes. In particular, the pinned Go directory is prepended only to that child process's `PATH`; the parent shell, global `PATH`, and globally installed tools are not changed. Go and Bazel execution force `GOTOOLCHAIN=local` and `GOWORK=off`, so an ambient workspace or Go's automatic toolchain selection cannot replace the locked inputs. For Bazel test and coverage commands, bootstrap asks the pinned Go tool for its configured `GOCACHE` and `GOMODCACHE` before Bazel changes the test `HOME`, then passes only those two values into the test environment. The sandbox `HOME` remains fresh, valid user-selected cache locations retain their Go semantics, and other Bazel commands do not perform the cache query.
+
+The Compose 5.5.1 executable stays in the project tool cache; it does not replace an installed Docker CLI plugin, install an engine, start Docker Desktop, or change a Docker context. Stack lifecycle actions require explicit operator authority and an owned project. A successful Compose version check is not dependency-stack readiness or CI evidence.
 
 On macOS, cgo-enabled Go, Clang, and Bazel execution require an Apple macOS SDK discoverable through the fixed system command:
 
@@ -85,6 +88,118 @@ sh scripts/dev/doctor.sh
 ```
 
 It reports ambient tool versions and index status without installing dependencies, changing global configuration, generating source, building PM, running tests, or contacting providers. Missing optional tools are reported explicitly; an installed tool whose version/status command fails makes the report fail. Exit zero means the report completed, not that the application is validated.
+
+### Configuration and offline installation
+
+The pure server-configuration boundary is now source-present in `internal/config`: `Load` rejects malformed, duplicate, unknown, wrongly cased, and lossy Unicode input; `Validate` resolves one immutable PostgreSQL/Temporal/S3 configuration and checks every requested lifecycle action before an operator can mutate a dependency. Input is bounded to 1 MiB and 128 levels. Configuration carries secret references, not resolved secret values. OIDC client identifiers remain exact opaque values within the [OAuth character contract](https://www.rfc-editor.org/rfc/rfc6749#appendix-A.1), not PM identifier names.
+
+The [server schema](../../schemas/server-config.schema.json), [bundled example](../../deploy/server.example.json), and [managed example](../../packaging/config/server.example.json) describe the same backend architecture. The examples contain placeholder references, not provisioned credentials or working endpoints. Admission selects `development` (32 global pending, 8 workspace pending, 2-minute workspace age) or `standard` (256, 32, 10 minutes); explicit finite positive overrides retain presence, and workspace pending cannot exceed global pending.
+
+Run the pure configuration and packaging-contract checks without starting services:
+
+```sh
+python3 tools/bootstrap.py exec go -- test -mod=readonly ./tests/stack -run '^(TestStrictStackConfiguration|TestOIDCClientIdentifierRemainsOpaque|TestPackagingPathSchemas|TestInstallerRejectsDestinationFileDirectoryConflict)$' -count=1 -timeout 10m
+scripts/install.sh --help
+```
+
+The offline installer consumes an operator-supplied payload described by the [release-pair schema](../../packaging/release-pair.schema.json) and [install-manifest schema](../../packaging/install-manifest.schema.json). `--check` verifies the plan without creating its destination. Installation checks release identity, artifact roles, target platform, digests, modes, and confined nonconflicting paths; it refuses different existing files and never starts services. This is not release authenticity verification, an upgrade protocol, real-stack readiness, or completed M12 installation/recovery proof.
+
+### Explicit dependency operator and physical qualification
+
+`scripts/pm-stack` invokes the selected Go toolchain and the dependency operator in `internal/stack`. It is not PM CLI auto-start and does not create a PM API or worker. `check` verifies actual PostgreSQL database/role/schema identities, the authenticated Temporal namespace, and authenticated S3 bucket access. `up` initializes and starts selected bundled dependencies; `migrate` serializes their schema tooling; `drain` stops only selected bundled services. Managed dependencies remain externally owned: lifecycle preflight rejects attempts to mutate or stop them.
+
+Compose's implicit `.env` loading and inherited `COMPOSE_ENV_FILES` are disabled. They cannot supply a second configuration source or override this boundary through `COMPOSE_DISABLE_ENV_FILE=false`.
+
+Bootstrap grants the application runtime only `SELECT` on its readiness marker, revokes database `CREATE` and `TEMPORARY` privileges from both the runtime and `PUBLIC`, and removes table/sequence default grants for future application objects. Store migrations own their exact per-table privileges; repeating dependency initialization must not restore broader application grants.
+
+The digest-pinned [Compose layout](../../deploy/compose.yaml) is a bounded, non-production qualification layout, not production sizing or availability guidance. It uses separate PostgreSQL application, Temporal persistence, Temporal visibility and object-metadata databases; Temporal's official schema tool; Seaweed `postgres2`; two TLS S3 gateways; and Caddy. The filer pool ceiling of two, four concurrent listing clients, and seeded object names are synthetic qualification inputs, not production defaults. Seaweed grows one volume at a time and reserves capacity for both its default metadata collection and the configured artifact bucket.
+
+Use an explicitly owned disposable fixture with fresh test-only credentials and trusted test certificates. Configuration examples alone do not provision these inputs. `PM_STACK_SECRETS_DIR` names the confined secret-bundle root; `PM_STACK_STATE_DIR` names owned generated state and data; `PM_STACK_PROJECT` identifies the unique Compose project. The named PostgreSQL, Temporal, S3-primary, S3-secondary and public-port overrides must agree with the configured endpoints. Every published infrastructure port binds to `127.0.0.1`; service CPU, memory and process counts are bounded. All service data mounts stay under owned state. Select the intended container engine explicitly; the operator does not install or start a host engine.
+
+With that fixture prepared, these source-present entry points operate on its configuration. The absolute path below is a placeholder, not a supplied fixture:
+
+```sh
+scripts/pm-stack check --config /absolute/path/to/owned-test-server.json
+scripts/pm-stack up --config /absolute/path/to/owned-test-server.json
+scripts/pm-stack migrate --config /absolute/path/to/owned-test-server.json
+scripts/pm-stack drain --dependency all --config /absolute/path/to/owned-test-server.json
+```
+
+Physical tests additionally require `PM_STACK_TEST_CONFIG`, `PM_STACK_TEST_S3_PRIMARY_ENDPOINT`, and `PM_STACK_TEST_S3_SECONDARY_ENDPOINT`, while retaining the fixture's secret, state, project and port settings. Missing inputs fail; they are not skips. Run against the owned fixture only:
+
+```sh
+python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./tests/stack -run '^TestSelected(Storage|PostgresTemporal)Qualification$' -count=1 -timeout 10m
+```
+
+The storage root exercises bounded concurrent nested listing, both gateways and a separate reader process, interrupted multipart publication, and rejection of corrupted or truncated bytes. The database/Temporal root exercises concurrent initialization, exact schema versions and incompatible-version refusal with restoration, denied roles, missing client authentication, unsafe port publication, and managed-stop refusal. Authenticated readiness alone is not byte-transfer proof.
+
+The Bazel target `//tests/stack:stack_test` includes these physical checks. Its `external` and `no-remote` tags prevent cached test success and remote execution without disabling sandboxed compilation. The [test rule](../../tests/stack/BUILD.bazel) explicitly inherits its named fixture, engine and tool settings from the invoking environment. Export those settings, including `PM_STACK_ROOT` set to this checkout; do not substitute an unowned stack. Local fixture results do not establish runner CI, PM API/worker behavior, connector certification, or later installation and recovery proof.
+
+### Job-owned CI dependency fixture
+
+The [foundation job](../../scripts/ci/check-foundation.sh) builds the dependency operator and [fixture generator](../../tools/cmd/pm-stack-fixture/main.go), then runs the complete Bazel test set through [the fixture wrapper](../../scripts/ci/with-stack-fixture.py). It requires an existing local Docker Unix socket, a Linux engine and the already-cached pinned Compose executable. Local Docker Desktop development uses the same wrapper. Missing prerequisites fail; the wrapper does not install or reconfigure an engine, register a runner, or borrow another project's services.
+
+The stack inspects the selected Docker engine before lifecycle actions. Ordinary engines use the operator's UID/GID; a rootless engine owned by that operator uses container `0:0`, which [maps to the unprivileged host owner](https://docs.docker.com/engine/security/rootless/uid-gid-mapping/), not host root. Private bind-mounted credentials keep their existing permissions. SeaweedFS invokes its binary directly so the image entrypoint cannot change that identity or chown the data; its FIPS runtime setting is retained. Rootful `userns-remap` is refused until an explicit ownership mapping is implemented. The fixture records and rechecks the engine's rootless identity during cleanup.
+
+`with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND...` creates a unique private project, bounded containers, loopback-only published ports, fresh synthetic credentials and test certificates. It uses the admitted image pins, removes inherited Docker/Compose overrides, isolates Docker authentication, and passes the generated fixture references to the requested command. No real provider credentials are needed.
+
+The manifest is `$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json`. Its exclusive, durable pre-mutation record binds the job attempt, checkout, daemon, project and owned paths; later records retain resource identities. The workflow's `always()` step invokes `with-stack-fixture.py --cleanup ABSOLUTE_PATH`. Cleanup revalidates ownership, removes only the owned resources and synthetic data, and leaves a cleaned receipt that cannot authorize deletion of a replacement directory or recycled resource. Startup, child-command and cleanup failures remain nonzero.
+
+Both physical Bazel targets declare [`exclusive` execution](https://bazel.build/reference/be/common-definitions#common.tags): their schema and role fault cases run serially within a Bazel invocation, including direct Bazel and Make entry points. Other tests retain normal scheduling. Separate manual test invocations must not share a fixture concurrently.
+
+Local checks exercise successful physical tests, child failure, normal cancellation, abrupt termination, partial startup, mismatched-job refusal and cleaned-receipt reuse. These are local development results, not final-head runner CI, runner-network qualification, production recovery or application/provider proof.
+
+### Typed source and value contracts
+
+`internal/contract` now provides strict operation, foundation and field-binding boundaries, exact semantic digests, scoped entity keys, and typed values. Values keep absent, null, false, zero, empty containers, exact integer/decimal text and scale, nested data, and provider property spelling distinct. Instant normalization preserves the exact fractional value when converting to UTC; local wall timestamps remain a separate type. Unsupported input is refused rather than silently coerced.
+
+Action results retain complete data unless the caller requests shared typed controls. Filtering evaluates the unprojected record before nested field selection. Filtered emission counts change without rewriting source counts, effective wire limits, continuation, unread tails, provider totals or source exhaustion. Container inputs and returned views cannot mutate retained values.
+
+The [foundation schema](../../schemas/foundation.schema.json), [field-binding schema](../../schemas/field-binding.schema.json), [identity schema](../../schemas/identity.schema.json), and [workflow-reference schema](../../schemas/workflow-ref.schema.json) execute with the pinned JSON Schema validator and a closed external loader in the focused tests. Shared Go validation additionally checks duplicate keys, exactly cased metadata names, exact references and semantic constraints; schema validation alone does not establish those guarantees.
+
+Identity and transition contracts retain explicit organization/workspace scope, requested/effective actors, bounded one-hop delegation, and grant expiry/policy epochs independent of login sessions. `ObjectRef` is the single Go representation of the eight-field immutable artifact descriptor; an explicit zero byte length differs from an absent length. `NewRunRecord` owns copies of caller-supplied intent and workflow-history containers.
+
+Timeouts retain effect uncertainty and attempt receipts. Unknown effects keep run/task aggregates reconciling rather than failed, cancelled, succeeded or blocked. Policy blockage becomes a blocked state only when every effect is known. API workflow bindings use `pm/run/<opaque UUID>`; Temporal chain observations do not replace the stable PM run identity or grant reference.
+
+```sh
+python3 tools/bootstrap.py exec go -- test -mod=readonly ./internal/contract -count=1 -timeout 10m
+```
+
+These are pure contract checks, not generated API readiness, authentication/RLS enforcement, durable lifecycle or Temporal execution, registered artifact-byte verification, connector implementation or provider certification.
+
+### Generated public API boundary
+
+The ordinary public API is authored once in [OpenAPI 3.1](../../api/pm.openapi.yaml), with exact PM controls in [controls.json](../../api/controls.json). The pinned generator produces the public Go DTOs/client, the Gin boundary, canonical OpenAPI JSON and their digest manifest. Edit the authoring inputs or generator, never the generated files.
+
+```sh
+make generate
+make check-generated
+python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./internal/api ./internal/httpapi -count=1 -timeout 5m
+```
+
+`check-generated` compares every owned output byte against fresh generation and is included in `make check` and the foundation CI command sequence. `TestGeneratedContractBoundary` exercises independent output directories, stale and semantically lossy output, unsupported source projection and generator failure propagation. Required, nullable and composed-schema constraints must survive; no proof-only DTO belongs in the ordinary API.
+
+`TestWireVersionAndEnvelope` covers protocol/required-feature refusal, safe additive responses, distinct admission/error/replay envelopes and exact shared values/selection/filter/pagination. `RegisterPMStrictHandlers` installs the protocol guard before caller middleware and typed binding. Ordinary metadata and replay reject secret-bearing fields; provider-owned data field names remain exact, including a legitimate field named `password`. The sole one-time PM credential response is separate from replay.
+
+This boundary does not start a server, authenticate a caller, commit an admission or execute a provider request. A compiled HTTP package with no tests is compilation evidence only; the generated-router smoke and protocol tests have separate behavioral evidence.
+
+### PostgreSQL control store
+
+`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v2`. The migrator owns exact table/column grants. The runtime role cannot create schemas/tables/temporary objects, truncate any PM table, delete history or broaden its authority. Operator reinitialization must preserve those store-owned grants.
+
+Use only an explicitly owned disposable PostgreSQL fixture. The tests require the selected application's `pm-app-endpoint` and `pm-app-migrator-password` references under `PM_STORE_TEST_SECRETS_DIR`; they do not skip when those inputs are missing. With the dependency fixture above already prepared:
+
+```sh
+export PM_STORE_TEST_SECRETS_DIR="$PM_STACK_SECRETS_DIR/operator/postgres"
+python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./internal/store -count=1 -timeout 5m
+python3 tools/bootstrap.py exec bazelisk -- test //internal/store:store_test --nocache_test_results --test_output=errors
+```
+
+The Bazel target inherits only the named fixture directory and resource controls. Tests use isolated scopes and ordered, scope-bound cleanup rather than dropping the application schema. They exercise interrupted migration rollback and downgrade refusal, equal-ID composite references, immutable workspace namespaces, physical connection reuse and discard after cleanup failure, competing claims and stale fences, atomic state/receipt/audit/event/outbox, admission replay after reopen, and complete-identity manifest/checkpoint publication.
+
+Connections, memberships, encrypted credential versions and checkpoints are workspace-scoped. Provider-account coordination is organization-owned: aliases across workspaces and worker replicas share one PostgreSQL capacity reservation, not a per-process counter. A store permit requires a current owner/fence and unexpired authority before it can enter the dispatched state. Dispatched or unknown work stays charged after expiry; no expiry alone proves that a request was unsent. Workspace tombstones retain their immutable key namespaces.
+
+These checks establish PostgreSQL-owned behavior only. `TestDurableAcceptedBefore202` observes committed visibility, not an HTTP response. `TestArtifactCrashWindows` observes unpublished metadata, not object upload/readback. R03–R05 cover the scoped store, composite references and durable permit/CAS boundary; they do not qualify application authentication or checks at the physical provider send. Ciphertext metadata round-tripping does not qualify a wrapping-key service or signer. No store result proves a provider effect, resolution of an unknown external outcome, Temporal workflow execution or recovery.
 
 ### Go tool and module pin maintenance
 

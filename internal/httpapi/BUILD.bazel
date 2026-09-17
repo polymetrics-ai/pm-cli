@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "httpapi",
+    srcs = ["server.gen.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/httpapi",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/api",
+        "@com_github_gin_gonic_gin//:gin",
+        "@com_github_oapi_codegen_runtime//:runtime",
+    ],
+)

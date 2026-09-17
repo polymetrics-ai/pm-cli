@@ -29,9 +29,9 @@ For every claimed check, retain the exact command or action, selected test/case 
 
 Run focused checks before integration. Broad suites and genuine CI run once at the coherent candidate boundary, with affected checks and targeted review after material fixes. Independent Standards and Spec review is separate from testing and cannot turn a missing check into green.
 
-## Current foundation boundary
+## Build and toolchain entry points
 
-The issue #3 foundation commands are now source-present. From the repository root, use the pinned entry points:
+The issue #3 foundation commands are source-present. From the repository root, use the pinned entry points below. The all-target Bazel test command also selects the physical stack checks: prepare and export their [explicitly owned fixture inputs](setup.md#explicit-dependency-operator-and-physical-qualification) first. Missing inputs fail rather than skip.
 
 ```sh
 make build test vet boundaries
@@ -41,7 +41,17 @@ python3 scripts/ci/check-dependencies.py --evidence-dir .cache/foundation-sboms
 make benchmark
 ```
 
-`make test` runs `TestResolvedDependencyPolicy`, including both real module graphs and its fail-closed synthetic SBOM controls. Without `PM_SBOMS`, that invocation does not claim full external-tool inventory qualification. `check-dependencies.py` generates current-platform inventories, invokes the real `pm-dependency-check` CLI, supplies those SBOMs through `PM_SBOMS`, and reruns the named test. The command is no longer planned or unavailable.
+`make test` includes `TestResolvedDependencyPolicy`, which checks both real module graphs and its fail-closed synthetic SBOM controls. Without `PM_SBOMS`, that invocation does not claim full external-tool inventory qualification. `check-dependencies.py` generates current-platform inventories, invokes the real `pm-dependency-check` CLI, supplies those SBOMs through `PM_SBOMS`, and reruns the named test. The command is no longer planned or unavailable.
+
+### API generation and PostgreSQL control-store checks
+
+The [generated public API and control-store entry points](setup.md#generated-public-api-boundary) are source-present. Keep generation, compilation, protocol behavior and actual storage execution distinct. In particular, `internal/httpapi` compiling without test files is not an executed handler test.
+
+`TestGeneratedContractBoundary` constructs semantically different required/nullable/`allOf` outputs, observes their differences with the pinned JSON Schema consumer and requires qualification against the original source to refuse them. Its independent-directory, stale-output and generator-exit checks remain separate. Temporary emitted-DTO and Gin-router consumers exercise generated code without pretending that application/authentication handlers exist.
+
+The store checks run against the selected owned PostgreSQL fixture, including transaction faults, two-connection visibility, reopen/replay, competing claims, stale fences, scoped cleanup and metadata publication. R03 observes physical backend identity and empty scope after reuse, discards uncertain cleanup connections, and rejects an otherwise valid runtime role with a stray `TRUNCATE` grant on a PM table. R04 checks tenant-local composite bindings and retained namespaces; checkpoint publication also requires the complete prior identity, current writer fence and atomic manifest advancement. R05 exercises shared account capacity across aliases/replicas, unknown-charge retention and fenced outbox claims. The API guard and these store transactions do not jointly establish application authorization, the physical-send gate or a durable HTTP 202 boundary; those integrations remain with their accepted later owners.
+
+The all-target Bazel command selects both `//internal/store:store_test` and `//tests/stack:stack_test`. Both declare exclusive execution because their fault cases mutate shared fixture schema and roles. Manual runs require the explicit fixture inputs documented in setup. The foundation CI job provisions its [job-owned dependency fixture](setup.md#job-owned-ci-dependency-fixture) on the existing Docker engine and preserves an ownership manifest for unconditional cleanup. Missing prerequisites, failed cleanup and skipped physical checks are not successful validation. Local fixture passes do not substitute for actual candidate CI.
 
 ### Bounded Darwin development observations
 
@@ -71,8 +81,8 @@ The same focused regression run loaded the Linux amd64 and arm64 native imports 
 
 The benchmark completed one cold-output/action-cache build in **47.086722667 seconds** and one warm build using the same output base in **5.195518208 seconds**. Tool and repository-download caches were already warm. This is one sample of each state, not a statistical speedup claim.
 
-### Still unqualified
+### Limits of the Darwin build observations
 
 The Darwin observations do not qualify a Linux target, release artifact, backend, service process, or deployment. Independent Standards and Spec review, exact-head Linux CI, and merge require their own records. Full BOOT completion must bind those results rather than infer success from this local checkpoint.
 
-This foundation creates no PM server, worker, client, connector, provider execution, service stack, or demo, and qualifies none of them. Source locks, successful downloads, module resolution, SBOM inventory, build/test results, and developer-tool navigation cannot substitute for the later product, same-stack, provider, recovery, release, and two-real-demo obligations owned by their accepted issues.
+The build/toolchain evidence above establishes no PM server, worker, client, connector, provider execution, or demo. The selected dependency operator and its independently exercised storage/database checks have a separate [fixture boundary](setup.md#explicit-dependency-operator-and-physical-qualification); they do not complete application-store or provider-workflow obligations. Source locks, successful downloads, module resolution, SBOM inventory, and developer-tool navigation cannot replace the actual product, same-stack, provider, recovery, release, and two-real-demo checks owned by their accepted issues.

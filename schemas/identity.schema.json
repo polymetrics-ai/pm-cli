@@ -1,0 +1,175 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://polymetrics.ai/schemas/identity.schema.json",
+  "title": "PM identity and durable grant contracts",
+  "oneOf": [
+    { "$ref": "#/$defs/tenant" },
+    { "$ref": "#/$defs/scope" },
+    { "$ref": "#/$defs/principal" },
+    { "$ref": "#/$defs/policyEpochs" },
+    { "$ref": "#/$defs/grantCeiling" },
+    { "$ref": "#/$defs/delegation" },
+    { "$ref": "#/$defs/actor" },
+    { "$ref": "#/$defs/executionGrant" },
+    { "$ref": "#/$defs/objectRef" }
+  ],
+  "$defs": {
+    "identity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?:\\S|\\S.*\\S)$"
+    },
+    "utcInstant": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "Z$"
+    },
+    "uint64": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 18446744073709551615
+    },
+    "positiveUint64": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 18446744073709551615
+    },
+    "scope": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org_id", "workspace_id"],
+      "properties": {
+        "org_id": { "$ref": "#/$defs/identity" },
+        "workspace_id": { "$ref": "#/$defs/identity" }
+      }
+    },
+    "tenant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org_id", "revision"],
+      "properties": {
+        "org_id": { "$ref": "#/$defs/identity" },
+        "revision": { "$ref": "#/$defs/positiveUint64" }
+      }
+    },
+    "principal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["org_id", "principal_id", "kind"],
+      "properties": {
+        "org_id": { "$ref": "#/$defs/identity" },
+        "principal_id": { "$ref": "#/$defs/identity" },
+        "kind": { "enum": ["user", "service_account"] }
+      }
+    },
+    "policyEpochs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["membership", "service", "delegation", "connection", "approval"],
+      "properties": {
+        "membership": { "$ref": "#/$defs/uint64" },
+        "service": { "$ref": "#/$defs/uint64" },
+        "delegation": { "$ref": "#/$defs/uint64" },
+        "connection": { "$ref": "#/$defs/uint64" },
+        "approval": { "$ref": "#/$defs/uint64" }
+      }
+    },
+    "identityArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/identity" }
+    },
+    "grantCeiling": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scope", "connection_ids", "operation_ids", "approval_refs", "expires_at"],
+      "properties": {
+        "scope": { "$ref": "#/$defs/scope" },
+        "connection_ids": { "$ref": "#/$defs/identityArray" },
+        "operation_ids": { "$ref": "#/$defs/identityArray" },
+        "approval_refs": { "$ref": "#/$defs/identityArray" },
+        "expires_at": { "$ref": "#/$defs/utcInstant" }
+      }
+    },
+    "delegation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["delegation_id", "parent_grant_ref", "hop", "parent_ceiling"],
+      "properties": {
+        "delegation_id": { "$ref": "#/$defs/identity" },
+        "parent_grant_ref": { "$ref": "#/$defs/identity" },
+        "hop": { "const": 1 },
+        "parent_ceiling": { "$ref": "#/$defs/grantCeiling" }
+      }
+    },
+    "actor": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["requested_actor", "effective_actor"],
+      "properties": {
+        "requested_actor": { "$ref": "#/$defs/principal" },
+        "effective_actor": { "$ref": "#/$defs/principal" },
+        "delegation": { "$ref": "#/$defs/delegation" }
+      }
+    },
+    "executionGrant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "grant_ref",
+        "grant_epoch",
+        "scope",
+        "actor",
+        "connection_ids",
+        "operation_ids",
+        "approval_refs",
+        "expires_at",
+        "policy_epochs"
+      ],
+      "properties": {
+        "grant_ref": { "$ref": "#/$defs/identity" },
+        "grant_epoch": { "$ref": "#/$defs/positiveUint64" },
+        "scope": { "$ref": "#/$defs/scope" },
+        "actor": { "$ref": "#/$defs/actor" },
+        "connection_ids": { "$ref": "#/$defs/identityArray" },
+        "operation_ids": { "$ref": "#/$defs/identityArray" },
+        "approval_refs": { "$ref": "#/$defs/identityArray" },
+        "expires_at": { "$ref": "#/$defs/utcInstant" },
+        "policy_epochs": { "$ref": "#/$defs/policyEpochs" }
+      }
+    },
+    "objectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "org_id",
+        "workspace_id",
+        "artifact_id",
+        "object_attempt_key",
+        "sha256",
+        "byte_length",
+        "media_type",
+        "backend_generation"
+      ],
+      "properties": {
+        "org_id": { "$ref": "#/$defs/identity" },
+        "workspace_id": { "$ref": "#/$defs/identity" },
+        "artifact_id": { "$ref": "#/$defs/identity" },
+        "object_attempt_key": { "$ref": "#/$defs/identity" },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        },
+        "byte_length": { "type": "integer", "minimum": 0, "maximum": 9223372036854775807 },
+        "media_type": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512,
+          "pattern": "^(?:\\S|\\S.*\\S)$"
+        },
+        "backend_generation": { "$ref": "#/$defs/identity" }
+      }
+    }
+  }
+}

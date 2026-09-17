@@ -1,0 +1,220 @@
+{
+  "schema_version": "pm.api.controls/v1",
+  "wire_version": "pm.api/v1",
+  "protocol_major": 1,
+  "supported_features": [
+    "exact-values",
+    "metadata-only-replay",
+    "typed-result-controls",
+    "wire-problem-v1"
+  ],
+  "protocol_metadata": {
+    "required": [
+      "expected_revision",
+      "intent_digest",
+      "request_key",
+      "required_features",
+      "wire_version"
+    ],
+    "optional": []
+  },
+  "forbidden_public_fields": [
+    "access_token",
+    "api_key",
+    "client_secret",
+    "credential_value",
+    "password",
+    "pm_automation_credential",
+    "provider_credential",
+    "provider_secret",
+    "refresh_token",
+    "secret"
+  ],
+  "run_states": [
+    "accepted",
+    "awaiting_approval",
+    "blocked",
+    "cancelled",
+    "failed",
+    "partial",
+    "queued",
+    "reconciling",
+    "running",
+    "succeeded"
+  ],
+  "terminal_run_states": [
+    "cancelled",
+    "failed",
+    "partial",
+    "succeeded"
+  ],
+  "admission_problems": [
+    {
+      "status": 400,
+      "code": "invalid_request",
+      "safe_retry_action": "correct_input",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 401,
+      "code": "authentication_required",
+      "safe_retry_action": "refresh_authorization",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 403,
+      "code": "grant_unavailable",
+      "safe_retry_action": "refresh_authorization",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 404,
+      "code": "resource_not_found",
+      "safe_retry_action": "correct_scope",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "foundation_incompatible",
+      "safe_retry_action": "after_capability_change",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "idempotency_conflict",
+      "safe_retry_action": "new_key_for_new_intent",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "resume_unavailable",
+      "safe_retry_action": "refresh_run_state",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "specification_stale",
+      "safe_retry_action": "refresh_specification",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 410,
+      "code": "retry_receipt_expired",
+      "safe_retry_action": "inspect_existing_result",
+      "disposition": "resolved_receipt_expired"
+    },
+    {
+      "status": 412,
+      "code": "control_revision_mismatch",
+      "safe_retry_action": "refresh_control_revision",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 428,
+      "code": "control_revision_required",
+      "safe_retry_action": "refresh_control_revision",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 429,
+      "code": "workspace_admission_age_limit",
+      "safe_retry_action": "after_backlog_progress",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 429,
+      "code": "workspace_admission_count_limit",
+      "safe_retry_action": "after_backlog_progress",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 503,
+      "code": "admission_outcome_unknown",
+      "safe_retry_action": "same_key_reconcile_only",
+      "disposition": "outcome_unknown"
+    },
+    {
+      "status": 503,
+      "code": "capability_unavailable",
+      "safe_retry_action": "after_capability_change",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 503,
+      "code": "control_store_unavailable",
+      "safe_retry_action": "same_key_after_dependency_recovery",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 503,
+      "code": "deployment_admission_overload",
+      "safe_retry_action": "after_backlog_progress",
+      "disposition": "confirmed_refusal"
+    }
+  ],
+  "operations": [
+    {
+      "operation_id": "createDelegation",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/delegations",
+      "required_body_fields": ["delegation", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "createServiceAccount",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/service-accounts",
+      "required_body_fields": ["protocol", "service_account"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "grantMembership",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/memberships",
+      "required_body_fields": ["membership", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "revokeDelegation",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/delegations/{id}/revoke",
+      "required_body_fields": ["delegation", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "revokeMembership",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/memberships/{id}/revoke",
+      "required_body_fields": ["membership", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "revokeServiceAccount",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/service-accounts/{id}/revoke",
+      "required_body_fields": ["protocol", "service_account"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "submitInvocation",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/invocations",
+      "required_body_fields": ["connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"],
+      "optional_body_fields": ["approval_ref"],
+      "requires_idempotency_key": true,
+      "requires_if_match": false
+    }
+  ]
+}

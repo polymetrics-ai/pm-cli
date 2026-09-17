@@ -1,0 +1,21 @@
+services:
+  postgres:
+    profiles: [bundled-postgres]
+  postgres-bootstrap:
+    profiles: [bundled-postgres]
+  temporal-schema:
+    profiles: [bundled-temporal]
+  temporal:
+    profiles: [bundled-temporal]
+  seaweed-master:
+    profiles: [bundled-artifacts]
+  seaweed-volume:
+    profiles: [bundled-artifacts]
+  seaweed-filer:
+    profiles: [bundled-artifacts]
+  seaweed-s3-a:
+    profiles: [bundled-artifacts]
+  seaweed-s3-b:
+    profiles: [bundled-artifacts]
+  caddy:
+    profiles: [bundled-artifacts]

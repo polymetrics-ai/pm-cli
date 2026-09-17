@@ -1,0 +1,1154 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: PM ordinary public API
+  version: 1.0.0
+  description: >-
+    Pure ordinary-client contract. It declares no reachable handler, durable
+    commit, provider execution, or separate administration ingress.
+tags:
+  - name: compatibility
+  - name: invocation
+  - name: access
+paths:
+  /v1/info:
+    get:
+      tags: [compatibility]
+      summary: Discover the public wire compatibility contract
+      operationId: getServerInfo
+      security: []
+      responses:
+        "200":
+          description: Minimal public compatibility information
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServerInfo"
+        "500":
+          $ref: "#/components/responses/Problem500"
+  /v1/workspaces/{workspace_id}/invocations:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      tags: [invocation]
+      summary: Submit one typed invocation intent
+      operationId: submitInvocation
+      security:
+        - PMSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/InvocationRequest"
+      responses:
+        "202":
+          description: Durably accepted, nonterminal run identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "429":
+          $ref: "#/components/responses/Problem429"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/memberships:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      tags: [access]
+      summary: Grant a workspace membership
+      operationId: grantMembership
+      security:
+        - PMSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MembershipGrantRequest"
+      responses:
+        "200":
+          description: Exact replay of the original safe result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationReplayResponse"
+        "201":
+          description: Original committed membership grant
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResultResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/memberships/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ResourceID"
+    post:
+      tags: [access]
+      summary: Revoke a workspace membership
+      operationId: revokeMembership
+      security:
+        - PMSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MembershipRevokeRequest"
+      responses:
+        "200":
+          description: Original changed or unchanged result, or exact safe replay
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MutationResultResponse"
+                  - $ref: "#/components/schemas/MutationReplayResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/service-accounts:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      tags: [access]
+      summary: Create a PM service account
+      operationId: createServiceAccount
+      security:
+        - PMSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceAccountCreateRequest"
+      responses:
+        "200":
+          description: Exact metadata-only replay; the creation credential is absent
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationReplayResponse"
+        "201":
+          description: Original committed creation with the one-time PM automation credential
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceAccountCreationResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/service-accounts/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ResourceID"
+    post:
+      tags: [access]
+      summary: Revoke a PM service account
+      operationId: revokeServiceAccount
+      security:
+        - PMSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ServiceAccountRevokeRequest"
+      responses:
+        "200":
+          description: Original changed or unchanged result, or exact safe replay
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MutationResultResponse"
+                  - $ref: "#/components/schemas/MutationReplayResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/delegations:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      tags: [access]
+      summary: Create one bounded delegation
+      operationId: createDelegation
+      security:
+        - PMSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DelegationCreateRequest"
+      responses:
+        "200":
+          description: Exact replay of the original safe result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationReplayResponse"
+        "201":
+          description: Original committed delegation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MutationResultResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/delegations/{id}/revoke:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ResourceID"
+    post:
+      tags: [access]
+      summary: Revoke one bounded delegation
+      operationId: revokeDelegation
+      security:
+        - PMSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DelegationRevokeRequest"
+      responses:
+        "200":
+          description: Original changed or unchanged result, or exact safe replay
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MutationResultResponse"
+                  - $ref: "#/components/schemas/MutationReplayResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+components:
+  securitySchemes:
+    PMSession:
+      type: http
+      scheme: bearer
+  parameters:
+    WorkspaceID:
+      name: workspace_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    ResourceID:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 200
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+  responses:
+    Problem400:
+      description: Malformed or unsupported typed request
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem401:
+      description: Authentication is required
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem403:
+      description: The required grant is unavailable after authorized scope resolution
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem404:
+      description: Resource is absent or hidden by scope
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem409:
+      description: Intent, capability, specification, resume, or foundation conflict
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem410:
+      description: A known resolved retry receipt has expired
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem412:
+      description: The supplied control revision is stale
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem428:
+      description: A required control revision is absent
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem429:
+      description: A workspace pending-count or oldest-pending-age limit is reached
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem500:
+      description: Safe internal problem
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem503:
+      description: Capability, control store, unknown acceptance, or deployment overload
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+  schemas:
+    ServerInfo:
+      type: object
+      required: [protocol_major, protocol_version, instance_id, features, required_features]
+      properties:
+        protocol_major:
+          type: integer
+          minimum: 1
+        protocol_version:
+          type: string
+          const: pm.api/v1
+        instance_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        features:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        required_features:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+      additionalProperties:
+        x-go-type: json.RawMessage
+        x-go-type-import:
+          path: encoding/json
+          name: json
+    SafeOutcomeReference:
+      type: object
+      additionalProperties: false
+      required: [kind, ref]
+      properties:
+        kind:
+          type: string
+          enum: [request, run, membership, service_account, delegation]
+        ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+    Problem:
+      type: object
+      required: [type, title, status, detail, code, incident_id, safe_retry_action]
+      properties:
+        type:
+          type: string
+          format: uri
+        title:
+          type: string
+          minLength: 1
+          maxLength: 256
+        status:
+          type: integer
+          minimum: 400
+          maximum: 599
+        detail:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        incident_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        safe_retry_action:
+          type: string
+          minLength: 1
+          maxLength: 128
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+      additionalProperties:
+        x-go-type: json.RawMessage
+        x-go-type-import:
+          path: encoding/json
+          name: json
+    ProtocolMetadata:
+      type: object
+      additionalProperties: false
+      required: [wire_version, required_features, request_key, intent_digest, expected_revision]
+      properties:
+        wire_version:
+          type: string
+          const: pm.api/v1
+        required_features:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        request_key:
+          type: string
+          minLength: 1
+          maxLength: 200
+        intent_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        expected_revision:
+          type: string
+          minLength: 1
+          maxLength: 512
+    RunState:
+      type: string
+      enum: [accepted, queued, running, awaiting_approval, blocked, reconciling, succeeded, partial, failed, cancelled]
+    AdmissionResponse:
+      type: object
+      additionalProperties: false
+      required: [state, run_ref, request_key, intent_digest, outcome_reference, replay]
+      properties:
+        state:
+          type: string
+          const: accepted
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        request_key:
+          type: string
+          minLength: 1
+          maxLength: 200
+        intent_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+        replay:
+          type: boolean
+    InvocationRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, connection_ref, operation_ref, lane, input, result_controls]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        connection_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        operation_ref:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        lane:
+          type: string
+          enum: [direct_read, direct_write, etl, reverse_etl, binary_download, binary_upload, sync_transport]
+        approval_ref:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 512
+        input:
+          $ref: "#/components/schemas/PresentValue"
+        result_controls:
+          $ref: "#/components/schemas/ResultControls"
+    MembershipGrantRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, membership]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        membership:
+          type: object
+          additionalProperties: false
+          required: [principal_ref, role, resource_grants, expires_at]
+          properties:
+            principal_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            role:
+              type: string
+              minLength: 1
+              maxLength: 128
+            resource_grants:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 1024
+            expires_at:
+              type: [string, "null"]
+              format: date-time
+    MembershipRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, membership]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        membership:
+          type: object
+          additionalProperties: false
+          required: [membership_ref, bound_scope_digest, expires_at]
+          properties:
+            membership_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            bound_scope_digest:
+              type: string
+              pattern: "^sha256:[0-9a-f]{64}$"
+            expires_at:
+              type: [string, "null"]
+              format: date-time
+    ServiceAccountCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, service_account]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        service_account:
+          type: object
+          additionalProperties: false
+          required: [display_name, workspace_scopes, connection_scopes, operation_scopes, expires_at]
+          properties:
+            display_name:
+              type: [string, "null"]
+              maxLength: 256
+            workspace_scopes:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
+            connection_scopes:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
+            operation_scopes:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 1024
+            expires_at:
+              type: string
+              format: date-time
+    ServiceAccountRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, service_account]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        service_account:
+          type: object
+          additionalProperties: false
+          required: [service_account_ref, grant_revision, expires_at]
+          properties:
+            service_account_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            grant_revision:
+              type: string
+              minLength: 1
+              maxLength: 512
+            expires_at:
+              type: string
+              format: date-time
+    DelegationCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, delegation]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        delegation:
+          type: object
+          additionalProperties: false
+          required: [requested_actor_ref, effective_actor_ref, workspace_scopes, connection_scopes, operation_scopes, expires_at]
+          properties:
+            requested_actor_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            effective_actor_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            workspace_scopes:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
+            connection_scopes:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
+            operation_scopes:
+              type: array
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 1024
+            expires_at:
+              type: string
+              format: date-time
+    DelegationRevokeRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, delegation]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        delegation:
+          type: object
+          additionalProperties: false
+          required: [delegation_ref, requested_actor_ref, effective_actor_ref, scope_digest, expires_at]
+          properties:
+            delegation_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            requested_actor_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            effective_actor_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            scope_digest:
+              type: string
+              pattern: "^sha256:[0-9a-f]{64}$"
+            expires_at:
+              type: string
+              format: date-time
+    MutationResultDisposition:
+      type: string
+      enum: [created, revoked, unchanged]
+    MutationResultResponse:
+      type: object
+      additionalProperties: false
+      required: [resource_id, result_revision, outcome_reference, result_disposition, replay]
+      properties:
+        resource_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        result_revision:
+          type: string
+          minLength: 1
+          maxLength: 512
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+        result_disposition:
+          $ref: "#/components/schemas/MutationResultDisposition"
+        requested_actor_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        effective_actor_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        replay:
+          type: boolean
+          const: false
+    MutationReplayResponse:
+      type: object
+      additionalProperties: false
+      required: [resource_id, result_revision, outcome_reference, result_disposition, replay]
+      properties:
+        resource_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        result_revision:
+          type: string
+          minLength: 1
+          maxLength: 512
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+        result_disposition:
+          type: string
+          const: prior_mutation_result
+        requested_actor_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        effective_actor_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        replay:
+          type: boolean
+          const: true
+    ServiceAccountCreationResponse:
+      type: object
+      additionalProperties: false
+      required: [resource_id, result_revision, outcome_reference, result_disposition, replay, pm_automation_credential]
+      properties:
+        resource_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        result_revision:
+          type: string
+          minLength: 1
+          maxLength: 512
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+        result_disposition:
+          type: string
+          const: created
+        replay:
+          type: boolean
+          const: false
+        pm_automation_credential:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          x-pm-one-time-credential: true
+    ExactNumber:
+      type: object
+      additionalProperties: false
+      required: [exact, precision, scale]
+      properties:
+        exact:
+          type: string
+          pattern: "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$"
+        precision:
+          type: integer
+          minimum: 1
+        scale:
+          type: integer
+          minimum: 0
+      x-go-type: contract.ExactNumber
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    ObjectRef:
+      type: object
+      additionalProperties: false
+      required: [org_id, workspace_id, artifact_id, object_attempt_key, sha256, byte_length, media_type, backend_generation]
+      properties:
+        org_id:
+          type: string
+          minLength: 1
+        workspace_id:
+          type: string
+          minLength: 1
+        artifact_id:
+          type: string
+          minLength: 1
+        object_attempt_key:
+          type: string
+          minLength: 1
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        byte_length:
+          type: integer
+          format: int64
+          minimum: 0
+        media_type:
+          type: string
+          minLength: 1
+        backend_generation:
+          type: string
+          minLength: 1
+      x-go-type: contract.ObjectRef
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    PresentValue:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [presence]
+          properties:
+            presence:
+              const: absent
+        - type: object
+          additionalProperties: false
+          required: [presence]
+          properties:
+            presence:
+              const: "null"
+        - type: object
+          additionalProperties: false
+          required: [presence, type, text]
+          properties:
+            presence:
+              const: value
+            type:
+              enum: [string, date, timestamp_instant, timestamp_local]
+            text:
+              type: string
+        - type: object
+          additionalProperties: false
+          required: [presence, type, boolean]
+          properties:
+            presence:
+              const: value
+            type:
+              const: bool
+            boolean:
+              type: boolean
+        - type: object
+          additionalProperties: false
+          required: [presence, type, exact, precision, scale]
+          properties:
+            presence:
+              const: value
+            type:
+              enum: [integer, decimal]
+            exact:
+              type: string
+            precision:
+              type: integer
+              minimum: 1
+            scale:
+              type: integer
+              minimum: 0
+        - type: object
+          additionalProperties: false
+          required: [presence, type, elements]
+          properties:
+            presence:
+              const: value
+            type:
+              const: array
+            elements:
+              type: array
+              items:
+                $ref: "#/components/schemas/PresentValue"
+        - type: object
+          additionalProperties: false
+          required: [presence, type, fields]
+          properties:
+            presence:
+              const: value
+            type:
+              const: object
+            fields:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/PresentValue"
+        - type: object
+          additionalProperties: false
+          required: [presence, type, variant, member]
+          properties:
+            presence:
+              const: value
+            type:
+              const: union
+            variant:
+              type: string
+              minLength: 1
+            member:
+              $ref: "#/components/schemas/PresentValue"
+        - type: object
+          additionalProperties: false
+          required: [presence, type, binary]
+          properties:
+            presence:
+              const: value
+            type:
+              const: binary_ref
+            binary:
+              $ref: "#/components/schemas/ObjectRef"
+      x-go-type: contract.PresentValue
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    FieldSelection:
+      type: object
+      additionalProperties: false
+      required: [paths]
+      properties:
+        paths:
+          type: array
+          minItems: 1
+          items:
+            type: array
+            minItems: 1
+            items:
+              type: string
+      x-go-type: contract.FieldSelection
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    RecordFilter:
+      type: object
+      additionalProperties: false
+      required: [path, operator]
+      properties:
+        path:
+          type: array
+          minItems: 1
+          items:
+            type: string
+        operator:
+          type: string
+          enum: [equal, is_absent, is_null]
+        value:
+          $ref: "#/components/schemas/PresentValue"
+      x-go-type: contract.RecordFilter
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    ResultControls:
+      type: object
+      additionalProperties: false
+      properties:
+        selection:
+          $ref: "#/components/schemas/FieldSelection"
+        filter:
+          $ref: "#/components/schemas/RecordFilter"
+      x-go-type: contract.ResultControls
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    ResultPagination:
+      type: object
+      additionalProperties: false
+      required: [effective_wire_limit, continuation, unread_tail, fetched_count, returned_count, emitted_count, source_exhausted]
+      properties:
+        effective_wire_limit:
+          type: integer
+          format: int64
+          minimum: 1
+        total_record_cap:
+          type: integer
+          format: int64
+          minimum: 1
+        continuation:
+          $ref: "#/components/schemas/PresentValue"
+        unread_tail:
+          type: array
+          items:
+            $ref: "#/components/schemas/PresentValue"
+        fetched_count:
+          type: integer
+          format: int64
+          minimum: 0
+        returned_count:
+          type: integer
+          format: int64
+          minimum: 0
+        emitted_count:
+          type: integer
+          format: int64
+          minimum: 0
+        provider_total:
+          $ref: "#/components/schemas/ExactNumber"
+        source_exhausted:
+          type: boolean
+      x-go-type: contract.ResultPagination
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    ActionResult:
+      type: object
+      additionalProperties: false
+      required: [media_type, data]
+      properties:
+        media_type:
+          type: string
+          minLength: 1
+        data:
+          $ref: "#/components/schemas/PresentValue"
+        pagination:
+          $ref: "#/components/schemas/ResultPagination"
+      x-go-type: contract.ActionResult
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract

@@ -26,9 +26,17 @@ alias(
 
 go_library(
     name = "tools",
-    srcs = ["dependency_policy.go"],
+    srcs = [
+        "api_generation.go",
+        "dependency_policy.go",
+    ],
     importpath = "github.com/polymetrics-ai/pm-cli/tools",
     visibility = ["//visibility:public"],
+    deps = [
+        "@tools_com_github_getkin_kin_openapi//openapi3",
+        "@tools_com_github_oapi_codegen_oapi_codegen_v2//pkg/codegen",
+        "@tools_in_yaml_go_yaml_v3//:yaml",
+    ],
 )
 
 go_test(

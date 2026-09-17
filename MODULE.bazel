@@ -40,6 +40,7 @@ use_repo(
     "com_github_getkin_kin_openapi",
     "com_github_gin_gonic_gin",
     "com_github_jackc_pgx_v5",
+    "com_github_oapi_codegen_nullable",
     "com_github_oapi_codegen_runtime",
     "com_github_pressly_goose_v3",
     "com_github_santhosh_tekuri_jsonschema_v6",
@@ -57,6 +58,7 @@ use_repo(
     "io_opentelemetry_go_otel_trace",
     "io_temporal_go_api",
     "io_temporal_go_sdk",
+    "org_golang_google_protobuf",
     "org_golang_x_oauth2",
     "org_golang_x_sync",
     "org_golang_x_time",
@@ -67,6 +69,8 @@ tools_go_deps.from_file(go_mod = "//tools:go.mod")
 use_repo(
     tools_go_deps,
     tools_co_honnef_go_tools = "co_honnef_go_tools",
+    tools_com_github_getkin_kin_openapi = "com_github_getkin_kin_openapi",
     tools_com_github_oapi_codegen_oapi_codegen_v2 = "com_github_oapi_codegen_oapi_codegen_v2",
+    tools_in_yaml_go_yaml_v3 = "in_yaml_go_yaml_v3",
     tools_org_golang_x_vuln = "org_golang_x_vuln",
 )

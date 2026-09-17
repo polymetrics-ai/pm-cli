@@ -1,0 +1,1972 @@
+{
+  "components": {
+    "parameters": {
+      "IdempotencyKey": {
+        "in": "header",
+        "name": "Idempotency-Key",
+        "required": true,
+        "schema": {
+          "maxLength": 200,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "IfMatch": {
+        "in": "header",
+        "name": "If-Match",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "ResourceID": {
+        "in": "path",
+        "name": "id",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "WorkspaceID": {
+        "in": "path",
+        "name": "workspace_id",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      }
+    },
+    "responses": {
+      "Problem400": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Malformed or unsupported typed request"
+      },
+      "Problem401": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Authentication is required"
+      },
+      "Problem403": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The required grant is unavailable after authorized scope resolution"
+      },
+      "Problem404": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Resource is absent or hidden by scope"
+      },
+      "Problem409": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Intent, capability, specification, resume, or foundation conflict"
+      },
+      "Problem410": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A known resolved retry receipt has expired"
+      },
+      "Problem412": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The supplied control revision is stale"
+      },
+      "Problem428": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A required control revision is absent"
+      },
+      "Problem429": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "A workspace pending-count or oldest-pending-age limit is reached"
+      },
+      "Problem500": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Safe internal problem"
+      },
+      "Problem503": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Capability, control store, unknown acceptance, or deployment overload"
+      }
+    },
+    "schemas": {
+      "ActionResult": {
+        "additionalProperties": false,
+        "properties": {
+          "data": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "media_type": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "pagination": {
+            "$ref": "#/components/schemas/ResultPagination"
+          }
+        },
+        "required": [
+          "media_type",
+          "data"
+        ],
+        "type": "object",
+        "x-go-type": "contract.ActionResult",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "AdmissionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "intent_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "outcome_reference": {
+            "$ref": "#/components/schemas/SafeOutcomeReference"
+          },
+          "replay": {
+            "type": "boolean"
+          },
+          "request_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "run_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "state": {
+            "const": "accepted",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state",
+          "run_ref",
+          "request_key",
+          "intent_digest",
+          "outcome_reference",
+          "replay"
+        ],
+        "type": "object"
+      },
+      "DelegationCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "delegation": {
+            "additionalProperties": false,
+            "properties": {
+              "connection_scopes": {
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "effective_actor_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "operation_scopes": {
+                "items": {
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "requested_actor_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "workspace_scopes": {
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "requested_actor_ref",
+              "effective_actor_ref",
+              "workspace_scopes",
+              "connection_scopes",
+              "operation_scopes",
+              "expires_at"
+            ],
+            "type": "object"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          }
+        },
+        "required": [
+          "protocol",
+          "delegation"
+        ],
+        "type": "object"
+      },
+      "DelegationRevokeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "delegation": {
+            "additionalProperties": false,
+            "properties": {
+              "delegation_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "effective_actor_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "requested_actor_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "scope_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "delegation_ref",
+              "requested_actor_ref",
+              "effective_actor_ref",
+              "scope_digest",
+              "expires_at"
+            ],
+            "type": "object"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          }
+        },
+        "required": [
+          "protocol",
+          "delegation"
+        ],
+        "type": "object"
+      },
+      "ExactNumber": {
+        "additionalProperties": false,
+        "properties": {
+          "exact": {
+            "pattern": "^-?(?:0|[1-9][0-9]*)(?:\\.[0-9]+)?$",
+            "type": "string"
+          },
+          "precision": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "scale": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "exact",
+          "precision",
+          "scale"
+        ],
+        "type": "object",
+        "x-go-type": "contract.ExactNumber",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "FieldSelection": {
+        "additionalProperties": false,
+        "properties": {
+          "paths": {
+            "items": {
+              "items": {
+                "type": "string"
+              },
+              "minItems": 1,
+              "type": "array"
+            },
+            "minItems": 1,
+            "type": "array"
+          }
+        },
+        "required": [
+          "paths"
+        ],
+        "type": "object",
+        "x-go-type": "contract.FieldSelection",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "InvocationRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "approval_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "connection_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "input": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "lane": {
+            "enum": [
+              "direct_read",
+              "direct_write",
+              "etl",
+              "reverse_etl",
+              "binary_download",
+              "binary_upload",
+              "sync_transport"
+            ],
+            "type": "string"
+          },
+          "operation_ref": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          },
+          "result_controls": {
+            "$ref": "#/components/schemas/ResultControls"
+          }
+        },
+        "required": [
+          "protocol",
+          "connection_ref",
+          "operation_ref",
+          "lane",
+          "input",
+          "result_controls"
+        ],
+        "type": "object"
+      },
+      "MembershipGrantRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "membership": {
+            "additionalProperties": false,
+            "properties": {
+              "expires_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "principal_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "resource_grants": {
+                "items": {
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "role": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "principal_ref",
+              "role",
+              "resource_grants",
+              "expires_at"
+            ],
+            "type": "object"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          }
+        },
+        "required": [
+          "protocol",
+          "membership"
+        ],
+        "type": "object"
+      },
+      "MembershipRevokeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "membership": {
+            "additionalProperties": false,
+            "properties": {
+              "bound_scope_digest": {
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              },
+              "expires_at": {
+                "format": "date-time",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "membership_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "membership_ref",
+              "bound_scope_digest",
+              "expires_at"
+            ],
+            "type": "object"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          }
+        },
+        "required": [
+          "protocol",
+          "membership"
+        ],
+        "type": "object"
+      },
+      "MutationReplayResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_actor_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome_reference": {
+            "$ref": "#/components/schemas/SafeOutcomeReference"
+          },
+          "replay": {
+            "const": true,
+            "type": "boolean"
+          },
+          "requested_actor_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "resource_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "result_disposition": {
+            "const": "prior_mutation_result",
+            "type": "string"
+          },
+          "result_revision": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "result_revision",
+          "outcome_reference",
+          "result_disposition",
+          "replay"
+        ],
+        "type": "object"
+      },
+      "MutationResultDisposition": {
+        "enum": [
+          "created",
+          "revoked",
+          "unchanged"
+        ],
+        "type": "string"
+      },
+      "MutationResultResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_actor_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome_reference": {
+            "$ref": "#/components/schemas/SafeOutcomeReference"
+          },
+          "replay": {
+            "const": false,
+            "type": "boolean"
+          },
+          "requested_actor_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "resource_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "result_disposition": {
+            "$ref": "#/components/schemas/MutationResultDisposition"
+          },
+          "result_revision": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "result_revision",
+          "outcome_reference",
+          "result_disposition",
+          "replay"
+        ],
+        "type": "object"
+      },
+      "ObjectRef": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "backend_generation": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "byte_length": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "media_type": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "object_attempt_key": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "org_id": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "workspace_id": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "workspace_id",
+          "artifact_id",
+          "object_attempt_key",
+          "sha256",
+          "byte_length",
+          "media_type",
+          "backend_generation"
+        ],
+        "type": "object",
+        "x-go-type": "contract.ObjectRef",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "PresentValue": {
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "presence": {
+                "const": "absent"
+              }
+            },
+            "required": [
+              "presence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "presence": {
+                "const": "null"
+              }
+            },
+            "required": [
+              "presence"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "presence": {
+                "const": "value"
+              },
+              "text": {
+                "type": "string"
+              },
+              "type": {
+                "enum": [
+                  "string",
+                  "date",
+                  "timestamp_instant",
+                  "timestamp_local"
+                ]
+              }
+            },
+            "required": [
+              "presence",
+              "type",
+              "text"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "boolean": {
+                "type": "boolean"
+              },
+              "presence": {
+                "const": "value"
+              },
+              "type": {
+                "const": "bool"
+              }
+            },
+            "required": [
+              "presence",
+              "type",
+              "boolean"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "exact": {
+                "type": "string"
+              },
+              "precision": {
+                "minimum": 1,
+                "type": "integer"
+              },
+              "presence": {
+                "const": "value"
+              },
+              "scale": {
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "enum": [
+                  "integer",
+                  "decimal"
+                ]
+              }
+            },
+            "required": [
+              "presence",
+              "type",
+              "exact",
+              "precision",
+              "scale"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "elements": {
+                "items": {
+                  "$ref": "#/components/schemas/PresentValue"
+                },
+                "type": "array"
+              },
+              "presence": {
+                "const": "value"
+              },
+              "type": {
+                "const": "array"
+              }
+            },
+            "required": [
+              "presence",
+              "type",
+              "elements"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "fields": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/PresentValue"
+                },
+                "type": "object"
+              },
+              "presence": {
+                "const": "value"
+              },
+              "type": {
+                "const": "object"
+              }
+            },
+            "required": [
+              "presence",
+              "type",
+              "fields"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "member": {
+                "$ref": "#/components/schemas/PresentValue"
+              },
+              "presence": {
+                "const": "value"
+              },
+              "type": {
+                "const": "union"
+              },
+              "variant": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "presence",
+              "type",
+              "variant",
+              "member"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "properties": {
+              "binary": {
+                "$ref": "#/components/schemas/ObjectRef"
+              },
+              "presence": {
+                "const": "value"
+              },
+              "type": {
+                "const": "binary_ref"
+              }
+            },
+            "required": [
+              "presence",
+              "type",
+              "binary"
+            ],
+            "type": "object"
+          }
+        ],
+        "x-go-type": "contract.PresentValue",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "Problem": {
+        "additionalProperties": {
+          "x-go-type": "json.RawMessage",
+          "x-go-type-import": {
+            "name": "json",
+            "path": "encoding/json"
+          }
+        },
+        "properties": {
+          "code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "detail": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "incident_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "outcome_reference": {
+            "$ref": "#/components/schemas/SafeOutcomeReference"
+          },
+          "safe_retry_action": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          },
+          "status": {
+            "maximum": 599,
+            "minimum": 400,
+            "type": "integer"
+          },
+          "title": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": {
+            "format": "uri",
+            "type": "string"
+          }
+        },
+        "required": [
+          "type",
+          "title",
+          "status",
+          "detail",
+          "code",
+          "incident_id",
+          "safe_retry_action"
+        ],
+        "type": "object"
+      },
+      "ProtocolMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "expected_revision": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "intent_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "request_key": {
+            "maxLength": 200,
+            "minLength": 1,
+            "type": "string"
+          },
+          "required_features": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "wire_version": {
+            "const": "pm.api/v1",
+            "type": "string"
+          }
+        },
+        "required": [
+          "wire_version",
+          "required_features",
+          "request_key",
+          "intent_digest",
+          "expected_revision"
+        ],
+        "type": "object"
+      },
+      "RecordFilter": {
+        "additionalProperties": false,
+        "properties": {
+          "operator": {
+            "enum": [
+              "equal",
+              "is_absent",
+              "is_null"
+            ],
+            "type": "string"
+          },
+          "path": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "value": {
+            "$ref": "#/components/schemas/PresentValue"
+          }
+        },
+        "required": [
+          "path",
+          "operator"
+        ],
+        "type": "object",
+        "x-go-type": "contract.RecordFilter",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "ResultControls": {
+        "additionalProperties": false,
+        "properties": {
+          "filter": {
+            "$ref": "#/components/schemas/RecordFilter"
+          },
+          "selection": {
+            "$ref": "#/components/schemas/FieldSelection"
+          }
+        },
+        "type": "object",
+        "x-go-type": "contract.ResultControls",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "ResultPagination": {
+        "additionalProperties": false,
+        "properties": {
+          "continuation": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "effective_wire_limit": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "emitted_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "fetched_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "provider_total": {
+            "$ref": "#/components/schemas/ExactNumber"
+          },
+          "returned_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "source_exhausted": {
+            "type": "boolean"
+          },
+          "total_record_cap": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "unread_tail": {
+            "items": {
+              "$ref": "#/components/schemas/PresentValue"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "effective_wire_limit",
+          "continuation",
+          "unread_tail",
+          "fetched_count",
+          "returned_count",
+          "emitted_count",
+          "source_exhausted"
+        ],
+        "type": "object",
+        "x-go-type": "contract.ResultPagination",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "RunState": {
+        "enum": [
+          "accepted",
+          "queued",
+          "running",
+          "awaiting_approval",
+          "blocked",
+          "reconciling",
+          "succeeded",
+          "partial",
+          "failed",
+          "cancelled"
+        ],
+        "type": "string"
+      },
+      "SafeOutcomeReference": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "request",
+              "run",
+              "membership",
+              "service_account",
+              "delegation"
+            ],
+            "type": "string"
+          },
+          "ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "kind",
+          "ref"
+        ],
+        "type": "object"
+      },
+      "ServerInfo": {
+        "additionalProperties": {
+          "x-go-type": "json.RawMessage",
+          "x-go-type-import": {
+            "name": "json",
+            "path": "encoding/json"
+          }
+        },
+        "properties": {
+          "features": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "instance_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "protocol_major": {
+            "minimum": 1,
+            "type": "integer"
+          },
+          "protocol_version": {
+            "const": "pm.api/v1",
+            "type": "string"
+          },
+          "required_features": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "protocol_major",
+          "protocol_version",
+          "instance_id",
+          "features",
+          "required_features"
+        ],
+        "type": "object"
+      },
+      "ServiceAccountCreateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          },
+          "service_account": {
+            "additionalProperties": false,
+            "properties": {
+              "connection_scopes": {
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "display_name": {
+                "maxLength": 256,
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "expires_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "operation_scopes": {
+                "items": {
+                  "maxLength": 1024,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              },
+              "workspace_scopes": {
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "type": "array",
+                "uniqueItems": true
+              }
+            },
+            "required": [
+              "display_name",
+              "workspace_scopes",
+              "connection_scopes",
+              "operation_scopes",
+              "expires_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "protocol",
+          "service_account"
+        ],
+        "type": "object"
+      },
+      "ServiceAccountCreationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "outcome_reference": {
+            "$ref": "#/components/schemas/SafeOutcomeReference"
+          },
+          "pm_automation_credential": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string",
+            "x-pm-one-time-credential": true
+          },
+          "replay": {
+            "const": false,
+            "type": "boolean"
+          },
+          "resource_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "result_disposition": {
+            "const": "created",
+            "type": "string"
+          },
+          "result_revision": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource_id",
+          "result_revision",
+          "outcome_reference",
+          "result_disposition",
+          "replay",
+          "pm_automation_credential"
+        ],
+        "type": "object"
+      },
+      "ServiceAccountRevokeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          },
+          "service_account": {
+            "additionalProperties": false,
+            "properties": {
+              "expires_at": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "grant_revision": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "service_account_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "service_account_ref",
+              "grant_revision",
+              "expires_at"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "protocol",
+          "service_account"
+        ],
+        "type": "object"
+      }
+    },
+    "securitySchemes": {
+      "PMSession": {
+        "scheme": "bearer",
+        "type": "http"
+      }
+    }
+  },
+  "info": {
+    "description": "Pure ordinary-client contract. It declares no reachable handler, durable commit, provider execution, or separate administration ingress.",
+    "title": "PM ordinary public API",
+    "version": "1.0.0"
+  },
+  "jsonSchemaDialect": "https://json-schema.org/draft/2020-12/schema",
+  "openapi": "3.1.0",
+  "paths": {
+    "/v1/info": {
+      "get": {
+        "operationId": "getServerInfo",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServerInfo"
+                }
+              }
+            },
+            "description": "Minimal public compatibility information"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          }
+        },
+        "security": [],
+        "summary": "Discover the public wire compatibility contract",
+        "tags": [
+          "compatibility"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/delegations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ],
+      "post": {
+        "operationId": "createDelegation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegationCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutationReplayResponse"
+                }
+              }
+            },
+            "description": "Exact replay of the original safe result"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutationResultResponse"
+                }
+              }
+            },
+            "description": "Original committed delegation"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          }
+        ],
+        "summary": "Create one bounded delegation",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/delegations/{id}/revoke": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ResourceID"
+        }
+      ],
+      "post": {
+        "operationId": "revokeDelegation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DelegationRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MutationResultResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MutationReplayResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Original changed or unchanged result, or exact safe replay"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          }
+        ],
+        "summary": "Revoke one bounded delegation",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/invocations": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ],
+      "post": {
+        "operationId": "submitInvocation",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/InvocationRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmissionResponse"
+                }
+              }
+            },
+            "description": "Durably accepted, nonterminal run identity"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          }
+        ],
+        "summary": "Submit one typed invocation intent",
+        "tags": [
+          "invocation"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/memberships": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ],
+      "post": {
+        "operationId": "grantMembership",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipGrantRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutationReplayResponse"
+                }
+              }
+            },
+            "description": "Exact replay of the original safe result"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutationResultResponse"
+                }
+              }
+            },
+            "description": "Original committed membership grant"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          }
+        ],
+        "summary": "Grant a workspace membership",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/memberships/{id}/revoke": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ResourceID"
+        }
+      ],
+      "post": {
+        "operationId": "revokeMembership",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MutationResultResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MutationReplayResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Original changed or unchanged result, or exact safe replay"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          }
+        ],
+        "summary": "Revoke a workspace membership",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/service-accounts": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ],
+      "post": {
+        "operationId": "createServiceAccount",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceAccountCreateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MutationReplayResponse"
+                }
+              }
+            },
+            "description": "Exact metadata-only replay; the creation credential is absent"
+          },
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ServiceAccountCreationResponse"
+                }
+              }
+            },
+            "description": "Original committed creation with the one-time PM automation credential"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          }
+        ],
+        "summary": "Create a PM service account",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/service-accounts/{id}/revoke": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ResourceID"
+        }
+      ],
+      "post": {
+        "operationId": "revokeServiceAccount",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ServiceAccountRevokeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MutationResultResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MutationReplayResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Original changed or unchanged result, or exact safe replay"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          }
+        ],
+        "summary": "Revoke a PM service account",
+        "tags": [
+          "access"
+        ]
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "compatibility"
+    },
+    {
+      "name": "invocation"
+    },
+    {
+      "name": "access"
+    }
+  ]
+}
