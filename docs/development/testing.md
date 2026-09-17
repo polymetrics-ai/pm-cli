@@ -31,6 +31,9 @@ Run focused checks before integration. Broad suites and genuine CI run once at t
 
 ## Build and toolchain entry points
 
+The [CI event and merge policy](ci.md) defines exact-revision PR checks,
+post-merge main checks, safe runner admission and human-only merge authority.
+
 The issue #3 foundation commands and current build target are source-present. From the repository root, use the pinned entry points below. The all-target Bazel test command also selects the physical stack, control-store and authenticated-server checks: prepare and export their [explicitly owned fixture inputs](setup.md#explicit-dependency-operator-and-physical-qualification) first. Missing inputs fail rather than skip.
 
 ```sh
