@@ -1,10 +1,10 @@
-# CI events and human-only merge
+# CI events and owner-account merge
 
 ## Test before and after merge
 
 The foundation and documentation workflows run for trusted, open, same-repository
 pull requests targeting `main`. They also run on each non-forced push to `main`,
-including a human merge. Checkout uses the event's exact `github.sha`: the PR
+including an authorized merge. Checkout uses the event's exact `github.sha`: the PR
 merge-test revision before merge and the landed commit afterward. PR issue-link
 validation applies only to PR events; main pushes still validate documentation.
 
@@ -60,24 +60,29 @@ automatically restore a known listener-killing hook.
 
 ## Merge authority and enforcement prerequisites
 
-Only the human `karthik-sivadas` may merge. Agents may test, review, push feature
-branches and prepare PRs; they must not merge, enable auto-merge or use an
-administrator bypass. This overrides older operational merge authorizations.
+Only the GitHub account `karthik-sivadas` may merge. The account owner explicitly
+authorizes agents to merge using this account when the PR's declared scope is
+correctly implemented, its agreed BDD/acceptance tests pass, independent review
+findings are resolved, and genuine final-candidate CI is green. No human-only
+click or additional routine approval is required. Missing, skipped, stale,
+different-head or failed required checks do not qualify. Do not use an
+administrator bypass or force a merge. Keep automatic merge off; each merge
+requires this explicit verification. This supersedes the earlier human-only
+interpretation.
 
 On an eligible private-repository organization plan, configure main protection
 to require the `foundation` and `architecture-documentation` checks against
 the current base, require a PR and resolved review conversations, restrict
 updates to `karthik-sivadas`, include administrators, and prohibit force-pushes
 and deletion. Keep auto-merge off. Do not require the sole author's own approval:
-independent AI review and the human merge decision are separate controls.
+independent AI review and the authorized merge decision are separate controls.
 
 Private repositories on GitHub Free for organizations cannot enforce that
 branch-protection policy. A paid organization plan or separately authorized
-visibility change is required; documentation is not enforcement. An agent using
-the human's GitHub credential is indistinguishable from that human to GitHub.
-Strong human-only enforcement additionally needs a separate restricted agent
-identity without permission to update main. Do not revoke shared credentials,
-change billing or make the repository public as an implicit CI repair.
+visibility change is required; documentation is not enforcement. GitHub sees an
+agent using the owner's credential as the same account, which matches this
+account-based policy. Do not revoke shared credentials, change billing or make
+the repository public as an implicit CI repair.
 
 See GitHub's [protected branch documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 [default variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables),
