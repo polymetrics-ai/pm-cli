@@ -11,6 +11,8 @@
   const reauthenticate = document.getElementById("reauthenticate");
   const status = document.getElementById("status");
   const buttons = Array.from(form.querySelectorAll("button"));
+  const unknownOutcomeMessage = "The storage outcome could not be confirmed. Check the connection state before reloading this page; do not submit another credential.";
+  let submissionLocked = false;
 
   const clearCredentialField = () => { credentialInput.value = ""; };
   window.addEventListener("pagehide", clearCredentialField);
@@ -83,6 +85,11 @@
 
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (submissionLocked) {
+      credentialInput.value = "";
+      status.textContent = unknownOutcomeMessage;
+      return;
+    }
     const csrf = readCookie(csrfCookieName);
     if (csrf === "") {
       credentialInput.value = "";
@@ -109,6 +116,7 @@
     credentialBytes.fill(0);
     let requestBody = JSON.stringify({credential_value: encodedCredential, scopes});
     encodedCredential = "";
+    submissionLocked = true;
     buttons.forEach((button) => { button.disabled = true; });
     status.textContent = "Storing credential…";
 
@@ -126,20 +134,26 @@
       });
       requestBody = "";
       if (!response.ok) {
-        if (response.status === 401 || response.status === 403) {
-          status.textContent = "Current authorization or recent reauthentication is required.";
+        if (response.status >= 400 && response.status < 500) {
+          submissionLocked = false;
+          if (response.status === 401 || response.status === 403) {
+            status.textContent = "Current authorization or recent reauthentication is required.";
+          } else {
+            status.textContent = "The credential was not accepted. Check the connection, scope, and current authorization.";
+          }
           return;
         }
-        status.textContent = "The credential was not accepted. Check the connection, scope, and current authorization.";
+        status.textContent = unknownOutcomeMessage;
         return;
       }
+      submissionLocked = false;
       status.textContent = "Credential stored. No credential value can be read back.";
     } catch (_) {
       requestBody = "";
-      status.textContent = "The storage outcome could not be confirmed. Do not resubmit until the connection state is checked.";
+      status.textContent = unknownOutcomeMessage;
     } finally {
       requestBody = "";
-      buttons.forEach((button) => { button.disabled = false; });
+      buttons.forEach((button) => { button.disabled = submissionLocked; });
     }
   });
 })();

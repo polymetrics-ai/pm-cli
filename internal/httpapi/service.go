@@ -139,7 +139,10 @@ func (service *Service) Middleware() MiddlewareFunc {
 		}
 		state := requestState{inbound: inbound, request: c.Request, writer: c.Writer}
 		if policy == policyPublic || policy == policyBrowserLogin || policy == policyDeviceLogin {
-			if policy != policyBrowserLogin {
+			// RequestBoundary admits plaintext here only for the credential-free
+			// loopback GET /v1/info exception.
+			plaintextDiscovery := policy == policyPublic && !inbound.TLS
+			if policy != policyBrowserLogin && !plaintextDiscovery {
 				browser := policy == policyPublic && inbound.Origin != ""
 				if err := service.auth.ValidateInboundPolicy(auth.InboundRequest{
 					TLS: inbound.TLS, Host: inbound.Host, Origin: inbound.Origin,
