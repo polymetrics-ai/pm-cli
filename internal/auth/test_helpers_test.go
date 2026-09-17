@@ -14,6 +14,7 @@ import (
 
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
@@ -465,6 +466,10 @@ func (fixture *authFixture) execMigrator(t *testing.T, scope contract.Scope, que
 		t.Fatalf("bind auth fixture mutation: %T", err)
 	}
 	if _, err := tx.Exec(ctx, query, arguments...); err != nil {
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) {
+			t.Fatalf("mutate auth fixture: SQLSTATE %s table=%s constraint=%s", databaseError.Code, databaseError.TableName, databaseError.ConstraintName)
+		}
 		t.Fatalf("mutate auth fixture: %T", err)
 	}
 	if err := tx.Commit(ctx); err != nil {

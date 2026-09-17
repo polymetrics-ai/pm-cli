@@ -198,6 +198,9 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 	})
 
 	t.Run("R10_E01_C03_slow_reader_closes_with_bounds_and_reconnects", func(t *testing.T) {
+		t.Cleanup(func() {
+			t.Error("DIAGNOSTIC CAPTURE ONLY: exposing bounded transport logs from the Linux probe; not a correctness verdict")
+		})
 		fixture := newEventFixture(t, true)
 		runID := admitEventRun(
 			t,
