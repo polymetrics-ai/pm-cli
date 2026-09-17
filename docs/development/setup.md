@@ -138,6 +138,16 @@ The minimal same-origin pages are `/login` for configured OIDC sign-in or reauth
 
 `/health/live` can report the process live, but `/health/ready` remains HTTP 503 with dispatch false even when the PostgreSQL admission probe succeeds. The production handler registry is empty, so invocation submission returns unavailable capability rather than fabricating accepted work. The [admission checks](testing.md#authenticated-admission-and-run-controls-m4) register an explicit fixture capability; the [handoff checks](testing.md#temporal-handoff-and-projection-m4) exercise real PostgreSQL and Temporal. Neither makes this process a ready provider-execution backend.
 
+### Scoped event streams and artifact boundaries
+
+`GET /v1/workspaces/{workspace_id}/runs/{run_id}/events` serves authenticated SSE. Both `run.read` and `event.read` must authorize the parent run before event disclosure, and polling rechecks current authority. Foreign scopes and runs remain concealed. The stream begins with an authoritative `snapshot`; committed `run_event` frames follow in durable sequence order. Sequences, state revisions and safe-payload counts are decimal strings, including values beyond JavaScript's exact integer range.
+
+Reconnect with the opaque `Last-Event-ID` from a committed event. When retained history has a gap, use the recovery snapshot's signed `cursor` rather than inventing a sequence. Cursor signatures bind deployment, organization, workspace and run; current actor authority is checked separately. Signing lazily derives a separate key from the configured 32-byte wrapping key and deployment identity; replicas serving the same deployment must use the same key. Missing signing capability returns explicit unavailability, not unsigned cursors.
+
+The subscription queue is capped at the smaller of the configured event-buffer limit and 1,000 messages. Each frame has the configured server write deadline. Disconnect and server drain end the subscription without cancelling the accepted run. These boundaries have [focused physical checks](testing.md#scoped-events-and-artifact-refusal-m4), including the composed server's signing and drain path; they do not make the provider registry ready.
+
+Artifact upload, inspection and download routes enforce scoped authorization but have no registered byte backend in this milestone. Authorized available metadata does not fabricate downloadable content: the unsupported capability returns HTTP 503. Upload is currently a bodyless capability probe; a raw upload body is rejected with HTTP 400 by the shared protocol boundary. Artifact-byte implementation and verification remain later scope.
+
 ### Standalone bounded PM worker
 
 `make build` also emits `.cache/bin/pm-worker`. Its `--help` and `--version` paths are offline. Startup uses the same two explicit path flags as the server:
@@ -153,6 +163,8 @@ These are placeholder paths, not a runnable deployment. The complete server conf
 `task_queue` must be `pm-control` and appear in `temporal.task_queues`. Dial and drain timeouts must be positive and at most five minutes; each concurrency bound must be 1–65,536. The nested timeouts require `schedule_to_close > start_to_close > 0`, with positive `heartbeat` and `transport` both below `start_to_close`. Schedule-to-close cannot exceed `limits.run_lifetime`. The Go validator enforces these relational constraints in addition to the JSON Schema's closed shape.
 
 The worker opens the configured application PostgreSQL endpoint and authenticated Temporal client from the confined operator secret bundles. It uses `pm-app-endpoint` and Temporal `ca.pem`, `client.pem`, and `client-key.pem`; it does not provision dependencies, migrate the store, or perform OIDC discovery. Workflow and activity polling share one SDK client. Shutdown stops the worker before closing the client and application resources, without cancelling accepted durable runs.
+
+At each new physical-unit boundary, the worker checks the accepted durable grant against current connection, principal and grant authority. Login-session expiry alone does not revoke accepted work. PostgreSQL account permits are shared across worker instances and connection aliases; authorization checks database-time expiry before committing a new attempt. An expired reservation is not renewed and dispatched in the same acquisition. Workspace admission budgets remain independent. These are the bounded [grant and permit checks](testing.md#current-grants-and-shared-account-permits-m4), not a measured fairness guarantee.
 
 The production provider registry and operation resolver remain unavailable. Registered orchestration is not permission to execute an undeclared provider operation, and schedule admission remains unavailable without its admitted authority. The [worker checks](testing.md#bounded-workflow-and-worker-execution-m4) exercise controlled capabilities through real PostgreSQL and TLS Temporal, including the actual compiled worker's polling and graceful stop; they are not connector certification.
 
@@ -226,18 +238,22 @@ The ordinary public API is authored once in [OpenAPI 3.1](../../api/pm.openapi.y
 ```sh
 make generate
 make check-generated
-python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./internal/api ./internal/httpapi -count=1 -timeout 5m
+python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./internal/api -count=1 -timeout 5m
 ```
 
 `check-generated` compares every owned output byte against fresh generation and is included in `make check` and the foundation CI command sequence. `TestGeneratedContractBoundary` exercises independent output directories, stale and semantically lossy output, unsupported source projection and generator failure propagation. Required, nullable and composed-schema constraints must survive; no proof-only DTO belongs in the ordinary API.
 
 `TestWireVersionAndEnvelope` covers protocol/required-feature refusal, safe additive responses, distinct admission/error/replay envelopes and exact shared values/selection/filter/pagination. `RegisterPMStrictHandlers` installs the protocol guard before caller middleware and typed binding. Ordinary metadata and replay reject secret-bearing fields; provider-owned data field names remain exact, including a legitimate field named `password`. The sole one-time PM credential response is separate from replay.
 
-This boundary does not start a server, authenticate a caller, commit an admission or execute a provider request. A compiled HTTP package with no tests is compilation evidence only; the generated-router smoke and protocol tests have separate behavioral evidence.
+The SSE and three artifact operations remain in canonical OpenAPI, exact controls and generated named DTOs. Their streaming/manual handlers are deliberately excluded from the ordinary generated client and strict handler interface; the same route registrar applies the shared protocol and authentication boundaries.
+
+Generated-router and protocol checks alone do not prove authentication, durable admission or provider execution. The HTTP package now also contains physical fixture cases; run those through the [owned-fixture wrapper](testing.md#scoped-events-and-artifact-refusal-m4), not as an unconfigured standalone package test.
 
 ### PostgreSQL control store
 
-`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v10`; authenticated worker state extends the existing store rather than creating another queue. Workflow handoff adds immutable command intents and append-only reconciliation witnesses. Its bounded migrator-owned claim function returns scoped routes; runtime callers re-enter scoped transactions. The runtime role cannot create schemas/tables/temporary objects, truncate PM tables, delete history, assume the migrator role, or broaden its authority. Operator reinitialization must preserve these store-owned grants.
+`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v11`; authenticated worker state extends the existing store rather than creating another queue. Workflow handoff adds immutable command intents and append-only reconciliation witnesses. Its bounded migrator-owned claim function returns scoped routes; runtime callers re-enter scoped transactions. The runtime role cannot create schemas/tables/temporary objects, truncate PM tables, delete history, assume the migrator role, or broaden its authority. Operator reinitialization must preserve these store-owned grants.
+
+Migration 0011 backfills each run's durable event watermark across retained scopes. Event allocation continues beyond that watermark even when retained rows have been removed. Its temporary migrator-only policies are transaction-bound and removed before commit; runtime visibility is not widened. Downgrade refuses a watermark that the retained rows cannot represent, rather than rewinding future event identities.
 
 Use only an explicitly owned disposable PostgreSQL fixture. The tests require the selected application's `pm-app-endpoint` and `pm-app-migrator-password` references under `PM_STORE_TEST_SECRETS_DIR`; they do not skip when those inputs are missing. With the dependency fixture above already prepared:
 

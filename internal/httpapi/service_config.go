@@ -1,7 +1,9 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
+	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
@@ -11,12 +13,16 @@ import (
 // authorities. It contains no provider adapter or client-controlled key locator.
 // NewService takes an immutable copy; callers must not replace its dependencies.
 type ServiceConfig struct {
-	PublicOrigin   string
-	Auth           *auth.Service
-	Identity       *app.IdentityService
-	Credentials    *app.CredentialIngress
-	Admission      *app.AdmissionService
-	Runs           *app.RunService
-	InstanceID     string
-	OIDCHTTPClient *http.Client
+	PublicOrigin          string
+	Auth                  *auth.Service
+	Identity              *app.IdentityService
+	Credentials           *app.CredentialIngress
+	Admission             *app.AdmissionService
+	Runs                  *app.RunService
+	InstanceID            string
+	OIDCHTTPClient        *http.Client
+	ResolveEventCursorKey func(context.Context) ([]byte, error)
+	EventBufferSize       uint64
+	EventWriteTimeout     time.Duration
+	Draining              <-chan struct{}
 }

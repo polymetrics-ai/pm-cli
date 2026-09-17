@@ -74,3 +74,28 @@ func RecheckRunGrant(
 	}
 	return accepted.Grant, nil
 }
+
+// RevokeFutureEffects records explicit revocation of an accepted run grant
+// without rewriting its immutable attribution. The caller owns current
+// authorization and the audit/control transaction; public revocation
+// orchestration is a later boundary.
+func RevokeFutureEffects(
+	ctx context.Context,
+	tx *store.Transaction,
+	runID string,
+	expectedGrantEpoch uint64,
+) (store.RunExecutionGrant, bool, error) {
+	if ctx == nil || tx == nil || !validApplicationID(runID) || expectedGrantEpoch == 0 {
+		return store.RunExecutionGrant{}, false, invalidRequestFailure()
+	}
+	revoked, changed, err := store.RevokeRunExecutionGrant(
+		ctx,
+		tx,
+		runID,
+		expectedGrantEpoch,
+	)
+	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrScopeMismatch) {
+		return store.RunExecutionGrant{}, false, resourceNotFoundFailure(err)
+	}
+	return revoked, changed, err
+}

@@ -624,50 +624,34 @@ func (service *WorkerService) prepareWorkerUnit(
 				return workerFailure(ErrWorkerAuthorization, errors.New("no accepted lifetime remains for a provider permit"))
 			}
 		}
-		permit, permitErr := store.LoadAccountPermit(ctx, tx, permitID)
-
-		if errors.Is(permitErr, store.ErrNotFound) {
-			if !freshSend {
-				return workerFailure(ErrWorkerConflict, errors.New("possibly dispatched work lacks its account permit"))
-			}
-			permit, err = store.ReserveAccountPermit(ctx, tx, store.AccountPermitRequest{
+		var permit store.AccountPermit
+		if freshSend {
+			permit, err = AcquirePermit(ctx, tx, store.AccountPermitRequest{
 				PermitID: permitID, ConnectionID: state.input.ConnectionID,
 				OwnerID: permitOwner, Units: 1, TTL: permitTTL,
-			})
+			}, connection.ProviderAccountID)
 			if err != nil {
 				return err
 			}
-			permit, err = store.AuthorizeAccountPermit(ctx, tx, permit)
-			if err != nil {
-				return err
-			}
-			freshSend = true
-		} else if permitErr != nil {
-			return permitErr
 		} else {
-			if permit.ConnectionID != state.input.ConnectionID || permit.ProviderAccountID != connection.ProviderAccountID ||
+			permit, err = store.LoadAccountPermit(ctx, tx, permitID)
+			if errors.Is(err, store.ErrNotFound) {
+				return workerFailure(ErrWorkerConflict, errors.New("possibly dispatched work lacks its account permit"))
+			}
+			if err != nil {
+				return err
+			}
+			if permit.ConnectionID != state.input.ConnectionID ||
+				permit.ProviderAccountID != connection.ProviderAccountID ||
 				permit.OwnerID != permitOwner || permit.Units != 1 {
 				return workerFailure(ErrWorkerConflict, errors.New("worker account permit identity conflicts"))
 			}
 			switch permit.State {
-			case store.AccountPermitReserved:
-				if !freshSend {
-					return workerFailure(ErrWorkerConflict, errors.New("unused account permit conflicts with dispatch evidence"))
-				}
-				if !permit.ExpiresAt.After(state.now) {
-					permit, err = store.ReclaimAccountPermit(ctx, tx, permit, permitOwner, permitTTL)
-					if err != nil {
-						return err
-					}
-				}
-				permit, err = store.AuthorizeAccountPermit(ctx, tx, permit)
-				if err != nil {
-					return err
-				}
 			case store.AccountPermitDispatched, store.AccountPermitUnknown:
-				if freshSend {
-					return workerFailure(ErrWorkerConflict, errors.New("new dispatch has a previously used account permit"))
-				}
+				// A recorded attempt may only enter reconciliation; permit
+				// expiry cannot erase or re-authorize its possible effect.
+			case store.AccountPermitReserved:
+				return workerFailure(ErrWorkerConflict, errors.New("unused account permit conflicts with dispatch evidence"))
 			case store.AccountPermitResolved:
 				return workerFailure(ErrWorkerConflict, errors.New("resolved account permit lacks durable settlement"))
 			case store.AccountPermitExpired:

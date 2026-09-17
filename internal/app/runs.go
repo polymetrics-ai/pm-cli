@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"io"
+	"math"
 	"slices"
 	"time"
 
@@ -79,6 +80,14 @@ type TaskPage struct {
 	Next  string
 }
 
+type RunEventPage struct {
+	Run          RunView
+	Watermark    uint64
+	ReadThrough  uint64
+	RetentionGap bool
+	Events       []contract.ServerEvent
+}
+
 func (service *RunService) GetRun(
 	ctx context.Context,
 	actor contract.Actor,
@@ -98,6 +107,84 @@ func (service *RunService) GetRun(
 			return err
 		}
 		result = runViewFromStore(stored)
+		return nil
+	})
+	return result, err
+}
+
+// AuthorizeRunEvents establishes both authorities needed by a stream before
+// cursor-signing material or durable event rows are accessed. Event collections
+// are authorized against their parent run; ResourceEvent remains reserved for
+// an exact event identity that is already known.
+func (service *RunService) AuthorizeRunEvents(
+	ctx context.Context,
+	actor contract.Actor,
+	scope contract.Scope,
+	runID string,
+) error {
+	if service == nil || ctx == nil || !validApplicationID(runID) {
+		return invalidRequestFailure()
+	}
+	return store.WithinScope(ctx, service.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
+		stored, err := store.LoadRunView(ctx, tx, runID)
+		if err != nil {
+			return mapRunStoreFailure(err)
+		}
+		return service.authorizeRunEventsRecord(
+			ctx,
+			tx,
+			actor,
+			scope,
+			stored,
+			stored.Record.Spec.OperationOrPlanRef.ID,
+		)
+	})
+}
+
+// ReadRunEvents authorizes the current actor before loading any event row. The
+// store then observes the run projection, durable watermark and bounded replay
+// while holding the run row against concurrent sequence allocation.
+func (service *RunService) ReadRunEvents(
+	ctx context.Context,
+	actor contract.Actor,
+	scope contract.Scope,
+	runID string,
+	after uint64,
+	through uint64,
+	limit uint32,
+) (RunEventPage, error) {
+	if service == nil || ctx == nil || !validApplicationID(runID) ||
+		after > math.MaxInt64 || through > math.MaxInt64 || through != 0 && after > through ||
+		limit == 0 || limit > 1000 {
+		return RunEventPage{}, invalidRequestFailure()
+	}
+	var result RunEventPage
+	err := store.WithinScope(ctx, service.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
+		candidate, err := store.LoadRunView(ctx, tx, runID)
+		if err != nil {
+			return mapRunStoreFailure(err)
+		}
+		if err := service.authorizeRunEventsRecord(
+			ctx,
+			tx,
+			actor,
+			scope,
+			candidate,
+			candidate.Record.Spec.OperationOrPlanRef.ID,
+		); err != nil {
+			return err
+		}
+		stored, err := store.LoadRunEventSnapshot(ctx, tx, runID, after, through, int(limit))
+		if err != nil {
+			return mapRunStoreFailure(err)
+		}
+		result = RunEventPage{
+			Run:          runViewFromStore(stored.Run),
+			Watermark:    stored.Watermark,
+			ReadThrough:  stored.ReadThrough,
+			RetentionGap: stored.RetentionGap,
+			Events:       stored.Events,
+		}
 		return nil
 	})
 	return result, err
@@ -257,6 +344,37 @@ func (service *RunService) GetTask(
 		return nil
 	})
 	return result, err
+}
+
+func (service *RunService) authorizeRunEventsRecord(
+	ctx context.Context,
+	tx *store.Transaction,
+	actor contract.Actor,
+	scope contract.Scope,
+	run store.RunViewRecord,
+	operationID string,
+) error {
+	if _, err := service.authorizeRunRecord(
+		ctx,
+		tx,
+		actor,
+		scope,
+		run,
+		"run.read",
+		operationID,
+	); err != nil {
+		return err
+	}
+	_, err := service.authorizeRunRecord(
+		ctx,
+		tx,
+		actor,
+		scope,
+		run,
+		"event.read",
+		operationID,
+	)
+	return err
 }
 
 func (service *RunService) authorizeRunRecord(

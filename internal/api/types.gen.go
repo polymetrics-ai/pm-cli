@@ -688,6 +688,37 @@ type EffectSummary struct {
 	Unsent ExactCounter `json:"unsent"`
 }
 
+// EventCursor Opaque signed cursor bound to one scope, run and durable watermark or committed sequence.
+type EventCursor = string
+
+// EventSafeCount defines model for EventSafeCount.
+type EventSafeCount struct {
+	Name string `json:"name"`
+
+	// Value Lossless nonnegative decimal counter for Go and browser consumers.
+	Value ExactCounter `json:"value"`
+}
+
+// EventSafePayload Browser-safe projection of contract.SafePayload; arbitrary values and provider response bodies are forbidden.
+type EventSafePayload struct {
+	// Counts Explicitly present even when empty; count names are unique and values are lossless decimal strings.
+	Counts []EventSafeCount `json:"counts"`
+
+	// ReasonCodes Explicitly present even when empty.
+	ReasonCodes []string `json:"reason_codes"`
+
+	// References Explicitly present even when empty; reference names are unique.
+	References []EventSafeReference `json:"references"`
+}
+
+// EventSafeReference defines model for EventSafeReference.
+type EventSafeReference struct {
+	Name string `json:"name"`
+
+	// Ref Canonical opaque reference; never inline provider data or a credential.
+	Ref string `json:"ref"`
+}
+
 // ExactCounter Lossless nonnegative decimal counter for Go and browser consumers.
 type ExactCounter = string
 
@@ -884,6 +915,35 @@ type RunCancelResponse struct {
 
 // RunCancelResponseCancelRequested Confirms durable intent only, never provider termination.
 type RunCancelResponseCancelRequested bool
+
+// RunEventData JSON data for event run_event; its SSE id is the signed cursor for this committed sequence.
+type RunEventData struct {
+	CommittedAt time.Time `json:"committed_at"`
+	RunRef      string    `json:"run_ref"`
+
+	// SafePayload Browser-safe projection of contract.SafePayload; arbitrary values and provider response bodies are forbidden.
+	SafePayload EventSafePayload `json:"safe_payload"`
+
+	// Sequence Lossless positive decimal revision for Go and browser consumers.
+	Sequence Revision `json:"sequence"`
+
+	// StateRevision Lossless positive decimal revision for Go and browser consumers.
+	StateRevision Revision `json:"state_revision"`
+	Type          string   `json:"type"`
+}
+
+// RunEventSnapshotData JSON data for event snapshot; its SSE frame has no id field and its required signed cursor names the durable watermark, including zero.
+type RunEventSnapshotData struct {
+	// Cursor Opaque signed cursor bound to one scope, run and durable watermark or committed sequence.
+	Cursor       EventCursor `json:"cursor"`
+	RetentionGap bool        `json:"retention_gap"`
+
+	// Run Lean authorized projection; never the stored RunSpec, grant, raw inputs, credentials or Temporal history.
+	Run RunView `json:"run"`
+
+	// WatermarkSequence Lossless nonnegative decimal counter for Go and browser consumers.
+	WatermarkSequence ExactCounter `json:"watermark_sequence"`
+}
 
 // RunIntentReference Safe immutable accepted operation-or-plan identity; it excludes the RunSpec, grant and inputs.
 type RunIntentReference struct {
@@ -1140,6 +1200,9 @@ type WorkspacePage struct {
 	NextCursor nullable.Nullable[string] `json:"next_cursor"`
 }
 
+// ArtifactID defines model for ArtifactID.
+type ArtifactID = string
+
 // CSRFToken defines model for CSRFToken.
 type CSRFToken = string
 
@@ -1154,6 +1217,9 @@ type IdempotencyKey = string
 
 // IfMatch defines model for IfMatch.
 type IfMatch = string
+
+// LastEventID Opaque signed cursor bound to one scope, run and durable watermark or committed sequence.
+type LastEventID = EventCursor
 
 // PageSize defines model for PageSize.
 type PageSize = int

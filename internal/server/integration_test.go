@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/rand"
@@ -12,6 +13,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -203,6 +205,21 @@ type integrationMembershipPage struct {
 
 func TestAuthenticatedApplicationDrainPreservesAcceptedRun(t *testing.T) {
 	fixture := newServerIntegrationFixture(t)
+	if changed := fixture.execScoped(t, fixture.scope, `
+		UPDATE pm.memberships
+		SET permissions = ARRAY(
+		        SELECT DISTINCT value FROM unnest(permissions || $1::text[]) AS value ORDER BY value
+		    ),
+		    resource_grants = ARRAY(
+		        SELECT DISTINCT value FROM unnest(resource_grants || $2::text[]) AS value ORDER BY value
+		    ),
+		    operation_ids = $3
+		WHERE org_id = $4 AND workspace_id = $5 AND identity_id = $6
+	`, []string{"run.read", "event.read"}, []string{"permission:run.read", "permission:event.read"},
+		[]string{"fixture.read"}, fixture.scope.OrgID, fixture.scope.WorkspaceID, fixture.operator.PrincipalID); changed != 1 {
+		t.Fatal("grant both read authorities to the owned lifecycle fixture")
+	}
+	browser := fixture.loginBrowser(t, integrationAuthTimeFresh, false)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	observer, err := store.OpenPool(ctx, store.PoolConfig{
@@ -321,8 +338,63 @@ func TestAuthenticatedApplicationDrainPreservesAcceptedRun(t *testing.T) {
 	if before.State != contract.RunStateAccepted || before.CancelRequested {
 		t.Fatal("lifecycle fixture did not contain a committed uncancelled accepted run")
 	}
+	streamRequest, err := http.NewRequestWithContext(ctx, http.MethodGet,
+		fixture.origin+"/v1/workspaces/"+fixture.scope.WorkspaceID+"/runs/"+runID+"/events", nil)
+	if err != nil {
+		t.Fatal("construct production event stream request")
+	}
+	stream, err := browser.client.Do(streamRequest)
+	if err != nil {
+		t.Fatalf("open production event stream: %v", err)
+	}
+	defer stream.Body.Close()
+	if stream.StatusCode != http.StatusOK || !strings.HasPrefix(stream.Header.Get("Content-Type"), "text/event-stream") {
+		t.Fatalf("production event stream returned HTTP %d instead of SSE", stream.StatusCode)
+	}
+	scanner := bufio.NewScanner(stream.Body)
+	var eventName string
+	var snapshotData strings.Builder
+	for scanner.Scan() {
+		line := scanner.Text()
+		if line == "" {
+			if eventName == "" && snapshotData.Len() == 0 {
+				continue
+			}
+			break
+		}
+		name, value, ok := strings.Cut(line, ":")
+		if !ok {
+			continue
+		}
+		value = strings.TrimPrefix(value, " ")
+		switch name {
+		case "event":
+			eventName = value
+		case "data":
+			snapshotData.WriteString(value)
+			snapshotData.WriteByte('\n')
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("read production stream snapshot: %v", err)
+	}
+	var snapshot struct {
+		Run struct {
+			RunRef string `json:"run_ref"`
+		} `json:"run"`
+		Cursor string `json:"cursor"`
+	}
+	if err := json.Unmarshal([]byte(snapshotData.String()), &snapshot); err != nil ||
+		eventName != "snapshot" || snapshot.Run.RunRef != runID || snapshot.Cursor == "" {
+		t.Fatal("production stream did not return the authorized run and signed recovery cursor")
+	}
 	if err := fixture.application.Close(); err != nil {
 		t.Fatalf("drain authenticated API application: %v", err)
+	}
+	for scanner.Scan() {
+	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("production stream did not reach clean EOF during drain: %v", err)
 	}
 	after := readRun()
 	if !reflect.DeepEqual(after, before) {

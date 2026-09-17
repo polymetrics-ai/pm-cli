@@ -158,12 +158,12 @@ func New(t testing.TB, configure ...ConfigureService) *Fixture {
 	return fixture
 }
 
-// NewAdmitting creates the controlled positive admission fixture. Its callback
-// is registered only to prove local capability reachability; admission must
-// never execute it and it does not certify a production connector.
-func NewAdmitting(t testing.TB) *Fixture {
+// NewAdmitting creates the controlled positive admission fixture. Its execution
+// callback proves local capability reachability; admission never executes it.
+// One optional service configurator runs after the real admission service is set.
+func NewAdmitting(t testing.TB, configure ...ConfigureService) *Fixture {
 	t.Helper()
-	return newAdmitting(t, nil, nil)
+	return newAdmitting(t, nil, nil, selectConfigurator(t, nil, configure))
 }
 
 // NewExecuting creates the same real authenticated admission fixture and also
@@ -177,13 +177,14 @@ func NewExecuting(
 	if execute == nil {
 		t.Fatal("controlled worker execution callback is required")
 	}
-	return newAdmitting(t, execute, reconcile)
+	return newAdmitting(t, execute, reconcile, nil)
 }
 
 func newAdmitting(
 	t testing.TB,
 	execute app.ExecutionCallback,
 	reconcile app.ExecutionCallback,
+	configure ConfigureService,
 ) *Fixture {
 	t.Helper()
 	registry, _, err := NewExecutionBoundary(ServiceDependencies{}, execute, reconcile)
@@ -206,6 +207,9 @@ func newAdmitting(
 			return err
 		}
 		configuration.Admission = admission
+		if configure != nil {
+			return configure(dependencies, configuration)
+		}
 		return nil
 	})
 	fixture.WorkerRegistry = registry

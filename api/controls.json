@@ -56,6 +56,12 @@
       "disposition": "confirmed_refusal"
     },
     {
+      "status": 400,
+      "code": "invalid_event_cursor",
+      "safe_retry_action": "correct_input",
+      "disposition": "confirmed_refusal"
+    },
+    {
       "status": 401,
       "code": "authentication_required",
       "safe_retry_action": "refresh_authorization",
@@ -322,6 +328,15 @@
       "requires_if_match": false
     },
     {
+      "operation_id": "downloadArtifact",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
       "operation_id": "exchangeDeviceLogin",
       "method": "POST",
       "path": "/v1/sessions/device/exchange",
@@ -401,6 +416,15 @@
       "optional_body_fields": [],
       "requires_idempotency_key": true,
       "requires_if_match": true
+    },
+    {
+      "operation_id": "inspectArtifact",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
     },
     {
       "operation_id": "listConnections",
@@ -545,6 +569,24 @@
       "optional_body_fields": [],
       "requires_idempotency_key": true,
       "requires_if_match": true
+    },
+    {
+      "operation_id": "uploadArtifact",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/artifacts",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "watchRunEvents",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runs/{run_id}/events",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
     }
   ]
 }

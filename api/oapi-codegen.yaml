@@ -8,3 +8,8 @@ compatibility:
 output-options:
   skip-prune: true
   nullable-type: true
+  exclude-operation-ids:
+    - watchRunEvents
+    - uploadArtifact
+    - inspectArtifact
+    - downloadArtifact

@@ -6,6 +6,8 @@ go_library(
         "admin.gen.go",
         "admin.go",
         "admin_service.go",
+        "artifacts.go",
+        "events.go",
         "identity.go",
         "middleware.go",
         "routes.go",
@@ -32,15 +34,27 @@ go_library(
 
 go_test(
     name = "httpapi_test",
+    size = "large",
     srcs = [
         "admin_test.go",
+        "artifacts_test.go",
+        "events_test.go",
         "protocol_test.go",
         "strict_test.go",
     ],
     embed = [":httpapi"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = ["exclusive", "external", "no-remote"],
     deps = [
         "//internal/api",
         "//internal/contract",
+        "//internal/store",
+        "//internal/testfixture",
         "@com_github_gin_gonic_gin//:gin",
+        "@com_github_jackc_pgx_v5//:pgx",
     ],
 )

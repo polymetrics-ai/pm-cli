@@ -2,7 +2,9 @@ package server
 
 import (
 	"context"
+	"crypto/hmac"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
@@ -103,6 +105,20 @@ func openWithOIDCFactory(
 		return fail(errors.New("resolved run admission policy is invalid"), nil, nil)
 	}
 	oidcClient, oidcTransport := oidcFactory()
+	loadWrappingKey := func(ctx context.Context, reference string) ([]byte, error) {
+		if ctx == nil || ctx.Err() != nil || reference != wrappingKeyRef {
+			return nil, errors.New("wrapping key is unavailable")
+		}
+		key, readErr := secrets.Read(reference, wrappingKeyMember)
+		if readErr != nil {
+			return nil, errors.New("wrapping key is unavailable")
+		}
+		if len(key) != wrappingKeyBytes {
+			clear(key)
+			return nil, errors.New("wrapping key must contain exactly 32 raw bytes")
+		}
+		return key, nil
+	}
 	services, err := app.OpenServices(ctx, app.ServicesConfig{
 		DeploymentID:      configuration.DeploymentID(),
 		PublicOrigin:      configuration.PublicOrigin(),
@@ -116,24 +132,15 @@ func openWithOIDCFactory(
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,
-			LoadWrappingKey: func(ctx context.Context, reference string) ([]byte, error) {
-				if ctx == nil || ctx.Err() != nil || reference != wrappingKeyRef {
-					return nil, errors.New("wrapping key is unavailable")
-				}
-				key, readErr := secrets.Read(reference, wrappingKeyMember)
-				if readErr != nil {
-					return nil, errors.New("wrapping key is unavailable")
-				}
-				if len(key) != wrappingKeyBytes {
-					clear(key)
-					return nil, errors.New("wrapping key must contain exactly 32 raw bytes")
-				}
-				return key, nil
-			},
+			LoadWrappingKey:  loadWrappingKey,
 		},
 	})
 	if err != nil {
 		return fail(err, nil, oidcTransport)
+	}
+	lifecycle, err := New(configuration, services.Ping, nil, diagnostics)
+	if err != nil {
+		return fail(errors.New("server lifecycle composition failed"), services, oidcTransport)
 	}
 	service, err := httpapi.NewService(httpapi.ServiceConfig{
 		PublicOrigin:   services.PublicOrigin(),
@@ -144,13 +151,24 @@ func openWithOIDCFactory(
 		Runs:           services.Runs,
 		InstanceID:     configuration.DeploymentID(),
 		OIDCHTTPClient: oidcClient,
+		ResolveEventCursorKey: func(ctx context.Context) ([]byte, error) {
+			key, err := loadWrappingKey(ctx, wrappingKeyRef)
+			if err != nil {
+				return nil, errors.New("event cursor authority is unavailable")
+			}
+			defer clear(key)
+			derivation := hmac.New(sha256.New, key)
+			_, _ = derivation.Write([]byte("pm/http/event-cursor/key/v1\x00"))
+			_, _ = derivation.Write([]byte(configuration.DeploymentID()))
+			return derivation.Sum(nil), nil
+		},
+		EventBufferSize:   configuration.Limits().EventBuffer,
+		EventWriteTimeout: serverSettings.WriteTimeout,
+		Draining:          lifecycle.Draining(),
 	})
 	if err != nil {
+		_ = lifecycle.Drain(context.Background())
 		return fail(errors.New("HTTP application composition failed"), services, oidcTransport)
-	}
-	lifecycle, err := New(configuration, services.Ping, nil, diagnostics)
-	if err != nil {
-		return fail(errors.New("server lifecycle composition failed"), services, oidcTransport)
 	}
 	gin.SetMode(gin.ReleaseMode)
 	router := gin.New()

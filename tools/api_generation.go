@@ -741,6 +741,19 @@ func generateAPIOutputs(ctx context.Context, document *openapi3.T, controls apiC
 	base := configuration.Configuration
 	base.NoVCSVersionOverride = &version
 
+	// Codegen filters excluded operations in place. Preserve the complete
+	// public contract and protocol controls before generating ordinary clients
+	// and handlers; manual streaming routes still belong to that contract.
+	controlsSource, err := generateControlsSource(controls, document)
+	if err != nil {
+		return nil, err
+	}
+	canonicalJSON, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal canonical OpenAPI JSON: %w", err)
+	}
+	canonicalJSON = append(canonicalJSON, '\n')
+
 	modelSource, err := codegen.Generate(document, base)
 	if err != nil {
 		return nil, fmt.Errorf("generate API models: %w", err)
@@ -785,16 +798,6 @@ func generateAPIOutputs(ctx context.Context, document *openapi3.T, controls apiC
 	if err != nil {
 		return nil, fmt.Errorf("format generated Gin server boundary: %w", err)
 	}
-
-	controlsSource, err := generateControlsSource(controls, document)
-	if err != nil {
-		return nil, err
-	}
-	canonicalJSON, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal canonical OpenAPI JSON: %w", err)
-	}
-	canonicalJSON = append(canonicalJSON, '\n')
 
 	adminModels, err := generateAdminModels(ctx, admin, base, modelFile)
 	if err != nil {

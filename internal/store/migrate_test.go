@@ -11,7 +11,216 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/pressly/goose/v3"
 )
+
+func TestEventWatermarkMigrationRetainedData(t *testing.T) {
+	credentials := loadTestStoreCredentials(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatalf("establish current schema before event watermark migration regression: %v", err)
+	}
+
+	t.Run("retained_v10_events_backfill_every_scope_and_continue_sequence", func(t *testing.T) {
+		scopes := []contract.Scope{newTestScope(t), newTestScope(t)}
+		t.Cleanup(func() {
+			restoreEventWatermarkMigrationFixture(t, credentials, scopes...)
+		})
+		pool := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+		runIDs := make([]string, len(scopes))
+		for index, scope := range scopes {
+			request := testAdmissionRequest(
+				t,
+				scope,
+				"event-watermark-retained-"+randomHex(t, 8),
+				fmt.Sprintf("event-watermark-retained-%d", index),
+			)
+			admitForTest(t, pool, scope, request)
+			runIDs[index] = request.Spec.RunID
+		}
+		pool.Close()
+
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("return owned retained-event fixture to v10: %v", err)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("migrate retained cross-scope events from v10 to v11: %v", err)
+		}
+
+		reopened := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+		defer reopened.Close()
+		backfilled := true
+		for index, scope := range scopes {
+			var watermark uint64
+			err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+				return tx.queryRow(ctx, `
+					SELECT last_event_sequence
+					FROM pm.runs
+					WHERE run_id = $1
+				`, runIDs[index]).Scan(&watermark)
+			})
+			if err != nil {
+				t.Fatalf("read backfilled event watermark for scope %d: %v", index, err)
+			}
+			if watermark != 1 {
+				t.Errorf("backfilled event watermark for scope %d = %d; want retained maximum 1", index, watermark)
+				backfilled = false
+			}
+		}
+		if !backfilled {
+			return
+		}
+		for index, scope := range scopes {
+			var sequence, watermark uint64
+			err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+				committedAt, err := readDatabaseTime(ctx, tx)
+				if err != nil {
+					return err
+				}
+				event, err := insertEvent(
+					ctx,
+					tx,
+					runIDs[index],
+					1,
+					testEvent("event-watermark-next-"+randomHex(t, 8), "migration_event", runIDs[index]),
+					committedAt,
+				)
+				if err != nil {
+					return err
+				}
+				sequence = event.Sequence
+				return tx.queryRow(ctx, `
+					SELECT last_event_sequence
+					FROM pm.runs
+					WHERE run_id = $1
+				`, runIDs[index]).Scan(&watermark)
+			})
+			if err != nil {
+				t.Fatalf("append after retained event migration for scope %d: %v", index, err)
+			}
+			if sequence != 2 || watermark != 2 {
+				t.Fatalf(
+					"post-migration event state for scope %d = sequence %d watermark %d; want 2/2",
+					index,
+					sequence,
+					watermark,
+				)
+			}
+		}
+	})
+
+	t.Run("downgrade_refuses_a_retained_tail_gap_visible_only_through_rls", func(t *testing.T) {
+		scope := newTestScope(t)
+		t.Cleanup(func() {
+			restoreEventWatermarkMigrationFixture(t, credentials, scope)
+		})
+		pool := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+		request := testAdmissionRequest(
+			t,
+			scope,
+			"event-watermark-downgrade-"+randomHex(t, 8),
+			"event-watermark-downgrade",
+		)
+		admitForTest(t, pool, scope, request)
+
+		var appendedSequence, watermark, retainedMaximum uint64
+		err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			committedAt, err := readDatabaseTime(ctx, tx)
+			if err != nil {
+				return err
+			}
+			event, err := insertEvent(
+				ctx,
+				tx,
+				request.Spec.RunID,
+				1,
+				testEvent("event-watermark-retained-tail-"+randomHex(t, 8), "migration_event", request.Spec.RunID),
+				committedAt,
+			)
+			if err != nil {
+				return err
+			}
+			appendedSequence = event.Sequence
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("append owned retained-tail event: %v", err)
+		}
+		migrator, err := pgx.Connect(ctx, credentials.migratorDSN)
+		if err != nil {
+			t.Fatal("connect migrator for owned retention fixture")
+		}
+		defer func() {
+			cleanupCtx, cleanupCancel := detachedCleanupContext()
+			defer cleanupCancel()
+			if err := migrator.Close(cleanupCtx); err != nil {
+				t.Errorf("close owned retention fixture: %T", err)
+			}
+		}()
+		if err := pgx.BeginFunc(ctx, migrator, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `
+				SELECT set_config('pm.org_id', $1, true), set_config('pm.workspace_id', $2, true)
+			`, scope.OrgID, scope.WorkspaceID); err != nil {
+				return err
+			}
+			tag, err := tx.Exec(ctx, `
+				DELETE FROM pm.server_events
+				WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND sequence = $4
+			`, scope.OrgID, scope.WorkspaceID, request.Spec.RunID, appendedSequence)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return fmt.Errorf("owned retention fixture deleted %d events", tag.RowsAffected())
+			}
+			return tx.QueryRow(ctx, `
+				SELECT run.last_event_sequence, COALESCE(MAX(event.sequence), 0)
+				FROM pm.runs AS run
+				LEFT JOIN pm.server_events AS event
+				  ON event.org_id = run.org_id AND event.workspace_id = run.workspace_id
+				     AND event.run_id = run.run_id
+				WHERE run.org_id = $1 AND run.workspace_id = $2 AND run.run_id = $3
+				GROUP BY run.last_event_sequence
+			`, scope.OrgID, scope.WorkspaceID, request.Spec.RunID).Scan(&watermark, &retainedMaximum)
+		}); err != nil {
+			t.Fatalf("create owned retained-tail event gap: %v", err)
+		}
+		if appendedSequence != 2 || watermark != 2 || retainedMaximum != 1 {
+			t.Fatalf(
+				"retained-tail fixture = sequence %d watermark %d maximum %d; want 2/2/1",
+				appendedSequence,
+				watermark,
+				retainedMaximum,
+			)
+		}
+		pool.Close()
+
+		err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN)
+		if err == nil {
+			t.Fatal("event watermark downgrade succeeded after retained tail deletion")
+		}
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("retained-tail downgrade error = %v; want migration refusal P0001", err)
+		}
+
+		conn, err := pgx.Connect(ctx, credentials.migratorDSN)
+		if err != nil {
+			t.Fatal("connect after retained-tail downgrade refusal")
+		}
+		defer func() { _ = conn.Close(context.Background()) }()
+		var revision string
+		if err := conn.QueryRow(ctx, `SELECT revision FROM pm.control_schema WHERE singleton`).Scan(&revision); err != nil {
+			t.Fatal("read control schema after retained-tail downgrade refusal")
+		}
+		if revision != ControlSchemaRevision {
+			t.Fatalf("control revision after retained-tail downgrade refusal = %q; want %q", revision, ControlSchemaRevision)
+		}
+	})
+}
 
 func TestMigrationRecovery(t *testing.T) {
 	credentials := loadTestStoreCredentials(t)
@@ -128,4 +337,81 @@ func TestMigrationRecovery(t *testing.T) {
 			t.Fatalf("reopen after restoring supported version: %v", err)
 		}
 	})
+}
+
+func openEventWatermarkMigrationPool(t *testing.T, ctx context.Context, connectionString string) *Pool {
+	t.Helper()
+	pool, err := OpenPool(ctx, PoolConfig{
+		ConnectionString:  connectionString,
+		MaxConns:          4,
+		MinConns:          0,
+		MaxConnLifetime:   5 * time.Minute,
+		MaxConnIdleTime:   time.Minute,
+		HealthCheckPeriod: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatalf("open event watermark migration pool: %v", err)
+	}
+	return pool
+}
+
+func restoreEventWatermarkMigrationFixture(
+	t *testing.T,
+	credentials testStoreCredentials,
+	scopes ...contract.Scope,
+) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Errorf("restore current schema after event watermark migration regression: %v", err)
+		return
+	}
+	cleanupTestScope(t, credentials, scopes...)
+}
+
+func migrateOneStoreVersionDown(ctx context.Context, connectionString string) error {
+	configuration, err := pgx.ParseConfig(connectionString)
+	if err != nil {
+		return fmt.Errorf("parse event watermark migration connection: %w", err)
+	}
+	configuration.DefaultQueryExecMode = pgx.QueryExecModeExec
+	if configuration.RuntimeParams == nil {
+		configuration.RuntimeParams = make(map[string]string)
+	}
+	configuration.RuntimeParams["timezone"] = "UTC"
+	configuration.RuntimeParams["search_path"] = "pg_catalog,pm"
+
+	database := stdlib.OpenDB(*configuration)
+	database.SetMaxOpenConns(1)
+	database.SetMaxIdleConns(1)
+	defer database.Close()
+	if err := verifyMigratorIdentity(ctx, database); err != nil {
+		return err
+	}
+	rooted, err := fs.Sub(migrationFiles, "migrations/postgres")
+	if err != nil {
+		return fmt.Errorf("open event watermark migrations: %w", err)
+	}
+	provider, err := goose.NewProvider(
+		goose.DialectPostgres,
+		database,
+		rooted,
+		goose.WithTableName(migrationTableName),
+		goose.WithDisableGlobalRegistry(true),
+	)
+	if err != nil {
+		return fmt.Errorf("create event watermark migration provider: %w", err)
+	}
+	current, _, err := provider.GetVersions(ctx)
+	if err != nil {
+		return fmt.Errorf("read event watermark migration version: %w", err)
+	}
+	if current != 11 {
+		return fmt.Errorf("event watermark migration current version = %d; want 11", current)
+	}
+	if _, err := provider.Down(ctx); err != nil {
+		return fmt.Errorf("apply event watermark downgrade: %w", err)
+	}
+	return nil
 }

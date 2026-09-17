@@ -36,6 +36,8 @@ type AdminCredentialStatus struct {
 // AdminCredentialStatusStatus defines model for AdminCredentialStatus.Status.
 type AdminCredentialStatusStatus string
 
+// ArtifactID defines model for ArtifactID.
+
 // ConnectionID defines model for ConnectionID.
 
 // ResourceID defines model for ResourceID.

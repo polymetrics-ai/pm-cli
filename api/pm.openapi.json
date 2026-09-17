@@ -11,6 +11,17 @@
       }
     },
     "parameters": {
+      "ArtifactID": {
+        "description": "Private opaque artifact identity; never a bearer capability.",
+        "in": "path",
+        "name": "artifact_id",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
       "CSRFToken": {
         "description": "Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.",
         "in": "header",
@@ -58,6 +69,14 @@
           "maxLength": 512,
           "minLength": 1,
           "type": "string"
+        }
+      },
+      "LastEventID": {
+        "description": "Optional; when present there MUST be exactly one nonempty opaque signed event cursor. It is bound to the authorized organization, workspace, run and durable sequence; it is not a raw sequence number and cannot select another scope.",
+        "in": "header",
+        "name": "Last-Event-ID",
+        "schema": {
+          "$ref": "#/components/schemas/EventCursor"
         }
       },
       "PageSize": {
@@ -895,6 +914,86 @@
           "unchanged",
           "rejected",
           "unknown"
+        ],
+        "type": "object"
+      },
+      "EventCursor": {
+        "description": "Opaque signed cursor bound to one scope, run and durable watermark or committed sequence.",
+        "maxLength": 4096,
+        "minLength": 1,
+        "type": "string"
+      },
+      "EventSafeCount": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/ExactCounter"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "type": "object"
+      },
+      "EventSafePayload": {
+        "additionalProperties": false,
+        "description": "Browser-safe projection of contract.SafePayload; arbitrary values and provider response bodies are forbidden.",
+        "properties": {
+          "counts": {
+            "description": "Explicitly present even when empty; count names are unique and values are lossless decimal strings.",
+            "items": {
+              "$ref": "#/components/schemas/EventSafeCount"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "reason_codes": {
+            "description": "Explicitly present even when empty.",
+            "items": {
+              "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "references": {
+            "description": "Explicitly present even when empty; reference names are unique.",
+            "items": {
+              "$ref": "#/components/schemas/EventSafeReference"
+            },
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "references",
+          "counts",
+          "reason_codes"
+        ],
+        "type": "object"
+      },
+      "EventSafeReference": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "type": "string"
+          },
+          "ref": {
+            "description": "Canonical opaque reference; never inline provider data or a credential.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "ref"
         ],
         "type": "object"
       },
@@ -1907,6 +2006,68 @@
           "result_revision",
           "outcome_reference",
           "replay"
+        ],
+        "type": "object"
+      },
+      "RunEventData": {
+        "additionalProperties": false,
+        "description": "JSON data for event run_event; its SSE id is the signed cursor for this committed sequence.",
+        "properties": {
+          "committed_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "run_ref": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "safe_payload": {
+            "$ref": "#/components/schemas/EventSafePayload"
+          },
+          "sequence": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "state_revision": {
+            "$ref": "#/components/schemas/Revision"
+          },
+          "type": {
+            "pattern": "^[a-z][a-z0-9_.-]{0,127}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "run_ref",
+          "sequence",
+          "state_revision",
+          "type",
+          "safe_payload",
+          "committed_at"
+        ],
+        "type": "object"
+      },
+      "RunEventSnapshotData": {
+        "additionalProperties": false,
+        "description": "JSON data for event snapshot; its SSE frame has no id field and its required signed cursor names the durable watermark, including zero.",
+        "properties": {
+          "cursor": {
+            "$ref": "#/components/schemas/EventCursor"
+          },
+          "retention_gap": {
+            "type": "boolean"
+          },
+          "run": {
+            "$ref": "#/components/schemas/RunView"
+          },
+          "watermark_sequence": {
+            "$ref": "#/components/schemas/ExactCounter"
+          }
+        },
+        "required": [
+          "run",
+          "watermark_sequence",
+          "retention_gap",
+          "cursor"
         ],
         "type": "object"
       },
@@ -3250,6 +3411,146 @@
         }
       ]
     },
+    "/v1/workspaces/{workspace_id}/artifacts": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ],
+      "post": {
+        "description": "M4 exposes only authorization and explicit capability refusal. No artifact byte backend is installed, so this operation advertises no successful representation and never fabricates artifact metadata. Send no request body: the shared protocol guard rejects a nonempty entity as invalid_request. A later byte-storage owner must declare the accepted raw-stream contract before enabling byte input or adding a success response.",
+        "operationId": "uploadArtifact",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Request an authorized artifact upload capability",
+        "tags": [
+          "artifacts"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}": {
+      "get": {
+        "description": "Authorizes the exact private artifact identity before reporting unavailable byte storage. Foreign and unknown artifacts remain concealed as resource_not_found. M4 advertises no successful metadata representation.",
+        "operationId": "inspectArtifact",
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Authorize inspection of one artifact",
+        "tags": [
+          "artifacts"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ArtifactID"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content": {
+      "get": {
+        "description": "Applies the exact artifact authorization and concealment precedence before reporting unavailable byte storage. M4 serves no body, range metadata, digest, length, media type, or successful content response.",
+        "operationId": "downloadArtifact",
+        "responses": {
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Authorize download of one artifact",
+        "tags": [
+          "artifacts"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ArtifactID"
+        }
+      ]
+    },
     "/v1/workspaces/{workspace_id}/connections": {
       "get": {
         "operationId": "listConnections",
@@ -4341,6 +4642,75 @@
         ]
       }
     },
+    "/v1/workspaces/{workspace_id}/runs/{run_id}/events": {
+      "get": {
+        "description": "Replays PostgreSQL-authoritative per-run sequence order after the optional signed cursor, then follows committed events. The first snapshot carries authoritative run truth, its durable watermark, an explicit retention-gap flag and a reconnect cursor. Heartbeats are SSE comments. Disconnecting ends only this response and never requests durable run cancellation.",
+        "operationId": "watchRunEvents",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/LastEventID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "text/event-stream": {
+                "schema": {
+                  "description": "Schema applies to each decoded SSE data field, not to a buffered aggregate response.",
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/RunEventSnapshotData"
+                    },
+                    {
+                      "$ref": "#/components/schemas/RunEventData"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Long-lived text/event-stream. An event named snapshot has JSON data matching RunEventSnapshotData and MUST NOT carry an SSE id field. An event named run_event has JSON data matching RunEventData and MUST carry an opaque signed EventCursor in its SSE id field."
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "500": {
+            "$ref": "#/components/responses/Problem500"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Watch one authorized run through durable committed events",
+        "tags": [
+          "runs"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/RunID"
+        }
+      ]
+    },
     "/v1/workspaces/{workspace_id}/runs/{run_id}/result": {
       "get": {
         "description": "Returns only currently available immutable result references beside PostgreSQL-owned effect truth. An empty result_references array is explicit; orchestration closure never fabricates a result or a successful effect.",
@@ -4859,6 +5229,9 @@
     },
     {
       "name": "runs"
+    },
+    {
+      "name": "artifacts"
     }
   ]
 }

@@ -14,6 +14,7 @@ tags:
   - name: workspaces
   - name: connections
   - name: runs
+  - name: artifacts
 paths:
   /v1/info:
     get:
@@ -533,6 +534,94 @@ paths:
           $ref: "#/components/responses/Problem429"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/artifacts:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      tags: [artifacts]
+      summary: Request an authorized artifact upload capability
+      operationId: uploadArtifact
+      description: >-
+        M4 exposes only authorization and explicit capability refusal. No artifact
+        byte backend is installed, so this operation advertises no successful
+        representation and never fabricates artifact metadata. Send no request
+        body: the shared protocol guard rejects a nonempty entity as invalid_request.
+        A later byte-storage owner must declare the accepted raw-stream contract
+        before enabling byte input or adding a success response.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/artifacts/{artifact_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ArtifactID"
+    get:
+      tags: [artifacts]
+      summary: Authorize inspection of one artifact
+      operationId: inspectArtifact
+      description: >-
+        Authorizes the exact private artifact identity before reporting unavailable
+        byte storage. Foreign and unknown artifacts remain concealed as
+        resource_not_found. M4 advertises no successful metadata representation.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ArtifactID"
+    get:
+      tags: [artifacts]
+      summary: Authorize download of one artifact
+      operationId: downloadArtifact
+      description: >-
+        Applies the exact artifact authorization and concealment precedence before
+        reporting unavailable byte storage. M4 serves no body, range metadata,
+        digest, length, media type, or successful content response.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/runs:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -603,6 +692,51 @@ paths:
           $ref: "#/components/responses/Problem403"
         "404":
           $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs/{run_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: Watch one authorized run through durable committed events
+      operationId: watchRunEvents
+      description: >-
+        Replays PostgreSQL-authoritative per-run sequence order after the optional
+        signed cursor, then follows committed events. The first snapshot carries
+        authoritative run truth, its durable watermark, an explicit retention-gap
+        flag and a reconnect cursor. Heartbeats are SSE comments. Disconnecting
+        ends only this response and never requests durable run cancellation.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/LastEventID"
+      responses:
+        "200":
+          description: >-
+            Long-lived text/event-stream. An event named snapshot has JSON data
+            matching RunEventSnapshotData and MUST NOT carry an SSE id field. An
+            event named run_event has JSON data matching RunEventData and MUST
+            carry an opaque signed EventCursor in its SSE id field.
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RunEventSnapshotData"
+                  - $ref: "#/components/schemas/RunEventData"
+                description: Schema applies to each decoded SSE data field, not to a buffered aggregate response.
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
         "503":
           $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/runs/{run_id}/result:
@@ -1217,6 +1351,17 @@ components:
         type: string
         minLength: 1
         maxLength: 4096
+    LastEventID:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: >-
+        Optional; when present there MUST be exactly one nonempty opaque signed
+        event cursor. It is bound to the authorized organization, workspace, run
+        and durable sequence; it is not a raw sequence number and cannot select
+        another scope.
+      schema:
+        $ref: "#/components/schemas/EventCursor"
     PageSize:
       name: page_size
       in: query
@@ -1253,6 +1398,15 @@ components:
       name: run_id
       in: path
       required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    ArtifactID:
+      name: artifact_id
+      in: path
+      required: true
+      description: Private opaque artifact identity; never a bearer capability.
       schema:
         type: string
         minLength: 1
@@ -1930,6 +2084,95 @@ components:
       type: string
       description: Lossless nonnegative decimal counter for Go and browser consumers.
       pattern: "^(0|[1-9][0-9]*)$"
+    EventCursor:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      description: Opaque signed cursor bound to one scope, run and durable watermark or committed sequence.
+    EventSafeReference:
+      type: object
+      additionalProperties: false
+      required: [name, ref]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+        ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Canonical opaque reference; never inline provider data or a credential.
+    EventSafeCount:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+        value:
+          $ref: "#/components/schemas/ExactCounter"
+    EventSafePayload:
+      type: object
+      additionalProperties: false
+      required: [references, counts, reason_codes]
+      properties:
+        references:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/EventSafeReference"
+          description: Explicitly present even when empty; reference names are unique.
+        counts:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/EventSafeCount"
+          description: Explicitly present even when empty; count names are unique and values are lossless decimal strings.
+        reason_codes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+          description: Explicitly present even when empty.
+      description: Browser-safe projection of contract.SafePayload; arbitrary values and provider response bodies are forbidden.
+    RunEventSnapshotData:
+      type: object
+      additionalProperties: false
+      required: [run, watermark_sequence, retention_gap, cursor]
+      properties:
+        run:
+          $ref: "#/components/schemas/RunView"
+        watermark_sequence:
+          $ref: "#/components/schemas/ExactCounter"
+        retention_gap:
+          type: boolean
+        cursor:
+          $ref: "#/components/schemas/EventCursor"
+      description: JSON data for event snapshot; its SSE frame has no id field and its required signed cursor names the durable watermark, including zero.
+    RunEventData:
+      type: object
+      additionalProperties: false
+      required: [run_ref, sequence, state_revision, type, safe_payload, committed_at]
+      properties:
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        sequence:
+          $ref: "#/components/schemas/Revision"
+        state_revision:
+          $ref: "#/components/schemas/Revision"
+        type:
+          type: string
+          pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+        safe_payload:
+          $ref: "#/components/schemas/EventSafePayload"
+        committed_at:
+          type: string
+          format: date-time
+      description: JSON data for event run_event; its SSE id is the signed cursor for this committed sequence.
     RunIntentReference:
       type: object
       additionalProperties: false

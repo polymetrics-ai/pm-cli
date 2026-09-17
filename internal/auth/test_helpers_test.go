@@ -246,8 +246,10 @@ func seedFixtureWorkspace(
 		return err
 	}
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO pm.runs (org_id, workspace_id, run_id, state, revision, record, updated_at)
-		VALUES ($1, $2, $3, 'accepted', 1, '{}'::jsonb, clock_timestamp())
+		INSERT INTO pm.runs (
+			org_id, workspace_id, run_id, state, revision, record, last_event_sequence, updated_at
+		)
+		VALUES ($1, $2, $3, 'accepted', 1, '{}'::jsonb, 1, clock_timestamp())
 	`, scope.OrgID, scope.WorkspaceID, runID); err != nil {
 		return err
 	}

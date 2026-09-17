@@ -3,7 +3,9 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "app",
     srcs = [
+        "account_permits.go",
         "admission.go",
+        "artifacts.go",
         "cancel.go",
         "capabilities.go",
         "connections.go",
@@ -34,6 +36,7 @@ go_test(
     name = "app_test",
     size = "large",
     srcs = [
+        "account_permits_test.go",
         "capabilities_test.go",
         "lifecycle_test.go",
     ],
@@ -41,6 +44,8 @@ go_test(
     env_inherit = [
         "GOMAXPROCS",
         "GOMEMLIMIT",
+        "PM_STACK_SECRETS_DIR",
+        "PM_STACK_TEST_CONFIG",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
     tags = ["exclusive", "external", "no-remote"],
@@ -50,7 +55,9 @@ go_test(
         "//internal/contract",
         "//internal/httpapi",
         "//internal/store",
+        "//internal/temporal",
         "//internal/testfixture",
         "@com_github_jackc_pgx_v5//:pgx",
+        "@io_temporal_go_sdk//client",
     ],
 )

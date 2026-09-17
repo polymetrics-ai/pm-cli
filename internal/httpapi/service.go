@@ -38,15 +38,19 @@ const (
 var errInvalidHTTPInput = errors.New("invalid HTTP application input")
 
 type Service struct {
-	publicOrigin   string
-	auth           *auth.Service
-	identity       *app.IdentityService
-	credentials    *app.CredentialIngress
-	instanceID     string
-	oidcHTTPClient *http.Client
-	admission      *app.AdmissionService
-	runs           *app.RunService
-	cursorKey      [sha256.Size]byte
+	publicOrigin          string
+	auth                  *auth.Service
+	identity              *app.IdentityService
+	credentials           *app.CredentialIngress
+	instanceID            string
+	oidcHTTPClient        *http.Client
+	admission             *app.AdmissionService
+	runs                  *app.RunService
+	resolveEventCursorKey func(context.Context) ([]byte, error)
+	eventBufferSize       uint64
+	eventWriteTimeout     time.Duration
+	draining              <-chan struct{}
+	cursorKey             [sha256.Size]byte
 }
 
 var _ StrictServerInterface = (*Service)(nil)
@@ -95,14 +99,18 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 	}
 	client := *configuration.OIDCHTTPClient
 	service := &Service{
-		publicOrigin:   configuration.PublicOrigin,
-		auth:           configuration.Auth,
-		identity:       configuration.Identity,
-		credentials:    configuration.Credentials,
-		instanceID:     configuration.InstanceID,
-		oidcHTTPClient: &client,
-		admission:      configuration.Admission,
-		runs:           configuration.Runs,
+		publicOrigin:          configuration.PublicOrigin,
+		auth:                  configuration.Auth,
+		identity:              configuration.Identity,
+		credentials:           configuration.Credentials,
+		instanceID:            configuration.InstanceID,
+		oidcHTTPClient:        &client,
+		admission:             configuration.Admission,
+		runs:                  configuration.Runs,
+		resolveEventCursorKey: configuration.ResolveEventCursorKey,
+		eventBufferSize:       configuration.EventBufferSize,
+		eventWriteTimeout:     configuration.EventWriteTimeout,
+		draining:              configuration.Draining,
 	}
 	if _, err := io.ReadFull(rand.Reader, service.cursorKey[:]); err != nil {
 		return nil, fmt.Errorf("initialize HTTP cursor authentication: %w", err)
@@ -237,6 +245,10 @@ func policyForRequest(method, path string) (requestPolicy, bool) {
 		"GET /v1/workspaces/:workspace_id/runs/:run_id",
 		"GET /v1/workspaces/:workspace_id/runs/:run_id/result",
 		"GET /v1/workspaces/:workspace_id/runs/:run_id/tasks",
+		"GET /v1/workspaces/:workspace_id/runs/:run_id/events",
+		"POST /v1/workspaces/:workspace_id/artifacts",
+		"GET /v1/workspaces/:workspace_id/artifacts/:artifact_id",
+		"GET /v1/workspaces/:workspace_id/artifacts/:artifact_id/content",
 		"GET /v1/workspaces/:workspace_id/tasks/:task_id",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/cancel",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/resume",

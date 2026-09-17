@@ -171,6 +171,69 @@ A separate disposable smoke driver launched the rebuilt `.cache/bin/pm-worker`, 
 
 These are controlled shared-foundation results, not live-provider certification, issue #17/#18 completion, final-head PR CI, or merge. The command above excludes the disposable compiled-binary smoke driver; it runs the retained behavioral roots and regressions.
 
+### Current grants and shared account permits M4
+
+After rebuilding the same two fixture helpers, run issue #17's retained application roots in one owned fixture:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
+  ./internal/app \
+  -run '^(TestInitialGrantRevocation|TestSharedAccountAdmission)$' \
+  -count=1 -timeout 10m
+```
+
+All six E01 cases, including the three explicit-revocation variations, passed locally on Darwin arm64 on 2026-09-17 with the race detector and no skips:
+
+| Case | Independent observation |
+| --- | --- |
+| C01 | Expiring the CLI login session does not revoke an accepted durable execution grant. |
+| C02 | Explicit connection, principal or run-grant revocation prevents the next controlled physical send; immutable accepted attribution is preserved. |
+| C03 | Missing execution handlers refuse admission without creating an accepted run or starting a callback. |
+| C04 | Two application worker instances share the PostgreSQL account limit across connection aliases; exhausting one workspace's admission budget does not consume another's. |
+| C05 | An expired permit cannot create a durable attempt or invoke the physical callback. |
+| C06 | Healthy current authority reaches the callback only after its authorized permit and attempt are committed. |
+
+C05 failed against the preceding production implementation with one callback and one durable attempt after expiry. The corrected boundary produced neither. The other five cases already passed as characterization; they are not claimed as newly introduced behavior. The explicit run-grant variation exercises `app.RevokeFutureEffects`, not only its storage primitive.
+
+These checks use real PostgreSQL transactions, authenticated Temporal admission and actual workflow identities. The shared-capacity case uses two `WorkerService` instances, not two OS worker processes. Controlled callbacks are not live-provider certification, measured fairness, issue #18 proof, final-candidate CI, or merge.
+
+### Scoped events and artifact refusal M4
+
+Rebuild the two fixture helpers from current source, then run issue #18's event/artifact routes, retained-data migration and composed-server drain case:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
+  ./internal/httpapi ./internal/store ./internal/server \
+  -run '^(TestScopedDurableEventRoutes|TestScopedUnavailableArtifactRoutes|TestEventWatermarkMigrationRetainedData|TestAuthenticatedApplicationDrainPreservesAcceptedRun)$' \
+  -count=1 -timeout 10m
+```
+
+These roots passed locally on Darwin arm64 on 2026-09-17 with the race detector and no skips. The wrapper also completed ownership-scoped fixture cleanup.
+
+| Boundary | Independent observation |
+| --- | --- |
+| R10 E01 C01, C08 | Foreign scopes/runs are concealed; neither `run.read` nor `event.read` alone permits event disclosure. |
+| R10 E01 C02 | A retained-history gap returns terminal run truth and a recovery cursor; later events preserve sequence and exact decimal counters without replacing that truth. |
+| R10 E01 C03 | A non-consuming reader reaches bounded closure and reconnects from its last observed committed cursor. Only the test-owned TCP receive buffer is constrained. |
+| R10 E01 C04 | Disconnect and server drain release subscriptions without durable run cancellation. |
+| R10 E01 C05–C06 | Tampered and foreign cursors are refused; restart/cross-replica replay follows committed event order. |
+| R10 E01 C07 | Missing signing capability returns unavailability before reading event rows. |
+| R16 E02 C01–C03 | Unauthorized artifacts remain concealed; an absent backend fabricates neither bytes nor metadata; raw upload bodies fail at the protocol boundary. |
+| Migration 0011 | Retained v10 events in two scopes backfill and continue their sequences; downgrade refuses a removed-tail gap without changing v11. |
+| Composed server | Real browser authentication opens a signed SSE snapshot through the configured server; drain ends the stream while an independent database observer sees the accepted run unchanged. |
+
+The slow-reader case failed when a compiler overlay disabled only the per-frame write deadline, before the client request timeout, and passed with the production deadline. The separate permission and migration probes failed for missing `event.read` authorization, RLS-hidden backfill, and unsafe downgrade before their fixes, then passed. The corrected cancellation oracle accepts the existing HTTP 202 contract; this is not a new cancellation behavior.
+
+These are controlled local HTTP/TLS/PostgreSQL checks. They do not establish live provider effects, artifact-byte support, final-head Linux CI, cleanup of another job's fixtures, or merge.
+
 ### Bounded Darwin development observations
 
 The following results were observed on 2026-09-15 for the foundation candidate on Darwin arm64. They are local development evidence, not Linux or final-head CI:
