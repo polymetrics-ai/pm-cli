@@ -41,6 +41,9 @@ type Schema struct {
 	Items      *Schema           `json:"items,omitempty"`
 	OneOf      []Schema          `json:"oneOf,omitempty"`
 	AllOf      []Schema          `json:"allOf,omitempty"`
+	Enum       []PresentValue    `json:"enum,omitempty"`
+	Minimum    *PresentValue     `json:"minimum,omitempty"`
+	Maximum    *PresentValue     `json:"maximum,omitempty"`
 }
 
 func DecodeSchema(document []byte) (Schema, error) {
@@ -64,6 +67,9 @@ func validateSchema(schema Schema, path string, depth int) error {
 	}
 	if !validSchemaType(schema.Type) {
 		return contractError(ErrUnsupportedSchema, path+".type", "logical type is unsupported")
+	}
+	if err := validateSchemaValueConstraints(schema, path); err != nil {
+		return err
 	}
 	for index, component := range schema.AllOf {
 		if component.Type != schema.Type {
@@ -135,6 +141,66 @@ func validateSchema(schema Schema, path string, depth int) error {
 	}
 	return nil
 }
+func validateSchemaValueConstraints(schema Schema, path string) error {
+	if schema.Enum != nil {
+		if len(schema.Enum) == 0 {
+			return contractError(ErrUnsupportedSchema, path+".enum", "must contain at least one typed value when declared")
+		}
+		switch schema.Type {
+		case SchemaTypeString, SchemaTypeBool, SchemaTypeInteger, SchemaTypeDecimal,
+			SchemaTypeDate, SchemaTypeTimestampInstant, SchemaTypeTimestampLocal:
+		default:
+			return contractError(ErrUnsupportedSchema, path+".enum", "ordinary enum constraints are unsupported for this logical type")
+		}
+		base := schema
+		base.Enum = nil
+		base.Minimum = nil
+		base.Maximum = nil
+		for index, candidate := range schema.Enum {
+			if err := candidate.Validate(); err != nil {
+				return contractError(ErrInvalidContract, fmt.Sprintf("%s.enum[%d]", path, index), "contains an invalid typed value")
+			}
+			if candidate.Presence() == PresenceAbsent || !operationInputMatchesSchema(candidate, base, false) {
+				return contractError(ErrInvalidContract, fmt.Sprintf("%s.enum[%d]", path, index), "does not match the enum schema")
+			}
+			for prior := range index {
+				if candidate.Equal(schema.Enum[prior]) {
+					return contractError(ErrDuplicateField, path+".enum", "typed enum value is duplicated")
+				}
+			}
+		}
+	}
+	if schema.Minimum == nil && schema.Maximum == nil {
+		return nil
+	}
+	if schema.Type != SchemaTypeInteger && schema.Type != SchemaTypeDecimal {
+		return contractError(ErrUnsupportedSchema, path, "minimum and maximum are valid only for numeric logical types")
+	}
+	for _, constraint := range []struct {
+		name  string
+		bound *PresentValue
+	}{
+		{name: "minimum", bound: schema.Minimum},
+		{name: "maximum", bound: schema.Maximum},
+	} {
+		if constraint.bound == nil {
+			continue
+		}
+		if err := constraint.bound.Validate(); err != nil {
+			return contractError(ErrInvalidContract, path+"."+constraint.name, "contains an invalid exact numeric bound")
+		}
+		if _, ok := constraint.bound.ExactNumber(); !ok {
+			return contractError(ErrInvalidContract, path+"."+constraint.name, "must be a present exact integer or decimal")
+		}
+	}
+	if schema.Minimum != nil && schema.Maximum != nil {
+		comparison, ok := compareExactNumericValues(*schema.Minimum, *schema.Maximum)
+		if !ok || comparison > 0 {
+			return contractError(ErrInvalidContract, path, "minimum must not exceed maximum")
+		}
+	}
+	return nil
+}
 
 func validSchemaType(value SchemaType) bool {
 	switch value {
@@ -156,8 +222,8 @@ func isJSONMediaType(value string) bool {
 }
 
 func validateMediaType(value string) error {
-	if value == "" {
-		return contractError(ErrIncompatibleMedia, "media_type", "must not be empty")
+	if value == "" || len(value) > 512 || !utf8.ValidString(value) {
+		return contractError(ErrIncompatibleMedia, "media_type", "must be a bounded nonempty valid UTF-8 value")
 	}
 	if _, _, err := mime.ParseMediaType(value); err != nil {
 		return contractError(ErrIncompatibleMedia, "media_type", "is malformed")

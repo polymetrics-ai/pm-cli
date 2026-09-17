@@ -19,5 +19,5 @@ go_test(
         "server_test.go",
         "worker_test.go",
     ],
-    embed = [":config"],
+    deps = [":config"],
 )

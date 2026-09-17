@@ -25,7 +25,6 @@ go_test(
         "continue_test.go",
         "payload_test.go",
     ],
-    embed = [":workflows"],
     env_inherit = [
         "GOMAXPROCS",
         "GOMEMLIMIT",
@@ -35,8 +34,13 @@ go_test(
         "PM_STACK_TEST_ROLLOVER_NAMESPACE",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
+        ":workflows",
         "//internal/activities",
         "//internal/api",
         "//internal/app",

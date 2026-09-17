@@ -14,3 +14,35 @@ func (r CapabilityRequirement) Validate() error {
 	}
 	return nil
 }
+
+// HTTPExecutionCapabilities returns the canonical compilation declarations for
+// shared HTTP behavior. Callers select only capabilities required by the
+// normalized operation; declarations do not establish runtime registration.
+func HTTPExecutionCapabilities() []CapabilityRequirement {
+	return []CapabilityRequirement{
+		{
+			Capability: "http.execute",
+			Foundation: FoundationRef{ID: "FND-06", Version: "1.0.0"},
+		},
+		{
+			Capability: "value.serialize",
+			Foundation: FoundationRef{ID: "FND-03", Version: "1.0.0"},
+		},
+		{
+			Capability: "effect.authorize",
+			Foundation: FoundationRef{ID: "FND-05", Version: "2.0.0"},
+		},
+		{
+			Capability: "effect.limit",
+			Foundation: FoundationRef{ID: "FND-10", Version: "2.0.0"},
+		},
+		{
+			Capability: "http.paginate",
+			Foundation: FoundationRef{ID: "FND-08", Version: "1.0.0"},
+		},
+		{
+			Capability: "credentials.resolve",
+			Foundation: FoundationRef{ID: "FND-05", Version: "2.0.0"},
+		},
+	}
+}

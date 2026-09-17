@@ -648,54 +648,7 @@ func localTimestampLayout(value string) string {
 }
 
 func valueMatchesSchema(value PresentValue, schema Schema) bool {
-	if value.presence == PresenceAbsent {
-		return true
-	}
-	if value.presence == PresenceNull {
-		return schema.Nullable
-	}
-	if schema.Type == SchemaTypeUnion {
-		if value.kind != ValueKindUnion || value.member == nil {
-			return false
-		}
-		matches := 0
-		for _, variant := range schema.OneOf {
-			if valueMatchesSchema(*value.member, variant) {
-				matches++
-			}
-		}
-		return matches == 1
-	}
-	if !kindMatchesSchema(value.kind, schema.Type) {
-		return false
-	}
-	for _, component := range schema.AllOf {
-		if !valueMatchesSchema(value, component) {
-			return false
-		}
-	}
-	if schema.Type == SchemaTypeArray {
-		for _, element := range value.elements {
-			if !valueMatchesSchema(element, *schema.Items) {
-				return false
-			}
-		}
-	}
-	if schema.Type == SchemaTypeObject {
-		for _, required := range schema.Required {
-			field, ok := value.fields[required]
-			if !ok || field.presence == PresenceAbsent {
-				return false
-			}
-		}
-		for name, property := range schema.Properties {
-			field, present := value.fields[name]
-			if present && !valueMatchesSchema(field, property) {
-				return false
-			}
-		}
-	}
-	return true
+	return operationInputMatchesSchema(value, schema, true)
 }
 
 func kindMatchesSchema(kind ValueKind, schemaType SchemaType) bool {

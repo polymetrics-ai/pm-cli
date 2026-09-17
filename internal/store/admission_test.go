@@ -502,25 +502,56 @@ func externalAdmissionResolver(dependencies testfixture.ServiceDependencies) app
 
 func externalAdmissionSelection(operationID string) app.OperationSelection {
 	foundation := contract.FoundationRef{ID: "FND-6", Version: "1.0.0"}
+	sourceRefs := []contract.SourceRef{
+		{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
+	}
 	return app.OperationSelection{
 		Operation: contract.Operation{
-			SchemaVersion: contract.OperationSchemaVersion,
-			OperationID:   operationID,
-			SourceRefs: []contract.SourceRef{
-				{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
-			},
-			Transport: contract.Transport{Kind: "http", Method: http.MethodGet, Path: "/fixture"},
-			Inputs:    []contract.FieldBinding{},
+			SchemaVersion:   contract.OperationSchemaVersion,
+			OperationID:     operationID,
+			SourceRefs:      sourceRefs,
+			Transport:       contract.Transport{Kind: contract.TransportKindHTTP, Method: http.MethodGet, Path: "/fixture"},
+			Inputs:          []contract.FieldBinding{},
+			RequestVariants: []contract.RequestVariant{},
 			Responses: []contract.Response{
-				{Status: "200", MediaType: "application/json", Schema: contract.Schema{Type: contract.SchemaTypeString}},
+				{
+					Status:     "200",
+					NoContent:  false,
+					MediaType:  "application/json",
+					Schema:     &contract.Schema{Type: contract.SchemaTypeString},
+					SourceRefs: sourceRefs,
+				},
 			},
 			CapabilityRequirements: []contract.CapabilityRequirement{
 				{Capability: "http.execute", Foundation: foundation},
 			},
-			LaneEligibility: []contract.LaneEligibility{{Lane: contract.LaneDirectRead, Eligible: true}},
+			LaneEligibility: storeLaneEligibilityForTest(contract.LaneDirectRead),
 		},
 		SchemaRefs: []string{"fixture-schema-v1"},
 	}
+}
+
+func storeLaneEligibilityForTest(eligible contract.Lane) []contract.LaneEligibility {
+	lanes := []contract.Lane{
+		contract.LaneDirectRead,
+		contract.LaneDirectWrite,
+		contract.LaneETL,
+		contract.LaneReverseETL,
+		contract.LaneBinaryDownload,
+		contract.LaneBinaryUpload,
+		contract.LaneSyncTransport,
+	}
+	eligibility := make([]contract.LaneEligibility, 0, len(lanes))
+	for _, lane := range lanes {
+		status := contract.LaneUnsupported
+		reason := "fixture-lane-unsupported"
+		if lane == eligible {
+			status = contract.LaneEligible
+			reason = "fixture-handler-registered"
+		}
+		eligibility = append(eligibility, contract.LaneEligibility{Lane: lane, Status: status, Reason: reason})
+	}
+	return eligibility
 }
 
 func externalAdmissionRegistration() app.HandlerRegistration {

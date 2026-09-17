@@ -150,6 +150,14 @@ The subscription queue is capped at the smaller of the configured event-buffer l
 
 Artifact upload, inspection and download routes enforce scoped authorization but have no registered byte backend in this milestone. Authorized available metadata does not fabricate downloadable content: the unsupported capability returns HTTP 503. Upload is currently a bodyless capability probe; a raw upload body is rejected with HTTP 400 by the shared protocol boundary. Artifact-byte implementation and verification remain later scope.
 
+### Thin PM client
+
+`make build` emits `.cache/bin/pm`. Its fresh Cobra tree owns server profiles, PM sessions, explicit workspace selection, connection/access mutations, and task/run/artifact views. Help and version work without valid settings, credentials or a server. Profiles contain nonsecret HTTPS server identity and session references, never a mutable current workspace or provider credentials.
+
+PM sessions use the OS credential store or explicitly selected process-local memory; there is no plaintext fallback. Mutation recovery persists secret-free scoped key/intent fingerprints before sending and permits at most three same-key sends within 30 seconds, with bounded 250 ms/1 s waits. Conflict, expiry and precondition refusals do not trigger rebasing or a replacement key.
+
+The client uses the generated public API and the canonical manual artifact boundaries. Current artifact-capability refusals come from the authenticated server; they are not fabricated client stubs. This surface does not yet establish watch/cancel recovery, browser parity, generated provider commands or connector execution.
+
 ### Standalone bounded PM worker
 
 `make build` also emits `.cache/bin/pm-worker`. Its `--help` and `--version` paths are offline. Startup uses the same two explicit path flags as the server:
@@ -232,6 +240,12 @@ python3 tools/bootstrap.py exec go -- test -mod=readonly ./internal/contract -co
 ```
 
 These are pure contract checks, not generated API readiness, authentication/RLS enforcement, durable lifecycle or Temporal execution, registered artifact-byte verification, connector implementation or provider certification.
+
+### Source compiler
+
+`make build` also emits `.cache/bin/pmgen`. `pmgen compile` consumes an explicit source lock, captured source/license bytes and optional source-linked semantics or revision diffs; it writes the generated execution bundle, fidelity report and optional command manifest. Required path arguments are listed in `cmd/pmgen/main.go`. It does not fetch missing references, install runtime handlers or certify a connector.
+
+The compiler retains request/status/media variants, explicit no-content responses, all seven lane dispositions, exact field presence/defaults and source pointers. Defaults are not applied implicitly. Shapes the shared contract cannot represent receive explicit diagnostics rather than lossy projection. The retained Pylon `Account.parent_account_id` counterexample still lacks matching captured bytes: no reproduction or full issue #22 closure is claimed.
 
 ### Generated public API boundary
 

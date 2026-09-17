@@ -1,3 +1,8 @@
+# gazelle:resolve go github.com/getkin/kin-openapi/openapi3 @tools_com_github_getkin_kin_openapi//openapi3
+# gazelle:resolve go github.com/oapi-codegen/oapi-codegen/v2/pkg/codegen @tools_com_github_oapi_codegen_oapi_codegen_v2//pkg/codegen
+# gazelle:resolve go go.yaml.in/yaml/v3 @tools_in_yaml_go_yaml_v3//:yaml
+# gazelle:resolve go golang.org/x/sys/unix @tools_org_golang_x_sys//unix
+
 load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 exports_files([

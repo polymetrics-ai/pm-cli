@@ -244,6 +244,34 @@ Canonical identity arrays use PostgreSQL `COLLATE "C"` to match Go's bytewise gr
 
 These are controlled local HTTP/TLS/PostgreSQL checks. They do not establish live provider effects, artifact-byte support, final-head Linux CI, cleanup of another job's fixtures, or merge.
 
+### Thin-client and source-compiler checks M5/M6
+
+After rebuilding the existing fixture helpers, use the same owned wrapper for the client, API, compiler and shared-contract targets:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //internal/api:api_test //internal/cli:cli_test \
+  //internal/compile:compile_test //internal/contract:contract_test \
+  --test_output=errors --cache_test_results=no
+```
+
+The workspace test starts two real child processes through the product CLI entry point, with one shared profile/session identity and a request barrier proving concurrent use of separate workspace selectors. Its controlled TLS peer retains the real synthetic PM credential in the parent-owned fixture transport. It does not install an OS credential or export provider secrets. The dependency-boundary test resolves the actual `cmd/pm` graph, checks a disposable forbidden-import overlay, and verifies that the authenticated server still responds after the client process exits.
+
+Run the focused race checks through a fresh owned fixture as well:
+
+```sh
+python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
+  ./internal/cli ./internal/app \
+  -run '^(TestConcurrentExplicitWorkspaces|TestThinBinaryDependencyBoundary|TestControlsPresenceAndPrecedence|TestRegisteredHandlerReachability)$' \
+  -count=1 -timeout 10m
+```
+
+Compiler checks cover captured-reference closure, deterministic inventories, exact default/presence fidelity, sensitivity and amendment refusal. Actual `pmgen` smoke execution additionally checks emitted bundle acceptance by the published JSON Schema, byte-identical repeated outputs, and no output publication after capture mismatch. These are local shared-foundation checks, not full Pylon reproduction, GitHub execution, browser parity, live-provider certification or candidate CI.
+
 ### Bounded Darwin development observations
 
 The following results were observed on 2026-09-15 for the foundation candidate on Darwin arm64. They are local development evidence, not Linux or final-head CI:

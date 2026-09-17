@@ -9,7 +9,9 @@
     "connector_id",
     "source_digest",
     "semantics_revision",
-    "operations"
+    "operations",
+    "commands",
+    "unavailable_operations"
   ],
   "properties": {
     "schema_version": {"const": "pm.bundle/v1"},
@@ -18,15 +20,38 @@
     "semantics_revision": {"$ref": "#/$defs/digest"},
     "operations": {
       "type": "array",
-      "minItems": 1,
       "items": {"$ref": "#/$defs/typedOperation"}
+    },
+    "commands": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/command"}
+    },
+    "unavailable_operations": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/unavailableOperation"}
     }
   },
+  "allOf": [
+    {
+      "anyOf": [
+        {"properties": {"operations": {"minItems": 1}}},
+        {"properties": {"unavailable_operations": {"minItems": 1}}}
+      ]
+    }
+  ],
   "$defs": {
     "identity": {
       "type": "string",
       "minLength": 1,
       "maxLength": 1024,
+      "pattern": "^(\\S|\\S.*\\S)$"
+    },
+    "contractIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
       "pattern": "^(\\S|\\S.*\\S)$"
     },
     "digest": {
@@ -38,24 +63,94 @@
       "additionalProperties": false,
       "required": ["source_id", "pointer"],
       "properties": {
-        "source_id": {"$ref": "#/$defs/identity"},
-        "pointer": {"type": "string", "maxLength": 4096}
+        "source_id": {"$ref": "#/$defs/contractIdentity"},
+        "pointer": {"type": "string", "maxLength": 4096, "pattern": "^(?:#(?:/(?:[^~]|~[01])*)?|/(?:[^~]|~[01])*)$"}
       }
+    },
+    "command": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "operation_id", "fields"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^\\S+$"},
+        "operation_id": {"$ref": "#/$defs/contractIdentity"},
+        "fields": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/commandField"}
+        }
+      }
+    },
+    "commandField": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["flag", "field_id", "location", "required", "sensitive"],
+      "properties": {
+        "flag": {"type": "string", "minLength": 3, "maxLength": 512, "pattern": "^--[^\\s=]+$"},
+        "field_id": {"$ref": "#/$defs/contractIdentity"},
+        "location": {"enum": ["path", "query", "header", "cookie", "body", "record", "metadata"]},
+        "required": {"type": "boolean"},
+        "sensitive": {"type": "boolean"}
+      }
+    },
+    "unavailableOperation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation_id", "source_refs", "diagnostic_codes", "lane_eligibility"],
+      "properties": {
+        "operation_id": {"$ref": "#/$defs/contractIdentity"},
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/sourceRef"}
+        },
+        "diagnostic_codes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 512, "pattern": "^\\S+$"}
+        },
+        "lane_eligibility": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {"$ref": "#/$defs/unavailableLaneEligibility"},
+          "allOf": [
+            {"contains": {"properties": {"lane": {"const": "direct_read"}}}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"lane": {"const": "direct_write"}}}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"lane": {"const": "etl"}}}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"lane": {"const": "reverse_etl"}}}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"lane": {"const": "binary_download"}}}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"lane": {"const": "binary_upload"}}}, "minContains": 1, "maxContains": 1},
+            {"contains": {"properties": {"lane": {"const": "sync_transport"}}}, "minContains": 1, "maxContains": 1}
+          ]
+        }
+      }
+    },
+    "unavailableLaneEligibility": {
+      "allOf": [
+        {"$ref": "#/$defs/laneEligibility"},
+        {"properties": {"status": {"enum": ["unsupported", "not_applicable", "blocked", "unproven"]}}}
+      ]
     },
     "typedOperation": {
       "type": "object",
       "additionalProperties": false,
       "required": [
+        "schema_version",
         "operation_id",
         "source_refs",
         "transport",
         "inputs",
+        "request_variants",
         "responses",
         "capability_requirements",
         "lane_eligibility"
       ],
       "properties": {
-        "operation_id": {"$ref": "#/$defs/identity"},
+        "schema_version": {"const": "pm.operation/v1"},
+        "operation_id": {"$ref": "#/$defs/contractIdentity"},
         "source_refs": {
           "type": "array",
           "minItems": 1,
@@ -66,6 +161,11 @@
           "type": "array",
           "items": {"$ref": "https://polymetrics.ai/schemas/field-binding.schema.json#/$defs/fieldBinding"}
         },
+        "request_variants": {
+          "type": "array",
+          "items": {"$ref": "#/$defs/requestVariant"}
+        },
+        "request_media_field_id": {"$ref": "#/$defs/contractIdentity"},
         "responses": {
           "type": "array",
           "minItems": 1,
@@ -73,7 +173,8 @@
         },
         "capability_requirements": {
           "type": "array",
-          "items": {"$ref": "https://polymetrics.ai/schemas/foundation.schema.json#/$defs/foundationRef"}
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/capabilityRequirement"}
         },
         "lane_eligibility": {
           "type": "array",
@@ -90,6 +191,74 @@
             {"contains": {"properties": {"lane": {"const": "sync_transport"}}}, "minContains": 1, "maxContains": 1}
           ]
         }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"request_variants": {"minItems": 2}}},
+          "then": {"required": ["request_media_field_id"]},
+          "else": {"not": {"required": ["request_media_field_id"]}}
+        },
+        {
+          "if": {
+            "properties": {
+              "transport": {
+                "properties": {"kind": {"const": "postgresql"}}
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "responses": {
+                "items": {
+                  "properties": {
+                    "status": {"const": "success"},
+                    "no_content": {"const": false}
+                  }
+                }
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "responses": {
+                "items": {
+                  "properties": {
+                    "status": {"pattern": "^([1-5][0-9][0-9]|default)$"}
+                  }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "requestVariant": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["variant_id", "media_type", "required", "schema", "inputs", "source_refs"],
+      "properties": {
+        "variant_id": {"$ref": "#/$defs/contractIdentity"},
+        "media_type": {"type": "string", "minLength": 1, "maxLength": 512},
+        "required": {"type": "boolean"},
+        "schema": {"$ref": "https://polymetrics.ai/schemas/field-binding.schema.json#/$defs/schema"},
+        "inputs": {
+          "type": "array",
+          "items": {"$ref": "https://polymetrics.ai/schemas/field-binding.schema.json#/$defs/fieldBinding"}
+        },
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"$ref": "#/$defs/sourceRef"}
+        }
+      }
+    },
+    "capabilityRequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["capability", "foundation"],
+      "properties": {
+        "capability": {"$ref": "#/$defs/contractIdentity"},
+        "foundation": {"$ref": "https://polymetrics.ai/schemas/foundation.schema.json#/$defs/foundationRef"}
       }
     },
     "transport": {
@@ -101,7 +270,7 @@
           "properties": {
             "kind": {"const": "http"},
             "method": {"enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"]},
-            "path": {"type": "string", "minLength": 1, "maxLength": 4096}
+            "path": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^/"}
           }
         },
         {
@@ -111,7 +280,7 @@
           "properties": {
             "kind": {"const": "postgresql"},
             "statement_kind": {"enum": ["metadata", "select", "mapped_upsert"]},
-            "relation_binding": {"$ref": "#/$defs/identity"}
+            "relation_binding": {"$ref": "#/$defs/contractIdentity"}
           }
         }
       ]
@@ -119,9 +288,10 @@
     "responseVariant": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["status", "media_type", "schema", "source_refs"],
+      "required": ["status", "no_content", "source_refs"],
       "properties": {
-        "status": {"type": "string", "pattern": "^([1-5][0-9][0-9]|default)$"},
+        "status": {"type": "string", "minLength": 1, "maxLength": 512},
+        "no_content": {"type": "boolean"},
         "media_type": {"type": "string", "minLength": 1, "maxLength": 512},
         "schema": {"$ref": "https://polymetrics.ai/schemas/field-binding.schema.json#/$defs/schema"},
         "source_refs": {
@@ -129,8 +299,27 @@
           "minItems": 1,
           "items": {"$ref": "#/$defs/sourceRef"}
         },
-        "record_pointer": {"type": "string", "maxLength": 4096}
-      }
+        "record_pointer": {
+          "type": "string",
+          "maxLength": 4096,
+          "pattern": "^(?:/(?:[^~]|~[01])*)?$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"no_content": {"const": true}}},
+          "then": {
+            "not": {
+              "anyOf": [
+                {"required": ["media_type"]},
+                {"required": ["schema"]},
+                {"required": ["record_pointer"]}
+              ]
+            }
+          },
+          "else": {"required": ["media_type", "schema"]}
+        }
+      ]
     },
     "laneEligibility": {
       "type": "object",
@@ -149,7 +338,7 @@
           ]
         },
         "status": {"enum": ["eligible", "unsupported", "not_applicable", "blocked", "unproven"]},
-        "reason": {"type": "string", "minLength": 1, "maxLength": 4096}
+        "reason": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(\\S|\\S.*\\S)$"}
       }
     }
   }

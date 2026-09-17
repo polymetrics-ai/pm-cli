@@ -1,0 +1,29 @@
+openapi: 3.0.3
+info:
+  title: Synthetic allOf preservation
+  version: 1.0.0
+paths:
+  /objects:
+    get:
+      operationId: getObjects
+      responses:
+        "200":
+          description: objects
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                allOf:
+                  - type: object
+                    additionalProperties: false
+                    required: [id]
+                    properties:
+                      id:
+                        type: string
+                  - type: object
+                    additionalProperties: false
+                    properties:
+                      name:
+                        type: string
+                        readOnly: true

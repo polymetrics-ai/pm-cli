@@ -40,7 +40,7 @@ SUPPORTED_PLATFORMS = {
     ("linux", "arm64"): "linux-arm64",
     ("linux", "aarch64"): "linux-arm64",
 }
-REQUIRED_ASSETS = {"bazel", "bazelisk", "clang", "docker-compose", "go", "syft"}
+REQUIRED_ASSETS = {"bazel", "bazelisk", "chromium", "clang", "docker-compose", "go", "node", "syft"}
 REQUIRED_MODULES = {"gazelle", "rules_go"}
 SUPPORTED_KINDS = {"binary", "tar.gz", "tar.xz", "zip"}
 MAX_LOCK_BYTES = 4 * 1024 * 1024
@@ -57,9 +57,11 @@ MAX_GO_CACHE_VALUE_BYTES = 4096
 EXPECTED_ASSET_VERSIONS = {
     "bazel": "9.2.0",
     "bazelisk": "1.29.0",
+    "chromium": "153.0.8010.12",
     "clang": "21.1.8",
     "docker-compose": "5.5.1",
     "go": "1.27.1",
+    "node": "24.21.0",
     "syft": "1.51.1",
 }
 EXPECTED_MODULE_VERSIONS = {
@@ -1454,6 +1456,11 @@ def _compiler_runtime_relatives(
     ]
 
 
+def _npm_cli_relative(asset: Mapping[str, object]) -> PurePosixPath:
+    executable = _safe_archive_path(str(asset["executable"]), "locked Node executable")
+    return executable.parent.parent / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
+
+
 def _executable_relatives(asset: Mapping[str, object]) -> list[PurePosixPath]:
     executable = _safe_archive_path(str(asset["executable"]), "locked executable")
     paths = [executable]
@@ -1462,6 +1469,8 @@ def _executable_relatives(asset: Mapping[str, object]) -> list[PurePosixPath]:
         if str(asset["platform"]) in LINUX_NATIVE_PLATFORMS:
             paths.append(_clang_linker_relative(asset))
             paths.append(executable.with_name("llvm-ar"))
+    elif asset["id"] == "node":
+        paths.append(_npm_cli_relative(asset))
     return paths
 
 
@@ -2354,12 +2363,16 @@ def _print_environment(
     )
     syft_asset, syft = _resolve_tool(lock, "syft", selected_platform, cache)
     compose_asset, compose = _resolve_tool(lock, "docker-compose", selected_platform, cache)
+    node_asset, node = _resolve_tool(lock, "node", selected_platform, cache)
+    chromium_asset, chromium = _resolve_tool(lock, "chromium", selected_platform, cache)
     selected = [
         bazel_asset,
         bazelisk_asset,
         clang_asset,
         compose_asset,
         go_asset,
+        node_asset,
+        chromium_asset,
         syft_asset,
     ]
     asset_sources = [
@@ -2383,6 +2396,8 @@ def _print_environment(
         "BAZELISK": str(bazelisk),
         "SYFT": str(syft),
         "DOCKER_COMPOSE": str(compose),
+        "NODE": str(node),
+        "CHROMIUM": str(chromium),
         "ASSET_ROOTS": [source["path"] for source in asset_sources],
         "ASSET_SOURCES": asset_sources,
         "native_environment": native.environment,
@@ -2408,6 +2423,11 @@ def _print_environment(
                 "sha256": bazel_asset["sha256"],
             },
             "syft": {"version": syft_asset["version"], "sha256": syft_asset["sha256"]},
+            "node": {"version": node_asset["version"], "sha256": node_asset["sha256"]},
+            "chromium": {
+                "version": chromium_asset["version"],
+                "sha256": chromium_asset["sha256"],
+            },
         },
     }
     print(json.dumps(result, indent=2, sort_keys=True))
@@ -2512,6 +2532,12 @@ def _exec_tool(
             *arguments,
             *_clang_driver_options(arguments, native),
         ]
+    elif tool == "npm":
+        asset, installed = _install_asset(lock, "node", selected_platform, cache)
+        executable = installed[_safe_archive_path(str(asset["executable"]))]
+        npm_cli = installed[_npm_cli_relative(asset)]
+        argv = [str(executable), str(npm_cli), *arguments]
+        environment["NPM_CONFIG_UPDATE_NOTIFIER"] = "false"
     else:
         _, executable = _resolve_tool(lock, tool, selected_platform, cache)
         argv = [str(executable), *arguments]
@@ -2523,6 +2549,8 @@ def _exec_tool(
             environment["PATH"] = str(executable.parent) + os.pathsep + environment.get("PATH", "")
         elif tool == "syft":
             environment["SYFT_CHECK_FOR_APP_UPDATE"] = "false"
+    if tool in {"node", "npm"}:
+        environment["PATH"] = str(executable.parent) + os.pathsep + environment.get("PATH", "")
     try:
         os.execve(executable, argv, environment)
     except OSError as exc:
@@ -2538,10 +2566,15 @@ def _parser() -> argparse.ArgumentParser:
         "exec", help="replace this process with a locked tool"
     )
     execute.add_argument(
-        "tool", choices=("go", "bazelisk", "clang", "clang++", "docker-compose", "syft")
+        "tool",
+        choices=("go", "bazelisk", "clang", "clang++", "docker-compose", "syft", "node", "npm", "chromium"),
     )
     execute.add_argument("arguments", nargs=argparse.REMAINDER, metavar="-- ARGS")
     subparsers.add_parser("print-env", help="print resolved paths and identities as JSON")
+    location = subparsers.add_parser(
+        "print-path", help="resolve a locked browser tool without executing it"
+    )
+    location.add_argument("tool", choices=("node", "chromium"))
     return parser
 
 
@@ -2560,6 +2593,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         cache = _cache_root()
         if args.command == "print-env":
             _print_environment(lock, selected_platform, cache)
+        elif args.command == "print-path":
+            _, executable = _resolve_tool(lock, args.tool, selected_platform, cache)
+            print(executable)
         else:
             _exec_tool(args.tool, tool_arguments, lock, selected_platform, cache)
     except BootstrapError as exc:

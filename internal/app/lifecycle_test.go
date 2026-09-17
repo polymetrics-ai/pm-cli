@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -35,6 +36,267 @@ type initialRunResponse struct {
 	problem     api.Problem
 	admission   api.AdmissionResponse
 	document    []byte
+}
+
+func TestAcceptedRunSurvivesClientExit(t *testing.T) {
+	temporal := newPermitTemporalHarness(t)
+
+	t.Run("pm-cli-run-watch-E02-C01_logout_or_session_expiry_does_not_cancel", func(t *testing.T) {
+		var sends atomic.Int32
+		fixture := testfixture.NewExecuting(
+			t,
+			func(_ context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+				sends.Add(1)
+				return successfulPermitObservation(request), nil
+			},
+			unexpectedPermitReconciliation,
+		)
+		service := newPermitWorkerService(t, fixture, temporal)
+		admitted := admitPermitRun(
+			t,
+			fixture,
+			fixture.Client,
+			fixture.Scope,
+			fixture.Connection.ConnectionID,
+			"issue20-session-expiry",
+		)
+		run := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, admitted)
+
+		expirePermitTestSessions(t, fixture, fixture.Actor)
+		requirePermitTestSessionExpired(t, fixture)
+
+		result, err := executePermitWorkerUnit(t, service, run)
+		if err != nil {
+			t.Fatalf("execute accepted run after its viewing session expired: %v", err)
+		}
+		record := loadLifecycleRunRecord(t, fixture, admitted.RunRef)
+		if result.State != contract.RunStateSucceeded || sends.Load() != 1 ||
+			record.Spec.RunID != admitted.RunRef || record.CancelRequested {
+			t.Fatalf(
+				"session-independent accepted run = result %#v sends %d record %#v; want same succeeded run without cancellation",
+				result,
+				sends.Load(),
+				record,
+			)
+		}
+	})
+
+	t.Run("pm-cli-run-watch-E02-C02_api_or_worker_death_recovers_accepted_run", func(t *testing.T) {
+		var sends atomic.Int32
+		fixture := testfixture.NewExecuting(
+			t,
+			func(_ context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+				sends.Add(1)
+				return successfulPermitObservation(request), nil
+			},
+			unexpectedPermitReconciliation,
+		)
+		admitted := admitPermitRun(
+			t,
+			fixture,
+			fixture.Client,
+			fixture.Scope,
+			fixture.Connection.ConnectionID,
+			"issue20-api-recovery",
+		)
+		fixture.Restart(t)
+		replacement := newPermitWorkerService(t, fixture, temporal)
+		run := bindPermitWorkerRun(t, fixture, temporal, fixture.Scope, fixture.Actor, admitted.RunRef)
+		run.plan = sealPermitWorkerPlan(
+			t,
+			fixture,
+			replacement,
+			fixture.Scope,
+			fixture.Actor,
+			run.execution,
+			run.reference,
+		)
+		result, err := executePermitWorkerUnit(t, replacement, run)
+		if err != nil {
+			t.Fatalf("recover accepted run after API runtime replacement: %v", err)
+		}
+		view := getRunViewForTest(t, fixture.Client, runPathForTest(fixture, admitted.RunRef))
+		if result.State != contract.RunStateSucceeded || sends.Load() != 1 ||
+			run.reference.RunID != admitted.RunRef || view.RunRef != admitted.RunRef || view.CancelRequested {
+			t.Fatalf(
+				"recovered accepted run = result %#v sends %d reference %#v view %#v; want one uncancelled durable identity",
+				result,
+				sends.Load(),
+				run.reference,
+				view,
+			)
+		}
+	})
+
+	t.Run("pm-cli-run-watch-E02-C03_client_exit_second_client_observes_run", func(t *testing.T) {
+		var sends atomic.Int32
+		fixture := testfixture.NewExecuting(
+			t,
+			func(_ context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+				sends.Add(1)
+				return successfulPermitObservation(request), nil
+			},
+			unexpectedPermitReconciliation,
+		)
+		firstClient := fixture.ClientFor(t, fixture.Actor)
+		admitted := admitPermitRun(
+			t,
+			fixture,
+			firstClient,
+			fixture.Scope,
+			fixture.Connection.ConnectionID,
+			"issue20-client-exit",
+		)
+		firstClient.CloseIdleConnections()
+
+		secondClient := fixture.ClientFor(t, fixture.Actor)
+		view := getRunViewForTest(t, secondClient, runPathForTest(fixture, admitted.RunRef))
+		service := newPermitWorkerService(t, fixture, temporal)
+		run := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, admitted)
+		result, err := executePermitWorkerUnit(t, service, run)
+		if err != nil {
+			t.Fatalf("continue accepted run after the admitting client exited: %v", err)
+		}
+		if view.RunRef != admitted.RunRef || view.State != api.RunStateAccepted || view.CancelRequested ||
+			result.State != contract.RunStateSucceeded || sends.Load() != 1 {
+			t.Fatalf(
+				"second-client observation = view %#v result %#v sends %d; want accepted then independently succeeded",
+				view,
+				result,
+				sends.Load(),
+			)
+		}
+	})
+
+	t.Run("pm-cli-run-watch-E02-C04_api_restart_serves_durable_run_and_outbox", func(t *testing.T) {
+		fixture := testfixture.NewAdmitting(t)
+		admitted := admitPermitRun(
+			t,
+			fixture,
+			fixture.Client,
+			fixture.Scope,
+			fixture.Connection.ConnectionID,
+			"issue20-api-restart",
+		)
+		beforeView := getRunViewForTest(t, fixture.Client, runPathForTest(fixture, admitted.RunRef))
+		beforeOutbox := loadLifecycleStartOutbox(t, fixture, admitted.RunRef)
+
+		fixture.Restart(t)
+
+		afterView := getRunViewForTest(t, fixture.Client, runPathForTest(fixture, admitted.RunRef))
+		afterOutbox := loadLifecycleStartOutbox(t, fixture, admitted.RunRef)
+		if afterView.RunRef != beforeView.RunRef || afterView.Revision != beforeView.Revision ||
+			afterView.State != beforeView.State || afterView.CancelRequested ||
+			afterOutbox != beforeOutbox || afterOutbox.count != 1 {
+			t.Fatalf(
+				"post-restart durability = before view %#v outbox %#v; after view %#v outbox %#v",
+				beforeView,
+				beforeOutbox,
+				afterView,
+				afterOutbox,
+			)
+		}
+	})
+
+	t.Run("pm-cli-run-watch-E02-C05_worker_replacement_resumes_same_run_identity", func(t *testing.T) {
+		var sends atomic.Int32
+		fixture := testfixture.NewExecuting(
+			t,
+			func(_ context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+				sends.Add(1)
+				return successfulPermitObservation(request), nil
+			},
+			unexpectedPermitReconciliation,
+		)
+		departing := newPermitWorkerService(t, fixture, temporal)
+		admitted := admitPermitRun(
+			t,
+			fixture,
+			fixture.Client,
+			fixture.Scope,
+			fixture.Connection.ConnectionID,
+			"issue20-worker-replacement",
+		)
+		run := preparePermitWorkerRun(t, fixture, departing, temporal, fixture.Scope, fixture.Actor, admitted)
+		deadContext, stopDeparting := context.WithCancel(context.Background())
+		stopDeparting()
+		if _, err := executePermitWorkerUnitContext(deadContext, departing, run); err == nil {
+			t.Fatal("departing worker unexpectedly executed after its process context was cancelled")
+		}
+		if sends.Load() != 0 {
+			t.Fatalf("departing worker reached provider execution %d times; want zero", sends.Load())
+		}
+
+		replacement := newPermitWorkerService(t, fixture, temporal)
+		result, err := executePermitWorkerUnit(t, replacement, run)
+		if err != nil {
+			t.Fatalf("replacement worker resume accepted run: %v", err)
+		}
+		record := loadLifecycleRunRecord(t, fixture, admitted.RunRef)
+		if result.TaskID != run.plan.TaskID || result.State != contract.RunStateSucceeded ||
+			run.reference.RunID != admitted.RunRef || record.Spec.RunID != admitted.RunRef ||
+			record.CancelRequested || sends.Load() != 1 {
+			t.Fatalf(
+				"replacement execution = result %#v reference %#v record %#v sends %d; want same uncancelled run/task and one send",
+				result,
+				run.reference,
+				record,
+				sends.Load(),
+			)
+		}
+	})
+}
+
+type lifecycleOutboxIdentity struct {
+	count     int64
+	commandID string
+	state     string
+}
+
+func loadLifecycleStartOutbox(
+	t *testing.T,
+	fixture *testfixture.Fixture,
+	runID string,
+) lifecycleOutboxIdentity {
+	t.Helper()
+	var identity lifecycleOutboxIdentity
+	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT count(*), COALESCE(min(command_id), ''), COALESCE(min(state::text), '')
+			FROM pm.outbox_commands
+			WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND kind = 'start_run'
+		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, runID).Scan(
+			&identity.count,
+			&identity.commandID,
+			&identity.state,
+		)
+	})
+	if identity.count != 1 || identity.commandID == "" || identity.state == "" {
+		t.Fatalf("accepted run start outbox = %#v; want one durable command", identity)
+	}
+	return identity
+}
+
+func loadLifecycleRunRecord(
+	t *testing.T,
+	fixture *testfixture.Fixture,
+	runID string,
+) contract.RunRecord {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	var record contract.RunRecord
+	if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+		view, err := store.LoadRunView(ctx, tx, runID)
+		if err != nil {
+			return err
+		}
+		record = view.Record
+		return nil
+	}); err != nil {
+		t.Fatalf("load accepted lifecycle run %q: %v", runID, err)
+	}
+	return record
 }
 
 func submitInitialRun(
@@ -603,22 +865,30 @@ func initialAdmissionConfigurator(
 
 func initialSelection(operationID, path, schemaRef string) app.OperationSelection {
 	foundation := contract.FoundationRef{ID: "FND-6", Version: "1.0.0"}
+	sourceRefs := []contract.SourceRef{
+		{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
+	}
 	return app.OperationSelection{
 		Operation: contract.Operation{
-			SchemaVersion: contract.OperationSchemaVersion,
-			OperationID:   operationID,
-			SourceRefs: []contract.SourceRef{
-				{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
-			},
-			Transport: contract.Transport{Kind: "http", Method: http.MethodGet, Path: path},
-			Inputs:    []contract.FieldBinding{},
+			SchemaVersion:   contract.OperationSchemaVersion,
+			OperationID:     operationID,
+			SourceRefs:      sourceRefs,
+			Transport:       contract.Transport{Kind: contract.TransportKindHTTP, Method: http.MethodGet, Path: path},
+			Inputs:          []contract.FieldBinding{},
+			RequestVariants: []contract.RequestVariant{},
 			Responses: []contract.Response{
-				{Status: "200", MediaType: "application/json", Schema: contract.Schema{Type: contract.SchemaTypeString}},
+				{
+					Status:     "200",
+					NoContent:  false,
+					MediaType:  "application/json",
+					Schema:     &contract.Schema{Type: contract.SchemaTypeString},
+					SourceRefs: sourceRefs,
+				},
 			},
 			CapabilityRequirements: []contract.CapabilityRequirement{
 				{Capability: "http.execute", Foundation: foundation},
 			},
-			LaneEligibility: []contract.LaneEligibility{{Lane: contract.LaneDirectRead, Eligible: true}},
+			LaneEligibility: operationLaneEligibilityForTest(contract.LaneDirectRead),
 		},
 		SchemaRefs: []string{schemaRef},
 	}

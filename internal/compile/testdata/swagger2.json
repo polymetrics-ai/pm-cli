@@ -1,0 +1,24 @@
+{
+  "swagger": "2.0",
+  "info": {"title": "Synthetic Swagger conversion", "version": "1.0.0"},
+  "basePath": "/v1",
+  "produces": ["application/json"],
+  "paths": {
+    "/things": {
+      "get": {
+        "operationId": "getThings",
+        "responses": {
+          "200": {
+            "description": "things",
+            "schema": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["id"],
+              "properties": {"id": {"type": "string"}}
+            }
+          }
+        }
+      }
+    }
+  }
+}

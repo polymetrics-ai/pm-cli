@@ -1,0 +1,50 @@
+openapi: 3.0.3
+info:
+  title: Synthetic complete inventory
+  version: 1.0.0
+paths:
+  /widgets:
+    get:
+      operationId: getWidgets
+      parameters:
+        - name: tags
+          in: query
+          required: true
+          style: form
+          explode: false
+          schema:
+            type: array
+            items:
+              type: string
+      responses:
+        "200":
+          description: widgets
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: false
+                      required: [id]
+                      properties:
+                        id:
+                          type: string
+        "204":
+          description: no content
+        default:
+          description: problem
+          content:
+            application/problem+json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [title]
+                properties:
+                  title:
+                    type: string

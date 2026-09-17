@@ -56,10 +56,15 @@ func TestStrictContractShape(t *testing.T) {
 			t.Fatalf("credential binding = %#v; want metadata-only secret binding", credential)
 		}
 
-		if len(operation.Responses) != 1 || operation.Responses[0].MediaType != "application/json" {
-			t.Fatalf("responses = %#v; want one JSON response", operation.Responses)
+		if len(operation.RequestVariants) != 0 || operation.RequestMediaFieldID != "" {
+			t.Fatalf("request variants = %#v, selector %q; want an explicit body-free request", operation.RequestVariants, operation.RequestMediaFieldID)
 		}
-		response := operation.Responses[0].Schema
+		if len(operation.Responses) != 1 || operation.Responses[0].MediaType != "application/json" ||
+			operation.Responses[0].NoContent || operation.Responses[0].Schema == nil ||
+			len(operation.Responses[0].SourceRefs) != 1 {
+			t.Fatalf("responses = %#v; want one source-linked JSON body response", operation.Responses)
+		}
+		response := *operation.Responses[0].Schema
 		if response.Type != SchemaTypeArray || response.Items == nil || response.Items.Type != SchemaTypeObject {
 			t.Fatalf("response schema = %#v; want array of complete objects", response)
 		}
@@ -102,8 +107,23 @@ func TestStrictContractShape(t *testing.T) {
 			typedValues.Foundation.ID != "FND-03" || typedValues.Foundation.Version != "1.0.0" {
 			t.Fatalf("capability requirements = %#v; want typed-values and field-binding on FND-03@1.0.0", operation.CapabilityRequirements)
 		}
-		if len(operation.LaneEligibility) != 1 || operation.LaneEligibility[0].Lane != "direct_read" || !operation.LaneEligibility[0].Eligible {
-			t.Fatalf("lane eligibility = %#v; want only declared direct_read eligibility", operation.LaneEligibility)
+		if len(operation.LaneEligibility) != len(canonicalLanes) {
+			t.Fatalf("lane eligibility = %#v; want all seven canonical lanes", operation.LaneEligibility)
+		}
+		wantStatuses := [...]LaneStatus{
+			LaneEligible,
+			LaneUnsupported,
+			LaneUnproven,
+			LaneNotApplicable,
+			LaneNotApplicable,
+			LaneNotApplicable,
+			LaneBlocked,
+		}
+		for index, lane := range canonicalLanes {
+			disposition := operation.LaneEligibility[index]
+			if disposition.Lane != lane || disposition.Status != wantStatuses[index] || disposition.Reason == "" {
+				t.Fatalf("lane eligibility[%d] = %#v; want %q/%q with reason", index, disposition, lane, wantStatuses[index])
+			}
 		}
 	})
 
@@ -295,12 +315,12 @@ func TestStrictContractShape(t *testing.T) {
 		},
 		{
 			name:        "V01_null_optional_transport_field_is_not_treated_as_absent",
-			document:    replaceOperationDocumentForTest(t, document, `"transport":{"kind":"http","method":"GET","path":"/repos/{owner}/{repo}/issues"}`, `"transport":{"kind":"http","method":"GET","path":"/repos/{owner}/{repo}/issues","operation":null}`),
+			document:    replaceOperationDocumentForTest(t, document, `"transport":{"kind":"http","method":"GET","path":"/repos/{owner}/{repo}/issues"}`, `"transport":{"kind":"http","method":"GET","path":"/repos/{owner}/{repo}/issues","statement_kind":null}`),
 			foundations: supportedFoundationsForTest(),
 		},
 		{
 			name:        "V01_lane_disposition_must_be_explicit",
-			document:    replaceOperationDocumentForTest(t, document, `"lane_eligibility":[{"lane":"direct_read","eligible":true}]`, `"lane_eligibility":[{"lane":"direct_read","reason":"missing explicit disposition"}]`),
+			document:    replaceOperationDocumentForTest(t, document, `"lane":"direct_read","status":"eligible","reason":"source-declared-read"`, `"lane":"direct_read","reason":"missing explicit disposition"`),
 			foundations: supportedFoundationsForTest(),
 		},
 		{
@@ -359,14 +379,25 @@ func TestOperationWireLocations(t *testing.T) {
 	destination := source
 	destination.FieldID = "destination-id"
 	destination.JSONPointer = "/destination/id"
-
 	samePointer := destination
 	samePointer.WireName = "other-id"
 	samePointer.JSONPointer = source.JSONPointer
-	querySource, queryDestination := source, destination
-	querySource.Location, queryDestination.Location = FieldLocationQuery, FieldLocationQuery
-	querySource.Style, queryDestination.Style = "form", "form"
-
+	root := Schema{
+		Type:     SchemaTypeObject,
+		Required: []string{"source", "destination"},
+		Properties: map[string]Schema{
+			"source": {
+				Type:       SchemaTypeObject,
+				Required:   []string{"id"},
+				Properties: map[string]Schema{"id": {Type: SchemaTypeString}},
+			},
+			"destination": {
+				Type:       SchemaTypeObject,
+				Required:   []string{"id"},
+				Properties: map[string]Schema{"id": {Type: SchemaTypeString}},
+			},
+		},
+	}
 	for _, test := range []struct {
 		name          string
 		inputs        []FieldBinding
@@ -374,11 +405,17 @@ func TestOperationWireLocations(t *testing.T) {
 	}{
 		{"distinct_nested_locations", []FieldBinding{source, destination}, false},
 		{"same_json_location", []FieldBinding{source, samePointer}, true},
-		{"duplicate_transport_name", []FieldBinding{querySource, queryDestination}, true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			candidate := operation
-			candidate.Inputs = test.inputs
+			candidate.RequestVariants = []RequestVariant{{
+				VariantID:  "json",
+				MediaType:  "application/json",
+				Required:   true,
+				Schema:     root,
+				Inputs:     test.inputs,
+				SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody"}},
+			}}
 			document, err := json.Marshal(candidate)
 			if err != nil {
 				t.Fatal(err)
@@ -393,10 +430,184 @@ func TestOperationWireLocations(t *testing.T) {
 			if err != nil {
 				t.Fatalf("distinct nested wire locations rejected: %v", err)
 			}
-			if !reflect.DeepEqual(decoded.Inputs, test.inputs) {
-				t.Fatalf("nested binding locations changed: got %#v; want %#v", decoded.Inputs, test.inputs)
+			if !reflect.DeepEqual(decoded.RequestVariants[0].Inputs, test.inputs) {
+				t.Fatalf("nested binding locations changed: got %#v; want %#v", decoded.RequestVariants[0].Inputs, test.inputs)
 			}
 		})
+	}
+
+	t.Run("duplicate common transport name", func(t *testing.T) {
+		querySource, queryDestination := source, destination
+		querySource.Location, queryDestination.Location = FieldLocationQuery, FieldLocationQuery
+		querySource.Style, queryDestination.Style = "form", "form"
+		candidate := operation
+		candidate.Inputs = []FieldBinding{querySource, queryDestination}
+		document, err := json.Marshal(candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeOperation(document, supportedFoundationsForTest()); !errors.Is(err, ErrDuplicateField) {
+			t.Fatalf("duplicate common wire name error = %v; want duplicate field", err)
+		}
+	})
+
+	t.Run("same body pointer across media variants", func(t *testing.T) {
+		selector := FieldBinding{
+			FieldID:       "request-content-type",
+			WireName:      RequestMediaTypeWireName,
+			Location:      FieldLocationHeader,
+			JSONPointer:   "/headers/Content-Type",
+			Required:      false,
+			Nullable:      false,
+			Style:         "simple",
+			Explode:       false,
+			AllowReserved: false,
+			Sensitivity:   SensitivityPublic,
+			Schema: Schema{
+				Type: SchemaTypeString,
+				Enum: []PresentValue{
+					NewStringValue("application/json"),
+					NewStringValue("application/merge-patch+json"),
+				},
+			},
+		}
+		second := source
+		second.FieldID = "merge-source-id"
+		crossMediaRoot := Schema{
+			Type:     SchemaTypeObject,
+			Required: []string{"source"},
+			Properties: map[string]Schema{
+				"source": {
+					Type:       SchemaTypeObject,
+					Required:   []string{"id"},
+					Properties: map[string]Schema{"id": {Type: SchemaTypeString}},
+				},
+			},
+		}
+		candidate := operation
+		candidate.Inputs = append(candidate.Inputs, selector)
+		candidate.RequestMediaFieldID = selector.FieldID
+		candidate.RequestVariants = []RequestVariant{
+			{
+				VariantID:  "json",
+				MediaType:  "application/json",
+				Required:   true,
+				Schema:     crossMediaRoot,
+				Inputs:     []FieldBinding{source},
+				SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody/content/application~1json"}},
+			},
+			{
+				VariantID:  "merge",
+				MediaType:  "application/merge-patch+json",
+				Required:   true,
+				Schema:     crossMediaRoot,
+				Inputs:     []FieldBinding{second},
+				SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody/content/application~1merge-patch+json"}},
+			},
+		}
+		document, err := json.Marshal(candidate)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeOperation(document, supportedFoundationsForTest()); err != nil {
+			t.Fatalf("same pointer across distinct media variants rejected: %v", err)
+		}
+	})
+}
+func TestResponseVariantsAndPostgreSQLTransport(t *testing.T) {
+	operation := decodeOperationForTest(t, validOperationDocumentForTest())
+	source := []SourceRef{{SourceID: "fixture-source", Pointer: "#/responses"}}
+	recordPointer := "/record"
+	operation.Responses = []Response{
+		{
+			Status:    "201",
+			NoContent: false,
+			MediaType: "application/json",
+			Schema: &Schema{
+				Type: SchemaTypeObject,
+				Properties: map[string]Schema{
+					"record": {Type: SchemaTypeObject, Properties: map[string]Schema{"id": {Type: SchemaTypeString}}},
+				},
+			},
+			SourceRefs:    source,
+			RecordPointer: &recordPointer,
+		},
+		{
+			Status:     "204",
+			NoContent:  true,
+			SourceRefs: source,
+		},
+		{
+			Status:     "default",
+			NoContent:  false,
+			MediaType:  "application/problem+json",
+			Schema:     &Schema{Type: SchemaTypeObject, Properties: map[string]Schema{"code": {Type: SchemaTypeString}}},
+			SourceRefs: source,
+		},
+	}
+	if err := operation.Validate(supportedFoundationsForTest()); err != nil {
+		t.Fatalf("201/204/default response variants: %v", err)
+	}
+
+	responseDocument, err := json.Marshal(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := DecodeOperation(responseDocument, supportedFoundationsForTest())
+	if err != nil {
+		t.Fatalf("decode response variants after wire round trip: %v", err)
+	}
+	if roundTrip.Responses[0].RecordPointer == nil || *roundTrip.Responses[0].RecordPointer != recordPointer ||
+		roundTrip.Responses[1].RecordPointer != nil || !roundTrip.Responses[1].NoContent {
+		t.Fatalf("response pointer/no-content presence changed across wire round trip: %#v", roundTrip.Responses)
+	}
+	invalidNoContent := operation
+	invalidNoContent.Responses = []Response{{
+		Status:     "204",
+		NoContent:  true,
+		MediaType:  "application/json",
+		Schema:     &Schema{Type: SchemaTypeObject, Properties: map[string]Schema{}},
+		SourceRefs: source,
+	}}
+	if err := invalidNoContent.Validate(supportedFoundationsForTest()); err == nil {
+		t.Fatal("no-content response accepted body media and schema")
+	}
+	invalidStatus := operation
+	invalidStatus.Responses = []Response{{
+		Status:     "20",
+		NoContent:  true,
+		SourceRefs: source,
+	}}
+	if err := invalidStatus.Validate(supportedFoundationsForTest()); err == nil {
+		t.Fatal("HTTP response accepted a noncanonical status")
+	}
+
+	postgres := operation
+	postgres.Transport = Transport{
+		Kind:            TransportKindPostgreSQL,
+		StatementKind:   PostgreSQLStatementSelect,
+		RelationBinding: "fixture-relation",
+	}
+	postgres.Inputs = []FieldBinding{}
+	postgres.Responses = []Response{{
+		Status:     "success",
+		NoContent:  false,
+		MediaType:  "application/json",
+		Schema:     &Schema{Type: SchemaTypeArray, Items: &Schema{Type: SchemaTypeObject, Properties: map[string]Schema{}}},
+		SourceRefs: source,
+	}}
+	if err := postgres.Validate(supportedFoundationsForTest()); err != nil {
+		t.Fatalf("canonical PostgreSQL typed transport: %v", err)
+	}
+	encoded, err := json.Marshal(postgres.Transport)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"kind":"postgresql"`) ||
+		!strings.Contains(string(encoded), `"statement_kind":"select"`) ||
+		!strings.Contains(string(encoded), `"relation_binding":"fixture-relation"`) ||
+		strings.Contains(string(encoded), `"operation":`) {
+		t.Fatalf("PostgreSQL transport wire shape = %s", encoded)
 	}
 }
 
@@ -407,7 +618,7 @@ func TestPublishedSourceSchemas(t *testing.T) {
 	compiler.UseLoader(jsonschema.SchemeURLLoader{})
 	paths := make(map[string]string)
 	compiled := make(map[string]*jsonschema.Schema)
-	for _, name := range []string{"foundation", "field-binding"} {
+	for _, name := range []string{"foundation", "field-binding", "bundle"} {
 		path, err := filepath.Abs(filepath.Join("..", "..", "schemas", name+".schema.json"))
 		if err != nil {
 			t.Fatal(err)
@@ -420,11 +631,12 @@ func TestPublishedSourceSchemas(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := compiler.AddResource(path, document); err != nil {
+		resource := "https://polymetrics.ai/schemas/" + name + ".schema.json"
+		if err := compiler.AddResource(resource, document); err != nil {
 			t.Fatal(err)
 		}
-		paths[name] = path
-		compiled[name], err = compiler.Compile(path)
+		paths[name] = resource
+		compiled[name], err = compiler.Compile(resource)
 		if err != nil {
 			t.Fatalf("%s schema cannot execute with the selected validator: %v", name, err)
 		}
@@ -443,14 +655,139 @@ func TestPublishedSourceSchemas(t *testing.T) {
 			t.Fatalf("%s typed wire value does not satisfy the published schema: %v", name, err)
 		}
 	}
+	checkInvalid := func(name string, schema *jsonschema.Schema, value any) {
+		t.Helper()
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		document, err := jsonschema.UnmarshalJSON(bytes.NewReader(encoded))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := schema.Validate(document); err == nil {
+			t.Fatalf("%s unexpectedly satisfied the published schema", name)
+		}
+	}
 	foundation, err := DecodeFoundationContract([]byte(`{"schema_version":"pm.foundation/v1","id":"FND-03","version":"1.0.0","name":"Typed values","owner":"contract","dependencies":[]}`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	check("foundation", compiled["foundation"], foundation)
-	for _, binding := range decodeOperationForTest(t, validOperationDocumentForTest()).Inputs {
+	operation := decodeOperationForTest(t, validOperationDocumentForTest())
+	for _, binding := range operation.Inputs {
 		check("field-binding", compiled["field-binding"], binding)
 	}
+	safeOperation := operation
+	safeOperation.Inputs = append([]FieldBinding(nil), operation.Inputs[:2]...)
+	if err := safeOperation.Validate(supportedFoundationsForTest()); err != nil {
+		t.Fatalf("safe operation fixture: %v", err)
+	}
+	command := Command{
+		Name: "issues-list-for-repo", OperationID: safeOperation.OperationID,
+		Fields: []CommandField{
+			{
+				Flag: "--owner", FieldID: "owner", Location: FieldLocationPath,
+				Required: true, Sensitive: false,
+			},
+			{
+				Flag: "--per-page", FieldID: "per-page", Location: FieldLocationQuery,
+				Required: false, Sensitive: false,
+			},
+		},
+	}
+	if err := command.Validate(); err != nil {
+		t.Fatalf("command fixture: %v", err)
+	}
+	unavailableLanes := append([]LaneEligibility(nil), safeOperation.LaneEligibility...)
+	for index := range unavailableLanes {
+		if unavailableLanes[index].Status == LaneEligible {
+			unavailableLanes[index].Status = LaneBlocked
+			unavailableLanes[index].Reason = "open object response cannot enter the executable contract"
+		}
+	}
+	unavailable := UnavailableOperation{
+		OperationID: "issues/get-open-shape",
+		SourceRefs: []SourceRef{{
+			SourceID: "github-rest-api", Pointer: "#/paths/~1repos~1{owner}~1{repo}~1issues~1open/get",
+		}},
+		DiagnosticCodes: []string{"open_object_shape", "unsupported_response_metadata"},
+		LaneEligibility: unavailableLanes,
+	}
+	if err := unavailable.Validate(); err != nil {
+		t.Fatalf("unavailable operation fixture: %v", err)
+	}
+	unsorted := unavailable
+	unsorted.DiagnosticCodes = []string{"unsupported_response_metadata", "open_object_shape"}
+	if err := unsorted.Validate(); err == nil {
+		t.Fatal("unavailable operation accepted noncanonical diagnostic order")
+	}
+	executableLane := unavailable
+	executableLane.LaneEligibility = append([]LaneEligibility(nil), unavailable.LaneEligibility...)
+	executableLane.LaneEligibility[0].Status = LaneEligible
+	if err := executableLane.Validate(); err == nil {
+		t.Fatal("unavailable operation accepted an executable lane")
+	}
+	bundleValue := map[string]any{
+		"schema_version":         "pm.bundle/v1",
+		"connector_id":           "github",
+		"source_digest":          "sha256:" + strings.Repeat("1", 64),
+		"semantics_revision":     "sha256:" + strings.Repeat("2", 64),
+		"operations":             []Operation{safeOperation},
+		"commands":               []Command{command},
+		"unavailable_operations": []UnavailableOperation{unavailable},
+	}
+	check("bundle", compiled["bundle"], bundleValue)
+	eligibleUnavailable := make(map[string]any, len(bundleValue))
+	for name, value := range bundleValue {
+		eligibleUnavailable[name] = value
+	}
+	eligibleUnavailable["unavailable_operations"] = []UnavailableOperation{executableLane}
+	checkInvalid("bundle with executable unavailable lane", compiled["bundle"], eligibleUnavailable)
+	executableOnly := make(map[string]any, len(bundleValue))
+	for name, value := range bundleValue {
+		executableOnly[name] = value
+	}
+	executableOnly["unavailable_operations"] = []UnavailableOperation{}
+	check("executable-only bundle", compiled["bundle"], executableOnly)
+	unavailableOnly := make(map[string]any, len(bundleValue))
+	for name, value := range bundleValue {
+		unavailableOnly[name] = value
+	}
+	unavailableOnly["operations"] = []Operation{}
+	unavailableOnly["commands"] = []Command{}
+	check("unavailable-only bundle", compiled["bundle"], unavailableOnly)
+	for _, missing := range []string{"commands", "unavailable_operations"} {
+		incomplete := make(map[string]any, len(bundleValue)-1)
+		for name, value := range bundleValue {
+			if name != missing {
+				incomplete[name] = value
+			}
+		}
+		checkInvalid("bundle missing "+missing, compiled["bundle"], incomplete)
+	}
+	emptyInventory := make(map[string]any, len(bundleValue))
+	for name, value := range bundleValue {
+		emptyInventory[name] = value
+	}
+	emptyInventory["operations"] = []Operation{}
+	emptyInventory["commands"] = []Command{}
+	emptyInventory["unavailable_operations"] = []UnavailableOperation{}
+	checkInvalid("bundle with empty combined inventory", compiled["bundle"], emptyInventory)
+	minimum := mustIntegerValueForTest(t, "0")
+	sourceDefault := mustIntegerValueForTest(t, "4")
+	maximum := mustIntegerValueForTest(t, "10")
+	constrained := operation.Inputs[1]
+	constrained.Schema = Schema{
+		Type:    SchemaTypeInteger,
+		Enum:    []PresentValue{minimum, sourceDefault, maximum},
+		Minimum: &minimum,
+		Maximum: &maximum,
+	}
+	if err := constrained.Validate(); err != nil {
+		t.Fatalf("constrained field binding: %v", err)
+	}
+	check("field-binding constraints", compiled["field-binding"], constrained)
 	valueSchema, err := compiler.Compile(paths["field-binding"] + "#/$defs/presentValue")
 	if err != nil {
 		t.Fatal(err)
@@ -506,8 +843,10 @@ func validOperationDocumentForTest() []byte {
     {"field_id":"per-page","wire_name":"per_page","location":"query","json_pointer":"/query/per_page","required":false,"nullable":false,"style":"form","explode":true,"allow_reserved":false,"sensitivity":"public","schema":{"type":"integer"},"source_default":{"presence":"value","type":"integer","exact":"4","precision":1,"scale":0}},
     {"field_id":"authorization","wire_name":"Authorization","location":"header","json_pointer":"/headers/Authorization","required":true,"nullable":false,"style":"simple","explode":false,"allow_reserved":false,"sensitivity":"secret","schema":{"type":"string"}}
   ],
+  "request_variants":[],
   "responses":[{
     "status":"200",
+    "no_content":false,
     "media_type":"application/json",
     "schema":{
       "type":"array",
@@ -526,12 +865,21 @@ func validOperationDocumentForTest() []byte {
           "composed":{"type":"object","allOf":[{"type":"object","required":["kind"],"properties":{"kind":{"type":"string"}}},{"type":"object","required":["active"],"properties":{"active":{"type":"bool"}}}]}
         }
       }
-    }
+    },
+    "source_refs":[{"source_id":"github-rest-api","pointer":"#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200"}]
   }],
   "capability_requirements":[
     {"capability":"typed-values","foundation":{"id":"FND-03","version":"1.0.0"}},
     {"capability":"field-binding","foundation":{"id":"FND-03","version":"1.0.0"}}
   ],
-  "lane_eligibility":[{"lane":"direct_read","eligible":true}]
+  "lane_eligibility":[
+    {"lane":"direct_read","status":"eligible","reason":"source-declared-read"},
+    {"lane":"direct_write","status":"unsupported","reason":"source-does-not-declare-write"},
+    {"lane":"etl","status":"unproven","reason":"runtime-proof-not-yet-established"},
+    {"lane":"reverse_etl","status":"not_applicable","reason":"read-operation-has-no-destination-write"},
+    {"lane":"binary_download","status":"not_applicable","reason":"response-is-not-binary"},
+    {"lane":"binary_upload","status":"not_applicable","reason":"request-is-not-binary"},
+    {"lane":"sync_transport","status":"blocked","reason":"sync-semantics-are-not-declared"}
+  ]
 }`)
 }

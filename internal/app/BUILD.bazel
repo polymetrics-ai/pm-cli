@@ -15,9 +15,9 @@ go_library(
         "runs.go",
         "runtime.go",
         "service_accounts.go",
-        "workspaces.go",
         "worker.go",
         "worker_runtime.go",
+        "workspaces.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/app",
     visibility = ["//visibility:public"],
@@ -40,7 +40,6 @@ go_test(
         "capabilities_test.go",
         "lifecycle_test.go",
     ],
-    embed = [":app"],
     env_inherit = [
         "GOMAXPROCS",
         "GOMEMLIMIT",
@@ -48,8 +47,13 @@ go_test(
         "PM_STACK_TEST_CONFIG",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
+        ":app",
         "//internal/api",
         "//internal/config",
         "//internal/contract",

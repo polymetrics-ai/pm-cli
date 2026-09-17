@@ -425,7 +425,7 @@ func shapeFoundations(references []contract.FoundationRef) []contract.Foundation
 func operationAllowsLane(operation contract.Operation, lane contract.Lane) bool {
 	for _, eligibility := range operation.LaneEligibility {
 		if eligibility.Lane == lane {
-			return eligibility.Eligible
+			return eligibility.Status == contract.LaneEligible
 		}
 	}
 	return false
@@ -434,9 +434,9 @@ func operationAllowsLane(operation contract.Operation, lane contract.Lane) bool 
 func registrationMatchesTransport(kind HandlerKind, transport string) bool {
 	switch kind {
 	case HandlerHTTP:
-		return transport == "http"
+		return transport == contract.TransportKindHTTP
 	case HandlerSQL:
-		return transport == "postgres"
+		return transport == contract.TransportKindPostgreSQL
 	default:
 		return true
 	}
