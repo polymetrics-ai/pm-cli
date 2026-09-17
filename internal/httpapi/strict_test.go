@@ -159,6 +159,31 @@ func TestGinStrictBoundary(t *testing.T) {
 		}
 	})
 
+	t.Run("composed middleware preserves loopback public discovery", func(t *testing.T) {
+		called := false
+		consumer := &ginBoundaryConsumer{observeInfo: func(context.Context) error {
+			called = true
+			return nil
+		}}
+		consumer.Service = &Service{instanceID: "gin-boundary-fixture"}
+		router := gin.New()
+		if err := RegisterRoutes(router, TransportPolicy{
+			PublicOrigin:     "https://pm.example.test",
+			TrustedProxies:   []string{"192.0.2.4/32"},
+			RequestTimeout:   5 * time.Second,
+			MaximumBodyBytes: 2048,
+		}, consumer, io.Discard, consumer.Service.Middleware()); err != nil {
+			t.Fatal(err)
+		}
+		request := httptest.NewRequest(http.MethodGet, "http://pm.example.test/v1/info", nil)
+		request.RemoteAddr = "127.0.0.1:1234"
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, request)
+		if response.Code != http.StatusOK || !called {
+			t.Fatalf("status=%d consumer_called=%t; want status=%d consumer_called=true", response.Code, called, http.StatusOK)
+		}
+	})
+
 	t.Run("panic and error material never crosses the boundary", func(t *testing.T) {
 		const canary = "synthetic-provider-secret-must-not-escape"
 		for _, panicMode := range []bool{false, true} {
