@@ -134,14 +134,26 @@ func LoadArtifact(ctx context.Context, tx *Transaction, artifactID string) (cont
 // LoadArtifactConnectionID returns the immutable trusted connection binding
 // used by public artifact authorization. Retained unbound rows fail closed.
 func LoadArtifactConnectionID(ctx context.Context, tx *Transaction, artifactID string) (string, error) {
-	stored, err := loadArtifactRecord(ctx, tx, artifactID)
-	if err != nil {
+	if _, err := tx.requireScope(); err != nil {
 		return "", err
 	}
-	if !stored.connectionID.Valid {
+	if !validStoreID(artifactID) {
 		return "", ErrNotFound
 	}
-	return stored.connectionID.String, nil
+	var connectionID sql.NullString
+	if err := tx.queryRow(
+		ctx,
+		`SELECT connection_id FROM pm.artifacts WHERE artifact_id = $1`,
+		artifactID,
+	).Scan(&connectionID); errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	} else if err != nil {
+		return "", fmt.Errorf("load artifact connection authority: %w", err)
+	}
+	if !connectionID.Valid || !validStoreID(connectionID.String) {
+		return "", ErrNotFound
+	}
+	return connectionID.String, nil
 }
 
 func loadArtifactRecord(ctx context.Context, tx *Transaction, artifactID string) (artifactRecord, error) {

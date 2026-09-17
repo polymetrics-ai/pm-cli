@@ -148,6 +148,9 @@ func authorizeResource(
 		request.RunID != "" && !validOpaque(request.RunID, 512) {
 		return Authorization{}, ErrResourceNotFound
 	}
+	if request.ResourceKind == ResourceArtifact && request.ConnectionID != "" {
+		return Authorization{}, ErrResourceNotFound
+	}
 	connectionID := request.ConnectionID
 	if request.ResourceKind == ResourceConnection {
 		if connectionID != "" && connectionID != request.ResourceID {
@@ -174,20 +177,31 @@ func authorizeResource(
 	if request.OperationID != "" && !slices.Contains(current.operations, request.OperationID) {
 		return Authorization{}, ErrResourceNotFound
 	}
+	if request.ResourceKind == ResourceArtifact {
+		connectionID, err = store.LoadArtifactConnectionID(ctx, tx, request.ResourceID)
+		if err != nil {
+			if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrScopeMismatch) {
+				return Authorization{}, ErrResourceNotFound
+			}
+			return Authorization{}, err
+		}
+	}
 	if connectionID != "" && !slices.Contains(current.connections, connectionID) {
 		return Authorization{}, ErrResourceNotFound
 	}
-	if err := store.AuthorizeResourceExistence(
-		ctx,
-		tx,
-		string(request.ResourceKind),
-		request.ResourceID,
-		request.RunID,
-	); err != nil {
-		if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrScopeMismatch) {
-			return Authorization{}, ErrResourceNotFound
+	if request.ResourceKind != ResourceArtifact {
+		if err := store.AuthorizeResourceExistence(
+			ctx,
+			tx,
+			string(request.ResourceKind),
+			request.ResourceID,
+			request.RunID,
+		); err != nil {
+			if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrScopeMismatch) {
+				return Authorization{}, ErrResourceNotFound
+			}
+			return Authorization{}, err
 		}
-		return Authorization{}, err
 	}
 	if connectionID != "" {
 		connection, loadErr := store.LoadConnectionAuthority(ctx, tx, connectionID)
