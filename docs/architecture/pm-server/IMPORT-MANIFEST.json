@@ -310,8 +310,8 @@
     {
       "target": "docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "14e0f343195f606e468a216eef222f6ccd5fd4ecf2700ab81bb53e0027a114e4",
-      "transformation": "Activated the single model-neutral engineering policy under OMP-only ownership, coherent grouped candidates and independent Standards/Spec review; preserved real CI, security, dependency and separate merge gates."
+      "sha256": "b1584ca845975014f777a624e5679c850439025df50863775be2dd149a52342c",
+      "transformation": "Activated the single model-neutral engineering policy, coherent grouped candidates and independent Standards/Spec review. The owner's subsequent account-based merge authorization permits agents using karthik-sivadas after complete declared scope, agreed BDD/acceptance tests, resolved independent review and genuine final-candidate CI; preserves separately required human review, no bypass, and other security/dependency gates."
     }
   ],
   "exclusions": [

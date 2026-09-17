@@ -260,17 +260,20 @@ def workflow_check(path, actionlint):
     require(isinstance(obj, dict), "workflow must be an object")
     require(set(obj) == {"name", "on", "permissions", "concurrency", "jobs"},
             "unapproved workflow capability")
-    require(obj["on"] == {"pull_request": {"branches": ["main", "omp/pmcli-foundations"],
+    require(obj["on"] == {"push": {"branches": ["main"]},
+            "pull_request": {"branches": ["main"],
             "types": ["opened", "synchronize", "reopened", "edited"]}},
             "unapproved workflow triggers")
     require(obj["permissions"] == {"contents": "read"}, "excess workflow permissions")
-    require(obj["concurrency"] == {"group": "foundation-${{ github.event.pull_request.number }}",
-            "cancel-in-progress": "true"}, "unapproved workflow concurrency")
+    require(obj["concurrency"] == {
+            "group": "foundation-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}",
+            "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"},
+            "unapproved workflow concurrency")
     require(set(obj["jobs"]) == {"foundation"}, "unapproved job membership")
     job = obj["jobs"]["foundation"]
     require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"},
             "unapproved job capability")
-    require(job["if"] == "github.repository == 'polymetrics-ai/pm-cli' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas'",
+    require(job["if"] == "github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && ((github.event_name == 'pull_request' && github.event.pull_request.state == 'open' && github.event.pull_request.merged == false && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.deleted == false && github.event.forced == false))",
             "unapproved workflow trust boundary")
     require(job["runs-on"] == ["self-hosted", "Linux", "X64", "pm-cli-qual-20260911-r8"],
             "runner routing changed")
@@ -281,7 +284,8 @@ def workflow_check(path, actionlint):
     require(set(checkout) == {"name", "uses", "with"}, "unapproved checkout capability")
     require(checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
             "checkout is not the reviewed full action pin")
-    require(checkout["with"] == {"persist-credentials": "false", "fetch-depth": "1",
+    require(checkout["with"] == {"ref": "${{ github.sha }}",
+            "persist-credentials": "false", "fetch-depth": "1",
             "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
             "checkout capabilities changed")
     require(check == {"name": "Build and test the foundation", "timeout-minutes": "25",

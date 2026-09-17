@@ -4,7 +4,8 @@ set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 : "${RUNNER_TEMP:?GitHub runner job temporary directory required}"
-: "${GITHUB_EVENT_PATH:?Actual pull-request event required}"
+: "${GITHUB_EVENT_PATH:?Actual workflow event required}"
+: "${GITHUB_EVENT_NAME:?Actual workflow event name required}"
 : "${GITHUB_RUN_ID:?Actual workflow run identity required}"
 : "${GITHUB_RUN_ATTEMPT:?Actual workflow attempt required}"
 export PATH="/opt/pmcli-tools/venv/bin:/opt/pmcli-tools/bin:$PATH"
@@ -28,11 +29,14 @@ export PYTHONPATH="$RUNNER_TEMP/foundation-docs-deps"
 # Invoke the existing entrypoints directly; the runner does not require make.
 python3 -I -B scripts/ci/check-setup.py --root . --policy scripts/ci/setup-policy.json
 python3 -I -B scripts/ci/test_setup.py
+python3 -I -B scripts/ci/test_runner_admission.py
 python3 -I -B scripts/ci/test_stack_fixture.py
 python3 -I -B tools/test_bootstrap.py
 python3 -B scripts/test_validate_architecture_docs.py
 python3 -B scripts/validate_architecture_docs.py
-python3 scripts/validate_architecture_docs.py --pr-event "$GITHUB_EVENT_PATH"
+if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+  python3 scripts/validate_architecture_docs.py --pr-event "$GITHUB_EVENT_PATH"
+fi
 
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/foundation-toolchain.json"
 python3 tools/bootstrap.py exec go -- version
