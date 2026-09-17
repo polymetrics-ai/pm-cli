@@ -30,6 +30,7 @@ def payload(kind="pull_request", workflow="check.yml"):
         "GITHUB_TRIGGERING_ACTOR": "karthik-sivadas",
         "GITHUB_EVENT_NAME": kind,
         "GITHUB_SHA": SHA,
+        "GITHUB_WORKFLOW_SHA": SHA,
     }
     if kind == "pull_request":
         event.update(action="synchronize", number=52, pull_request={
@@ -64,6 +65,18 @@ class AdmissionPolicy(unittest.TestCase):
                     event, env = payload(kind, workflow)
                     self.policy.validate(event, env)
 
+        # GITHUB_SHA is server-defined runner context. The immutable PR payload's
+        # merge_commit_sha may be absent, null or stale while the merge ref moves.
+        for name, merge_sha in (("absent", ...), ("null", None),
+                                ("stale", "b" * 40)):
+            with self.subTest(merge_commit_sha=name):
+                event, env = payload()
+                if merge_sha is ...:
+                    event["pull_request"].pop("merge_commit_sha")
+                else:
+                    event["pull_request"]["merge_commit_sha"] = merge_sha
+                self.policy.validate(event, env)
+
     def test_closed_pr_metadata_replay_is_rejected(self):
         event, env = payload()
         event["action"] = "edited"
@@ -94,8 +107,8 @@ class AdmissionPolicy(unittest.TestCase):
             ("workflow ref", lambda e, v: v.update(GITHUB_WORKFLOW_REF=f"{REPOSITORY}/.github/workflows/check.yml@refs/heads/main")),
             ("ref", lambda e, v: v.update(GITHUB_REF="refs/pull/53/merge")),
             ("SHA", lambda e, v: v.update(GITHUB_SHA="not-a-sha")),
-            ("merge SHA mismatch", lambda e, v: e["pull_request"].update(merge_commit_sha="b" * 40)),
-            ("merge SHA absent", lambda e, v: e["pull_request"].pop("merge_commit_sha")),
+            ("workflow SHA mismatch", lambda e, v: v.update(GITHUB_WORKFLOW_SHA="b" * 40)),
+            ("workflow SHA absent", lambda e, v: v.pop("GITHUB_WORKFLOW_SHA")),
         ]
         for name, mutate in changes:
             with self.subTest(case=name):

@@ -25,12 +25,18 @@ outside the writable checkout, owned by root. The existing runner hook points
 to that wrapper. Workflow code cannot promote a changed policy into the host.
 
 Admission requires the expected runner UID, repository, original and rerun
-actor, payload sender, workflow path, event ref and commit identity. Only the
-two reviewed workflows, open same-repository PRs against main, and non-deleted,
-non-forced owner pushes to main are supported. Forks, closed or merged PR
-metadata edits, other actors, refs, events and workflows are refused. Input size
-and execution time are bounded. Refusal returns nonzero to fail only the job;
-it never stops the listener, Docker daemon or another job.
+actor, payload sender, workflow path, event ref and GitHub's server-defined
+`GITHUB_SHA`. The direct workflow's `GITHUB_WORKFLOW_SHA` must equal
+`GITHUB_SHA`; checkout consumes that exact SHA. For PR jobs,
+`GITHUB_SHA` and `GITHUB_REF` are the merge-test
+identity source of truth; the immutable event's nullable or stale
+`pull_request.merge_commit_sha` is not required or compared, and admission makes
+no live REST lookup. Only the two reviewed workflows, open same-repository PRs
+against main, and non-deleted, non-forced owner pushes to main are supported.
+Forks, closed or merged PR metadata edits, other actors, refs, events and
+workflows are refused. Input size and execution time are bounded. Refusal
+returns nonzero to fail only the job; it never stops the listener, Docker daemon
+or another job.
 
 Before installation, run the focused suite:
 
@@ -74,4 +80,8 @@ identity without permission to update main. Do not revoke shared credentials,
 change billing or make the repository public as an implicit CI repair.
 
 See GitHub's [protected branch documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
+[default variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables),
+[pull-request event identity](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request),
+[pull-request mergeability behavior](https://docs.github.com/en/rest/pulls/pulls#get-a-pull-request),
+[REST API breaking changes](https://docs.github.com/en/rest/about-the-rest-api/breaking-changes?apiVersion=2026-03-10),
 and [runner hook behavior](https://docs.github.com/en/actions/how-tos/manage-runners/self-hosted-runners/run-scripts).

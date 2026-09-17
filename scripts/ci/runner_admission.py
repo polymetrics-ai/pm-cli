@@ -27,6 +27,7 @@ def validate(event, env):
         require(event["sender"]["login"] == OWNER)
         sha = env.get("GITHUB_SHA", "")
         require(isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha))
+        require(env.get("GITHUB_WORKFLOW_SHA") == sha)
         kind = env.get("GITHUB_EVENT_NAME")
         if kind == "pull_request":
             pr = event["pull_request"]
@@ -35,7 +36,6 @@ def validate(event, env):
             require(type(pr["number"]) is int and pr["number"] == number)
             require(event["action"] in ("opened", "synchronize", "reopened", "edited"))
             require(pr["state"] == "open" and pr["merged"] is False)
-            require(pr["merge_commit_sha"] == sha)
             require(pr["head"]["repo"]["full_name"] == REPOSITORY)
             require(pr["base"]["repo"]["full_name"] == REPOSITORY)
             require(pr["base"]["ref"] == "main")
