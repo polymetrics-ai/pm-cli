@@ -214,6 +214,21 @@ func TestCompactedServiceAccountMutationReceipt(t *testing.T) {
 	state := readServiceAccountReceiptState(t, fixture, request.Control.IdempotencyKey)
 	requireServiceAccountReceiptState(t, state, store.MutationReceiptResolved, created.Mutation.ResultRef, true)
 
+	liveReplayRequest := request
+	liveReplayRequest.Control.ExpectedRevision = nil
+	liveReplay, err := identityService.CreateServiceAccount(ctx, admin, fixture.alpha, liveReplayRequest)
+	if err != nil {
+		t.Fatalf("replay live identity mutation receipt: %v", err)
+	}
+	if liveReplay.Mutation.Status != app.StatusOK || !liveReplay.Mutation.Replayed ||
+		liveReplay.OneTimeCredential != "" ||
+		!equalServiceAccountMetadata(created.ServiceAccount, liveReplay.ServiceAccount) ||
+		liveReplay.Mutation.ResultRef != created.Mutation.ResultRef ||
+		liveReplay.Mutation.Revision != created.Mutation.Revision ||
+		liveReplay.Mutation.ControlRevision != created.Mutation.ControlRevision {
+		t.Fatal("live replay did not return the original safe account metadata and revisions")
+	}
+
 	fixture.execMigrator(t, fixture.alpha, `
 		UPDATE pm.identity_mutation_keys
 		SET resolved_at = clock_timestamp() - interval '8 days',
@@ -228,6 +243,32 @@ func TestCompactedServiceAccountMutationReceipt(t *testing.T) {
 	if !state.receiptTimesOrdered || !state.responseAlreadyExpired {
 		t.Fatalf("expired receipt SQL chronology/expiry = %t/%t, want true/true", state.receiptTimesOrdered, state.responseAlreadyExpired)
 	}
+
+	resolvedConflicting := request
+	changedResolvedDisplayName := "Changed expired resolved receipt intent"
+	resolvedConflicting.DisplayName = &changedResolvedDisplayName
+	resolvedConflictResult, resolvedConflictErr := identityService.CreateServiceAccount(ctx, admin, fixture.alpha, resolvedConflicting)
+	requireReceiptFailure(t, resolvedConflictErr, app.StatusConflict, "idempotency_conflict", "new_key_for_new_intent", "")
+	if !errors.Is(resolvedConflictErr, store.ErrIdempotencyConflict) {
+		t.Fatalf("expired resolved conflicting refusal cause = %v, want idempotency conflict", resolvedConflictErr)
+	}
+	requireEmptyServiceAccountMutation(t, resolvedConflictResult, "expired resolved conflicting intent")
+
+	resolvedExpiredResult, resolvedExpiredErr := identityService.CreateServiceAccount(ctx, admin, fixture.alpha, liveReplayRequest)
+	requireReceiptFailure(t, resolvedExpiredErr, app.StatusGone, "retry_receipt_expired", "inspect_existing_result", created.Mutation.ResultRef)
+	var resolvedExpiredReceipt *store.MutationReceiptExpiredError
+	if !errors.As(resolvedExpiredErr, &resolvedExpiredReceipt) {
+		t.Fatalf("expired resolved refusal cause = %v, want typed mutation receipt expiry", resolvedExpiredErr)
+	}
+	if resolvedExpiredReceipt.ResultRef != created.Mutation.ResultRef ||
+		resolvedExpiredReceipt.ResultRevision != created.Mutation.Revision {
+		t.Fatalf("expired resolved receipt guard = %q/%d, want %q/%d",
+			resolvedExpiredReceipt.ResultRef, resolvedExpiredReceipt.ResultRevision,
+			created.Mutation.ResultRef, created.Mutation.Revision)
+	}
+	requireEmptyServiceAccountMutation(t, resolvedExpiredResult, "expired resolved receipt replay")
+	state = readServiceAccountReceiptState(t, fixture, request.Control.IdempotencyKey)
+	requireServiceAccountReceiptState(t, state, store.MutationReceiptResolved, created.Mutation.ResultRef, true)
 
 	var compacted uint32
 	err = store.WithinScope(ctx, fixture.pool, fixture.alpha, admin, func(ctx context.Context, tx *store.Transaction) error {
