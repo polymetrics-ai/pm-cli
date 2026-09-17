@@ -162,7 +162,8 @@ NETWORK_FORMAT = (
 )
 DAEMON_FORMAT = (
     '{"id":{{json .ID}},"os":{{json .OSType}},'
-    '"architecture":{{json .Architecture}},"server_version":{{json .ServerVersion}}}'
+    '"architecture":{{json .Architecture}},"server_version":{{json .ServerVersion}},'
+    '"security_options":{{json .SecurityOptions}}}'
 )
 
 
@@ -577,8 +578,9 @@ def inspect_daemon(
         stage="inspect Docker engine",
     )
     value = parse_single_json(stdout, "Docker engine inspection")
-    if not isinstance(value, dict) or set(value) != {"id", "os", "architecture", "server_version"}:
+    if not isinstance(value, dict) or set(value) != {"id", "os", "architecture", "server_version", "security_options"}:
         raise FixtureError("Docker engine inspection returned an unexpected shape")
+    value["rootless"] = rootless_engine(value.pop("security_options"))
     for name in ("id", "os", "architecture", "server_version"):
         if not isinstance(value[name], str) or SAFE_DAEMON_VALUE.fullmatch(value[name]) is None:
             raise FixtureError("Docker engine inspection returned an unsafe identity")
@@ -587,6 +589,17 @@ def inspect_daemon(
     value["endpoint"] = endpoint
     value["socket"] = dict(socket_identity)
     return value
+
+
+def rootless_engine(options: Any) -> bool:
+    if not isinstance(options, list) or any(not isinstance(option, str) for option in options):
+        raise FixtureError("Docker security options are invalid")
+    names = {option.split(",", 1)[0] for option in options}
+    if "name=rootless" in names:
+        return True
+    if "name=userns" in names:
+        raise FixtureError("rootful Docker userns-remap lacks an admitted bind-mount ownership mapping")
+    return False
 
 
 def verify_daemon_identity(
@@ -1042,10 +1055,13 @@ class OwnershipManifest:
             "os",
             "architecture",
             "server_version",
+            "rootless",
             "endpoint",
             "socket",
         }:
             raise FixtureError("ownership manifest daemon identity is invalid")
+        if type(daemon["rootless"]) is not bool:
+            raise FixtureError("ownership manifest daemon user namespace is invalid")
         for name in ("id", "os", "architecture", "server_version", "endpoint"):
             if not isinstance(daemon.get(name), str) or SAFE_DAEMON_VALUE.fullmatch(daemon[name]) is None:
                 raise FixtureError("ownership manifest daemon identity is unsafe")
@@ -1423,6 +1439,7 @@ def validate_stack_container(
     repo_root: Path,
     environment: Mapping[str, str],
     image_refs: Mapping[str, str],
+    rootless: bool = False,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise FixtureError("container inspection is invalid")
@@ -1462,7 +1479,8 @@ def validate_stack_container(
     if not isinstance(image_id, str) or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None:
         raise FixtureError("container image content identity is invalid")
     nano_cpus, memory, pids_limit, readonly, restart = service_limits(service)
-    expected_user = "" if service in {"postgres", "postgres-bootstrap"} else f"{os.getuid()}:{os.getgid()}"
+    mapped_user = "0:0" if rootless else f"{os.getuid()}:{os.getgid()}"
+    expected_user = "" if service in {"postgres", "postgres-bootstrap"} else mapped_user
     if (
         value.get("user") != expected_user
         or value.get("privileged") is not False
@@ -1683,6 +1701,7 @@ def discover_resources(
             repo_root,
             environment,
             image_refs,
+            rootless=manifest.daemon["rootless"],
         )
         for container_id in sorted(container_ids)
     ]

@@ -22,6 +22,14 @@ SPEC.loader.exec_module(FIXTURE)
 
 
 class FixtureOwnershipTests(unittest.TestCase):
+    def test_rootless_mapping_requires_observed_daemon_option(self):
+        self.assertTrue(FIXTURE.rootless_engine(["name=seccomp,profile=builtin", "name=rootless"]))
+        self.assertFalse(FIXTURE.rootless_engine(["name=seccomp,profile=builtin"]))
+        self.assertFalse(FIXTURE.rootless_engine(["name=not-rootless"]))
+        for options in (None, {}, [False], ["name=userns"]):
+            with self.subTest(options=options), self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.rootless_engine(options)
+
     def run_with_preflight(self, runner_temp, token):
         with contextlib.ExitStack() as stack:
             for name, value in (
