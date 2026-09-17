@@ -4303,7 +4303,7 @@
           "generator": null,
           "go_package": "main",
           "assignment_owner": "server",
-          "group_responsibility": "Independent API process composition, graceful drain and dependency readiness; never starts PostgreSQL or Temporal.",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
           "allowed_internal_dependencies": [
             "server",
             "config",
@@ -4369,7 +4369,7 @@
           "generator": null,
           "go_package": "server",
           "assignment_owner": "server",
-          "group_responsibility": "Independent API process composition, graceful drain and dependency readiness; never starts PostgreSQL or Temporal.",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
           "allowed_internal_dependencies": [
             "config",
             "httpapi",
@@ -4429,7 +4429,7 @@
           "generator": null,
           "go_package": "config",
           "assignment_owner": "server",
-          "group_responsibility": "Independent API process composition, graceful drain and dependency readiness; never starts PostgreSQL or Temporal.",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
           "allowed_internal_dependencies": [],
           "import_activation": [],
           "subsequent_wiring_milestones": []
@@ -4443,9 +4443,10 @@
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Register generated public/private routes and middleware using Gin; unwrap Request.Context before application calls.",
+          "responsibility": "Register the generated public/private routes and middleware using Gin. StrictDecode responsibility is consolidated here through generator-owned strict handler registration; no handwritten strict.go alias exists.",
           "interfaces": [
-            "RegisterRoutes"
+            "RegisterRoutes",
+            "StrictDecode"
           ],
           "dependencies": [
             "api",
@@ -4455,12 +4456,13 @@
           ],
           "test_ids": [
             "V12",
-            "V13"
+            "V13",
+            "R06"
           ],
           "generator": null,
           "go_package": "httpapi",
           "assignment_owner": "server",
-          "group_responsibility": "Independent API process composition, graceful drain and dependency readiness; never starts PostgreSQL or Temporal.",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -4525,7 +4527,7 @@
           "generator": null,
           "go_package": "server",
           "assignment_owner": "server",
-          "group_responsibility": "Independent API process composition, graceful drain and dependency readiness; never starts PostgreSQL or Temporal.",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
           "allowed_internal_dependencies": [
             "config",
             "httpapi",
@@ -4584,7 +4586,7 @@
           "generator": null,
           "go_package": "server",
           "assignment_owner": "server",
-          "group_responsibility": "Independent API process composition, graceful drain and dependency readiness; never starts PostgreSQL or Temporal.",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
           "allowed_internal_dependencies": [
             "config",
             "httpapi",
@@ -4618,6 +4620,390 @@
           ]
         },
         {
+          "path": "cmd/pm-server/BUILD.bazel",
+          "group_id": "F11",
+          "prior_group_id": "F11",
+          "owner": "server",
+          "process": "API composition",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Bazel targets for the pm-server command; they expose only the config/server composition already owned by this process.",
+          "interfaces": [],
+          "dependencies": [
+            "server",
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V12",
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "server",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
+          "allowed_internal_dependencies": [
+            "server",
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "server",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [
+            "M4"
+          ]
+        },
+        {
+          "path": "internal/app/BUILD.bazel",
+          "group_id": "F11",
+          "prior_group_id": "F11",
+          "owner": "server",
+          "process": "API composition",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Bazel target for the application service package with the existing app dependency boundary.",
+          "interfaces": [],
+          "dependencies": [
+            "contract",
+            "store",
+            "auth",
+            "credentials",
+            "connectors",
+            "sync"
+          ],
+          "test_ids": [
+            "V12",
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "server",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store",
+            "auth",
+            "credentials",
+            "connectors",
+            "sync"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "connectors",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "sync",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/app/runtime.go",
+          "group_id": "F11",
+          "prior_group_id": "F11",
+          "owner": "server",
+          "process": "API composition",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Compose the store-backed authentication, identity and credential-ingress services from resolved operator configuration; durable invocation admission remains absent until M4.",
+          "interfaces": [
+            "Services",
+            "OpenServices"
+          ],
+          "dependencies": [
+            "contract",
+            "store",
+            "auth",
+            "credentials",
+            "connectors",
+            "sync"
+          ],
+          "test_ids": [
+            "V12",
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "server",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store",
+            "auth",
+            "credentials",
+            "connectors",
+            "sync"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "connectors",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "sync",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [
+            "M4"
+          ]
+        },
+        {
+          "path": "internal/server/BUILD.bazel",
+          "group_id": "F11",
+          "prior_group_id": "F11",
+          "owner": "server",
+          "process": "API composition",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Bazel target and embedded-browser asset declaration for the server package without infrastructure provisioning or a dispatch substitute.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V12",
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "server",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [
+            "M4",
+            "M6",
+            "M7",
+            "M8",
+            "M9",
+            "M10",
+            "M11"
+          ]
+        },
+        {
+          "path": "internal/server/browser.go",
+          "group_id": "F11",
+          "prior_group_id": "F11",
+          "owner": "server",
+          "process": "API composition",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Embed and register the minimal same-origin browser pages and static assets behind the server request boundary with restrictive response headers.",
+          "interfaces": [
+            "RegisterBrowserRoutes"
+          ],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V12",
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "server",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/secrets.go",
+          "group_id": "F11",
+          "prior_group_id": "F11",
+          "owner": "server",
+          "process": "API composition",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Read bounded regular-file operator secrets through a descriptor-confined root for startup composition; no pathname escape or public projection.",
+          "interfaces": [
+            "OperatorSecrets"
+          ],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V12",
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "server",
+          "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "internal/config/server_test.go",
           "group_id": "T_V13",
           "prior_group_id": "T_V13",
@@ -4637,9 +5023,121 @@
           "generator": null,
           "go_package": "config",
           "assignment_owner": "config",
-          "group_responsibility": "Strict config rejects unknown keys, default secrets, unsupported schema, incompatible dependency identity and impossible budgets; API never forks PostgreSQL/Temporal. Readiness distinguishes admission and dispatch degradation.",
+          "group_responsibility": "Strict typed startup, descriptor-bound operator secret reads, bounded listener/drain behavior and truthful admission/dispatch readiness; closing the API does not redefine or cancel durable accepted-run state. Staging: contract introduction does not complete later admission or Temporal integration.",
           "allowed_internal_dependencies": [],
           "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/lifecycle_test.go",
+          "group_id": "T_V13",
+          "prior_group_id": "T_V13",
+          "owner": "config",
+          "process": "Operator, API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise bounded real-socket drain, request cancellation and distinct admission/dispatch readiness without creating durable execution.",
+          "interfaces": [
+            "TestBoundedLifecycleDrain"
+          ],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "config",
+          "group_responsibility": "Strict typed startup, descriptor-bound operator secret reads, bounded listener/drain behavior and truthful admission/dispatch readiness; closing the API does not redefine or cancel durable accepted-run state. Staging: contract introduction does not complete later admission or Temporal integration.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/secrets_test.go",
+          "group_id": "T_V13",
+          "prior_group_id": "T_V13",
+          "owner": "config",
+          "process": "Operator, API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise descriptor-confined operator-secret startup reads, exact binary bytes, nonregular refusal and pathname-replacement confinement.",
+          "interfaces": [
+            "TestOperatorSecretStartupBoundary"
+          ],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V13"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "config",
+          "group_responsibility": "Strict typed startup, descriptor-bound operator secret reads, bounded listener/drain behavior and truthful admission/dispatch readiness; closing the API does not redefine or cancel durable accepted-run state. Staging: contract introduction does not complete later admission or Temporal integration.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
           "subsequent_wiring_milestones": []
         }
       ],
@@ -4720,7 +5218,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Human/device/browser sessions, resource authorization and server-only authenticated credential administration.",
+          "group_responsibility": "Human/device/browser sessions, resource authorization, safe connection control, the private admin schema and embedded login projection; provider credential administration remains server-only and write-only.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -4765,7 +5263,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Human/device/browser sessions, resource authorization and server-only authenticated credential administration.",
+          "group_responsibility": "Human/device/browser sessions, resource authorization, safe connection control, the private admin schema and embedded login projection; provider credential administration remains server-only and write-only.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -4811,7 +5309,7 @@
           "generator": null,
           "go_package": "app",
           "assignment_owner": "auth",
-          "group_responsibility": "Human/device/browser sessions, resource authorization and server-only authenticated credential administration.",
+          "group_responsibility": "Human/device/browser sessions, resource authorization, safe connection control, the private admin schema and embedded login projection; provider credential administration remains server-only and write-only.",
           "allowed_internal_dependencies": [
             "contract",
             "store",
@@ -4857,7 +5355,7 @@
           ]
         },
         {
-          "path": "internal/httpapi/ui/login.html",
+          "path": "internal/server/browser_assets/login.html",
           "group_id": "F12",
           "prior_group_id": "F12",
           "owner": "auth",
@@ -4865,13 +5363,13 @@
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Own login behavior within httpapi; bounded role: Human/device/browser sessions, resource authorization and server-only authenticated credential administration.",
+          "responsibility": "Embedded minimal sign-in page served by internal/server/browser.go; starts only the configured OIDC browser flow and stores no provider credential.",
           "interfaces": [],
           "dependencies": [
-            "api",
+            "config",
+            "httpapi",
             "app",
-            "auth",
-            "contract"
+            "temporal"
           ],
           "test_ids": [
             "V14",
@@ -4879,18 +5377,23 @@
             "V16"
           ],
           "generator": null,
-          "go_package": "httpapi",
+          "go_package": "server",
           "assignment_owner": "auth",
-          "group_responsibility": "Human/device/browser sessions, resource authorization and server-only authenticated credential administration.",
+          "group_responsibility": "Human/device/browser sessions, resource authorization, safe connection control, the private admin schema and embedded login projection; provider credential administration remains server-only and write-only.",
           "allowed_internal_dependencies": [
-            "api",
+            "config",
+            "httpapi",
             "app",
-            "auth",
-            "contract"
+            "temporal"
           ],
           "import_activation": [
             {
-              "package": "api",
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
               "earliest_milestone": "M3",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             },
@@ -4900,13 +5403,8 @@
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             },
             {
-              "package": "auth",
-              "earliest_milestone": "M3",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            },
-            {
-              "package": "contract",
-              "earliest_milestone": "M3",
+              "package": "temporal",
+              "earliest_milestone": "M4",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
@@ -4932,9 +5430,107 @@
           "generator": null,
           "go_package": null,
           "assignment_owner": "auth",
-          "group_responsibility": "Human/device/browser sessions, resource authorization and server-only authenticated credential administration.",
+          "group_responsibility": "Human/device/browser sessions, resource authorization, safe connection control, the private admin schema and embedded login projection; provider credential administration remains server-only and write-only.",
           "allowed_internal_dependencies": [],
           "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/auth/BUILD.bazel",
+          "group_id": "F12",
+          "prior_group_id": "F12",
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Bazel targets for the auth package and its same-stack tests using only the admitted auth package boundary.",
+          "interfaces": [],
+          "dependencies": [
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "V14",
+            "V15",
+            "V16"
+          ],
+          "generator": null,
+          "go_package": "auth",
+          "assignment_owner": "auth",
+          "group_responsibility": "Human/device/browser sessions, resource authorization, safe connection control, the private admin schema and embedded login projection; provider credential administration remains server-only and write-only.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/browser_assets/login.js",
+          "group_id": "F12",
+          "prior_group_id": "F12",
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Start a configured OIDC browser challenge and navigate only to the returned HTTPS authorization URL; retain no provider or PM secret.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V14",
+            "V15",
+            "V16"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Human/device/browser sessions, resource authorization, safe connection control, the private admin schema and embedded login projection; provider credential administration remains server-only and write-only.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
           "subsequent_wiring_milestones": []
         },
         {
@@ -4961,6 +5557,46 @@
           "go_package": "auth",
           "assignment_owner": "auth",
           "group_responsibility": "Wrong tenant/workspace/connection/run/event/artifact is rejected; loopback is not exempt. Remote TLS and exact Origin/Host/CSRF policy are enforced.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/auth/test_helpers_test.go",
+          "group_id": "T_V14",
+          "prior_group_id": "T_V14",
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Shared PostgreSQL/auth fixture for the accepted scope, session, browser, service and mutation cases; fixture setup is not independent proof.",
+          "interfaces": [],
+          "dependencies": [
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "V14"
+          ],
+          "generator": null,
+          "go_package": "auth",
+          "assignment_owner": "auth",
+          "group_responsibility": "Wrong tenant/workspace/connection/run/event/artifact is rejected; loopback is not exempt. Remote TLS and exact Origin/Host/CSRF policy are enforced. Staging: Contract introduction does not complete later consumer integration.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5044,7 +5680,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5088,7 +5724,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5133,7 +5769,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5178,7 +5814,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5220,7 +5856,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5262,7 +5898,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5304,7 +5940,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5350,7 +5986,7 @@
           "generator": null,
           "go_package": "httpapi",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -5382,7 +6018,7 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/httpapi/problem.go",
+          "path": "internal/server/browser_assets/credentials.html",
           "group_id": "R05",
           "prior_group_id": null,
           "owner": "auth",
@@ -5390,8 +6026,142 @@
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Map closed safe error codes to RFC9457 without raw error/panic/secret dumps.",
+          "responsibility": "Embedded minimal write-only connection-credential page served by internal/server/browser.go; provider secret bytes never enter URLs or browser storage.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R06",
+            "R07",
+            "R08"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/migrations/postgres/0003_identity.sql",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Ordered PostgreSQL migration 0003_identity.sql: create/alter only named PM-owned state, constraints and scoped grants.",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R06",
+            "R07",
+            "R08"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/auth/discovery.go",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Discover exact HTTPS OIDC issuer metadata through the caller-owned bounded redirect-refusing client and bind endpoints/signing keys to that issuer.",
           "interfaces": [
+            "DiscoverOIDC"
+          ],
+          "dependencies": [
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "R07"
+          ],
+          "generator": null,
+          "go_package": "auth",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/service.go",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own the HTTP Service and request state, safe problem projection formerly planned as problem.go, and application response mapping; unavailable dispatch stays 503.",
+          "interfaces": [
+            "Service",
             "WriteProblem"
           ],
           "dependencies": [
@@ -5408,7 +6178,7 @@
           "generator": null,
           "go_package": "httpapi",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -5437,10 +6207,12 @@
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
-          "subsequent_wiring_milestones": []
+          "subsequent_wiring_milestones": [
+            "M4"
+          ]
         },
         {
-          "path": "internal/httpapi/strict.go",
+          "path": "internal/httpapi/service_config.go",
           "group_id": "R05",
           "prior_group_id": null,
           "owner": "auth",
@@ -5448,9 +6220,10 @@
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Bound bytes and reject duplicate/trailing/unknown/wrong-case JSON before typed/schema decode; exact numbers preserved.",
+          "responsibility": "Bind generated HTTP transport to immutable app/auth/credential authorities; nil SubmitInvocation preserves M4 capability unavailability.",
           "interfaces": [
-            "StrictDecode"
+            "ServiceConfig",
+            "NewService"
           ],
           "dependencies": [
             "api",
@@ -5466,7 +6239,68 @@
           "generator": null,
           "go_package": "httpapi",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [
+            "M4"
+          ]
+        },
+        {
+          "path": "internal/httpapi/sessions.go",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Implement generated browser OIDC, device approval/exchange, current-session and revocation handlers with host/origin/CSRF cookie rules.",
+          "interfaces": [
+            "StartBrowserLogin",
+            "CompleteBrowserLogin",
+            "StartDeviceLogin",
+            "ExchangeDeviceLogin"
+          ],
+          "dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "test_ids": [
+            "R07"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -5498,7 +6332,7 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/httpapi/ui/admin-credentials.html",
+          "path": "internal/server/browser_assets/callback.html",
           "group_id": "R05",
           "prior_group_id": null,
           "owner": "auth",
@@ -5506,32 +6340,35 @@
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Own admin-credentials behavior within httpapi; bounded role: Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "responsibility": "Minimal same-origin OIDC callback page; one-time provider values are handled by the companion script and never persisted.",
           "interfaces": [],
           "dependencies": [
-            "api",
+            "config",
+            "httpapi",
             "app",
-            "auth",
-            "contract"
+            "temporal"
           ],
           "test_ids": [
-            "R06",
-            "R07",
-            "R08"
+            "R07"
           ],
           "generator": null,
-          "go_package": "httpapi",
+          "go_package": "server",
           "assignment_owner": "auth",
-          "group_responsibility": "Authentication and authorization plus Gin strict/context/proxy/error adapters; public DTOs exclude admin secrets.",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
           "allowed_internal_dependencies": [
-            "api",
+            "config",
+            "httpapi",
             "app",
-            "auth",
-            "contract"
+            "temporal"
           ],
           "import_activation": [
             {
-              "package": "api",
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
               "earliest_milestone": "M3",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             },
@@ -5541,13 +6378,320 @@
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             },
             {
-              "package": "auth",
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/browser_assets/callback.js",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Remove OIDC code/state from browser history before one same-origin completion request and retain no one-time value.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R07"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
               "earliest_milestone": "M3",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             },
             {
-              "package": "contract",
+              "package": "httpapi",
               "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/browser_assets/device.html",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Minimal browser form for an authenticated user to approve or deny one bounded device login challenge.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R07"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/browser_assets/device.js",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Submit one same-origin CSRF-protected device approval/denial and clear challenge values on page lifecycle transitions.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R07"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/browser_assets/credentials.js",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Submit credential bytes only to the private same-origin write-only endpoint, with CSRF and fresh-auth flow, then clear browser fields and transient buffers.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R06",
+            "R07",
+            "R08"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/browser_assets/pm.css",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Shared accessible styling for the minimal embedded browser login, device and credential pages; no runtime authority or external asset dependency.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R07"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/auth.go",
+          "group_id": "R05",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own deployment/session/OIDC/device/service authentication records and scoped identity authority reads used by auth and identity services.",
+          "interfaces": [
+            "WithinAuthDeployment",
+            "WithinPrincipalScope",
+            "InsertPMSession",
+            "AuthorizeResourceExistence"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R06",
+            "R07",
+            "R08"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "auth",
+          "group_responsibility": "Authentication and authorization, bounded OIDC discovery, session HTTP handling and Gin request/context/proxy/error adapters. Strict decoding is generator-owned and registered by routes; problem projection lives in the HTTP service. Embedded browser assets expose no admin secret DTO.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M2",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
@@ -5578,7 +6722,64 @@
           "generator": null,
           "go_package": "httpapi",
           "assignment_owner": "httpapi",
-          "group_responsibility": "Gin defaults are overridden: malformed/duplicate/trailing/unknown JSON, unsafe proxy headers, raw panic/error and unexpected origins fail safely; large exact numbers survive; request cancellation reaches standard context.",
+          "group_responsibility": "Gin defaults are overridden: malformed/duplicate/trailing/unknown JSON, unsafe proxy headers, raw panic/error and unexpected origins fail safely; large exact numbers survive; request cancellation reaches standard context. Staging: Contract introduction does not complete later consumer integration.",
+          "allowed_internal_dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/protocol_test.go",
+          "group_id": "T_R06",
+          "prior_group_id": null,
+          "owner": "httpapi",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise conditional revision metadata reaching authorization and strict bodyless/query refusal through the generated handler boundary.",
+          "interfaces": [
+            "TestConditionalRevisionReachesAuthorization",
+            "TestBodylessOperationBoundary"
+          ],
+          "dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "test_ids": [
+            "R06"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Gin defaults are overridden: malformed/duplicate/trailing/unknown JSON, unsafe proxy headers, raw panic/error and unexpected origins fail safely; large exact numbers survive; request cancellation reaches standard context. Staging: Contract introduction does not complete later consumer integration.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -5632,7 +6833,7 @@
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Browser same-origin HttpOnly session plus CSRF and exact origins; device flow one-time/expiry checks; bearer credentials not accepted from query strings; provider secret never enters public SDK.",
+          "group_responsibility": "Browser same-origin HttpOnly session plus CSRF and exact origins; device flow one-time/expiry checks; bearer credentials not accepted from query strings; provider secret never enters public SDK. Staging: Contract introduction does not complete later consumer integration.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5652,6 +6853,122 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "path": "internal/server/integration_fixture_test.go",
+          "group_id": "T_R07",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Bounded signed-loopback HTTPS OIDC and PostgreSQL fixture shared by browser/device/session, scoped mutation and credential-ingress application cases.",
+          "interfaces": [],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V16",
+            "R07",
+            "R08"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Browser same-origin HttpOnly session plus CSRF and exact origins; device flow one-time/expiry checks; bearer credentials not accepted from query strings; provider secret never enters public SDK. Staging: Contract introduction does not complete later consumer integration.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/integration_test.go",
+          "group_id": "T_R07",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise the composed application browser/device/session path, scoped membership/credential ingress, and API drain preserving pre-existing durable run state; it does not claim M4 HTTP admission or Temporal execution.",
+          "interfaces": [
+            "TestAuthenticatedApplicationBrowserDeviceAndSession",
+            "TestAuthenticatedApplicationScopeMutationAndCredentialIngress",
+            "TestAuthenticatedApplicationDrainPreservesAcceptedRun"
+          ],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "V16",
+            "R07",
+            "R08"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Browser same-origin HttpOnly session plus CSRF and exact origins; device flow one-time/expiry checks; bearer credentials not accepted from query strings; provider secret never enters public SDK. Staging: Contract introduction does not complete later consumer integration.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "internal/auth/service_test.go",
           "group_id": "T_R08",
           "prior_group_id": null,
@@ -5660,7 +6977,7 @@
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Service account/delegation cannot exceed explicit connection/operation/workspace/time grant; actor and effective actor remain distinct and auditable.",
+          "responsibility": "Exercise service-account/delegation ceilings and all six membership/service-account/delegation mutation semantics: authorization before replay, revision preconditions, safe exact replay and one-time credential only on original create.",
           "interfaces": [
             "TestServiceAndDelegationScope"
           ],
@@ -5669,12 +6986,13 @@
             "store"
           ],
           "test_ids": [
-            "R08"
+            "R08",
+            "AUTH-MUTATION-PARITY"
           ],
           "generator": null,
           "go_package": "auth",
           "assignment_owner": "auth",
-          "group_responsibility": "Service account/delegation cannot exceed explicit connection/operation/workspace/time grant; actor and effective actor remain distinct and auditable.",
+          "group_responsibility": "Service-account/delegation ceilings plus all six membership/service-account/delegation mutation receipt transitions: authorization before replay, revision preconditions, one logical concurrent effect, safe replay metadata and one-time credential only on original create. Staging: contract introduction does not complete later execution admission.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -5688,6 +7006,164 @@
             {
               "package": "store",
               "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/auth/receipt_test.go",
+          "group_id": "T_R08",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise concurrent equal service-account creates and compacted mutation-receipt replay/refusal semantics without credential reissuance.",
+          "interfaces": [
+            "TestConcurrentServiceAccountMutationReceipts",
+            "TestCompactedServiceAccountMutationReceipt"
+          ],
+          "dependencies": [
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "R08",
+            "AUTH-MUTATION-PARITY"
+          ],
+          "generator": null,
+          "go_package": "auth",
+          "assignment_owner": "auth",
+          "group_responsibility": "Service-account/delegation ceilings plus all six membership/service-account/delegation mutation receipt transitions: authorization before replay, revision preconditions, one logical concurrent effect, safe replay metadata and one-time credential only on original create. Staging: contract introduction does not complete later execution admission.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/service_accounts_integration_test.go",
+          "group_id": "T_R08",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise the composed authenticated HTTP service-account create/revoke routes, revision and replay semantics, and one-time credential only on original create.",
+          "interfaces": [
+            "TestAuthenticatedApplicationServiceAccountMutations"
+          ],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R08",
+            "AUTH-MUTATION-PARITY"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Service-account/delegation ceilings plus all six membership/service-account/delegation mutation receipt transitions: authorization before replay, revision preconditions, one logical concurrent effect, safe replay metadata and one-time credential only on original create. Staging: contract introduction does not complete later execution admission.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/delegations_integration_test.go",
+          "group_id": "T_R08",
+          "prior_group_id": null,
+          "owner": "auth",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise the composed authenticated HTTP delegation create/revoke routes, bounded scope, revision preconditions and safe exact replay.",
+          "interfaces": [
+            "TestAuthenticatedApplicationDelegationMutations"
+          ],
+          "dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "test_ids": [
+            "R08",
+            "AUTH-MUTATION-PARITY"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "auth",
+          "group_responsibility": "Service-account/delegation ceilings plus all six membership/service-account/delegation mutation receipt transitions: authorization before replay, revision preconditions, one logical concurrent effect, safe replay metadata and one-time credential only on original create. Staging: contract introduction does not complete later execution admission.",
+          "allowed_internal_dependencies": [
+            "config",
+            "httpapi",
+            "app",
+            "temporal"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
@@ -5719,7 +7195,7 @@
           "generator": null,
           "go_package": "app",
           "assignment_owner": "app",
-          "group_responsibility": "Workspace membership and bounded automation identity use cases; permissions checked before grants and mutations.",
+          "group_responsibility": "Workspace membership, safe connection metadata, bounded automation identity use cases and atomic scoped mutation receipts; permissions and current revisions are checked before grants, replay disclosure and mutations.",
           "allowed_internal_dependencies": [
             "contract",
             "store",
@@ -5790,7 +7266,7 @@
           "generator": null,
           "go_package": "app",
           "assignment_owner": "app",
-          "group_responsibility": "Workspace membership and bounded automation identity use cases; permissions checked before grants and mutations.",
+          "group_responsibility": "Workspace membership, safe connection metadata, bounded automation identity use cases and atomic scoped mutation receipts; permissions and current revisions are checked before grants, replay disclosure and mutations.",
           "allowed_internal_dependencies": [
             "contract",
             "store",
@@ -5861,7 +7337,7 @@
           "generator": null,
           "go_package": "app",
           "assignment_owner": "app",
-          "group_responsibility": "Workspace membership and bounded automation identity use cases; permissions checked before grants and mutations.",
+          "group_responsibility": "Workspace membership, safe connection metadata, bounded automation identity use cases and atomic scoped mutation receipts; permissions and current revisions are checked before grants, replay disclosure and mutations.",
           "allowed_internal_dependencies": [
             "contract",
             "store",
@@ -5930,7 +7406,7 @@
           "generator": null,
           "go_package": "httpapi",
           "assignment_owner": "app",
-          "group_responsibility": "Workspace membership and bounded automation identity use cases; permissions checked before grants and mutations.",
+          "group_responsibility": "Workspace membership, safe connection metadata, bounded automation identity use cases and atomic scoped mutation receipts; permissions and current revisions are checked before grants, replay disclosure and mutations.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -5956,6 +7432,46 @@
             {
               "package": "contract",
               "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/identity_mutations.go",
+          "group_id": "R20",
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own atomic membership, service-account, delegation and connection mutation receipts, collection revisions and scoped list/write transitions.",
+          "interfaces": [
+            "BeginIdentityMutation",
+            "FinishIdentityMutation",
+            "GrantMembership",
+            "CreateServiceAccount",
+            "CreateDelegation"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R04",
+            "R08"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "app",
+          "group_responsibility": "Workspace membership, safe connection metadata, bounded automation identity use cases and atomic scoped mutation receipts; permissions and current revisions are checked before grants, replay disclosure and mutations.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M2",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
@@ -6070,9 +7586,10 @@
         {
           "paths": [
             "internal/server/server.go",
-            "internal/httpapi/routes.go"
+            "internal/httpapi/routes.go",
+            "internal/httpapi/server.gen.go"
           ],
-          "reason": "Bind M3 auth middleware/session routes; positive scoped request and unauthenticated/unauthorized requests exercise the registered Gin router via TestGinStrictBoundary.",
+          "reason": "Bind M3 auth middleware/session routes and the generator-owned strict request binder; problem mapping is consolidated in the HTTP Service. TestGinStrictBoundary exercises the registered Gin router without handwritten problem.go/strict.go aliases.",
           "authority": "UPDATE after first owner merged; preserve its contract and serialize any overlapping integration edit."
         }
       ],
@@ -6127,7 +7644,7 @@
           "generator": null,
           "go_package": "credentials",
           "assignment_owner": "credentials",
-          "group_responsibility": "PG encrypted provider secret versions, scoped resolution, distributed refresh CAS and redaction; wrapping key is operator provisioned.",
+          "group_responsibility": "PostgreSQL encrypted provider-secret versions, lifecycle state, scoped resolution, distributed refresh fencing/CAS and redaction; wrapping keys remain operator provisioned.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -6170,7 +7687,7 @@
           "generator": null,
           "go_package": "credentials",
           "assignment_owner": "credentials",
-          "group_responsibility": "PG encrypted provider secret versions, scoped resolution, distributed refresh CAS and redaction; wrapping key is operator provisioned.",
+          "group_responsibility": "PostgreSQL encrypted provider-secret versions, lifecycle state, scoped resolution, distributed refresh fencing/CAS and redaction; wrapping keys remain operator provisioned.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -6213,7 +7730,7 @@
           "generator": null,
           "go_package": "credentials",
           "assignment_owner": "credentials",
-          "group_responsibility": "PG encrypted provider secret versions, scoped resolution, distributed refresh CAS and redaction; wrapping key is operator provisioned.",
+          "group_responsibility": "PostgreSQL encrypted provider-secret versions, lifecycle state, scoped resolution, distributed refresh fencing/CAS and redaction; wrapping keys remain operator provisioned.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -6256,7 +7773,7 @@
           "generator": null,
           "go_package": "credentials",
           "assignment_owner": "credentials",
-          "group_responsibility": "PG encrypted provider secret versions, scoped resolution, distributed refresh CAS and redaction; wrapping key is operator provisioned.",
+          "group_responsibility": "PostgreSQL encrypted provider-secret versions, lifecycle state, scoped resolution, distributed refresh fencing/CAS and redaction; wrapping keys remain operator provisioned.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -6270,6 +7787,119 @@
             {
               "package": "store",
               "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/migrations/postgres/0004_credential_lifecycle.sql",
+          "group_id": "F13",
+          "prior_group_id": "F13",
+          "owner": "credentials",
+          "process": "Worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Ordered PostgreSQL migration 0004_credential_lifecycle.sql: create/alter only named PM-owned state, constraints and scoped grants.",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V16",
+            "V17"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "credentials",
+          "group_responsibility": "PostgreSQL encrypted provider-secret versions, lifecycle state, scoped resolution, distributed refresh fencing/CAS and redaction; wrapping keys remain operator provisioned.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/credentials/BUILD.bazel",
+          "group_id": "F13",
+          "prior_group_id": "F13",
+          "owner": "credentials",
+          "process": "Worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Bazel targets for credential storage, resolution, refresh and redaction plus their bounded same-stack tests.",
+          "interfaces": [],
+          "dependencies": [
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "V16",
+            "V17"
+          ],
+          "generator": null,
+          "go_package": "credentials",
+          "assignment_owner": "credentials",
+          "group_responsibility": "PostgreSQL encrypted provider-secret versions, lifecycle state, scoped resolution, distributed refresh fencing/CAS and redaction; wrapping keys remain operator provisioned.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/credential_lifecycle.go",
+          "group_id": "F13",
+          "prior_group_id": "F13",
+          "owner": "credentials",
+          "process": "Worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own durable encrypted-credential lifecycle revisions, mutation replay metadata and provider-account-wide refresh fencing in scoped transactions.",
+          "interfaces": [
+            "LockCredentialLifecycle",
+            "CommitCredentialVersion",
+            "ClaimCredentialRefresh"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V16",
+            "V17"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "credentials",
+          "group_responsibility": "PostgreSQL encrypted provider-secret versions, lifecycle state, scoped resolution, distributed refresh fencing/CAS and redaction; wrapping keys remain operator provisioned.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M2",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
@@ -6298,7 +7928,7 @@
           "generator": null,
           "go_package": "credentials",
           "assignment_owner": "credentials",
-          "group_responsibility": "Provider-secret canaries in vault, refresh, headers, response bodies and errors never enter CLI arguments, requests, caches, logs, catalog or proof. Safe server authentication still works.",
+          "group_responsibility": "Provider-secret canaries in vault, refresh, headers, response bodies and errors never enter CLI arguments, requests, caches, logs, catalog or proof. Safe server authentication still works. Staging: Contract introduction does not complete later consumer integration.",
           "allowed_internal_dependencies": [
             "contract",
             "store"
@@ -6311,6 +7941,104 @@
             },
             {
               "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/auth/credential_ingress_test.go",
+          "group_id": "T_V16",
+          "prior_group_id": "T_V16",
+          "owner": "credentials",
+          "process": "Worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise transfer and clearing of the wrapping-key byte slice at the application credential-ingress boundary.",
+          "interfaces": [
+            "TestCredentialIngressWipesTransferredWrappingKey"
+          ],
+          "dependencies": [
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "V16"
+          ],
+          "generator": null,
+          "go_package": "auth",
+          "assignment_owner": "credentials",
+          "group_responsibility": "Provider-secret canaries in vault, refresh, headers, response bodies and errors never enter CLI arguments, requests, caches, logs, catalog or proof. Safe server authentication still works. Staging: Contract introduction does not complete later consumer integration.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/admin_test.go",
+          "group_id": "T_V16",
+          "prior_group_id": "T_V16",
+          "owner": "credentials",
+          "process": "Worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise private admin request shape, authentication reachability and secret-free generated diagnostics before credential persistence.",
+          "interfaces": [
+            "TestPrivateIngressBoundary"
+          ],
+          "dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "test_ids": [
+            "V16"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "credentials",
+          "group_responsibility": "Provider-secret canaries in vault, refresh, headers, response bodies and errors never enter CLI arguments, requests, caches, logs, catalog or proof. Safe server authentication still works. Staging: Contract introduction does not complete later consumer integration.",
+          "allowed_internal_dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
               "earliest_milestone": "M3",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
@@ -6360,6 +8088,47 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "path": "internal/credentials/test_helpers_test.go",
+          "group_id": "T_V17",
+          "prior_group_id": "T_V17",
+          "owner": "credentials",
+          "process": "Worker",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Shared PostgreSQL credential lifecycle, alias, key-resolution and process fixture for V16/V17; helper setup is not independent proof.",
+          "interfaces": [],
+          "dependencies": [
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "V16",
+            "V17"
+          ],
+          "generator": null,
+          "go_package": "credentials",
+          "assignment_owner": "credentials",
+          "group_responsibility": "Concurrent refresh has one owner; account changes invalidate witnesses. Rotation failure leaks no secret and never weakens scope. Staging: Contract introduction does not complete later consumer integration.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "internal/httpapi/admin.gen.go",
           "group_id": "F12g",
           "prior_group_id": "F12g",
@@ -6384,7 +8153,7 @@
           "generator": "scripts/generate.sh -> pinned pmgen/oapi/browser tools",
           "go_package": "httpapi",
           "assignment_owner": "httpapi",
-          "group_responsibility": "Mandatory PM auth, bounded bootstrap, server-admin provider ingress",
+          "group_responsibility": "Generated private admin DTO/handler projection and its deterministic composition helper; ordinary public models and clients exclude provider-secret input.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -6416,6 +8185,31 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "path": "tools/api_admin_generation.go",
+          "group_id": "F12g",
+          "prior_group_id": "F12g",
+          "owner": "httpapi",
+          "process": "API",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Compose the private admin OpenAPI fragment only into the server projection and generate private DTOs without adding secret input to ordinary clients.",
+          "interfaces": [],
+          "dependencies": [],
+          "test_ids": [
+            "V14",
+            "V15",
+            "V16"
+          ],
+          "generator": null,
+          "go_package": "tools",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Generated private admin DTO/handler projection and its deterministic composition helper; ordinary public models and clients exclude provider-secret input.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "internal/httpapi/admin.go",
           "group_id": "N08",
           "prior_group_id": "N08",
@@ -6433,6 +8227,7 @@
             "contract"
           ],
           "test_ids": [
+            "V16",
             "V75",
             "V76",
             "V79"
@@ -6440,7 +8235,134 @@
           "generator": null,
           "go_package": "httpapi",
           "assignment_owner": "httpapi",
-          "group_responsibility": "Server-authenticated admin endpoint; deployment identity comes from PG/config and secrets never have public readback.",
+          "group_responsibility": "Server-authenticated, fresh-browser, write-only provider-credential ingress; deployment identity and wrapping-key references come from PG/config and no secret has public readback.",
+          "allowed_internal_dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/app/credentials.go",
+          "group_id": "N08",
+          "prior_group_id": "N08",
+          "owner": "httpapi",
+          "process": "API",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Authorize fresh browser-only, write-only credential ingress before resolving the operator wrapping key and return only safe durable revision metadata.",
+          "interfaces": [
+            "CredentialIngress",
+            "StoreEncryptedCredential"
+          ],
+          "dependencies": [
+            "contract",
+            "store",
+            "auth",
+            "credentials",
+            "connectors",
+            "sync"
+          ],
+          "test_ids": [
+            "V16"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Server-authenticated, fresh-browser, write-only provider-credential ingress; deployment identity and wrapping-key references come from PG/config and no secret has public readback.",
+          "allowed_internal_dependencies": [
+            "contract",
+            "store",
+            "auth",
+            "credentials",
+            "connectors",
+            "sync"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M3",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "connectors",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "sync",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/admin_service.go",
+          "group_id": "N08",
+          "prior_group_id": "N08",
+          "owner": "httpapi",
+          "process": "API",
+          "milestone": "M3",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Bind the private generated admin handler to CredentialIngress, clear request secret bytes and return only safe credential status metadata.",
+          "interfaces": [
+            "AdminStoreCredential"
+          ],
+          "dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract"
+          ],
+          "test_ids": [
+            "V16"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Server-authenticated, fresh-browser, write-only provider-credential ingress; deployment identity and wrapping-key references come from PG/config and no secret has public readback.",
           "allowed_internal_dependencies": [
             "api",
             "app",
@@ -7442,7 +9364,7 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/store/migrations/postgres/0003_workflow_outbox.sql",
+          "path": "internal/store/migrations/postgres/0005_workflow_outbox.sql",
           "group_id": "R08",
           "prior_group_id": null,
           "owner": "temporal",
@@ -7450,7 +9372,7 @@
           "milestone": "M4",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Ordered PostgreSQL migration 0003_workflow_outbox.sql: create/alter only named PM-owned state, constraints and scoped grants.",
+          "responsibility": "Ordered PostgreSQL migration 0005_workflow_outbox.sql: create/alter only named PM-owned state, constraints and scoped grants.",
           "interfaces": [],
           "dependencies": [
             "contract"
@@ -15138,7 +17060,7 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/store/migrations/postgres/0004_warehouse_schema.sql",
+          "path": "internal/store/migrations/postgres/0006_warehouse_schema.sql",
           "group_id": "R17",
           "prior_group_id": null,
           "owner": "store",
@@ -15146,7 +17068,7 @@
           "milestone": "M7",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Ordered PostgreSQL migration 0004_warehouse_schema.sql: create/alter only named PM-owned state, constraints and scoped grants.",
+          "responsibility": "Ordered PostgreSQL migration 0006_warehouse_schema.sql: create/alter only named PM-owned state, constraints and scoped grants.",
           "interfaces": [],
           "dependencies": [
             "contract"
@@ -16870,7 +18792,7 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/store/migrations/postgres/0005_profiles_approvals.sql",
+          "path": "internal/store/migrations/postgres/0007_profiles_approvals.sql",
           "group_id": "F32",
           "prior_group_id": "F32",
           "owner": "store",
@@ -16878,7 +18800,7 @@
           "milestone": "M8",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Ordered PostgreSQL migration 0005_profiles_approvals.sql: create/alter only named PM-owned state, constraints and scoped grants.",
+          "responsibility": "Ordered PostgreSQL migration 0007_profiles_approvals.sql: create/alter only named PM-owned state, constraints and scoped grants.",
           "interfaces": [],
           "dependencies": [
             "contract"
@@ -18832,7 +20754,7 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/store/migrations/postgres/0006_schedules_flows.sql",
+          "path": "internal/store/migrations/postgres/0008_schedules_flows.sql",
           "group_id": "F35",
           "prior_group_id": "F35",
           "owner": "store",
@@ -18840,7 +20762,7 @@
           "milestone": "M9",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Ordered PostgreSQL migration 0006_schedules_flows.sql: create/alter only named PM-owned state, constraints and scoped grants.",
+          "responsibility": "Ordered PostgreSQL migration 0008_schedules_flows.sql: create/alter only named PM-owned state, constraints and scoped grants.",
           "interfaces": [],
           "dependencies": [
             "contract"
@@ -20145,7 +22067,7 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/store/migrations/postgres/0007_dynamic_schema.sql",
+          "path": "internal/store/migrations/postgres/0009_dynamic_schema.sql",
           "group_id": "R19",
           "prior_group_id": null,
           "owner": "schema",
@@ -20153,7 +22075,7 @@
           "milestone": "M10",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Ordered PostgreSQL migration 0007_dynamic_schema.sql: create/alter only named PM-owned state, constraints and scoped grants.",
+          "responsibility": "Ordered PostgreSQL migration 0009_dynamic_schema.sql: create/alter only named PM-owned state, constraints and scoped grants.",
           "interfaces": [],
           "dependencies": [
             "contract"

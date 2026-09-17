@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Completing PM sign in</title>
+  <link rel="stylesheet" href="/assets/pm.css">
+  <script src="/assets/callback.js" defer></script>
+</head>
+<body>
+  <main class="shell" aria-labelledby="page-title">
+    <section class="card">
+      <p class="eyebrow">PM Server</p>
+      <h1 id="page-title">Completing sign in</h1>
+      <p id="status" class="status" role="status" aria-live="assertive">Verifying your identity…</p>
+      <div id="next-actions" class="hidden">
+        <p>Your browser session is ready.</p>
+        <nav aria-label="PM browser actions">
+          <a href="/login/device">Approve a device login</a>
+          <a href="/admin/credentials">Store a connection credential</a>
+        </nav>
+      </div>
+      <noscript>JavaScript is required to complete the one-time identity callback.</noscript>
+    </section>
+  </main>
+</body>
+</html>

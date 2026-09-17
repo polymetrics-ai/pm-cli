@@ -95,6 +95,171 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/info (the `GetServerInfo` operationId).
 	GetServerInfo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// CompleteBrowserLoginWithBody Complete one configured OIDC callback with state, nonce and PKCE verification
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+	CompleteBrowserLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CompleteBrowserLogin Complete one configured OIDC callback with state, nonce and PKCE verification
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+	CompleteBrowserLogin(ctx context.Context, body CompleteBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartBrowserLoginWithBody Start a configured OIDC login with server-held PKCE binding
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+	StartBrowserLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartBrowserLogin Start a configured OIDC login with server-held PKCE binding
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+	StartBrowserLogin(ctx context.Context, body StartBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeCurrentSession Revoke the current login session without revoking accepted run grants
+	//
+	// Corresponds with DELETE /v1/sessions/current (the `RevokeCurrentSession` operationId).
+	RevokeCurrentSession(ctx context.Context, params *RevokeCurrentSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartDeviceLoginWithBody Start a bounded device login challenge
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+	StartDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StartDeviceLogin Start a bounded device login challenge
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+	StartDeviceLogin(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveDeviceLoginWithBody Approve a device challenge as the current verified browser identity
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+	ApproveDeviceLoginWithBody(ctx context.Context, params *ApproveDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ApproveDeviceLogin Approve a device challenge as the current verified browser identity
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+	ApproveDeviceLogin(ctx context.Context, params *ApproveDeviceLoginParams, body ApproveDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DenyDeviceLoginWithBody Deny a device challenge as the current verified browser identity
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+	DenyDeviceLoginWithBody(ctx context.Context, params *DenyDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DenyDeviceLogin Deny a device challenge as the current verified browser identity
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+	DenyDeviceLogin(ctx context.Context, params *DenyDeviceLoginParams, body DenyDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeDeviceLoginWithBody Exchange one approved device proof exactly once
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+	ExchangeDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExchangeDeviceLogin Exchange one approved device proof exactly once
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+	ExchangeDeviceLogin(ctx context.Context, body ExchangeDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCurrentSession Inspect the current authenticated actor and workspace memberships
+	//
+	// Corresponds with GET /v1/sessions/me (the `GetCurrentSession` operationId).
+	GetCurrentSession(ctx context.Context, params *GetCurrentSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListWorkspaces List memberships of the authenticated principal without inferring a workspace
+	//
+	// Corresponds with GET /v1/workspaces (the `ListWorkspaces` operationId).
+	ListWorkspaces(ctx context.Context, params *ListWorkspacesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWorkspace Inspect an explicitly authorized workspace
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id} (the `GetWorkspace` operationId).
+	GetWorkspace(ctx context.Context, workspaceId WorkspaceID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListConnections List safe connection metadata and its collection revision
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections (the `ListConnections` operationId).
+	ListConnections(ctx context.Context, workspaceId WorkspaceID, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnectionWithBody Create a safe connection against an existing authoritative provider account
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+	CreateConnectionWithBody(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConnection Create a safe connection against an existing authoritative provider account
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+	CreateConnection(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConnectionWithBody Revoke a connection under its current resource revision
+	//
+	// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+	DeleteConnectionWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConnection Revoke a connection under its current resource revision
+	//
+	// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+	DeleteConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, body DeleteConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConnection Inspect safe current connection metadata
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id} (the `GetConnection` operationId).
+	GetConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateConnectionWithBody Update safe connection metadata while preserving its credential binding
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+	UpdateConnectionWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateConnection Update safe connection metadata while preserving its credential binding
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+	UpdateConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListDelegations List safe one-hop delegation scope and revision metadata
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/delegations (the `ListDelegations` operationId).
+	ListDelegations(ctx context.Context, workspaceId WorkspaceID, params *ListDelegationsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateDelegationWithBody Create one bounded delegation
 	//
 	// Takes any type of body and a specified content type.
@@ -137,6 +302,11 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/workspaces/{workspace_id}/invocations (the `SubmitInvocation` operationId).
 	SubmitInvocation(ctx context.Context, workspaceId WorkspaceID, params *SubmitInvocationParams, body SubmitInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListMemberships List currently authorized membership and grant metadata
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/memberships (the `ListMemberships` operationId).
+	ListMemberships(ctx context.Context, workspaceId WorkspaceID, params *ListMembershipsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GrantMembershipWithBody Grant a workspace membership
 	//
 	// Takes any type of body and a specified content type.
@@ -165,6 +335,73 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/workspaces/{workspace_id}/memberships/{id}/revoke (the `RevokeMembership` operationId).
 	RevokeMembership(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *RevokeMembershipParams, body RevokeMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListRuns List currently authorized runs
+	//
+	// Returns a scope-bound cursor page of safe run projections. Each projection identifies the immutable accepted connection and operation-or-plan context; it does not expose the RunSpec, execution grant, inputs, credentials or orchestration internals.
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs (the `ListRuns` operationId).
+	ListRuns(ctx context.Context, workspaceId WorkspaceID, params *ListRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRun Inspect one authorized run
+	//
+	// Authorizes the immutable accepted connection and operation-or-plan context before returning current PostgreSQL-owned run and effect truth. Revocation of execution authority does not rewrite or by itself hide an otherwise authorized historical run view.
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id} (the `GetRun` operationId).
+	GetRun(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelRunWithBody Persist an explicit cancellation intent
+	//
+	// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+	CancelRunWithBody(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CancelRun Persist an explicit cancellation intent
+	//
+	// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+	CancelRun(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, body CancelRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetRunResult List available result references for one authorized run
+	//
+	// Returns only currently available immutable result references beside PostgreSQL-owned effect truth. An empty result_references array is explicit; orchestration closure never fabricates a result or a successful effect.
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/result (the `GetRunResult` operationId).
+	GetRunResult(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeRunWithBody Request one explicit recovery generation
+	//
+	// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+	ResumeRunWithBody(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeRun Request one explicit recovery generation
+	//
+	// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+	ResumeRun(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, body ResumeRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListRunTasks List durable tasks and exact member outcomes for one authorized run
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/tasks (the `ListRunTasks` operationId).
+	ListRunTasks(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ListRunTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListServiceAccounts List safe service-account scope and revision metadata
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/service-accounts (the `ListServiceAccounts` operationId).
+	ListServiceAccounts(ctx context.Context, workspaceId WorkspaceID, params *ListServiceAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// CreateServiceAccountWithBody Create a PM service account
 	//
 	// Takes any type of body and a specified content type.
@@ -192,6 +429,13 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/workspaces/{workspace_id}/service-accounts/{id}/revoke (the `RevokeServiceAccount` operationId).
 	RevokeServiceAccount(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *RevokeServiceAccountParams, body RevokeServiceAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetTask Inspect one durable task and its exact member outcomes
+	//
+	// The public task_id is the immutable reference returned by a task view and binds the exact run and stored task identity. Implementations must not select an arbitrary same-named task by its stored task component alone.
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/tasks/{task_id} (the `GetTask` operationId).
+	GetTask(ctx context.Context, workspaceId WorkspaceID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 // GetServerInfo Discover the public wire compatibility contract
@@ -199,6 +443,421 @@ type ClientInterface interface {
 // Corresponds with GET /v1/info (the `GetServerInfo` operationId).
 func (c *Client) GetServerInfo(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetServerInfoRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteBrowserLoginWithBody Complete one configured OIDC callback with state, nonce and PKCE verification
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+func (c *Client) CompleteBrowserLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteBrowserLoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CompleteBrowserLogin Complete one configured OIDC callback with state, nonce and PKCE verification
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+func (c *Client) CompleteBrowserLogin(ctx context.Context, body CompleteBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCompleteBrowserLoginRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartBrowserLoginWithBody Start a configured OIDC login with server-held PKCE binding
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+func (c *Client) StartBrowserLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartBrowserLoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartBrowserLogin Start a configured OIDC login with server-held PKCE binding
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+func (c *Client) StartBrowserLogin(ctx context.Context, body StartBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartBrowserLoginRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeCurrentSession Revoke the current login session without revoking accepted run grants
+//
+// Corresponds with DELETE /v1/sessions/current (the `RevokeCurrentSession` operationId).
+func (c *Client) RevokeCurrentSession(ctx context.Context, params *RevokeCurrentSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeCurrentSessionRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartDeviceLoginWithBody Start a bounded device login challenge
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+func (c *Client) StartDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartDeviceLoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StartDeviceLogin Start a bounded device login challenge
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+func (c *Client) StartDeviceLogin(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStartDeviceLoginRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveDeviceLoginWithBody Approve a device challenge as the current verified browser identity
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+func (c *Client) ApproveDeviceLoginWithBody(ctx context.Context, params *ApproveDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveDeviceLoginRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ApproveDeviceLogin Approve a device challenge as the current verified browser identity
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+func (c *Client) ApproveDeviceLogin(ctx context.Context, params *ApproveDeviceLoginParams, body ApproveDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewApproveDeviceLoginRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DenyDeviceLoginWithBody Deny a device challenge as the current verified browser identity
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+func (c *Client) DenyDeviceLoginWithBody(ctx context.Context, params *DenyDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDenyDeviceLoginRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DenyDeviceLogin Deny a device challenge as the current verified browser identity
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+func (c *Client) DenyDeviceLogin(ctx context.Context, params *DenyDeviceLoginParams, body DenyDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDenyDeviceLoginRequest(c.Server, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeDeviceLoginWithBody Exchange one approved device proof exactly once
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+func (c *Client) ExchangeDeviceLoginWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeDeviceLoginRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ExchangeDeviceLogin Exchange one approved device proof exactly once
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+func (c *Client) ExchangeDeviceLogin(ctx context.Context, body ExchangeDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExchangeDeviceLoginRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCurrentSession Inspect the current authenticated actor and workspace memberships
+//
+// Corresponds with GET /v1/sessions/me (the `GetCurrentSession` operationId).
+func (c *Client) GetCurrentSession(ctx context.Context, params *GetCurrentSessionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCurrentSessionRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListWorkspaces List memberships of the authenticated principal without inferring a workspace
+//
+// Corresponds with GET /v1/workspaces (the `ListWorkspaces` operationId).
+func (c *Client) ListWorkspaces(ctx context.Context, params *ListWorkspacesParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListWorkspacesRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetWorkspace Inspect an explicitly authorized workspace
+//
+// Corresponds with GET /v1/workspaces/{workspace_id} (the `GetWorkspace` operationId).
+func (c *Client) GetWorkspace(ctx context.Context, workspaceId WorkspaceID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWorkspaceRequest(c.Server, workspaceId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListConnections List safe connection metadata and its collection revision
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections (the `ListConnections` operationId).
+func (c *Client) ListConnections(ctx context.Context, workspaceId WorkspaceID, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConnectionsRequest(c.Server, workspaceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnectionWithBody Create a safe connection against an existing authoritative provider account
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+func (c *Client) CreateConnectionWithBody(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectionRequestWithBody(c.Server, workspaceId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConnection Create a safe connection against an existing authoritative provider account
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+func (c *Client) CreateConnection(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConnectionRequest(c.Server, workspaceId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConnectionWithBody Revoke a connection under its current resource revision
+//
+// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+func (c *Client) DeleteConnectionWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectionRequestWithBody(c.Server, workspaceId, connectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConnection Revoke a connection under its current resource revision
+//
+// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+func (c *Client) DeleteConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, body DeleteConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConnectionRequest(c.Server, workspaceId, connectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnection Inspect safe current connection metadata
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id} (the `GetConnection` operationId).
+func (c *Client) GetConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectionRequest(c.Server, workspaceId, connectionId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateConnectionWithBody Update safe connection metadata while preserving its credential binding
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+func (c *Client) UpdateConnectionWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateConnectionRequestWithBody(c.Server, workspaceId, connectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateConnection Update safe connection metadata while preserving its credential binding
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+func (c *Client) UpdateConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateConnectionRequest(c.Server, workspaceId, connectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListDelegations List safe one-hop delegation scope and revision metadata
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/delegations (the `ListDelegations` operationId).
+func (c *Client) ListDelegations(ctx context.Context, workspaceId WorkspaceID, params *ListDelegationsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListDelegationsRequest(c.Server, workspaceId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -311,6 +970,21 @@ func (c *Client) SubmitInvocation(ctx context.Context, workspaceId WorkspaceID, 
 	return c.Client.Do(req)
 }
 
+// ListMemberships List currently authorized membership and grant metadata
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/memberships (the `ListMemberships` operationId).
+func (c *Client) ListMemberships(ctx context.Context, workspaceId WorkspaceID, params *ListMembershipsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListMembershipsRequest(c.Server, workspaceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // GrantMembershipWithBody Grant a workspace membership
 //
 // Takes any type of body and a specified content type.
@@ -369,6 +1043,163 @@ func (c *Client) RevokeMembershipWithBody(ctx context.Context, workspaceId Works
 // Corresponds with POST /v1/workspaces/{workspace_id}/memberships/{id}/revoke (the `RevokeMembership` operationId).
 func (c *Client) RevokeMembership(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *RevokeMembershipParams, body RevokeMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeMembershipRequest(c.Server, workspaceId, id, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListRuns List currently authorized runs
+//
+// Returns a scope-bound cursor page of safe run projections. Each projection identifies the immutable accepted connection and operation-or-plan context; it does not expose the RunSpec, execution grant, inputs, credentials or orchestration internals.
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs (the `ListRuns` operationId).
+func (c *Client) ListRuns(ctx context.Context, workspaceId WorkspaceID, params *ListRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRunsRequest(c.Server, workspaceId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRun Inspect one authorized run
+//
+// Authorizes the immutable accepted connection and operation-or-plan context before returning current PostgreSQL-owned run and effect truth. Revocation of execution authority does not rewrite or by itself hide an otherwise authorized historical run view.
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id} (the `GetRun` operationId).
+func (c *Client) GetRun(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRunRequest(c.Server, workspaceId, runId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelRunWithBody Persist an explicit cancellation intent
+//
+// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+func (c *Client) CancelRunWithBody(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelRunRequestWithBody(c.Server, workspaceId, runId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CancelRun Persist an explicit cancellation intent
+//
+// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+func (c *Client) CancelRun(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, body CancelRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCancelRunRequest(c.Server, workspaceId, runId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetRunResult List available result references for one authorized run
+//
+// Returns only currently available immutable result references beside PostgreSQL-owned effect truth. An empty result_references array is explicit; orchestration closure never fabricates a result or a successful effect.
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/result (the `GetRunResult` operationId).
+func (c *Client) GetRunResult(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetRunResultRequest(c.Server, workspaceId, runId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeRunWithBody Request one explicit recovery generation
+//
+// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+func (c *Client) ResumeRunWithBody(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeRunRequestWithBody(c.Server, workspaceId, runId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeRun Request one explicit recovery generation
+//
+// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+func (c *Client) ResumeRun(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, body ResumeRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeRunRequest(c.Server, workspaceId, runId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListRunTasks List durable tasks and exact member outcomes for one authorized run
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/tasks (the `ListRunTasks` operationId).
+func (c *Client) ListRunTasks(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ListRunTasksParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListRunTasksRequest(c.Server, workspaceId, runId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListServiceAccounts List safe service-account scope and revision metadata
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/service-accounts (the `ListServiceAccounts` operationId).
+func (c *Client) ListServiceAccounts(ctx context.Context, workspaceId WorkspaceID, params *ListServiceAccountsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListServiceAccountsRequest(c.Server, workspaceId, params)
 	if err != nil {
 		return nil, err
 	}
@@ -447,6 +1278,23 @@ func (c *Client) RevokeServiceAccount(ctx context.Context, workspaceId Workspace
 	return c.Client.Do(req)
 }
 
+// GetTask Inspect one durable task and its exact member outcomes
+//
+// The public task_id is the immutable reference returned by a task view and binds the exact run and stored task identity. Implementations must not select an arbitrary same-named task by its stored task component alone.
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/tasks/{task_id} (the `GetTask` operationId).
+func (c *Client) GetTask(ctx context.Context, workspaceId WorkspaceID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetTaskRequest(c.Server, workspaceId, taskId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // NewGetServerInfoRequest constructs an http.Request for the GetServerInfo method
 func NewGetServerInfoRequest(server string) (*http.Request, error) {
 	var err error
@@ -464,6 +1312,931 @@ func NewGetServerInfoRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCompleteBrowserLoginRequest calls the generic CompleteBrowserLogin builder with application/json body
+func NewCompleteBrowserLoginRequest(server string, body CompleteBrowserLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCompleteBrowserLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCompleteBrowserLoginRequestWithBody constructs an http.Request for the CompleteBrowserLogin method, with any body, and a specified content type
+func NewCompleteBrowserLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/browser")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewStartBrowserLoginRequest calls the generic StartBrowserLogin builder with application/json body
+func NewStartBrowserLoginRequest(server string, body StartBrowserLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartBrowserLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewStartBrowserLoginRequestWithBody constructs an http.Request for the StartBrowserLogin method, with any body, and a specified content type
+func NewStartBrowserLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/browser/challenges")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRevokeCurrentSessionRequest constructs an http.Request for the RevokeCurrentSession method
+func NewRevokeCurrentSessionRequest(server string, params *RevokeCurrentSessionParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/current")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XCSRFToken != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewStartDeviceLoginRequest calls the generic StartDeviceLogin builder with application/json body
+func NewStartDeviceLoginRequest(server string, body StartDeviceLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewStartDeviceLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewStartDeviceLoginRequestWithBody constructs an http.Request for the StartDeviceLogin method, with any body, and a specified content type
+func NewStartDeviceLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/device")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewApproveDeviceLoginRequest calls the generic ApproveDeviceLogin builder with application/json body
+func NewApproveDeviceLoginRequest(server string, params *ApproveDeviceLoginParams, body ApproveDeviceLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewApproveDeviceLoginRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewApproveDeviceLoginRequestWithBody constructs an http.Request for the ApproveDeviceLogin method, with any body, and a specified content type
+func NewApproveDeviceLoginRequestWithBody(server string, params *ApproveDeviceLoginParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/device/approve")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XCSRFToken != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDenyDeviceLoginRequest calls the generic DenyDeviceLogin builder with application/json body
+func NewDenyDeviceLoginRequest(server string, params *DenyDeviceLoginParams, body DenyDeviceLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDenyDeviceLoginRequestWithBody(server, params, "application/json", bodyReader)
+}
+
+// NewDenyDeviceLoginRequestWithBody constructs an http.Request for the DenyDeviceLogin method, with any body, and a specified content type
+func NewDenyDeviceLoginRequestWithBody(server string, params *DenyDeviceLoginParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/device/deny")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XCSRFToken != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam0)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewExchangeDeviceLoginRequest calls the generic ExchangeDeviceLogin builder with application/json body
+func NewExchangeDeviceLoginRequest(server string, body ExchangeDeviceLoginJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewExchangeDeviceLoginRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewExchangeDeviceLoginRequestWithBody constructs an http.Request for the ExchangeDeviceLogin method, with any body, and a specified content type
+func NewExchangeDeviceLoginRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/device/exchange")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCurrentSessionRequest constructs an http.Request for the GetCurrentSession method
+func NewGetCurrentSessionRequest(server string, params *GetCurrentSessionParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/sessions/me")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListWorkspacesRequest constructs an http.Request for the ListWorkspaces method
+func NewListWorkspacesRequest(server string, params *ListWorkspacesParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetWorkspaceRequest constructs an http.Request for the GetWorkspace method
+func NewGetWorkspaceRequest(server string, workspaceId WorkspaceID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListConnectionsRequest constructs an http.Request for the ListConnections method
+func NewListConnectionsRequest(server string, workspaceId WorkspaceID, params *ListConnectionsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCreateConnectionRequest calls the generic CreateConnection builder with application/json body
+func NewCreateConnectionRequest(server string, workspaceId WorkspaceID, params *CreateConnectionParams, body CreateConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateConnectionRequestWithBody(server, workspaceId, params, "application/json", bodyReader)
+}
+
+// NewCreateConnectionRequestWithBody constructs an http.Request for the CreateConnection method, with any body, and a specified content type
+func NewCreateConnectionRequestWithBody(server string, workspaceId WorkspaceID, params *CreateConnectionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewDeleteConnectionRequest calls the generic DeleteConnection builder with application/json body
+func NewDeleteConnectionRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, body DeleteConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDeleteConnectionRequestWithBody(server, workspaceId, connectionId, params, "application/json", bodyReader)
+}
+
+// NewDeleteConnectionRequestWithBody constructs an http.Request for the DeleteConnection method, with any body, and a specified content type
+func NewDeleteConnectionRequestWithBody(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetConnectionRequest constructs an http.Request for the GetConnection method
+func NewGetConnectionRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUpdateConnectionRequest calls the generic UpdateConnection builder with application/json body
+func NewUpdateConnectionRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateConnectionRequestWithBody(server, workspaceId, connectionId, params, "application/json", bodyReader)
+}
+
+// NewUpdateConnectionRequestWithBody constructs an http.Request for the UpdateConnection method, with any body, and a specified content type
+func NewUpdateConnectionRequestWithBody(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListDelegationsRequest constructs an http.Request for the ListDelegations method
+func NewListDelegationsRequest(server string, workspaceId WorkspaceID, params *ListDelegationsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/delegations", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -529,14 +2302,27 @@ func NewCreateDelegationRequestWithBody(server string, workspaceId WorkspaceID, 
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
-		var headerParam1 string
+		if params.IfMatch != nil {
+			var headerParam1 string
 
-		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
 		}
 
-		req.Header.Set("If-Match", headerParam1)
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
 
 	}
 
@@ -605,14 +2391,27 @@ func NewRevokeDelegationRequestWithBody(server string, workspaceId WorkspaceID, 
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
-		var headerParam1 string
+		if params.IfMatch != nil {
+			var headerParam1 string
 
-		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
 		}
 
-		req.Header.Set("If-Match", headerParam1)
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
 
 	}
 
@@ -674,6 +2473,90 @@ func NewSubmitInvocationRequestWithBody(server string, workspaceId WorkspaceID, 
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
+		if params.XCSRFToken != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam1)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListMembershipsRequest constructs an http.Request for the ListMemberships method
+func NewListMembershipsRequest(server string, workspaceId WorkspaceID, params *ListMembershipsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/memberships", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
@@ -734,14 +2617,27 @@ func NewGrantMembershipRequestWithBody(server string, workspaceId WorkspaceID, p
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
-		var headerParam1 string
+		if params.IfMatch != nil {
+			var headerParam1 string
 
-		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
 		}
 
-		req.Header.Set("If-Match", headerParam1)
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
 
 	}
 
@@ -810,15 +2706,526 @@ func NewRevokeMembershipRequestWithBody(server string, workspaceId WorkspaceID, 
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
-		var headerParam1 string
+		if params.IfMatch != nil {
+			var headerParam1 string
 
-		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListRunsRequest constructs an http.Request for the ListRuns method
+func NewListRunsRequest(server string, workspaceId WorkspaceID, params *ListRunsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/runs", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetRunRequest constructs an http.Request for the GetRun method
+func NewGetRunRequest(server string, workspaceId WorkspaceID, runId RunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "run_id", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/runs/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewCancelRunRequest calls the generic CancelRun builder with application/json body
+func NewCancelRunRequest(server string, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, body CancelRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCancelRunRequestWithBody(server, workspaceId, runId, params, "application/json", bodyReader)
+}
+
+// NewCancelRunRequestWithBody constructs an http.Request for the CancelRun method, with any body, and a specified content type
+func NewCancelRunRequestWithBody(server string, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "run_id", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/runs/%s/cancel", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
 		if err != nil {
 			return nil, err
 		}
 
-		req.Header.Set("If-Match", headerParam1)
+		req.Header.Set("Idempotency-Key", headerParam0)
 
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetRunResultRequest constructs an http.Request for the GetRunResult method
+func NewGetRunResultRequest(server string, workspaceId WorkspaceID, runId RunID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "run_id", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/runs/%s/result", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeRunRequest calls the generic ResumeRun builder with application/json body
+func NewResumeRunRequest(server string, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, body ResumeRunJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewResumeRunRequestWithBody(server, workspaceId, runId, params, "application/json", bodyReader)
+}
+
+// NewResumeRunRequestWithBody constructs an http.Request for the ResumeRun method, with any body, and a specified content type
+func NewResumeRunRequestWithBody(server string, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "run_id", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/runs/%s/resume", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewListRunTasksRequest constructs an http.Request for the ListRunTasks method
+func NewListRunTasksRequest(server string, workspaceId WorkspaceID, runId RunID, params *ListRunTasksParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "run_id", runId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/runs/%s/tasks", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListServiceAccountsRequest constructs an http.Request for the ListServiceAccounts method
+func NewListServiceAccountsRequest(server string, workspaceId WorkspaceID, params *ListServiceAccountsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/service-accounts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.PageSize != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "page_size", *params.PageSize, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
@@ -879,14 +3286,27 @@ func NewCreateServiceAccountRequestWithBody(server string, workspaceId Workspace
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
-		var headerParam1 string
+		if params.IfMatch != nil {
+			var headerParam1 string
 
-		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
 		}
 
-		req.Header.Set("If-Match", headerParam1)
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
 
 	}
 
@@ -955,15 +3375,69 @@ func NewRevokeServiceAccountRequestWithBody(server string, workspaceId Workspace
 
 		req.Header.Set("Idempotency-Key", headerParam0)
 
-		var headerParam1 string
+		if params.IfMatch != nil {
+			var headerParam1 string
 
-		headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
-		if err != nil {
-			return nil, err
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
 		}
 
-		req.Header.Set("If-Match", headerParam1)
+		if params.XCSRFToken != nil {
+			var headerParam2 string
 
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetTaskRequest constructs an http.Request for the GetTask method
+func NewGetTaskRequest(server string, workspaceId WorkspaceID, taskId TaskID) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "task_id", taskId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/tasks/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
 	}
 
 	return req, nil
@@ -1020,6 +3494,185 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/info (the `GetServerInfo` operationId).
 	GetServerInfoWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetServerInfoResponse, error)
 
+	// CompleteBrowserLoginWithBodyWithResponse Complete one configured OIDC callback with state, nonce and PKCE verification
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+	CompleteBrowserLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CompleteBrowserLoginResponse, error)
+
+	// CompleteBrowserLoginWithResponse Complete one configured OIDC callback with state, nonce and PKCE verification
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+	CompleteBrowserLoginWithResponse(ctx context.Context, body CompleteBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteBrowserLoginResponse, error)
+
+	// StartBrowserLoginWithBodyWithResponse Start a configured OIDC login with server-held PKCE binding
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+	StartBrowserLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartBrowserLoginResponse, error)
+
+	// StartBrowserLoginWithResponse Start a configured OIDC login with server-held PKCE binding
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+	StartBrowserLoginWithResponse(ctx context.Context, body StartBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*StartBrowserLoginResponse, error)
+
+	// RevokeCurrentSessionWithResponse Revoke the current login session without revoking accepted run grants
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/sessions/current (the `RevokeCurrentSession` operationId).
+	RevokeCurrentSessionWithResponse(ctx context.Context, params *RevokeCurrentSessionParams, reqEditors ...RequestEditorFn) (*RevokeCurrentSessionResponse, error)
+
+	// StartDeviceLoginWithBodyWithResponse Start a bounded device login challenge
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+	StartDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error)
+
+	// StartDeviceLoginWithResponse Start a bounded device login challenge
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+	StartDeviceLoginWithResponse(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error)
+
+	// ApproveDeviceLoginWithBodyWithResponse Approve a device challenge as the current verified browser identity
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+	ApproveDeviceLoginWithBodyWithResponse(ctx context.Context, params *ApproveDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveDeviceLoginResponse, error)
+
+	// ApproveDeviceLoginWithResponse Approve a device challenge as the current verified browser identity
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+	ApproveDeviceLoginWithResponse(ctx context.Context, params *ApproveDeviceLoginParams, body ApproveDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveDeviceLoginResponse, error)
+
+	// DenyDeviceLoginWithBodyWithResponse Deny a device challenge as the current verified browser identity
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+	DenyDeviceLoginWithBodyWithResponse(ctx context.Context, params *DenyDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DenyDeviceLoginResponse, error)
+
+	// DenyDeviceLoginWithResponse Deny a device challenge as the current verified browser identity
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+	DenyDeviceLoginWithResponse(ctx context.Context, params *DenyDeviceLoginParams, body DenyDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*DenyDeviceLoginResponse, error)
+
+	// ExchangeDeviceLoginWithBodyWithResponse Exchange one approved device proof exactly once
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+	ExchangeDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeDeviceLoginResponse, error)
+
+	// ExchangeDeviceLoginWithResponse Exchange one approved device proof exactly once
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+	ExchangeDeviceLoginWithResponse(ctx context.Context, body ExchangeDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeDeviceLoginResponse, error)
+
+	// GetCurrentSessionWithResponse Inspect the current authenticated actor and workspace memberships
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/sessions/me (the `GetCurrentSession` operationId).
+	GetCurrentSessionWithResponse(ctx context.Context, params *GetCurrentSessionParams, reqEditors ...RequestEditorFn) (*GetCurrentSessionResponse, error)
+
+	// ListWorkspacesWithResponse List memberships of the authenticated principal without inferring a workspace
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces (the `ListWorkspaces` operationId).
+	ListWorkspacesWithResponse(ctx context.Context, params *ListWorkspacesParams, reqEditors ...RequestEditorFn) (*ListWorkspacesResponse, error)
+
+	// GetWorkspaceWithResponse Inspect an explicitly authorized workspace
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id} (the `GetWorkspace` operationId).
+	GetWorkspaceWithResponse(ctx context.Context, workspaceId WorkspaceID, reqEditors ...RequestEditorFn) (*GetWorkspaceResponse, error)
+
+	// ListConnectionsWithResponse List safe connection metadata and its collection revision
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections (the `ListConnections` operationId).
+	ListConnectionsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectionsResponse, error)
+
+	// CreateConnectionWithBodyWithResponse Create a safe connection against an existing authoritative provider account
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+	CreateConnectionWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error)
+
+	// CreateConnectionWithResponse Create a safe connection against an existing authoritative provider account
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+	CreateConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error)
+
+	// DeleteConnectionWithBodyWithResponse Revoke a connection under its current resource revision
+	//
+	// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+	DeleteConnectionWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteConnectionResponse, error)
+
+	// DeleteConnectionWithResponse Revoke a connection under its current resource revision
+	//
+	// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+	DeleteConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, body DeleteConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DeleteConnectionResponse, error)
+
+	// GetConnectionWithResponse Inspect safe current connection metadata
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id} (the `GetConnection` operationId).
+	GetConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error)
+
+	// UpdateConnectionWithBodyWithResponse Update safe connection metadata while preserving its credential binding
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+	UpdateConnectionWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateConnectionResponse, error)
+
+	// UpdateConnectionWithResponse Update safe connection metadata while preserving its credential binding
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+	UpdateConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConnectionResponse, error)
+
+	// ListDelegationsWithResponse List safe one-hop delegation scope and revision metadata
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/delegations (the `ListDelegations` operationId).
+	ListDelegationsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListDelegationsParams, reqEditors ...RequestEditorFn) (*ListDelegationsResponse, error)
+
 	// CreateDelegationWithBodyWithResponse Create one bounded delegation
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1062,6 +3715,13 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/workspaces/{workspace_id}/invocations (the `SubmitInvocation` operationId).
 	SubmitInvocationWithResponse(ctx context.Context, workspaceId WorkspaceID, params *SubmitInvocationParams, body SubmitInvocationJSONRequestBody, reqEditors ...RequestEditorFn) (*SubmitInvocationResponse, error)
 
+	// ListMembershipsWithResponse List currently authorized membership and grant metadata
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/memberships (the `ListMemberships` operationId).
+	ListMembershipsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListMembershipsParams, reqEditors ...RequestEditorFn) (*ListMembershipsResponse, error)
+
 	// GrantMembershipWithBodyWithResponse Grant a workspace membership
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1090,6 +3750,83 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/workspaces/{workspace_id}/memberships/{id}/revoke (the `RevokeMembership` operationId).
 	RevokeMembershipWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *RevokeMembershipParams, body RevokeMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeMembershipResponse, error)
 
+	// ListRunsWithResponse List currently authorized runs
+	//
+	// Returns a scope-bound cursor page of safe run projections. Each projection identifies the immutable accepted connection and operation-or-plan context; it does not expose the RunSpec, execution grant, inputs, credentials or orchestration internals.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs (the `ListRuns` operationId).
+	ListRunsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListRunsParams, reqEditors ...RequestEditorFn) (*ListRunsResponse, error)
+
+	// GetRunWithResponse Inspect one authorized run
+	//
+	// Authorizes the immutable accepted connection and operation-or-plan context before returning current PostgreSQL-owned run and effect truth. Revocation of execution authority does not rewrite or by itself hide an otherwise authorized historical run view.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id} (the `GetRun` operationId).
+	GetRunWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*GetRunResponse, error)
+
+	// CancelRunWithBodyWithResponse Persist an explicit cancellation intent
+	//
+	// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+	CancelRunWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelRunResponse, error)
+
+	// CancelRunWithResponse Persist an explicit cancellation intent
+	//
+	// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+	CancelRunWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, body CancelRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelRunResponse, error)
+
+	// GetRunResultWithResponse List available result references for one authorized run
+	//
+	// Returns only currently available immutable result references beside PostgreSQL-owned effect truth. An empty result_references array is explicit; orchestration closure never fabricates a result or a successful effect.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/result (the `GetRunResult` operationId).
+	GetRunResultWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*GetRunResultResponse, error)
+
+	// ResumeRunWithBodyWithResponse Request one explicit recovery generation
+	//
+	// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+	ResumeRunWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeRunResponse, error)
+
+	// ResumeRunWithResponse Request one explicit recovery generation
+	//
+	// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+	ResumeRunWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, body ResumeRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeRunResponse, error)
+
+	// ListRunTasksWithResponse List durable tasks and exact member outcomes for one authorized run
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/tasks (the `ListRunTasks` operationId).
+	ListRunTasksWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ListRunTasksParams, reqEditors ...RequestEditorFn) (*ListRunTasksResponse, error)
+
+	// ListServiceAccountsWithResponse List safe service-account scope and revision metadata
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/service-accounts (the `ListServiceAccounts` operationId).
+	ListServiceAccountsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListServiceAccountsParams, reqEditors ...RequestEditorFn) (*ListServiceAccountsResponse, error)
+
 	// CreateServiceAccountWithBodyWithResponse Create a PM service account
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -1117,6 +3854,15 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/workspaces/{workspace_id}/service-accounts/{id}/revoke (the `RevokeServiceAccount` operationId).
 	RevokeServiceAccountWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *RevokeServiceAccountParams, body RevokeServiceAccountJSONRequestBody, reqEditors ...RequestEditorFn) (*RevokeServiceAccountResponse, error)
+
+	// GetTaskWithResponse Inspect one durable task and its exact member outcomes
+	//
+	// The public task_id is the immutable reference returned by a task view and binds the exact run and stored task identity. Implementations must not select an arbitrary same-named task by its stored task component alone.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/tasks/{task_id} (the `GetTask` operationId).
+	GetTaskWithResponse(ctx context.Context, workspaceId WorkspaceID, taskId TaskID, reqEditors ...RequestEditorFn) (*GetTaskResponse, error)
 }
 
 type GetServerInfoResponse struct {
@@ -1161,6 +3907,1257 @@ func (r GetServerInfoResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetServerInfoResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CompleteBrowserLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CompleteBrowserLoginResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CompleteBrowserLoginResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CompleteBrowserLoginResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CompleteBrowserLoginResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r CompleteBrowserLoginResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CompleteBrowserLoginResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CompleteBrowserLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CompleteBrowserLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CompleteBrowserLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CompleteBrowserLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartBrowserLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *BrowserLoginChallenge
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem429
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r StartBrowserLoginResponse) GetJSON201() *BrowserLoginChallenge {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r StartBrowserLoginResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r StartBrowserLoginResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r StartBrowserLoginResponse) GetApplicationproblemJSON429() *Problem429 {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r StartBrowserLoginResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r StartBrowserLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartBrowserLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartBrowserLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartBrowserLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RevokeCurrentSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RevokeCurrentSessionResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RevokeCurrentSessionResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RevokeCurrentSessionResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RevokeCurrentSessionResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeCurrentSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeCurrentSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeCurrentSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeCurrentSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type StartDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *DeviceChallenge
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem429
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r StartDeviceLoginResponse) GetJSON201() *DeviceChallenge {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r StartDeviceLoginResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r StartDeviceLoginResponse) GetApplicationproblemJSON429() *Problem429 {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r StartDeviceLoginResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r StartDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StartDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StartDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StartDeviceLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ApproveDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ApproveDeviceLoginResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ApproveDeviceLoginResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ApproveDeviceLoginResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ApproveDeviceLoginResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r ApproveDeviceLoginResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ApproveDeviceLoginResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ApproveDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ApproveDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ApproveDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ApproveDeviceLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DenyDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DenyDeviceLoginResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DenyDeviceLoginResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DenyDeviceLoginResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DenyDeviceLoginResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r DenyDeviceLoginResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DenyDeviceLoginResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DenyDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DenyDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DenyDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DenyDeviceLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ExchangeDeviceLoginResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *PMDeviceSession
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem429
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ExchangeDeviceLoginResponse) GetJSON200() *PMDeviceSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON429() *Problem429 {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ExchangeDeviceLoginResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ExchangeDeviceLoginResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExchangeDeviceLoginResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ExchangeDeviceLoginResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetCurrentSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CurrentSession
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCurrentSessionResponse) GetJSON200() *CurrentSession {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetCurrentSessionResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetCurrentSessionResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetCurrentSessionResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetCurrentSessionResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCurrentSessionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCurrentSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCurrentSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCurrentSessionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListWorkspacesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WorkspacePage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListWorkspacesResponse) GetJSON200() *WorkspacePage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListWorkspacesResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListWorkspacesResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListWorkspacesResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListWorkspacesResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListWorkspacesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListWorkspacesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListWorkspacesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListWorkspacesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetWorkspaceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Workspace
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetWorkspaceResponse) GetJSON200() *Workspace {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetWorkspaceResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetWorkspaceResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetWorkspaceResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetWorkspaceResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetWorkspaceResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetWorkspaceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWorkspaceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWorkspaceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetWorkspaceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListConnectionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionPage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConnectionsResponse) GetJSON200() *ConnectionPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListConnectionsResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListConnectionsResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListConnectionsResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListConnectionsResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListConnectionsResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConnectionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConnectionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConnectionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConnectionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CreateConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionMutationResponse
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *ConnectionMutationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r CreateConnectionResponse) GetJSON200() *ConnectionMutationResponse {
+	return r.JSON200
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateConnectionResponse) GetJSON201() *ConnectionMutationResponse {
+	return r.JSON201
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CreateConnectionResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DeleteConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionMutationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteConnectionResponse) GetJSON200() *ConnectionMutationResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DeleteConnectionResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Connection
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectionResponse) GetJSON200() *Connection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetConnectionResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetConnectionResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetConnectionResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetConnectionResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetConnectionResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateConnectionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionMutationResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateConnectionResponse) GetJSON200() *ConnectionMutationResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdateConnectionResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateConnectionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateConnectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateConnectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListDelegationsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *DelegationPage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListDelegationsResponse) GetJSON200() *DelegationPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListDelegationsResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListDelegationsResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListDelegationsResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListDelegationsResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListDelegationsResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListDelegationsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListDelegationsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListDelegationsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListDelegationsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1493,6 +5490,82 @@ func (r SubmitInvocationResponse) ContentType() string {
 	return ""
 }
 
+type ListMembershipsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *MembershipPage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListMembershipsResponse) GetJSON200() *MembershipPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListMembershipsResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListMembershipsResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListMembershipsResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListMembershipsResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListMembershipsResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListMembershipsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListMembershipsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListMembershipsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListMembershipsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type GrantMembershipResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -1702,6 +5775,608 @@ func (r RevokeMembershipResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RevokeMembershipResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListRunsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RunPage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListRunsResponse) GetJSON200() *RunPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListRunsResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListRunsResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListRunsResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListRunsResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListRunsResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListRunsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRunsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRunsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListRunsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetRunResponse200Headers the declared response headers of an HTTP 200 response for GetRun
+type GetRunResponse200Headers struct {
+	ETag *string
+}
+
+type GetRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RunView
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetRunResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRunResponse) GetJSON200() *RunView {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetRunResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetRunResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetRunResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetRunResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetRunResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type CancelRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *RunCancelResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r CancelRunResponse) GetJSON202() *RunCancelResponse {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r CancelRunResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r CancelRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CancelRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CancelRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CancelRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetRunResultResponse200Headers the declared response headers of an HTTP 200 response for GetRunResult
+type GetRunResultResponse200Headers struct {
+	ETag *string
+}
+
+type GetRunResultResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *RunResultResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetRunResultResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetRunResultResponse) GetJSON200() *RunResultResponse {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetRunResultResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetRunResultResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetRunResultResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetRunResultResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetRunResultResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetRunResultResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetRunResultResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetRunResultResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetRunResultResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ResumeRunResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *RunResumeResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r ResumeRunResponse) GetJSON202() *RunResumeResponse {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ResumeRunResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeRunResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeRunResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeRunResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeRunResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListRunTasksResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TaskPage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListRunTasksResponse) GetJSON200() *TaskPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListRunTasksResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListRunTasksResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListRunTasksResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListRunTasksResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListRunTasksResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListRunTasksResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListRunTasksResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListRunTasksResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListRunTasksResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type ListServiceAccountsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ServiceAccountPage
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListServiceAccountsResponse) GetJSON200() *ServiceAccountPage {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r ListServiceAccountsResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r ListServiceAccountsResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r ListServiceAccountsResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r ListServiceAccountsResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r ListServiceAccountsResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ListServiceAccountsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListServiceAccountsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListServiceAccountsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListServiceAccountsResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -1923,6 +6598,89 @@ func (r RevokeServiceAccountResponse) ContentType() string {
 	return ""
 }
 
+// GetTaskResponse200Headers the declared response headers of an HTTP 200 response for GetTask
+type GetTaskResponse200Headers struct {
+	ETag *string
+}
+
+type GetTaskResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *TaskView
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetTaskResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetTaskResponse) GetJSON200() *TaskView {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetTaskResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetTaskResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetTaskResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetTaskResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetTaskResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetTaskResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetTaskResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetTaskResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetTaskResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetServerInfoWithResponse Discover the public wire compatibility contract
 //
 // Returns a wrapper object for the known response body format(s).
@@ -1934,6 +6692,335 @@ func (c *ClientWithResponses) GetServerInfoWithResponse(ctx context.Context, req
 		return nil, err
 	}
 	return ParseGetServerInfoResponse(rsp)
+}
+
+// CompleteBrowserLoginWithBodyWithResponse Complete one configured OIDC callback with state, nonce and PKCE verification
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+func (c *ClientWithResponses) CompleteBrowserLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CompleteBrowserLoginResponse, error) {
+	rsp, err := c.CompleteBrowserLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteBrowserLoginResponse(rsp)
+}
+
+// CompleteBrowserLoginWithResponse Complete one configured OIDC callback with state, nonce and PKCE verification
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/browser (the `CompleteBrowserLogin` operationId).
+func (c *ClientWithResponses) CompleteBrowserLoginWithResponse(ctx context.Context, body CompleteBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*CompleteBrowserLoginResponse, error) {
+	rsp, err := c.CompleteBrowserLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCompleteBrowserLoginResponse(rsp)
+}
+
+// StartBrowserLoginWithBodyWithResponse Start a configured OIDC login with server-held PKCE binding
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+func (c *ClientWithResponses) StartBrowserLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartBrowserLoginResponse, error) {
+	rsp, err := c.StartBrowserLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartBrowserLoginResponse(rsp)
+}
+
+// StartBrowserLoginWithResponse Start a configured OIDC login with server-held PKCE binding
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/browser/challenges (the `StartBrowserLogin` operationId).
+func (c *ClientWithResponses) StartBrowserLoginWithResponse(ctx context.Context, body StartBrowserLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*StartBrowserLoginResponse, error) {
+	rsp, err := c.StartBrowserLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartBrowserLoginResponse(rsp)
+}
+
+// RevokeCurrentSessionWithResponse Revoke the current login session without revoking accepted run grants
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/sessions/current (the `RevokeCurrentSession` operationId).
+func (c *ClientWithResponses) RevokeCurrentSessionWithResponse(ctx context.Context, params *RevokeCurrentSessionParams, reqEditors ...RequestEditorFn) (*RevokeCurrentSessionResponse, error) {
+	rsp, err := c.RevokeCurrentSession(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeCurrentSessionResponse(rsp)
+}
+
+// StartDeviceLoginWithBodyWithResponse Start a bounded device login challenge
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+func (c *ClientWithResponses) StartDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error) {
+	rsp, err := c.StartDeviceLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartDeviceLoginResponse(rsp)
+}
+
+// StartDeviceLoginWithResponse Start a bounded device login challenge
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device (the `StartDeviceLogin` operationId).
+func (c *ClientWithResponses) StartDeviceLoginWithResponse(ctx context.Context, body StartDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*StartDeviceLoginResponse, error) {
+	rsp, err := c.StartDeviceLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStartDeviceLoginResponse(rsp)
+}
+
+// ApproveDeviceLoginWithBodyWithResponse Approve a device challenge as the current verified browser identity
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+func (c *ClientWithResponses) ApproveDeviceLoginWithBodyWithResponse(ctx context.Context, params *ApproveDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ApproveDeviceLoginResponse, error) {
+	rsp, err := c.ApproveDeviceLoginWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveDeviceLoginResponse(rsp)
+}
+
+// ApproveDeviceLoginWithResponse Approve a device challenge as the current verified browser identity
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device/approve (the `ApproveDeviceLogin` operationId).
+func (c *ClientWithResponses) ApproveDeviceLoginWithResponse(ctx context.Context, params *ApproveDeviceLoginParams, body ApproveDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*ApproveDeviceLoginResponse, error) {
+	rsp, err := c.ApproveDeviceLogin(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseApproveDeviceLoginResponse(rsp)
+}
+
+// DenyDeviceLoginWithBodyWithResponse Deny a device challenge as the current verified browser identity
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+func (c *ClientWithResponses) DenyDeviceLoginWithBodyWithResponse(ctx context.Context, params *DenyDeviceLoginParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DenyDeviceLoginResponse, error) {
+	rsp, err := c.DenyDeviceLoginWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDenyDeviceLoginResponse(rsp)
+}
+
+// DenyDeviceLoginWithResponse Deny a device challenge as the current verified browser identity
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device/deny (the `DenyDeviceLogin` operationId).
+func (c *ClientWithResponses) DenyDeviceLoginWithResponse(ctx context.Context, params *DenyDeviceLoginParams, body DenyDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*DenyDeviceLoginResponse, error) {
+	rsp, err := c.DenyDeviceLogin(ctx, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDenyDeviceLoginResponse(rsp)
+}
+
+// ExchangeDeviceLoginWithBodyWithResponse Exchange one approved device proof exactly once
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+func (c *ClientWithResponses) ExchangeDeviceLoginWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ExchangeDeviceLoginResponse, error) {
+	rsp, err := c.ExchangeDeviceLoginWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeDeviceLoginResponse(rsp)
+}
+
+// ExchangeDeviceLoginWithResponse Exchange one approved device proof exactly once
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/sessions/device/exchange (the `ExchangeDeviceLogin` operationId).
+func (c *ClientWithResponses) ExchangeDeviceLoginWithResponse(ctx context.Context, body ExchangeDeviceLoginJSONRequestBody, reqEditors ...RequestEditorFn) (*ExchangeDeviceLoginResponse, error) {
+	rsp, err := c.ExchangeDeviceLogin(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExchangeDeviceLoginResponse(rsp)
+}
+
+// GetCurrentSessionWithResponse Inspect the current authenticated actor and workspace memberships
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/sessions/me (the `GetCurrentSession` operationId).
+func (c *ClientWithResponses) GetCurrentSessionWithResponse(ctx context.Context, params *GetCurrentSessionParams, reqEditors ...RequestEditorFn) (*GetCurrentSessionResponse, error) {
+	rsp, err := c.GetCurrentSession(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCurrentSessionResponse(rsp)
+}
+
+// ListWorkspacesWithResponse List memberships of the authenticated principal without inferring a workspace
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces (the `ListWorkspaces` operationId).
+func (c *ClientWithResponses) ListWorkspacesWithResponse(ctx context.Context, params *ListWorkspacesParams, reqEditors ...RequestEditorFn) (*ListWorkspacesResponse, error) {
+	rsp, err := c.ListWorkspaces(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListWorkspacesResponse(rsp)
+}
+
+// GetWorkspaceWithResponse Inspect an explicitly authorized workspace
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id} (the `GetWorkspace` operationId).
+func (c *ClientWithResponses) GetWorkspaceWithResponse(ctx context.Context, workspaceId WorkspaceID, reqEditors ...RequestEditorFn) (*GetWorkspaceResponse, error) {
+	rsp, err := c.GetWorkspace(ctx, workspaceId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWorkspaceResponse(rsp)
+}
+
+// ListConnectionsWithResponse List safe connection metadata and its collection revision
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections (the `ListConnections` operationId).
+func (c *ClientWithResponses) ListConnectionsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectionsResponse, error) {
+	rsp, err := c.ListConnections(ctx, workspaceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConnectionsResponse(rsp)
+}
+
+// CreateConnectionWithBodyWithResponse Create a safe connection against an existing authoritative provider account
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+func (c *ClientWithResponses) CreateConnectionWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error) {
+	rsp, err := c.CreateConnectionWithBody(ctx, workspaceId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectionResponse(rsp)
+}
+
+// CreateConnectionWithResponse Create a safe connection against an existing authoritative provider account
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections (the `CreateConnection` operationId).
+func (c *ClientWithResponses) CreateConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, params *CreateConnectionParams, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error) {
+	rsp, err := c.CreateConnection(ctx, workspaceId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConnectionResponse(rsp)
+}
+
+// DeleteConnectionWithBodyWithResponse Revoke a connection under its current resource revision
+//
+// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+func (c *ClientWithResponses) DeleteConnectionWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DeleteConnectionResponse, error) {
+	rsp, err := c.DeleteConnectionWithBody(ctx, workspaceId, connectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectionResponse(rsp)
+}
+
+// DeleteConnectionWithResponse Revoke a connection under its current resource revision
+//
+// Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/workspaces/{workspace_id}/connections/{connection_id} (the `DeleteConnection` operationId).
+func (c *ClientWithResponses) DeleteConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DeleteConnectionParams, body DeleteConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*DeleteConnectionResponse, error) {
+	rsp, err := c.DeleteConnection(ctx, workspaceId, connectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConnectionResponse(rsp)
+}
+
+// GetConnectionWithResponse Inspect safe current connection metadata
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id} (the `GetConnection` operationId).
+func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error) {
+	rsp, err := c.GetConnection(ctx, workspaceId, connectionId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectionResponse(rsp)
+}
+
+// UpdateConnectionWithBodyWithResponse Update safe connection metadata while preserving its credential binding
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+func (c *ClientWithResponses) UpdateConnectionWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateConnectionResponse, error) {
+	rsp, err := c.UpdateConnectionWithBody(ctx, workspaceId, connectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateConnectionResponse(rsp)
+}
+
+// UpdateConnectionWithResponse Update safe connection metadata while preserving its credential binding
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
+func (c *ClientWithResponses) UpdateConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConnectionResponse, error) {
+	rsp, err := c.UpdateConnection(ctx, workspaceId, connectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateConnectionResponse(rsp)
+}
+
+// ListDelegationsWithResponse List safe one-hop delegation scope and revision metadata
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/delegations (the `ListDelegations` operationId).
+func (c *ClientWithResponses) ListDelegationsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListDelegationsParams, reqEditors ...RequestEditorFn) (*ListDelegationsResponse, error) {
+	rsp, err := c.ListDelegations(ctx, workspaceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListDelegationsResponse(rsp)
 }
 
 // CreateDelegationWithBodyWithResponse Create one bounded delegation
@@ -2014,6 +7101,19 @@ func (c *ClientWithResponses) SubmitInvocationWithResponse(ctx context.Context, 
 	return ParseSubmitInvocationResponse(rsp)
 }
 
+// ListMembershipsWithResponse List currently authorized membership and grant metadata
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/memberships (the `ListMemberships` operationId).
+func (c *ClientWithResponses) ListMembershipsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListMembershipsParams, reqEditors ...RequestEditorFn) (*ListMembershipsResponse, error) {
+	rsp, err := c.ListMemberships(ctx, workspaceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListMembershipsResponse(rsp)
+}
+
 // GrantMembershipWithBodyWithResponse Grant a workspace membership
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -2064,6 +7164,137 @@ func (c *ClientWithResponses) RevokeMembershipWithResponse(ctx context.Context, 
 		return nil, err
 	}
 	return ParseRevokeMembershipResponse(rsp)
+}
+
+// ListRunsWithResponse List currently authorized runs
+//
+// Returns a scope-bound cursor page of safe run projections. Each projection identifies the immutable accepted connection and operation-or-plan context; it does not expose the RunSpec, execution grant, inputs, credentials or orchestration internals.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs (the `ListRuns` operationId).
+func (c *ClientWithResponses) ListRunsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListRunsParams, reqEditors ...RequestEditorFn) (*ListRunsResponse, error) {
+	rsp, err := c.ListRuns(ctx, workspaceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRunsResponse(rsp)
+}
+
+// GetRunWithResponse Inspect one authorized run
+//
+// Authorizes the immutable accepted connection and operation-or-plan context before returning current PostgreSQL-owned run and effect truth. Revocation of execution authority does not rewrite or by itself hide an otherwise authorized historical run view.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id} (the `GetRun` operationId).
+func (c *ClientWithResponses) GetRunWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*GetRunResponse, error) {
+	rsp, err := c.GetRun(ctx, workspaceId, runId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRunResponse(rsp)
+}
+
+// CancelRunWithBodyWithResponse Persist an explicit cancellation intent
+//
+// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+func (c *ClientWithResponses) CancelRunWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CancelRunResponse, error) {
+	rsp, err := c.CancelRunWithBody(ctx, workspaceId, runId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelRunResponse(rsp)
+}
+
+// CancelRunWithResponse Persist an explicit cancellation intent
+//
+// Persists an authorized cancellation command under the scoped request key. HTTP 202 means the command is durable; it never asserts that orchestration stopped or that provider work was terminated. Current authorization is checked before replay disclosure. Exact replay may be resolved before the current If-Match comparison; every new mutation requires If-Match.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/cancel (the `CancelRun` operationId).
+func (c *ClientWithResponses) CancelRunWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *CancelRunParams, body CancelRunJSONRequestBody, reqEditors ...RequestEditorFn) (*CancelRunResponse, error) {
+	rsp, err := c.CancelRun(ctx, workspaceId, runId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCancelRunResponse(rsp)
+}
+
+// GetRunResultWithResponse List available result references for one authorized run
+//
+// Returns only currently available immutable result references beside PostgreSQL-owned effect truth. An empty result_references array is explicit; orchestration closure never fabricates a result or a successful effect.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/result (the `GetRunResult` operationId).
+func (c *ClientWithResponses) GetRunResultWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, reqEditors ...RequestEditorFn) (*GetRunResultResponse, error) {
+	rsp, err := c.GetRunResult(ctx, workspaceId, runId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetRunResultResponse(rsp)
+}
+
+// ResumeRunWithBodyWithResponse Request one explicit recovery generation
+//
+// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+func (c *ClientWithResponses) ResumeRunWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResumeRunResponse, error) {
+	rsp, err := c.ResumeRunWithBody(ctx, workspaceId, runId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeRunResponse(rsp)
+}
+
+// ResumeRunWithResponse Request one explicit recovery generation
+//
+// Names the recovery generation and approval context explicitly and preserves every unresolved effect. HTTP 202 accepts only the durable recovery command, not a provider-effect outcome. An unavailable or ineligible handler returns HTTP 409 resume_unavailable. Current authorization precedes replay disclosure; exact replay may precede the current If-Match comparison, while every new mutation requires If-Match.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/runs/{run_id}/resume (the `ResumeRun` operationId).
+func (c *ClientWithResponses) ResumeRunWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ResumeRunParams, body ResumeRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ResumeRunResponse, error) {
+	rsp, err := c.ResumeRun(ctx, workspaceId, runId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeRunResponse(rsp)
+}
+
+// ListRunTasksWithResponse List durable tasks and exact member outcomes for one authorized run
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/runs/{run_id}/tasks (the `ListRunTasks` operationId).
+func (c *ClientWithResponses) ListRunTasksWithResponse(ctx context.Context, workspaceId WorkspaceID, runId RunID, params *ListRunTasksParams, reqEditors ...RequestEditorFn) (*ListRunTasksResponse, error) {
+	rsp, err := c.ListRunTasks(ctx, workspaceId, runId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListRunTasksResponse(rsp)
+}
+
+// ListServiceAccountsWithResponse List safe service-account scope and revision metadata
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/service-accounts (the `ListServiceAccounts` operationId).
+func (c *ClientWithResponses) ListServiceAccountsWithResponse(ctx context.Context, workspaceId WorkspaceID, params *ListServiceAccountsParams, reqEditors ...RequestEditorFn) (*ListServiceAccountsResponse, error) {
+	rsp, err := c.ListServiceAccounts(ctx, workspaceId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListServiceAccountsResponse(rsp)
 }
 
 // CreateServiceAccountWithBodyWithResponse Create a PM service account
@@ -2118,6 +7349,21 @@ func (c *ClientWithResponses) RevokeServiceAccountWithResponse(ctx context.Conte
 	return ParseRevokeServiceAccountResponse(rsp)
 }
 
+// GetTaskWithResponse Inspect one durable task and its exact member outcomes
+//
+// The public task_id is the immutable reference returned by a task view and binds the exact run and stored task identity. Implementations must not select an arbitrary same-named task by its stored task component alone.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/tasks/{task_id} (the `GetTask` operationId).
+func (c *ClientWithResponses) GetTaskWithResponse(ctx context.Context, workspaceId WorkspaceID, taskId TaskID, reqEditors ...RequestEditorFn) (*GetTaskResponse, error) {
+	rsp, err := c.GetTask(ctx, workspaceId, taskId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetTaskResponse(rsp)
+}
+
 // ParseGetServerInfoResponse parses an HTTP response from a GetServerInfoWithResponse call
 func ParseGetServerInfoResponse(rsp *http.Response) (*GetServerInfoResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2145,6 +7391,1029 @@ func ParseGetServerInfoResponse(rsp *http.Response) (*GetServerInfoResponse, err
 			return nil, err
 		}
 		response.ApplicationproblemJSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCompleteBrowserLoginResponse parses an HTTP response from a CompleteBrowserLoginWithResponse call
+func ParseCompleteBrowserLoginResponse(rsp *http.Response) (*CompleteBrowserLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CompleteBrowserLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStartBrowserLoginResponse parses an HTTP response from a StartBrowserLoginWithResponse call
+func ParseStartBrowserLoginResponse(rsp *http.Response) (*StartBrowserLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartBrowserLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest BrowserLoginChallenge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRevokeCurrentSessionResponse parses an HTTP response from a RevokeCurrentSessionWithResponse call
+func ParseRevokeCurrentSessionResponse(rsp *http.Response) (*RevokeCurrentSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeCurrentSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseStartDeviceLoginResponse parses an HTTP response from a StartDeviceLoginWithResponse call
+func ParseStartDeviceLoginResponse(rsp *http.Response) (*StartDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StartDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest DeviceChallenge
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseApproveDeviceLoginResponse parses an HTTP response from a ApproveDeviceLoginWithResponse call
+func ParseApproveDeviceLoginResponse(rsp *http.Response) (*ApproveDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ApproveDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDenyDeviceLoginResponse parses an HTTP response from a DenyDeviceLoginWithResponse call
+func ParseDenyDeviceLoginResponse(rsp *http.Response) (*DenyDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DenyDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExchangeDeviceLoginResponse parses an HTTP response from a ExchangeDeviceLoginWithResponse call
+func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExchangeDeviceLoginResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest PMDeviceSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCurrentSessionResponse parses an HTTP response from a GetCurrentSessionWithResponse call
+func ParseGetCurrentSessionResponse(rsp *http.Response) (*GetCurrentSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCurrentSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CurrentSession
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListWorkspacesResponse parses an HTTP response from a ListWorkspacesWithResponse call
+func ParseListWorkspacesResponse(rsp *http.Response) (*ListWorkspacesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListWorkspacesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WorkspacePage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWorkspaceResponse parses an HTTP response from a GetWorkspaceWithResponse call
+func ParseGetWorkspaceResponse(rsp *http.Response) (*GetWorkspaceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWorkspaceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Workspace
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListConnectionsResponse parses an HTTP response from a ListConnectionsWithResponse call
+func ParseListConnectionsResponse(rsp *http.Response) (*ListConnectionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConnectionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseCreateConnectionResponse parses an HTTP response from a CreateConnectionWithResponse call
+func ParseCreateConnectionResponse(rsp *http.Response) (*CreateConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionMutationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest ConnectionMutationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConnectionResponse parses an HTTP response from a DeleteConnectionWithResponse call
+func ParseDeleteConnectionResponse(rsp *http.Response) (*DeleteConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionMutationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectionResponse parses an HTTP response from a GetConnectionWithResponse call
+func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Connection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateConnectionResponse parses an HTTP response from a UpdateConnectionWithResponse call
+func ParseUpdateConnectionResponse(rsp *http.Response) (*UpdateConnectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateConnectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionMutationResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListDelegationsResponse parses an HTTP response from a ListDelegationsWithResponse call
+func ParseListDelegationsResponse(rsp *http.Response) (*ListDelegationsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListDelegationsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest DelegationPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
 
 	}
 
@@ -2432,6 +8701,67 @@ func ParseSubmitInvocationResponse(rsp *http.Response) (*SubmitInvocationRespons
 	return response, nil
 }
 
+// ParseListMembershipsResponse parses an HTTP response from a ListMembershipsWithResponse call
+func ParseListMembershipsResponse(rsp *http.Response) (*ListMembershipsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListMembershipsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest MembershipPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGrantMembershipResponse parses an HTTP response from a GrantMembershipWithResponse call
 func ParseGrantMembershipResponse(rsp *http.Response) (*GrantMembershipResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -2604,6 +8934,515 @@ func ParseRevokeMembershipResponse(rsp *http.Response) (*RevokeMembershipRespons
 			return nil, err
 		}
 		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListRunsResponse parses an HTTP response from a ListRunsWithResponse call
+func ParseListRunsResponse(rsp *http.Response) (*ListRunsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRunsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRunResponse parses an HTTP response from a GetRunWithResponse call
+func ParseGetRunResponse(rsp *http.Response) (*GetRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetRunResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCancelRunResponse parses an HTTP response from a CancelRunWithResponse call
+func ParseCancelRunResponse(rsp *http.Response) (*CancelRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CancelRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest RunCancelResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetRunResultResponse parses an HTTP response from a GetRunResultWithResponse call
+func ParseGetRunResultResponse(rsp *http.Response) (*GetRunResultResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetRunResultResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest RunResultResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetRunResultResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseResumeRunResponse parses an HTTP response from a ResumeRunWithResponse call
+func ParseResumeRunResponse(rsp *http.Response) (*ResumeRunResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeRunResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest RunResumeResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListRunTasksResponse parses an HTTP response from a ListRunTasksWithResponse call
+func ParseListRunTasksResponse(rsp *http.Response) (*ListRunTasksResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListRunTasksResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TaskPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseListServiceAccountsResponse parses an HTTP response from a ListServiceAccountsWithResponse call
+func ParseListServiceAccountsResponse(rsp *http.Response) (*ListServiceAccountsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListServiceAccountsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ServiceAccountPage
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem503
@@ -2797,6 +9636,80 @@ func ParseRevokeServiceAccountResponse(rsp *http.Response) (*RevokeServiceAccoun
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	}
+
+	return response, nil
+}
+
+// ParseGetTaskResponse parses an HTTP response from a GetTaskWithResponse call
+func ParseGetTaskResponse(rsp *http.Response) (*GetTaskResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetTaskResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TaskView
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetTaskResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil

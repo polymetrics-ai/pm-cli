@@ -197,7 +197,11 @@ func BindAttempt(semantics SemanticBinding, dispatchID DispatchID, attemptID Att
 }
 
 func validIdentityPart(value string) bool {
-	if value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) || len(value) > 512 {
+	return validBoundedIdentityPart(value, 512)
+}
+
+func validBoundedIdentityPart(value string, maximumBytes int) bool {
+	if value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) || len(value) > maximumBytes {
 		return false
 	}
 	for _, character := range value {

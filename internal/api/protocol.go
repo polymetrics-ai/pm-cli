@@ -107,7 +107,7 @@ func DecodeProblem(status int, contentType string, document []byte) (DecodedProb
 		!validIdentity(value.SafeRetryAction, 128) || !validProblemType(value.Type) {
 		return DecodedProblem{}, ErrMalformedEnvelope
 	}
-	rule, ok := AdmissionProblemRuleFor(status, value.Code)
+	rule, ok := ProblemRuleFor(status, value.Code)
 	if !ok || rule.SafeRetryAction != value.SafeRetryAction {
 		return DecodedProblem{}, ErrMalformedEnvelope
 	}
@@ -129,7 +129,7 @@ func validOutcomeReference(reference SafeOutcomeReference) bool {
 		return false
 	}
 	switch string(reference.Kind) {
-	case "request", "run", "membership", "service_account", "delegation":
+	case "request", "run", "connection", "membership", "service_account", "delegation":
 		return true
 	default:
 		return false
@@ -226,20 +226,22 @@ func ValidateIncomingJSON(operationID string, document []byte) error {
 	if err := validateExactObjectFields(object, allowed, control.RequiredBodyFields); err != nil {
 		return err
 	}
-	protocolRaw, ok := object["protocol"]
-	if !ok {
-		return ErrMalformedEnvelope
-	}
-	var protocol map[string]json.RawMessage
-	if err := json.Unmarshal(protocolRaw, &protocol); err != nil || protocol == nil {
-		return ErrMalformedEnvelope
-	}
-	metadataAllowed := append(append([]string(nil), ProtocolMetadataRequiredFields[:]...), ProtocolMetadataOptionalFields[:]...)
-	if err := validateExactObjectFields(protocol, metadataAllowed, ProtocolMetadataRequiredFields[:]); err != nil {
-		return err
-	}
-	if err := validateProtocolMetadata(protocol); err != nil {
-		return err
+	if control.HasProtocol {
+		protocolRaw, ok := object["protocol"]
+		if !ok {
+			return ErrMalformedEnvelope
+		}
+		var protocol map[string]json.RawMessage
+		if err := json.Unmarshal(protocolRaw, &protocol); err != nil || protocol == nil {
+			return ErrMalformedEnvelope
+		}
+		metadataAllowed := append(append([]string(nil), ProtocolMetadataRequiredFields[:]...), ProtocolMetadataOptionalFields[:]...)
+		if err := validateExactObjectFields(protocol, metadataAllowed, ProtocolMetadataRequiredFields[:]); err != nil {
+			return err
+		}
+		if err := validateProtocolMetadata(protocol); err != nil {
+			return err
+		}
 	}
 	if err := validateOperationObjectFields(operationID, object); err != nil {
 		return err
@@ -250,28 +252,50 @@ func ValidateIncomingJSON(operationID string, document []byte) error {
 // ValidateHTTPRequest enforces generated header/body controls while restoring
 // the exact body bytes for the generated strict binder.
 func ValidateHTTPRequest(operationID string, request *http.Request) error {
-	if operationID == "getServerInfo" {
-		if request == nil || request.Method != http.MethodGet {
-			return ErrMalformedEnvelope
-		}
-		return nil
-	}
-	if request == nil {
+	if request == nil || request.URL == nil {
 		return ErrMalformedEnvelope
 	}
 	control, ok := OperationControlFor(operationID)
 	if !ok || request.Method != control.Method {
 		return ErrMalformedEnvelope
 	}
+	query, err := url.ParseQuery(request.URL.RawQuery)
+	if err != nil {
+		return ErrMalformedEnvelope
+	}
+	for name, values := range query {
+		allowed := false
+		for _, field := range control.QueryFields {
+			allowed = allowed || name == field
+		}
+		if !allowed || len(values) != 1 {
+			return ErrMalformedEnvelope
+		}
+	}
 	if control.RequiresIdempotencyKey {
 		if err := requireSingleHeader(request.Header, "Idempotency-Key"); err != nil {
 			return err
 		}
 	}
-	if control.RequiresIfMatch {
+	// New mutations require a revision only after current authorization and
+	// receipt lookup. The wire boundary validates a supplied value, not absence.
+	hasIfMatch := len(request.Header.Values("If-Match")) != 0
+	if control.RequiresIfMatch && hasIfMatch {
 		if err := requireSingleHeader(request.Header, "If-Match"); err != nil {
 			return err
 		}
+	}
+	if !control.HasBody {
+		if request.Body != nil {
+			var extra [1]byte
+			n, err := io.ReadFull(request.Body, extra[:])
+			request.Body.Close()
+			request.Body = http.NoBody
+			if n != 0 || err != io.EOF {
+				return ErrMalformedEnvelope
+			}
+		}
+		return nil
 	}
 	if err := requireSingleHeader(request.Header, "Content-Type"); err != nil {
 		return err
@@ -296,6 +320,9 @@ func ValidateHTTPRequest(operationID string, request *http.Request) error {
 	if err := ValidateIncomingJSON(operationID, body); err != nil {
 		return err
 	}
+	if !control.HasProtocol {
+		return nil
+	}
 	var envelope struct {
 		Protocol struct {
 			RequestKey       string `json:"request_key"`
@@ -308,7 +335,7 @@ func ValidateHTTPRequest(operationID string, request *http.Request) error {
 	if control.RequiresIdempotencyKey && request.Header.Get("Idempotency-Key") != envelope.Protocol.RequestKey {
 		return ErrMalformedEnvelope
 	}
-	if control.RequiresIfMatch && request.Header.Get("If-Match") != envelope.Protocol.ExpectedRevision {
+	if control.RequiresIfMatch && hasIfMatch && request.Header.Get("If-Match") != envelope.Protocol.ExpectedRevision {
 		return ErrMalformedEnvelope
 	}
 	return nil
@@ -404,11 +431,29 @@ func rawValueAtPointer(root map[string]json.RawMessage, pointer string) (json.Ra
 }
 
 func validateExactObjectFields(object map[string]json.RawMessage, allowed, required []string) error {
-	allowedSet := stringSet(allowed)
 	for name := range object {
 		if isForbiddenPublicField(name) {
 			return fmt.Errorf("%w: %s", ErrForbiddenSecretField, name)
 		}
+	}
+	return validateObjectFieldNames(object, allowed, required)
+}
+
+// ValidateServerObjectJSON checks the generated root-field grammar for a
+// dedicated server-owned surface. It does not admit an ordinary public request:
+// those must use ValidateIncomingJSON and its public-secret restrictions.
+// Authentication and typed value binding remain mandatory at the caller.
+func ValidateServerObjectJSON(document []byte, allowed, required []string) error {
+	object, err := decodeJSONObject(document)
+	if err != nil {
+		return err
+	}
+	return validateObjectFieldNames(object, allowed, required)
+}
+
+func validateObjectFieldNames(object map[string]json.RawMessage, allowed, required []string) error {
+	allowedSet := stringSet(allowed)
+	for name := range object {
 		if _, ok := allowedSet[name]; ok {
 			continue
 		}
@@ -462,27 +507,12 @@ func decodeExactJSONObjectAllowingCredential(document []byte, allowed, required 
 }
 
 func validateExactObjectFieldsAllowingCredential(object map[string]json.RawMessage, allowed, required []string) error {
-	allowedSet := stringSet(allowed)
 	for name := range object {
 		if name != "pm_automation_credential" && isForbiddenPublicField(name) {
 			return fmt.Errorf("%w: %s", ErrForbiddenSecretField, name)
 		}
-		if _, ok := allowedSet[name]; ok {
-			continue
-		}
-		for exact := range allowedSet {
-			if strings.EqualFold(name, exact) {
-				return fmt.Errorf("%w: %s", ErrWrongCaseMetadataField, name)
-			}
-		}
-		return fmt.Errorf("%w: %s", ErrUnknownMetadataField, name)
 	}
-	for _, name := range required {
-		if _, ok := object[name]; !ok {
-			return fmt.Errorf("%w: missing %s", ErrMalformedEnvelope, name)
-		}
-	}
-	return nil
+	return validateObjectFieldNames(object, allowed, required)
 }
 
 func decodeJSONObject(document []byte) (map[string]json.RawMessage, error) {
@@ -698,4 +728,22 @@ func NewInternalProblem(_ error) Problem {
 		IncidentId:      "pm-" + rand.Text(),
 		SafeRetryAction: "contact_support_with_incident_id",
 	}
+}
+
+// These DTOs deliberately carry one-time PM authentication material on their
+// designated wire paths. Diagnostic formatting must never become a second
+// credential transport; JSON encoding remains the explicit client boundary.
+func (DeviceProof) String() string       { return "PM device proof [REDACTED]" }
+func (DeviceProof) GoString() string     { return "PM device proof [REDACTED]" }
+func (DeviceChallenge) String() string   { return "PM device challenge [REDACTED]" }
+func (DeviceChallenge) GoString() string { return "PM device challenge [REDACTED]" }
+func (PMDeviceSession) String() string   { return "PM device session [REDACTED]" }
+func (PMDeviceSession) GoString() string { return "PM device session [REDACTED]" }
+func (BrowserLogin) String() string      { return "PM browser callback [REDACTED]" }
+func (BrowserLogin) GoString() string    { return "PM browser callback [REDACTED]" }
+func (ServiceAccountCreationResponse) String() string {
+	return "PM service-account creation [REDACTED]"
+}
+func (ServiceAccountCreationResponse) GoString() string {
+	return "PM service-account creation [REDACTED]"
 }

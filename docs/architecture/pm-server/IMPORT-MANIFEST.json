@@ -27,8 +27,8 @@
       "target": "docs/architecture/pm-server/architecture/PLAN.md",
       "source": "data/pm-cli/architecture/PLAN.md",
       "source_sha256": "6d153d808841269207a7a4c840551ebbfce8649a118b92a7b8eb0d4b353925e3",
-      "sha256": "80e4e115714531c5e38d00c9940d54b965a46871f10e21beee055344ceeb66cc",
-      "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; implementation remains unexecuted. Applied accepted issue #3 TD27 development-native host-identity amendment (issuecomment-5687998290); immutable build-image qualification remains required before image-based or release-native builds."
+      "sha256": "7d522516ee494c7f6d7c138f435ef084a725665e6f1bb40bafe9a68ff8ee5dde",
+      "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; imported planning state does not certify implementation. Applied accepted issue #3 TD27 development-native host-identity amendment (issuecomment-5687998290); immutable build-image qualification remains required before image-based or release-native builds. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled the M3 tree with physical ownership; this projection is not implementation, review or CI evidence. Recorded required explicit run_lifetime for the immutable admission budget policy."
     },
     {
       "target": "docs/architecture/pm-server/architecture/ADRS.md",
@@ -55,22 +55,22 @@
       "target": "docs/architecture/pm-server/architecture/CONTRACTS.json",
       "source": "data/pm-cli/architecture/CONTRACTS.json",
       "source_sha256": "fafdda5003e3f9cd0223f5c3ecc5dd37a5b704a1cc59cbfacbce376e27fcaa47",
-      "sha256": "4c37319f3d7410846ac793f44f062bdff9269e3a9e18995015e817954dfac7ee",
-      "transformation": "Advanced canonical contract schema to v4 with ActionResult, AdmissionPolicy, AuthorizationMutation, ConnectorSourceAuthority and PostgresMappedUpsert."
+      "sha256": "585c378c4805888f4d3a85ff9292ba2e259e2f0da079bfdd4ed5b0cf00c813c2",
+      "transformation": "Advanced canonical contract schema to v4 with ActionResult, AdmissionPolicy, AuthorizationMutation, ConnectorSourceAuthority and PostgresMappedUpsert. Recorded required explicit run_lifetime for the immutable admission budget policy."
     },
     {
       "target": "docs/architecture/pm-server/architecture/FOUNDATION-MAPPINGS.json",
       "source": "data/pm-cli/architecture/FOUNDATION-MAPPINGS.json",
       "source_sha256": "5a9780e77a8f471a0bcd5ad2164a669c47b107229cba1e913587166d9336f94a",
-      "sha256": "132c4b7cf91734650eb2ca25871164597276fe76a50cb09788a9f2d770c5c2fc",
-      "transformation": "Added F01/AUTH traceability requirements and projected accepted GitHub/PostgreSQL bindings; 43 requirements total."
+      "sha256": "7801c060723b0be6046aecc8d274a07b3d804df84f9d325d04255edc100ab951",
+      "transformation": "Added F01/AUTH traceability requirements and projected accepted GitHub/PostgreSQL bindings; 43 requirements total. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Rebound M3 physical files without changing requirements, case IDs or dependency direction."
     },
     {
       "target": "docs/architecture/pm-server/architecture/FOUNDATIONS.json",
       "source": "data/pm-cli/architecture/FOUNDATIONS.json",
       "source_sha256": "75cbcdbcdfe87877d37c5135fec5e1bb9134b681199d24e9f8006d417c6ff6ea",
-      "sha256": "604739ad815c1aecbbff49120e533e0b092d3b8a9df8c6173d7a71e8ba06f7aa",
-      "transformation": "Versioned affected reusable foundations for accepted result, admission, source and PostgreSQL semantics without adding a duplicate mechanism."
+      "sha256": "ad14fe1a748c44d7ce4f0115c53197d41bfbeabf11e717c971059eeab17e7dcc",
+      "transformation": "Versioned affected reusable foundations for accepted result, admission, source and PostgreSQL semantics without adding a duplicate mechanism. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Rebound M3 artifacts to their actual shared owners, preserving foundation versions and gates."
     },
     {
       "target": "docs/architecture/pm-server/architecture/STATE-OWNERSHIP.json",
@@ -90,15 +90,15 @@
       "target": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
       "source": "data/pm-cli/implementation/FILE-OWNERSHIP.json",
       "source_sha256": "5c5b461dda1f81f10a63a7234e07792f54a9996d11df8a5d7cd88ca5f83f7411",
-      "sha256": "abeb3ff1b6b370995705d9f6ee55b33085c07f664e9b38da54d1df5e500be980",
-      "transformation": "Added N13-PG and serialized PostgreSQL #28-create/#34-update/#41-composition ownership while retaining disjoint owners."
+      "sha256": "86e34f36ff39fcb892e8409e249733060276703c916ba47c775a85e8530c88d0",
+      "transformation": "Added N13-PG and serialized PostgreSQL #28-create/#34-update/#41-composition ownership while retaining disjoint owners. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled M3 physical paths, shared helpers, browser assets and registered-HTTP proof ownership without changing acceptance or later ownership."
     },
     {
       "target": "docs/architecture/pm-server/implementation/MILESTONES.json",
       "source": "data/pm-cli/implementation/MILESTONES.json",
       "source_sha256": "99286dffffbd2d7930dfcda31833ba6b4e36d0392a44499a8d5fe1c9807eba45",
-      "sha256": "647d774a2c625c20f928b69de94b706c8ed21fb37b60caa0823835e97a1071a5",
-      "transformation": "Projected accepted boundaries into M1/M3/M4/M6/M7/M8/M11 and moved saved ETL route ownership to M8/F33."
+      "sha256": "829d9ef7aa6b197c8eec9e059e29cb2fdb4425f1e510d6f8c4ce0468a1a61ba4",
+      "transformation": "Projected accepted boundaries into M1/M3/M4/M6/M7/M8/M11 and moved saved ETL route ownership to M8/F33. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Projected 77 M3 physical files while retaining execution order and later milestones."
     },
     {
       "target": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
@@ -125,8 +125,8 @@
       "target": "docs/architecture/pm-server/schemas/contracts.schema.json",
       "source": "data/pm-cli/schemas/contracts.schema.json",
       "source_sha256": "ce6bb57646bbb41bf351611cf13826d72cc312151049c7b98fbf8cbb043ff6fd",
-      "sha256": "af0fdaac35e734d2cdc4b8ac0391a0bfcb8d6de75ec4dc6cdff66832661942b3",
-      "transformation": "Canonical authored document with URI literal-space identifiers percent-encoded as %20; source provenance and validation constraints preserved; advanced companion schema to validate the v4 accepted product-contract shape."
+      "sha256": "6469488e5bbcc086ca1e6d9232db9efbba1cc569e4db63b835e638c9cddc2253",
+      "transformation": "Canonical authored document with URI literal-space identifiers percent-encoded as %20; source provenance and validation constraints preserved; advanced companion schema to validate the v4 accepted product-contract shape. Recorded required explicit run_lifetime for the immutable admission budget policy."
     },
     {
       "target": "docs/architecture/pm-server/schemas/file-ownership.schema.json",
@@ -209,8 +209,8 @@
       "target": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
       "source": "baseline ISSUE-RECORDS.json",
       "source_sha256": "9ecc107c39976504d43b892a6c8f1e351c6a5adea1128bfc1cb0ca1c27eb20a9",
-      "sha256": "8b68ad2043477519d45faf80baffbe8720c6a399d100bb022b4c0334134b6e5b",
-      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41; reconciled only #2/#3 integration policy and BOOT-4 workflow under September 15 OMP ownership, retaining every case and technical gate."
+      "sha256": "71460a7b0bae500eedb3b453c175b07e010be37d6d29aab45b48d428dc911af5",
+      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41; reconciled only #2/#3 integration policy and BOOT-4 workflow under September 15 OMP ownership, retaining every case and technical gate. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled #11–#13 physical ownership and bounded registered-route proof bindings without changing acceptance or later integration rights."
     },
     {
       "target": "docs/architecture/pm-server/reference/SOURCE-LEDGER.json",

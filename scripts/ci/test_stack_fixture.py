@@ -2,8 +2,10 @@
 """Behavioral checks for fixture ownership and process-group cancellation."""
 
 import contextlib
+import hashlib
 import importlib.util
 import io
+import json
 import os
 from pathlib import Path
 import selectors
@@ -11,6 +13,8 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import types
 import unittest
 from unittest import mock
 
@@ -75,6 +79,101 @@ class FixtureOwnershipTests(unittest.TestCase):
             with mock.patch.object(FIXTURE, "inspect_daemon", side_effect=replace_parent):
                 self.assertNotEqual(self.run_with_preflight(runner_temp, token), 0)
             self.assertEqual(marker.read_bytes(), b"different directory identity")
+
+    def test_temporal_profile_identity_and_digest_are_immutable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            parent = Path(temporary).resolve()
+            repo_root = parent / "repo"
+            fixture_root = parent / "fixture"
+            repo_root.mkdir(mode=0o700)
+            fixture_root.mkdir(mode=0o700)
+            project = "pmci-" + "3" * 20
+            environment = {
+                "PM_STACK_ROOT": str(repo_root),
+                "PM_STACK_SECRETS_DIR": str(fixture_root / "secrets"),
+                "PM_STACK_STATE_DIR": str(fixture_root / "state"),
+                "PM_STACK_PROJECT": project,
+                "PM_STACK_TEMPORAL_DYNAMIC_CONFIG": str(fixture_root / "temporal-dynamicconfig.yaml"),
+                "PM_STACK_TEST_CONFIG": str(fixture_root / "server.json"),
+                "PM_STACK_TEST_ROLLOVER_NAMESPACE": project + "-rollover",
+                "PM_STACK_TEST_S3_PRIMARY_ENDPOINT": "https://127.0.0.1:12003",
+                "PM_STACK_TEST_S3_SECONDARY_ENDPOINT": "https://127.0.0.1:12004",
+                "PM_STORE_TEST_SECRETS_DIR": str(fixture_root / "secrets/operator/postgres"),
+                "PM_STACK_POSTGRES_PORT": "12001",
+                "PM_STACK_TEMPORAL_PORT": "12002",
+                "PM_STACK_S3_PRIMARY_PORT": "12003",
+                "PM_STACK_S3_SECONDARY_PORT": "12004",
+                "PM_STACK_PUBLIC_PORT": "12005",
+            }
+            environment_bytes = (json.dumps(environment, sort_keys=True) + "\n").encode()
+            config_bytes = b'{"schema_version":"1"}\n'
+            profile_bytes = b"system.enableDeployments:\n  - value: true\n"
+            (fixture_root / "environment.json").write_bytes(environment_bytes)
+            (fixture_root / "server.json").write_bytes(config_bytes)
+            profile_path = fixture_root / "temporal-dynamicconfig.yaml"
+            profile_path.write_bytes(profile_bytes)
+            record = FIXTURE.fixture_record(
+                fixture_root,
+                environment,
+                hashlib.sha256(environment_bytes).hexdigest(),
+                hashlib.sha256(config_bytes).hexdigest(),
+                hashlib.sha256(profile_bytes).hexdigest(),
+            )
+            manifest = types.SimpleNamespace(
+                project=project,
+                repo_root=repo_root,
+                fixture_root=fixture_root,
+                document={"fixture": record},
+            )
+            self.assertEqual(FIXTURE.validate_fixture_record(manifest), environment)
+            FIXTURE.verify_immutable_fixture_files(manifest, environment)
+            profile_path.write_bytes(profile_bytes + b"tampered: true\n")
+            with self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.verify_immutable_fixture_files(manifest, environment)
+
+    def test_temporal_mount_uses_owned_profile_not_repository_default(self):
+        fixture_root = Path("/private/fixture")
+        repo_root = Path("/private/repository")
+        mounts = FIXTURE.expected_mounts("temporal", fixture_root, repo_root)
+        self.assertIn(
+            (
+                str(fixture_root / "temporal-dynamicconfig.yaml"),
+                "/etc/temporal/dynamicconfig.yaml",
+                False,
+                "bind",
+            ),
+            mounts,
+        )
+        self.assertNotIn(
+            (
+                str(repo_root / "deploy/temporal/dynamicconfig.yaml"),
+                "/etc/temporal/dynamicconfig.yaml",
+                False,
+                "bind",
+            ),
+            mounts,
+        )
+
+    def test_bounded_reader_refuses_fifo_without_blocking(self):
+        if not hasattr(os, "mkfifo"):
+            self.skipTest("FIFO is unavailable")
+        with tempfile.TemporaryDirectory() as temporary:
+            fifo = Path(temporary) / "profile"
+            os.mkfifo(fifo, 0o600)
+            result = []
+
+            def read_fifo():
+                try:
+                    FIXTURE.read_limited(fifo)
+                except Exception as exc:  # behavior under test is the exact safe refusal type below
+                    result.append(exc)
+
+            reader = threading.Thread(target=read_fifo, daemon=True)
+            reader.start()
+            reader.join(timeout=2)
+            self.assertFalse(reader.is_alive(), "bounded reader blocked opening a FIFO")
+            self.assertEqual(len(result), 1)
+            self.assertIsInstance(result[0], FIXTURE.FixtureError)
 
     def test_cancellation_reaps_a_leader_exiting_during_group_signal(self):
         process = subprocess.Popen(

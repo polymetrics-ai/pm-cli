@@ -486,6 +486,32 @@ func TestAllowedTransitions(t *testing.T) {
 	})
 }
 
+func TestOperationScopeWidth(t *testing.T) {
+	_, grant := runSpecForIdentityTest(t, time.Date(2026, time.September, 16, 4, 0, 0, 0, time.UTC))
+	operation := strings.Repeat("o", 1024)
+	grant.OperationIDs = []string{operation}
+	if err := grant.Validate(); err != nil {
+		t.Errorf("publicly admitted operation scope was rejected by its durable grant: %v", err)
+	}
+	ceiling := GrantCeiling{
+		Scope: grant.Scope, ConnectionIDs: grant.ConnectionIDs, OperationIDs: grant.OperationIDs,
+		ApprovalRefs: grant.ApprovalRefs, ExpiresAt: grant.ExpiresAt,
+	}
+	if err := ceiling.Validate(); err != nil {
+		t.Errorf("publicly admitted operation scope was rejected by its delegation ceiling: %v", err)
+	}
+	validateIdentitySchemaValue(t, compileIdentitySchemaForTest(t, "identity"), grant)
+	grant.OperationIDs = []string{operation + "x"}
+	if err := grant.Validate(); err == nil {
+		t.Fatal("operation scope exceeded the declared 1024-byte bound")
+	}
+	grant.OperationIDs = []string{"github.issues.create"}
+	grant.ConnectionIDs = []string{operation}
+	if err := grant.Validate(); err == nil {
+		t.Fatal("operation-specific width silently widened ordinary connection identities")
+	}
+}
+
 func runSpecForIdentityTest(t *testing.T, base time.Time) (RunSpec, ExecutionGrant) {
 	t.Helper()
 	digest := SemanticDigest("sha256:0000000000000000000000000000000000000000000000000000000000000000")

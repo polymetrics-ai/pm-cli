@@ -104,6 +104,10 @@ func validateUTCInstant(value time.Time, path string) error {
 }
 
 func validateIdentityList(values []string, path string, allowEmpty bool) error {
+	return validateBoundedIdentityList(values, path, allowEmpty, 512)
+}
+
+func validateBoundedIdentityList(values []string, path string, allowEmpty bool, maximumBytes int) error {
 	if values == nil {
 		return contractError(ErrInvalidContract, path, "must be explicitly present, even when empty")
 	}
@@ -112,7 +116,7 @@ func validateIdentityList(values []string, path string, allowEmpty bool) error {
 	}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
-		if !validIdentityPart(value) {
+		if !validBoundedIdentityPart(value, maximumBytes) {
 			return contractError(ErrInvalidIdentity, path, "contains an invalid opaque identity")
 		}
 		if _, duplicate := seen[value]; duplicate {

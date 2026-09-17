@@ -3,13 +3,14 @@ name: Architecture documentation
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, omp/pmcli-foundations]
     types: [opened, synchronize, reopened, edited]
 
-# This gate runs on default-branch PRs: use a separate `Closes #N` for every
-# fully completed issue and `Refs #N` for partial work. Grouped PRs list each
-# applicable issue. Stacked PRs must track each issue explicitly through the
-# final default-branch integration; an intermediate merge does not complete it.
+# This gate runs on PRs targeting `main` or the approved stack base
+# `omp/pmcli-foundations`: use a separate `Closes #N` for every fully completed
+# issue and `Refs #N` for partial work. Grouped PRs list each applicable issue.
+# Stacked PRs must track each issue explicitly through final default-branch
+# integration; an intermediate merge does not complete it.
 # Publication PR #47 uniquely requires issue #46.
 
 permissions:

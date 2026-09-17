@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"reflect"
 	"time"
 
@@ -123,6 +124,11 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	if err := validateCommitSideRecords(commit.Run.Spec.RunID, commit.Receipt, commit.Audit, commit.Event, commit.Outbox); err != nil {
 		return contract.ServerEvent{}, err
 	}
+	if runStateRequiresPendingReservationEvidence(commit.Run.State) {
+		if _, err := lockPendingAdmissions(ctx, tx); err != nil {
+			return contract.ServerEvent{}, err
+		}
+	}
 	stored, err := loadRunForUpdate(ctx, tx, commit.Run.Spec.RunID)
 	if err != nil {
 		return contract.ServerEvent{}, err
@@ -130,9 +136,15 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	if err := validateRunProjectionUpdate(stored, commit.Run); err != nil {
 		return contract.ServerEvent{}, err
 	}
+	releaseReason, releaseNow := pendingReservationRelease(stored, commit.Run)
 	committedAt, err := readDatabaseTime(ctx, tx)
 	if err != nil {
 		return contract.ServerEvent{}, err
+	}
+	if releaseReason != "" {
+		if err := commitPendingReservationRelease(ctx, tx, scope, commit.Run.Spec.RunID, releaseReason, releaseNow, committedAt); err != nil {
+			return contract.ServerEvent{}, err
+		}
 	}
 	recordJSON, err := json.Marshal(commit.Run)
 	if err != nil {
@@ -153,6 +165,11 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	if tag.RowsAffected() != 1 {
 		return contract.ServerEvent{}, ErrCASConflict
 	}
+	if terminalStoreRunState(commit.Run.State) {
+		if err := resolveAdmissionReceipt(ctx, tx, commit.Run.Spec.RunID); err != nil {
+			return contract.ServerEvent{}, err
+		}
+	}
 	if err := insertReceipt(ctx, tx, commit.Receipt, committedAt); err != nil {
 		return contract.ServerEvent{}, err
 	}
@@ -169,26 +186,121 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	return event, nil
 }
 
+const maximumEventPageSize = 1000
+
+// RunEventSnapshotRecord is one run projection and a bounded committed replay
+// page observed while holding the run row against concurrent event allocation.
+// Watermark survives retained-event deletion.
+type RunEventSnapshotRecord struct {
+	Run          RunViewRecord
+	Watermark    uint64
+	ReadThrough  uint64
+	RetentionGap bool
+	Events       []contract.ServerEvent
+}
+
+func LoadRunEventSnapshot(
+	ctx context.Context,
+	tx *Transaction,
+	runID string,
+	after uint64,
+	through uint64,
+	limit int,
+) (RunEventSnapshotRecord, error) {
+	scope, err := tx.requireScope()
+	if err != nil {
+		return RunEventSnapshotRecord{}, err
+	}
+	if !validStoreID(runID) || after > math.MaxInt64 || through > math.MaxInt64 ||
+		through != 0 && after > through || limit <= 0 || limit > maximumEventPageSize {
+		return RunEventSnapshotRecord{}, errors.New("event snapshot arguments are invalid")
+	}
+	var recordJSON, snapshotJSON []byte
+	var watermark uint64
+	if err := tx.queryRow(ctx, `
+		SELECT run.record, input.snapshot, run.last_event_sequence
+		FROM pm.runs AS run
+		JOIN pm.run_input_snapshots AS input
+		  ON input.org_id = run.org_id
+		 AND input.workspace_id = run.workspace_id
+		 AND input.run_id = run.run_id
+		WHERE run.org_id = $1 AND run.workspace_id = $2 AND run.run_id = $3
+		FOR SHARE OF run
+	`, scope.OrgID, scope.WorkspaceID, runID).Scan(
+		&recordJSON,
+		&snapshotJSON,
+		&watermark,
+	); errors.Is(err, pgx.ErrNoRows) {
+		return RunEventSnapshotRecord{}, ErrNotFound
+	} else if err != nil {
+		return RunEventSnapshotRecord{}, fmt.Errorf("lock run event snapshot: %w", err)
+	}
+	run, err := decodeRunViewRecord(scope, runID, recordJSON, snapshotJSON)
+	if err != nil {
+		return RunEventSnapshotRecord{}, err
+	}
+	readThrough := through
+	if readThrough == 0 || readThrough > watermark {
+		readThrough = watermark
+	}
+	events, err := listEventsThrough(ctx, tx, scope, runID, after, readThrough, limit)
+	if err != nil {
+		return RunEventSnapshotRecord{}, err
+	}
+	retentionGap := after > watermark
+	expectedSequence := after + 1
+	for _, event := range events {
+		if event.Sequence != expectedSequence {
+			retentionGap = true
+			break
+		}
+		expectedSequence++
+	}
+	if !retentionGap && len(events) < limit && expectedSequence <= readThrough {
+		retentionGap = true
+	}
+	return RunEventSnapshotRecord{
+		Run:          run,
+		Watermark:    watermark,
+		ReadThrough:  readThrough,
+		RetentionGap: retentionGap,
+		Events:       events,
+	}, nil
+}
+
 func ListEvents(ctx context.Context, tx *Transaction, runID string, after uint64, limit int) ([]contract.ServerEvent, error) {
 	scope, err := tx.requireScope()
 	if err != nil {
 		return nil, err
 	}
-	if !validStoreID(runID) || limit <= 0 || limit > 1000 {
+	return listEventsThrough(ctx, tx, scope, runID, after, math.MaxInt64, limit)
+}
+
+func listEventsThrough(
+	ctx context.Context,
+	tx *Transaction,
+	scope contract.Scope,
+	runID string,
+	after uint64,
+	through uint64,
+	limit int,
+) ([]contract.ServerEvent, error) {
+	if !validStoreID(runID) || after > math.MaxInt64 || through > math.MaxInt64 ||
+		limit <= 0 || limit > maximumEventPageSize {
 		return nil, errors.New("event list arguments are invalid")
 	}
 	rows, err := tx.query(ctx, `
 		SELECT sequence, state_revision, event_type, safe_payload, committed_at
 		FROM pm.server_events
-		WHERE run_id = $1 AND sequence > $2
+		WHERE run_id = $1 AND sequence > $2 AND sequence <= $3
 		ORDER BY sequence
-		LIMIT $3
-	`, runID, after, limit)
+		LIMIT $4
+	`, runID, after, through, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list server events: %w", err)
 	}
 	defer rows.Close()
-	events := make([]contract.ServerEvent, 0)
+	var events []contract.ServerEvent
 	for rows.Next() {
 		var event contract.ServerEvent
 		var payload []byte
@@ -224,32 +336,52 @@ func insertEvent(ctx context.Context, tx *Transaction, runID string, stateRevisi
 	if err := input.validate(); err != nil {
 		return contract.ServerEvent{}, err
 	}
-	var lockedRun string
-	if err := tx.queryRow(ctx, `SELECT run_id FROM pm.runs WHERE run_id = $1 FOR UPDATE`, runID).Scan(&lockedRun); errors.Is(err, pgx.ErrNoRows) {
+	var lastSequence uint64
+	if err := tx.queryRow(ctx, `
+		SELECT last_event_sequence
+		FROM pm.runs
+		WHERE run_id = $1
+		FOR UPDATE
+	`, runID).Scan(&lastSequence); errors.Is(err, pgx.ErrNoRows) {
 		return contract.ServerEvent{}, ErrNotFound
 	} else if err != nil {
 		return contract.ServerEvent{}, fmt.Errorf("lock event sequence: %w", err)
 	}
+	if lastSequence >= math.MaxInt64 {
+		return contract.ServerEvent{}, errors.New("event sequence is exhausted")
+	}
+	sequence := lastSequence + 1
 	payload, err := json.Marshal(input.Payload)
 	if err != nil {
 		return contract.ServerEvent{}, fmt.Errorf("encode event payload: %w", err)
 	}
-	var sequence uint64
-	if err := tx.queryRow(ctx, `
+	tag, err := tx.exec(ctx, `
+		UPDATE pm.runs
+		SET last_event_sequence = $2
+		WHERE run_id = $1 AND last_event_sequence = $3
+	`, runID, sequence, lastSequence)
+	if err != nil {
+		return contract.ServerEvent{}, fmt.Errorf("advance event watermark: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return contract.ServerEvent{}, ErrCASConflict
+	}
+	if _, err := tx.exec(ctx, `
 		INSERT INTO pm.server_events (
-			org_id, workspace_id, run_id, sequence, event_id, state_revision, event_type, safe_payload, committed_at
-		)
-		SELECT $1, $2, $3, COALESCE(MAX(sequence), 0) + 1, $4, $5, $6, $7, $8
-		FROM pm.server_events
-		WHERE run_id = $3
-		RETURNING sequence
+			org_id, workspace_id, run_id, sequence, event_id,
+			state_revision, event_type, safe_payload, committed_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 	`,
 		scope.OrgID,
 		scope.WorkspaceID,
 		runID,
+		sequence,
 		input.EventID,
 		stateRevision,
-		input.Type, json.RawMessage(payload), committedAt).Scan(&sequence); err != nil {
+		input.Type,
+		json.RawMessage(payload),
+		committedAt,
+	); err != nil {
 		return contract.ServerEvent{}, fmt.Errorf("insert server event: %w", err)
 	}
 	event := contract.ServerEvent{
@@ -311,6 +443,9 @@ func validateRunProjectionUpdate(stored, proposed contract.RunRecord) error {
 	if proposed.Revision != stored.Revision+1 || !reflect.DeepEqual(proposed.Spec, stored.Spec) {
 		return ErrCASConflict
 	}
+	if err := validateWorkflowBindingProgression(stored.WorkflowBinding, proposed.WorkflowBinding); err != nil {
+		return err
+	}
 	if len(proposed.History) < len(stored.History) ||
 		!reflect.DeepEqual(proposed.History[:len(stored.History)], stored.History) {
 		return ErrCASConflict
@@ -341,6 +476,87 @@ func terminalStoreRunState(state contract.RunState) bool {
 	default:
 		return false
 	}
+}
+
+const (
+	pendingReleaseReasonExecutionStarted    = "execution_started"
+	pendingReleaseReasonTerminalBeforeStart = "terminal_before_start"
+)
+
+func runStateRequiresPendingReservationEvidence(state contract.RunState) bool {
+	return state == contract.RunStateRunning || terminalStoreRunState(state)
+}
+
+func pendingReservationRelease(stored, proposed contract.RunRecord) (reason string, releaseNow bool) {
+	switch {
+	case proposed.State == contract.RunStateRunning:
+		return pendingReleaseReasonExecutionStarted, !runHasStarted(stored)
+	case terminalStoreRunState(proposed.State):
+		if runHasStarted(stored) {
+			return pendingReleaseReasonExecutionStarted, false
+		}
+		return pendingReleaseReasonTerminalBeforeStart, !terminalStoreRunState(stored.State)
+	default:
+		return "", false
+	}
+}
+
+func runHasStarted(run contract.RunRecord) bool {
+	if run.State == contract.RunStateRunning {
+		return true
+	}
+	for _, transition := range run.History {
+		if transition.To == contract.RunStateRunning {
+			return true
+		}
+	}
+	return false
+}
+
+func commitPendingReservationRelease(
+	ctx context.Context,
+	tx *Transaction,
+	scope contract.Scope,
+	runID string,
+	reason string,
+	releaseNow bool,
+	releasedAt time.Time,
+) error {
+	var storedReleasedAt *time.Time
+	var storedReason *string
+	if err := tx.queryRow(ctx, `
+		SELECT released_at, release_reason
+		FROM pm.pending_reservations
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3
+		FOR UPDATE
+	`, scope.OrgID, scope.WorkspaceID, runID).Scan(&storedReleasedAt, &storedReason); errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("pending reservation evidence is missing: %w", ErrImmutableConflict)
+	} else if err != nil {
+		return fmt.Errorf("lock pending reservation evidence: %w", err)
+	}
+
+	if !releaseNow {
+		if storedReleasedAt == nil || storedReason == nil || *storedReason != reason {
+			return fmt.Errorf("pending reservation evidence is inconsistent: %w", ErrImmutableConflict)
+		}
+		return nil
+	}
+	if storedReleasedAt != nil || storedReason != nil {
+		return fmt.Errorf("pending reservation was released before its state transition: %w", ErrImmutableConflict)
+	}
+	tag, err := tx.exec(ctx, `
+		UPDATE pm.pending_reservations
+		SET released_at = $4, release_reason = $5
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3
+		  AND released_at IS NULL AND release_reason IS NULL
+	`, scope.OrgID, scope.WorkspaceID, runID, releasedAt, reason)
+	if err != nil {
+		return fmt.Errorf("release pending reservation: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("release pending reservation: %w", ErrImmutableConflict)
+	}
+	return nil
 }
 
 func sameTaskIdentity(left, right contract.Task) bool {

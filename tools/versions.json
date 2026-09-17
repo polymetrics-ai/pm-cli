@@ -58,6 +58,12 @@
         "source_url": "https://github.com/jackc/pgx/tree/5e583fa7aabfa88b796292f849fc9d7d75ac159d"
       },
       {
+        "path": "github.com/jackc/puddle/v2",
+        "version": "v2.2.2",
+        "license": "MIT",
+        "source_url": "https://github.com/jackc/puddle/tree/bd09d14bd4018b6d65a9d7770e2f3ddf8b00af1c"
+      },
+      {
         "path": "github.com/oapi-codegen/nullable",
         "version": "v1.1.0",
         "license": "Apache-2.0",
@@ -166,6 +172,12 @@
         "source_url": "https://github.com/yaml/go-yaml/tree/e16c7af9361b241fa02d91582fb59ce4954d8afc"
       },
       {
+        "path": "golang.org/x/net",
+        "version": "v0.58.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/net/+/acc78e0d2b2c855c0c4fbdcfe5f42a9e3d0f9778"
+      },
+      {
         "path": "golang.org/x/oauth2",
         "version": "v0.37.0",
         "license": "BSD-3-Clause",
@@ -208,6 +220,12 @@
         "version": "v3.0.5",
         "license": "MIT/Apache-2.0 file-specific",
         "source_url": "https://github.com/yaml/go-yaml/tree/e16c7af9361b241fa02d91582fb59ce4954d8afc"
+      },
+      {
+        "path": "golang.org/x/sys",
+        "version": "v0.48.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/sys/+/613e2570718ecde85c04e69ebd5585c3881c442c"
       },
       {
         "path": "golang.org/x/vuln",

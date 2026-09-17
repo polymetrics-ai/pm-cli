@@ -13,7 +13,7 @@ This file records the third-party source identities selected by the build/toolch
 
 ## Selected Go source identities
 
-`tools/versions.json` is the machine-readable selected-direct-module policy. It pins 31 application entries and five generator/quality-tool entries: 34 unique identities because `github.com/getkin/kin-openapi@v0.149.0` and `go.yaml.in/yaml/v3@v3.0.5` are selected in both scopes. The resolved lists contain every selected pin, including DuckDB Go `v2.10505.0`, bindings `v0.10505.0`, oapi-codegen `v2.8.0`, Staticcheck `v0.8.1`, and govulncheck `v1.8.0`. The only selected forbidden identity is exactly `github.com/goreleaser/goreleaser/v2@v2.18.1`; no broader GoReleaser family policy is asserted.
+`tools/versions.json` is the machine-readable selected-direct-module policy for the application, generators, quality tools, and fixture tooling. The resolved lists contain every selected pin, including DuckDB Go `v2.10505.0`, bindings `v0.10505.0`, oapi-codegen `v2.8.0`, Staticcheck `v0.8.1`, govulncheck `v1.8.0`, and the fixture's direct `golang.org/x/sys@v0.48.0` dependency. The latter was already present in the resolved tools graph and license inventory; its descriptor-relative filesystem use now makes it an explicit selected root. The only selected forbidden identity is exactly `github.com/goreleaser/goreleaser/v2@v2.18.1`; no broader GoReleaser family policy is asserted.
 
 ## Native and external source notices
 
@@ -268,7 +268,7 @@ Locked source archive/binary hashes and installed-content hashes emitted by an S
 | `github.com/pressly/goose/v3@v3.28.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/pressly/goose/v3@v3.28.0) |
 | `github.com/prometheus/procfs@v0.22.0` | application | Apache-2.0 (`LICENSE, NOTICE`) | [source](https://pkg.go.dev/github.com/prometheus/procfs@v0.22.0) |
 | `github.com/quic-go/qpack@v0.6.0` | application | MIT (`LICENSE.md`) | [source](https://pkg.go.dev/github.com/quic-go/qpack@v0.6.0) |
-| `github.com/quic-go/quic-go@v0.59.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/quic-go/quic-go@v0.59.0) |
+| `github.com/quic-go/quic-go@v0.59.1` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/quic-go/quic-go@v0.59.1) |
 | `github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec) |
 | `github.com/robfig/cron@v1.2.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/robfig/cron@v1.2.0) |
 | `github.com/rogpeppe/go-internal@v1.11.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/rogpeppe/go-internal@v1.11.0) |

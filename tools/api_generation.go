@@ -35,18 +35,20 @@ var generatedAPIPaths = []string{
 	"internal/api/client.gen.go",
 	"internal/api/controls.gen.go",
 	"internal/api/types.gen.go",
+	"internal/httpapi/admin.gen.go",
 	"internal/httpapi/server.gen.go",
 }
 
 // APIGenerationOptions identifies the accepted source files and the owned
 // output tree. Source paths may be absolute for isolated fault fixtures.
 type APIGenerationOptions struct {
-	Root         string
-	SpecPath     string
-	ControlsPath string
-	ConfigPath   string
-	OutputRoot   string
-	Check        bool
+	Root          string
+	SpecPath      string
+	AdminSpecPath string
+	ControlsPath  string
+	ConfigPath    string
+	OutputRoot    string
+	Check         bool
 }
 
 type apiCodegenConfiguration struct {
@@ -63,7 +65,7 @@ type apiControls struct {
 	ForbiddenPublicFields []string           `json:"forbidden_public_fields"`
 	RunStates             []string           `json:"run_states"`
 	TerminalRunStates     []string           `json:"terminal_run_states"`
-	AdmissionProblems     []problemControl   `json:"admission_problems"`
+	Problems              []problemControl   `json:"problems"`
 	Operations            []operationControl `json:"operations"`
 }
 
@@ -136,7 +138,20 @@ func GenerateAPI(ctx context.Context, options APIGenerationOptions) error {
 		return err
 	}
 
-	outputs, err := generateAPIOutputs(ctx, specSource, document, controls, configuration)
+	adminSource, err := readBoundedFile(resolved.AdminSpecPath)
+	if err != nil {
+		return fmt.Errorf("read private API source: %w", err)
+	}
+	adminNode, err := parseYAMLDocument(adminSource)
+	if err != nil {
+		return fmt.Errorf("parse private API source: %w", err)
+	}
+	admin, err := composeAdminAPI(specNode, adminNode)
+	if err != nil {
+		return fmt.Errorf("compose isolated admin API: %w", err)
+	}
+
+	outputs, err := generateAPIOutputs(ctx, document, controls, configuration, admin)
 	if err != nil {
 		return err
 	}
@@ -173,6 +188,9 @@ func resolveAPIGenerationOptions(options APIGenerationOptions) (APIGenerationOpt
 	options.Root = root
 	if options.SpecPath, err = resolve(options.SpecPath, "api/pm.openapi.yaml"); err != nil {
 		return APIGenerationOptions{}, fmt.Errorf("resolve OpenAPI source: %w", err)
+	}
+	if options.AdminSpecPath, err = resolve(options.AdminSpecPath, "api/admin.openapi.yaml"); err != nil {
+		return APIGenerationOptions{}, fmt.Errorf("resolve private API source: %w", err)
 	}
 	if options.ControlsPath, err = resolve(options.ControlsPath, "api/controls.json"); err != nil {
 		return APIGenerationOptions{}, fmt.Errorf("resolve controls source: %w", err)
@@ -606,22 +624,22 @@ func validateAPIControls(controls apiControls, document *openapi3.T) error {
 			return err
 		}
 	}
-	if len(controls.AdmissionProblems) != 17 {
-		return fmt.Errorf("admission problem rule count = %d; require accepted 17", len(controls.AdmissionProblems))
+	if len(controls.Problems) == 0 {
+		return errors.New("problem rules are required")
 	}
-	problemKeys := make(map[string]struct{}, len(controls.AdmissionProblems))
-	for _, rule := range controls.AdmissionProblems {
+	problemKeys := make(map[string]struct{}, len(controls.Problems))
+	for _, rule := range controls.Problems {
 		if rule.Status < 400 || rule.Status > 599 || rule.Code == "" || rule.SafeRetryAction == "" {
-			return fmt.Errorf("invalid admission problem rule %#v", rule)
+			return fmt.Errorf("invalid problem rule %#v", rule)
 		}
 		switch rule.Disposition {
-		case "confirmed_refusal", "outcome_unknown", "resolved_receipt_expired":
+		case "confirmed_refusal", "outcome_unknown", "resolved_receipt_expired", "unclassified_failure":
 		default:
-			return fmt.Errorf("invalid admission problem disposition %q", rule.Disposition)
+			return fmt.Errorf("invalid problem disposition %q", rule.Disposition)
 		}
 		key := fmt.Sprintf("%d\x00%s", rule.Status, rule.Code)
 		if _, exists := problemKeys[key]; exists {
-			return fmt.Errorf("duplicate admission problem rule for HTTP %d %s", rule.Status, rule.Code)
+			return fmt.Errorf("duplicate problem rule for HTTP %d %s", rule.Status, rule.Code)
 		}
 		problemKeys[key] = struct{}{}
 	}
@@ -718,10 +736,23 @@ func validateAPICodegenConfiguration(configuration apiCodegenConfiguration) erro
 	return nil
 }
 
-func generateAPIOutputs(ctx context.Context, specSource []byte, document *openapi3.T, controls apiControls, configuration apiCodegenConfiguration) (map[string][]byte, error) {
+func generateAPIOutputs(ctx context.Context, document *openapi3.T, controls apiControls, configuration apiCodegenConfiguration, admin adminAPIComposition) (map[string][]byte, error) {
 	version := apiGeneratorVersion
 	base := configuration.Configuration
 	base.NoVCSVersionOverride = &version
+
+	// Codegen filters excluded operations in place. Preserve the complete
+	// public contract and protocol controls before generating ordinary clients
+	// and handlers; manual streaming routes still belong to that contract.
+	controlsSource, err := generateControlsSource(controls, document)
+	if err != nil {
+		return nil, err
+	}
+	canonicalJSON, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("marshal canonical OpenAPI JSON: %w", err)
+	}
+	canonicalJSON = append(canonicalJSON, '\n')
 
 	modelSource, err := codegen.Generate(document, base)
 	if err != nil {
@@ -746,7 +777,7 @@ func generateAPIOutputs(ctx context.Context, specSource []byte, document *openap
 		return nil, fmt.Errorf("generate API client: %w", err)
 	}
 
-	serverDocument, err := loadOpenAPIDocument(ctx, specSource)
+	serverDocument, err := loadOpenAPIDocument(ctx, admin.serverSource)
 	if err != nil {
 		return nil, fmt.Errorf("reload OpenAPI for server projection: %w", err)
 	}
@@ -763,46 +794,54 @@ func generateAPIOutputs(ctx context.Context, specSource []byte, document *openap
 	if err != nil {
 		return nil, err
 	}
-	formattedServer, err := projectServerResponseAliases(serverSource)
+	formattedServer, err := projectServerBoundary(serverSource)
 	if err != nil {
 		return nil, fmt.Errorf("format generated Gin server boundary: %w", err)
 	}
 
-	controlsSource, err := generateControlsSource(controls, document)
+	adminModels, err := generateAdminModels(ctx, admin, base, modelFile)
 	if err != nil {
 		return nil, err
 	}
-	canonicalJSON, err := json.MarshalIndent(document, "", "  ")
-	if err != nil {
-		return nil, fmt.Errorf("marshal canonical OpenAPI JSON: %w", err)
-	}
-	canonicalJSON = append(canonicalJSON, '\n')
 
 	outputs := map[string][]byte{
 		"api/pm.openapi.json":            canonicalJSON,
 		"internal/api/client.gen.go":     []byte(clientSource),
 		"internal/api/controls.gen.go":   controlsSource,
 		"internal/api/types.gen.go":      []byte(modelSource),
+		"internal/httpapi/admin.gen.go":  adminModels,
 		"internal/httpapi/server.gen.go": formattedServer,
 	}
 	outputs["api/generated.sha256"] = generateAPIDigestManifest(outputs)
 	return outputs, nil
 }
 
-// Strict response visitors must be local types, even when their payload is a
-// canonical API DTO. Serialize through that DTO so union internals remain owned
-// by the API package and its generated MarshalJSON implementation.
-func projectServerResponseAliases(source string) ([]byte, error) {
+// Strict operations receive the standard request context, never Gin's pooled
+// context. Strict response visitors remain local types but serialize through the
+// canonical API DTO and its generated MarshalJSON implementation.
+func projectServerBoundary(source string) ([]byte, error) {
 	fileSet := token.NewFileSet()
 	file, err := parser.ParseFile(fileSet, "server.gen.go", source, parser.ParseComments|parser.SkipObjectResolution)
 	if err != nil {
 		return nil, err
 	}
 	aliases := make(map[string]*ast.TypeSpec)
+	expectedContexts, projectedContexts := 0, 0
 	for _, declaration := range file.Decls {
 		if generic, ok := declaration.(*ast.GenDecl); ok {
 			for _, specification := range generic.Specs {
-				if definition, ok := specification.(*ast.TypeSpec); ok && definition.Assign.IsValid() {
+				definition, ok := specification.(*ast.TypeSpec)
+				if !ok {
+					continue
+				}
+				if definition.Name.Name == "StrictServerInterface" {
+					boundary, ok := definition.Type.(*ast.InterfaceType)
+					if !ok {
+						return nil, errors.New("strict server interface has an unsupported projection")
+					}
+					expectedContexts = boundary.Methods.NumFields()
+				}
+				if definition.Assign.IsValid() {
 					if _, local := definition.Type.(*ast.Ident); local {
 						aliases[definition.Name.Name] = definition
 					}
@@ -812,7 +851,48 @@ func projectServerResponseAliases(source string) ([]byte, error) {
 	}
 	for _, declaration := range file.Decls {
 		visitor, ok := declaration.(*ast.FuncDecl)
-		if !ok || visitor.Recv == nil || !strings.HasPrefix(visitor.Name.Name, "Visit") {
+		if !ok || visitor.Recv == nil {
+			continue
+		}
+		if pointer, ok := visitor.Recv.List[0].Type.(*ast.StarExpr); ok {
+			if receiver, ok := pointer.X.(*ast.Ident); ok && receiver.Name == "strictHandler" {
+				projected := 0
+				ast.Inspect(visitor.Body, func(node ast.Node) bool {
+					call, ok := node.(*ast.CallExpr)
+					if !ok || len(call.Args) != 2 {
+						return true
+					}
+					method, ok := call.Fun.(*ast.SelectorExpr)
+					if !ok {
+						return true
+					}
+					service, ok := method.X.(*ast.SelectorExpr)
+					if !ok || service.Sel.Name != "ssi" {
+						return true
+					}
+					instance, ok := service.X.(*ast.Ident)
+					if !ok || instance.Name != visitor.Recv.List[0].Names[0].Name {
+						return true
+					}
+					requestContext, ok := call.Args[0].(*ast.Ident)
+					if !ok || requestContext.Name != "ctx" {
+						return true
+					}
+					call.Args[0] = &ast.CallExpr{Fun: &ast.SelectorExpr{
+						X:   &ast.SelectorExpr{X: requestContext, Sel: ast.NewIdent("Request")},
+						Sel: ast.NewIdent("Context"),
+					}}
+					projected++
+					return true
+				})
+				if projected != 1 {
+					return nil, fmt.Errorf("strict operation %s has an unsupported request context projection", visitor.Name.Name)
+				}
+				projectedContexts++
+				continue
+			}
+		}
+		if !strings.HasPrefix(visitor.Name.Name, "Visit") {
 			continue
 		}
 		receiver := visitor.Recv.List[0]
@@ -846,6 +926,9 @@ func projectServerResponseAliases(source string) ([]byte, error) {
 			return nil, fmt.Errorf("strict response %s has an unsupported canonical payload projection", receiverType.Name)
 		}
 		definition.Assign = token.NoPos
+	}
+	if expectedContexts == 0 || projectedContexts != expectedContexts {
+		return nil, fmt.Errorf("strict request context projection covers %d of %d operations", projectedContexts, expectedContexts)
 	}
 	var output bytes.Buffer
 	if err := format.Node(&output, fileSet, file); err != nil {
@@ -890,6 +973,14 @@ const generatedServerBoundary = `
 // PMProtocolMiddleware validates the generated operation's exact public
 // metadata envelope before request-body binding or application code.
 func PMProtocolMiddleware(c *gin.Context) {
+	if isAdminAPIRoute(c.Request.Method, c.FullPath()) {
+		if err := validateAdminHTTPRequest(c.Request); err != nil {
+			problem := api.NewProtocolProblem(err)
+			c.Header("Content-Type", "application/problem+json")
+			c.AbortWithStatusJSON(http.StatusBadRequest, problem)
+		}
+		return
+	}
 	operationID, ok := api.OperationIDForRoute(c.Request.Method, c.FullPath())
 	if !ok {
 		problem := api.NewProtocolProblem(nil)
@@ -951,14 +1042,15 @@ func generateControlsSource(controls apiControls, document *openapi3.T) ([]byte,
 	source.WriteString("\tProblemConfirmedRefusal ProblemDisposition = \"confirmed_refusal\"\n")
 	source.WriteString("\tProblemOutcomeUnknown ProblemDisposition = \"outcome_unknown\"\n")
 	source.WriteString("\tProblemResolvedReceiptExpired ProblemDisposition = \"resolved_receipt_expired\"\n")
+	source.WriteString("\tProblemUnclassifiedFailure ProblemDisposition = \"unclassified_failure\"\n")
 	source.WriteString(")\n\n")
-	source.WriteString("type AdmissionProblemRule struct {\n\tStatus int\n\tCode string\n\tSafeRetryAction string\n\tDisposition ProblemDisposition\n}\n\n")
-	source.WriteString("var AdmissionProblemRules = [...]AdmissionProblemRule{\n")
-	for _, rule := range controls.AdmissionProblems {
+	source.WriteString("type ProblemRule struct {\n\tStatus int\n\tCode string\n\tSafeRetryAction string\n\tDisposition ProblemDisposition\n}\n\n")
+	source.WriteString("var ProblemRules = [...]ProblemRule{\n")
+	for _, rule := range controls.Problems {
 		fmt.Fprintf(&source, "\t{Status: %d, Code: %q, SafeRetryAction: %q, Disposition: ProblemDisposition(%q)},\n", rule.Status, rule.Code, rule.SafeRetryAction, rule.Disposition)
 	}
 	source.WriteString("}\n\n")
-	source.WriteString("func AdmissionProblemRuleFor(status int, code string) (AdmissionProblemRule, bool) {\n\tfor _, rule := range AdmissionProblemRules {\n\t\tif rule.Status == status && rule.Code == code {\n\t\t\treturn rule, true\n\t\t}\n\t}\n\treturn AdmissionProblemRule{}, false\n}\n\n")
+	source.WriteString("func ProblemRuleFor(status int, code string) (ProblemRule, bool) {\n\tfor _, rule := range ProblemRules {\n\t\tif rule.Status == status && rule.Code == code {\n\t\t\treturn rule, true\n\t\t}\n\t}\n\treturn ProblemRule{}, false\n}\n\n")
 
 	writeStringSlice(&source, "SupportedFeatures", controls.SupportedFeatures)
 	writeStringSlice(&source, "ProtocolMetadataRequiredFields", controls.ProtocolMetadata.Required)
@@ -967,11 +1059,30 @@ func generateControlsSource(controls apiControls, document *openapi3.T) ([]byte,
 	writeStringSlice(&source, "RunStates", controls.RunStates)
 	writeStringSlice(&source, "TerminalRunStates", controls.TerminalRunStates)
 
-	source.WriteString("type OperationControl struct {\n\tOperationID string\n\tMethod string\n\tPath string\n\tRequiredBodyFields []string\n\tOptionalBodyFields []string\n\tRequiresIdempotencyKey bool\n\tRequiresIfMatch bool\n}\n\n")
+	source.WriteString("type OperationControl struct {\n\tOperationID string\n\tMethod string\n\tPath string\n\tRequiredBodyFields []string\n\tOptionalBodyFields []string\n\tRequiresIdempotencyKey bool\n\tRequiresIfMatch bool\n\tHasBody bool\n\tHasProtocol bool\n\tQueryFields []string\n}\n\n")
 	source.WriteString("var operationControls = map[string]OperationControl{\n")
 	for _, operation := range controls.Operations {
-		fmt.Fprintf(&source, "\t%q: {OperationID: %q, Method: %q, Path: %q, RequiredBodyFields: %#v, OptionalBodyFields: %#v, RequiresIdempotencyKey: %t, RequiresIfMatch: %t},\n",
-			operation.OperationID, operation.OperationID, strings.ToUpper(operation.Method), operation.Path, operation.RequiredBodyFields, operation.OptionalBodyFields, operation.RequiresIdempotencyKey, operation.RequiresIfMatch)
+		pathItem := document.Paths.Value(operation.Path)
+		definition := pathItem.Operations()[strings.ToUpper(operation.Method)]
+		queryFields := make([]string, 0)
+		for _, parameters := range []openapi3.Parameters{pathItem.Parameters, definition.Parameters} {
+			for _, parameter := range parameters {
+				if parameter.Value == nil || parameter.Value.In != "query" {
+					continue
+				}
+				if parameter.Value.Schema == nil || parameter.Value.Schema.Value == nil || parameter.Value.Schema.Value.Type.Is("array") || parameter.Value.Schema.Value.Type.Is("object") {
+					return nil, fmt.Errorf("operation %s requires an unsupported query parameter shape", operation.OperationID)
+				}
+				queryFields = append(queryFields, parameter.Value.Name)
+			}
+		}
+		sort.Strings(queryFields)
+		hasProtocol := false
+		for _, field := range operation.RequiredBodyFields {
+			hasProtocol = hasProtocol || field == "protocol"
+		}
+		fmt.Fprintf(&source, "\t%q: {OperationID: %q, Method: %q, Path: %q, RequiredBodyFields: %#v, OptionalBodyFields: %#v, RequiresIdempotencyKey: %t, RequiresIfMatch: %t, HasBody: %t, HasProtocol: %t, QueryFields: %#v},\n",
+			operation.OperationID, operation.OperationID, strings.ToUpper(operation.Method), operation.Path, operation.RequiredBodyFields, operation.OptionalBodyFields, operation.RequiresIdempotencyKey, operation.RequiresIfMatch, definition.RequestBody != nil, hasProtocol, queryFields)
 	}
 	source.WriteString("}\n\n")
 	source.WriteString("var operationIDsByRoute = map[string]string{\n")
@@ -1003,7 +1114,7 @@ func generateControlsSource(controls apiControls, document *openapi3.T) ([]byte,
 		source.WriteString("\t},\n")
 	}
 	source.WriteString("}\n\n")
-	source.WriteString("func OperationControlFor(operationID string) (OperationControl, bool) {\n\tcontrol, ok := operationControls[operationID]\n\tif !ok {\n\t\treturn OperationControl{}, false\n\t}\n\tcontrol.RequiredBodyFields = append([]string(nil), control.RequiredBodyFields...)\n\tcontrol.OptionalBodyFields = append([]string(nil), control.OptionalBodyFields...)\n\treturn control, true\n}\n\n")
+	source.WriteString("func OperationControlFor(operationID string) (OperationControl, bool) {\n\tcontrol, ok := operationControls[operationID]\n\tif !ok {\n\t\treturn OperationControl{}, false\n\t}\n\tcontrol.RequiredBodyFields = append([]string(nil), control.RequiredBodyFields...)\n\tcontrol.OptionalBodyFields = append([]string(nil), control.OptionalBodyFields...)\n\tcontrol.QueryFields = append([]string(nil), control.QueryFields...)\n\treturn control, true\n}\n\n")
 	source.WriteString("func OperationIDForRoute(method, path string) (string, bool) {\n\toperationID, ok := operationIDsByRoute[strings.ToUpper(method)+\" \"+path]\n\treturn operationID, ok\n}\n\n")
 	source.WriteString("func IsTerminalRunState[T ~string](state T) bool {\n\tswitch state {\n")
 	writeGeneratedStringCase(&source, controls.TerminalRunStates)
@@ -1087,8 +1198,18 @@ func collectOperationObjectControls(document *openapi3.T, controls apiControls) 
 			return nil, fmt.Errorf("collect object controls: missing path %s", control.Path)
 		}
 		operation := pathItem.Operations()[strings.ToUpper(control.Method)]
-		if operation == nil || operation.RequestBody == nil || operation.RequestBody.Value == nil {
-			return nil, fmt.Errorf("collect object controls: %s has no request body", control.OperationID)
+		if operation == nil {
+			return nil, fmt.Errorf("collect object controls: missing operation %s", control.OperationID)
+		}
+		if operation.RequestBody == nil {
+			if len(control.RequiredBodyFields) != 0 || len(control.OptionalBodyFields) != 0 {
+				return nil, fmt.Errorf("collect object controls: bodyless operation %s declares body fields", control.OperationID)
+			}
+			result[control.OperationID] = map[string]generatedObjectControl{}
+			continue
+		}
+		if operation.RequestBody.Value == nil {
+			return nil, fmt.Errorf("collect object controls: %s has an unresolved request body", control.OperationID)
 		}
 		mediaType := operation.RequestBody.Value.Content["application/json"]
 		if mediaType == nil || mediaType.Schema == nil {

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Approve a PM device</title>
+  <link rel="stylesheet" href="/assets/pm.css">
+  <script src="/assets/device.js" defer></script>
+</head>
+<body>
+  <main class="shell" aria-labelledby="page-title">
+    <section class="card">
+      <p class="eyebrow">PM Server</p>
+      <h1 id="page-title">Approve a device login</h1>
+      <p class="lede">Enter both values shown by the PM client. Confirm that they match before approving.</p>
+      <form id="device-form" method="post" action="/login/device" autocomplete="off">
+        <label for="challenge-id">Challenge ID</label>
+        <input id="challenge-id" name="challenge_id" type="text" maxlength="512" required spellcheck="false" autocomplete="off">
+        <label for="user-code">User code</label>
+        <input id="user-code" name="user_code" type="text" maxlength="128" required spellcheck="false" autocomplete="off">
+        <div class="actions">
+          <button type="submit" data-decision="approve">Approve</button>
+          <button type="submit" class="secondary" data-decision="deny">Deny</button>
+        </div>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <nav aria-label="PM authentication actions">
+        <a href="/login">Sign in or reauthenticate</a>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

@@ -17,6 +17,64 @@
     "limits"
   ],
   "properties": {
+    "server": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "listen": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 128,
+          "description": "Literal IPv4 or bracketed IPv6 address and nonzero TCP port; defaults to loopback."
+        },
+        "trusted_proxies": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 2, "maxLength": 128},
+          "description": "Explicit IP addresses or canonical CIDRs; no default trust or all-address prefix."
+        },
+        "read_header_timeout": {"$ref": "#/$defs/duration"},
+        "request_timeout": {"$ref": "#/$defs/duration"},
+        "write_timeout": {"$ref": "#/$defs/duration"},
+        "idle_timeout": {"$ref": "#/$defs/duration"},
+        "drain_timeout": {"$ref": "#/$defs/duration"},
+        "probe_timeout": {"$ref": "#/$defs/duration"},
+        "max_header_bytes": {"type": "integer", "minimum": 1, "maximum": 1048576},
+        "max_connections": {"type": "integer", "minimum": 1, "maximum": 65536}
+      }
+    },
+    "worker": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional for API-only configuration; pm-worker requires the complete block. Go validation enforces finite timeouts, timeout ordering, run-lifetime bounds, and membership of pm-control in temporal.task_queues.",
+      "required": [
+        "task_queue",
+        "dial_timeout",
+        "drain_timeout",
+        "max_concurrent_activities",
+        "max_concurrent_workflow_tasks",
+        "activity_timeouts"
+      ],
+      "properties": {
+        "task_queue": {"const": "pm-control"},
+        "dial_timeout": {"$ref": "#/$defs/duration"},
+        "drain_timeout": {"$ref": "#/$defs/duration"},
+        "max_concurrent_activities": {"type": "integer", "minimum": 1, "maximum": 65536},
+        "max_concurrent_workflow_tasks": {"type": "integer", "minimum": 1, "maximum": 65536},
+        "activity_timeouts": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["schedule_to_close", "start_to_close", "heartbeat", "transport"],
+          "properties": {
+            "schedule_to_close": {"$ref": "#/$defs/duration"},
+            "start_to_close": {"$ref": "#/$defs/duration"},
+            "heartbeat": {"$ref": "#/$defs/duration"},
+            "transport": {"$ref": "#/$defs/duration"}
+          }
+        }
+      }
+    },
     "schema_version": {
       "const": "1"
     },
@@ -139,6 +197,11 @@
         },
         "client_secret_ref": {
           "$ref": "#/$defs/secretReference"
+        },
+        "step_up_maximum_age": {
+          "$ref": "#/$defs/duration",
+          "default": "5m",
+          "description": "Maximum age of a verified signed OIDC auth_time for privileged secret ingress; 1s through 15m. Login/session issuance time never qualifies."
         }
       }
     },
@@ -184,6 +247,7 @@
         "workspace_active_runs",
         "workflow_payload_bytes",
         "workflow_fanout",
+        "run_lifetime",
         "event_buffer",
         "query_children",
         "query_child_memory_bytes",
@@ -200,6 +264,9 @@
         },
         "workflow_fanout": {
           "$ref": "#/$defs/positiveInteger"
+        },
+        "run_lifetime": {
+          "$ref": "#/$defs/duration"
         },
         "event_buffer": {
           "$ref": "#/$defs/positiveInteger"

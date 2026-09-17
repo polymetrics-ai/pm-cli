@@ -110,9 +110,10 @@ type ArtifactsConfiguration struct {
 }
 
 type IdentityConfiguration struct {
-	Issuer          string
-	ClientID        string
-	ClientSecretRef string
+	Issuer           string
+	ClientID         string
+	ClientSecretRef  string
+	StepUpMaximumAge time.Duration
 }
 
 type EncryptionConfiguration struct {
@@ -147,6 +148,7 @@ type ResourceLimits struct {
 	WorkspaceActiveRuns   uint64
 	WorkflowPayloadBytes  uint64
 	WorkflowFanout        uint64
+	RunLifetime           time.Duration
 	EventBuffer           uint64
 	QueryChildren         uint64
 	QueryChildMemoryBytes uint64
@@ -174,6 +176,8 @@ type Configuration struct {
 	admissionOverrides AdmissionOverrides
 	admission          AdmissionLimits
 	limits             ResourceLimits
+	server             ServerConfiguration
+	worker             WorkerConfiguration
 }
 
 func (c Configuration) SchemaVersion() string {
@@ -230,6 +234,10 @@ func (c Configuration) Limits() ResourceLimits {
 	return c.limits
 }
 
+func (c Configuration) Worker() WorkerConfiguration {
+	return c.worker
+}
+
 type documentData struct {
 	schemaVersion      string
 	deploymentID       string
@@ -242,6 +250,8 @@ type documentData struct {
 	admissionProfile   AdmissionProfile
 	admissionOverrides AdmissionOverrides
 	limits             ResourceLimits
+	server             ServerConfiguration
+	worker             WorkerConfiguration
 }
 
 type optionalUint64 struct {
@@ -274,7 +284,7 @@ func Load(reader io.Reader) (Document, error) {
 	if scanErr := scanStrictJSON(data); scanErr != nil {
 		return Document{}, scanErr
 	}
-	root, decodeErr := decodeObject(data, "$", rootFields, rootFields)
+	root, decodeErr := decodeObject(data, "$", allowedRootFields, rootFields)
 	if decodeErr != nil {
 		return Document{}, decodeErr
 	}
@@ -311,6 +321,12 @@ func Load(reader io.Reader) (Document, error) {
 	if result.limits, err = decodeLimits(root["limits"]); err != nil {
 		return Document{}, err
 	}
+	if result.server, err = decodeServer(root["server"]); err != nil {
+		return Document{}, err
+	}
+	if result.worker, err = decodeWorker(root["worker"]); err != nil {
+		return Document{}, err
+	}
 	return Document{data: result, loaded: true}, nil
 }
 
@@ -326,6 +342,8 @@ var rootFields = []string{
 	"admission",
 	"limits",
 }
+
+var allowedRootFields = append([]string{"server", "worker"}, rootFields...)
 
 func decodePostgres(raw json.RawMessage) (PostgresConfiguration, error) {
 	fields := []string{"ownership", "database", "endpoint_ref"}
@@ -429,8 +447,8 @@ func decodeArtifacts(raw json.RawMessage) (ArtifactsConfiguration, error) {
 }
 
 func decodeIdentity(raw json.RawMessage) (IdentityConfiguration, error) {
-	fields := []string{"issuer", "client_id", "client_secret_ref"}
-	object, err := decodeObject(raw, "identity", fields, fields)
+	fields := []string{"issuer", "client_id", "client_secret_ref", "step_up_maximum_age"}
+	object, err := decodeObject(raw, "identity", fields, fields[:3])
 	if err != nil {
 		return IdentityConfiguration{}, err
 	}
@@ -446,7 +464,16 @@ func decodeIdentity(raw json.RawMessage) (IdentityConfiguration, error) {
 	if err != nil {
 		return IdentityConfiguration{}, err
 	}
-	return IdentityConfiguration{Issuer: issuer, ClientID: clientID, ClientSecretRef: clientSecretRef}, nil
+	maximumAge := 5 * time.Minute
+	if _, present := object["step_up_maximum_age"]; present {
+		maximumAge, err = decodeDuration(object, "step_up_maximum_age", "identity.step_up_maximum_age")
+		if err != nil {
+			return IdentityConfiguration{}, err
+		}
+	}
+	return IdentityConfiguration{
+		Issuer: issuer, ClientID: clientID, ClientSecretRef: clientSecretRef, StepUpMaximumAge: maximumAge,
+	}, nil
 }
 
 func decodeEncryption(raw json.RawMessage) (EncryptionConfiguration, error) {
@@ -510,6 +537,7 @@ func decodeLimits(raw json.RawMessage) (ResourceLimits, error) {
 		"workspace_active_runs",
 		"workflow_payload_bytes",
 		"workflow_fanout",
+		"run_lifetime",
 		"event_buffer",
 		"query_children",
 		"query_child_memory_bytes",
@@ -529,6 +557,9 @@ func decodeLimits(raw json.RawMessage) (ResourceLimits, error) {
 		return ResourceLimits{}, err
 	}
 	if limits.WorkflowFanout, err = decodeUint64(object, "workflow_fanout", "limits.workflow_fanout"); err != nil {
+		return ResourceLimits{}, err
+	}
+	if limits.RunLifetime, err = decodeDuration(object, "run_lifetime", "limits.run_lifetime"); err != nil {
 		return ResourceLimits{}, err
 	}
 	if limits.EventBuffer, err = decodeUint64(object, "event_buffer", "limits.event_buffer"); err != nil {

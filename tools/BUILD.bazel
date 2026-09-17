@@ -27,6 +27,7 @@ alias(
 go_library(
     name = "tools",
     srcs = [
+        "api_admin_generation.go",
         "api_generation.go",
         "dependency_policy.go",
     ],

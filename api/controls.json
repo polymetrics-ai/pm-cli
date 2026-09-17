@@ -48,10 +48,16 @@
     "partial",
     "succeeded"
   ],
-  "admission_problems": [
+  "problems": [
     {
       "status": 400,
       "code": "invalid_request",
+      "safe_retry_action": "correct_input",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 400,
+      "code": "invalid_event_cursor",
       "safe_retry_action": "correct_input",
       "disposition": "confirmed_refusal"
     },
@@ -150,9 +156,141 @@
       "code": "deployment_admission_overload",
       "safe_retry_action": "after_backlog_progress",
       "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 400,
+      "code": "login_challenge_invalid",
+      "safe_retry_action": "restart_login",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 401,
+      "code": "oidc_verification_failed",
+      "safe_retry_action": "restart_login",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 403,
+      "code": "inbound_policy_rejected",
+      "safe_retry_action": "use_trusted_transport",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 403,
+      "code": "csrf_validation_failed",
+      "safe_retry_action": "refresh_browser_session",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 403,
+      "code": "device_authorization_denied",
+      "safe_retry_action": "restart_login",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 403,
+      "code": "reauthentication_required",
+      "safe_retry_action": "reauthenticate",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "resource_conflict",
+      "safe_retry_action": "inspect_existing_result",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "login_challenge_used",
+      "safe_retry_action": "restart_login",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "device_authorization_pending",
+      "safe_retry_action": "poll_after_interval",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "credential_revision_stale",
+      "safe_retry_action": "refresh_control_revision",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 410,
+      "code": "login_challenge_expired",
+      "safe_retry_action": "restart_login",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 429,
+      "code": "device_poll_too_soon",
+      "safe_retry_action": "poll_after_interval",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 429,
+      "code": "authentication_rate_limited",
+      "safe_retry_action": "retry_after_backoff",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 500,
+      "code": "internal_error",
+      "safe_retry_action": "contact_support_with_incident_id",
+      "disposition": "unclassified_failure"
+    },
+    {
+      "status": 503,
+      "code": "credential_storage_unavailable",
+      "safe_retry_action": "after_capability_change",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 503,
+      "code": "mutation_outcome_unknown",
+      "safe_retry_action": "same_key_reconcile_only",
+      "disposition": "outcome_unknown"
     }
   ],
   "operations": [
+    {
+      "operation_id": "approveDeviceLogin",
+      "method": "POST",
+      "path": "/v1/sessions/device/approve",
+      "required_body_fields": ["challenge_id", "user_code"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "cancelRun",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/runs/{run_id}/cancel",
+      "required_body_fields": ["protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "completeBrowserLogin",
+      "method": "POST",
+      "path": "/v1/sessions/browser",
+      "required_body_fields": ["code", "state"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "createConnection",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/connections",
+      "required_body_fields": ["connection", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
     {
       "operation_id": "createDelegation",
       "method": "POST",
@@ -172,6 +310,105 @@
       "requires_if_match": true
     },
     {
+      "operation_id": "deleteConnection",
+      "method": "DELETE",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}",
+      "required_body_fields": ["protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "denyDeviceLogin",
+      "method": "POST",
+      "path": "/v1/sessions/device/deny",
+      "required_body_fields": ["challenge_id", "user_code"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "downloadArtifact",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "exchangeDeviceLogin",
+      "method": "POST",
+      "path": "/v1/sessions/device/exchange",
+      "required_body_fields": ["challenge_id", "proof"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getConnection",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getCurrentSession",
+      "method": "GET",
+      "path": "/v1/sessions/me",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getRun",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runs/{run_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getRunResult",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runs/{run_id}/result",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getServerInfo",
+      "method": "GET",
+      "path": "/v1/info",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getTask",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/tasks/{task_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getWorkspace",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
       "operation_id": "grantMembership",
       "method": "POST",
       "path": "/v1/workspaces/{workspace_id}/memberships",
@@ -179,6 +416,96 @@
       "optional_body_fields": [],
       "requires_idempotency_key": true,
       "requires_if_match": true
+    },
+    {
+      "operation_id": "inspectArtifact",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listConnections",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/connections",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listDelegations",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/delegations",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listMemberships",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/memberships",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listRunTasks",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runs/{run_id}/tasks",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listRuns",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runs",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listServiceAccounts",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/service-accounts",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listWorkspaces",
+      "method": "GET",
+      "path": "/v1/workspaces",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "resumeRun",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/runs/{run_id}/resume",
+      "required_body_fields": ["approval_ref", "protocol", "recovery_generation"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "revokeCurrentSession",
+      "method": "DELETE",
+      "path": "/v1/sessions/current",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
     },
     {
       "operation_id": "revokeDelegation",
@@ -208,12 +535,57 @@
       "requires_if_match": true
     },
     {
+      "operation_id": "startBrowserLogin",
+      "method": "POST",
+      "path": "/v1/sessions/browser/challenges",
+      "required_body_fields": ["reauthenticate"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "startDeviceLogin",
+      "method": "POST",
+      "path": "/v1/sessions/device",
+      "required_body_fields": ["device_id"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
       "operation_id": "submitInvocation",
       "method": "POST",
       "path": "/v1/workspaces/{workspace_id}/invocations",
       "required_body_fields": ["connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"],
       "optional_body_fields": ["approval_ref"],
       "requires_idempotency_key": true,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "updateConnection",
+      "method": "PATCH",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}",
+      "required_body_fields": ["connection", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
+      "operation_id": "uploadArtifact",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/artifacts",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "watchRunEvents",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/runs/{run_id}/events",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
       "requires_if_match": false
     }
   ]

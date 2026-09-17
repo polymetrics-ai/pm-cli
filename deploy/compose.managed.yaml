@@ -7,6 +7,8 @@ services:
     profiles: [bundled-temporal]
   temporal:
     profiles: [bundled-temporal]
+    volumes:
+      - ${PM_STACK_TEMPORAL_DYNAMIC_CONFIG:-${PM_STACK_ROOT:?}/deploy/temporal/dynamicconfig.yaml}:/etc/temporal/dynamicconfig.yaml:ro
   seaweed-master:
     profiles: [bundled-artifacts]
   seaweed-volume:

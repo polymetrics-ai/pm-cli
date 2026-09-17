@@ -4,12 +4,17 @@ info:
   title: PM ordinary public API
   version: 1.0.0
   description: >-
-    Pure ordinary-client contract. It declares no reachable handler, durable
-    commit, provider execution, or separate administration ingress.
+    Typed ordinary-client contract. Provider-secret ingress is server-only and
+    deliberately absent from ordinary models, clients and this public document.
 tags:
   - name: compatibility
   - name: invocation
   - name: access
+  - name: sessions
+  - name: workspaces
+  - name: connections
+  - name: runs
+  - name: artifacts
 paths:
   /v1/info:
     get:
@@ -26,6 +31,463 @@ paths:
                 $ref: "#/components/schemas/ServerInfo"
         "500":
           $ref: "#/components/responses/Problem500"
+  /v1/sessions/device:
+    post:
+      tags: [sessions]
+      summary: Start a bounded device login challenge
+      operationId: startDeviceLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceStart"
+      responses:
+        "201":
+          description: Unapproved expiring challenge; not a PM session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceChallenge"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "429":
+          $ref: "#/components/responses/Problem429"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/sessions/device/exchange:
+    post:
+      tags: [sessions]
+      summary: Exchange one approved device proof exactly once
+      operationId: exchangeDeviceLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceProof"
+      responses:
+        "200":
+          description: Original one-time PM device session credential; store only in the client OS credential store
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PMDeviceSession"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "429":
+          $ref: "#/components/responses/Problem429"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/sessions/device/approve:
+    post:
+      tags: [sessions]
+      summary: Approve a device challenge as the current verified browser identity
+      operationId: approveDeviceLogin
+      security:
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceApproval"
+      responses:
+        "204":
+          description: Challenge approved without exposing or issuing a device session
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/sessions/device/deny:
+    post:
+      tags: [sessions]
+      summary: Deny a device challenge as the current verified browser identity
+      operationId: denyDeviceLogin
+      security:
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DeviceApproval"
+      responses:
+        "204":
+          description: Challenge denied without issuing a session
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/sessions/browser/challenges:
+    post:
+      tags: [sessions]
+      summary: Start a configured OIDC login with server-held PKCE binding
+      operationId: startBrowserLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserLoginStart"
+      responses:
+        "201":
+          description: Authorization URL and expiry; the PKCE verifier is confined to a Secure HttpOnly challenge cookie
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BrowserLoginChallenge"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "429":
+          $ref: "#/components/responses/Problem429"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/sessions/browser:
+    post:
+      tags: [sessions]
+      summary: Complete one configured OIDC callback with state, nonce and PKCE verification
+      operationId: completeBrowserLogin
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BrowserLogin"
+      responses:
+        "204":
+          description: Sets a Secure HttpOnly SameSite browser session cookie and a session-bound CSRF cookie; never returns a device bearer credential
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/sessions/me:
+    get:
+      tags: [sessions]
+      summary: Inspect the current authenticated actor and workspace memberships
+      operationId: getCurrentSession
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Current identity and a bounded membership page; no credential material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CurrentSession"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/sessions/current:
+    delete:
+      tags: [sessions]
+      summary: Revoke the current login session without revoking accepted run grants
+      operationId: revokeCurrentSession
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "204":
+          description: Current login session is revoked or no login session remains
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces:
+    get:
+      tags: [workspaces]
+      summary: List memberships of the authenticated principal without inferring a workspace
+      operationId: listWorkspaces
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: A bounded page of currently authorized workspace memberships
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkspacePage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [workspaces]
+      summary: Inspect an explicitly authorized workspace
+      operationId: getWorkspace
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "200":
+          description: Current workspace membership and its control revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Workspace"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [connections]
+      summary: List safe connection metadata and its collection revision
+      operationId: listConnections
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Scoped page with opaque credential references only
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+    post:
+      tags: [connections]
+      summary: Create a safe connection against an existing authoritative provider account
+      operationId: createConnection
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionCreateRequest"
+      responses:
+        "200":
+          description: Exact replay of the original safe connection result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionMutationResponse"
+        "201":
+          description: Original committed connection with server-owned identifiers
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionMutationResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections/{connection_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectionID"
+    get:
+      tags: [connections]
+      summary: Inspect safe current connection metadata
+      operationId: getConnection
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "200":
+          description: Current connection and resource revision without credential values or private locators
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Connection"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+    patch:
+      tags: [connections]
+      summary: Update safe connection metadata while preserving its credential binding
+      operationId: updateConnection
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionUpdateRequest"
+      responses:
+        "200":
+          description: Updated, unchanged or exactly replayed safe result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionMutationResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+    delete:
+      tags: [connections]
+      summary: Revoke a connection under its current resource revision
+      operationId: deleteConnection
+      description: Revocation retains durable history and does not imply rollback or cancellation of accepted run grants.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ConnectionDeleteRequest"
+      responses:
+        "200":
+          description: Revoked, unchanged or exactly replayed safe result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionMutationResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/invocations:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -35,8 +497,10 @@ paths:
       operationId: submitInvocation
       security:
         - PMSession: []
+        - PMBrowserSession: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
         content:
@@ -70,18 +534,458 @@ paths:
           $ref: "#/components/responses/Problem429"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/artifacts:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    post:
+      tags: [artifacts]
+      summary: Request an authorized artifact upload capability
+      operationId: uploadArtifact
+      description: >-
+        M4 exposes only authorization and explicit capability refusal. No artifact
+        byte backend is installed, so this operation advertises no successful
+        representation and never fabricates artifact metadata. Send no request
+        body: the shared protocol guard rejects a nonempty entity as invalid_request.
+        A later byte-storage owner must declare the accepted raw-stream contract
+        before enabling byte input or adding a success response.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      responses:
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/artifacts/{artifact_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ArtifactID"
+    get:
+      tags: [artifacts]
+      summary: Authorize inspection of one artifact
+      operationId: inspectArtifact
+      description: >-
+        Authorizes the exact private artifact identity before reporting unavailable
+        byte storage. Foreign and unknown artifacts remain concealed as
+        resource_not_found. M4 advertises no successful metadata representation.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ArtifactID"
+    get:
+      tags: [artifacts]
+      summary: Authorize download of one artifact
+      operationId: downloadArtifact
+      description: >-
+        Applies the exact artifact authorization and concealment precedence before
+        reporting unavailable byte storage. M4 serves no body, range metadata,
+        digest, length, media type, or successful content response.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [runs]
+      summary: List currently authorized runs
+      operationId: listRuns
+      description: >-
+        Returns a scope-bound cursor page of safe run projections. Each projection
+        identifies the immutable accepted connection and operation-or-plan context;
+        it does not expose the RunSpec, execution grant, inputs, credentials or
+        orchestration internals.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+        - $ref: "#/components/parameters/RunStateFilter"
+      responses:
+        "200":
+          description: Scope-bound run page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs/{run_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: Inspect one authorized run
+      operationId: getRun
+      description: >-
+        Authorizes the immutable accepted connection and operation-or-plan context
+        before returning current PostgreSQL-owned run and effect truth. Revocation
+        of execution authority does not rewrite or by itself hide an otherwise
+        authorized historical run view.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "200":
+          description: Safe run projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunView"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs/{run_id}/events:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: Watch one authorized run through durable committed events
+      operationId: watchRunEvents
+      description: >-
+        Replays PostgreSQL-authoritative per-run sequence order after the optional
+        signed cursor, then follows committed events. The first snapshot carries
+        authoritative run truth, its durable watermark, an explicit retention-gap
+        flag and a reconnect cursor. Heartbeats are SSE comments. Disconnecting
+        ends only this response and never requests durable run cancellation.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/LastEventID"
+      responses:
+        "200":
+          description: >-
+            Long-lived text/event-stream. An event named snapshot has JSON data
+            matching RunEventSnapshotData and MUST NOT carry an SSE id field. An
+            event named run_event has JSON data matching RunEventData and MUST
+            carry an opaque signed EventCursor in its SSE id field.
+          content:
+            text/event-stream:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/RunEventSnapshotData"
+                  - $ref: "#/components/schemas/RunEventData"
+                description: Schema applies to each decoded SSE data field, not to a buffered aggregate response.
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "500":
+          $ref: "#/components/responses/Problem500"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs/{run_id}/result:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: List available result references for one authorized run
+      operationId: getRunResult
+      description: >-
+        Returns only currently available immutable result references beside
+        PostgreSQL-owned effect truth. An empty result_references array is explicit;
+        orchestration closure never fabricates a result or a successful effect.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "200":
+          description: Truthful run result-reference projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResultResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs/{run_id}/tasks:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/RunID"
+    get:
+      tags: [runs]
+      summary: List durable tasks and exact member outcomes for one authorized run
+      operationId: listRunTasks
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Scope-bound task page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs/{run_id}/cancel:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/RunID"
+    post:
+      tags: [runs]
+      summary: Persist an explicit cancellation intent
+      operationId: cancelRun
+      description: >-
+        Persists an authorized cancellation command under the scoped request key.
+        HTTP 202 means the command is durable; it never asserts that orchestration
+        stopped or that provider work was terminated. Current authorization is
+        checked before replay disclosure. Exact replay may be resolved before the
+        current If-Match comparison; every new mutation requires If-Match.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunCancelRequest"
+      responses:
+        "202":
+          description: Durable cancellation command, original or exact replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunCancelResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/runs/{run_id}/resume:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/RunID"
+    post:
+      tags: [runs]
+      summary: Request one explicit recovery generation
+      operationId: resumeRun
+      description: >-
+        Names the recovery generation and approval context explicitly and preserves
+        every unresolved effect. HTTP 202 accepts only the durable recovery command,
+        not a provider-effect outcome. An unavailable or ineligible handler returns
+        HTTP 409 resume_unavailable. Current authorization precedes replay disclosure;
+        exact replay may precede the current If-Match comparison, while every new
+        mutation requires If-Match.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RunResumeRequest"
+      responses:
+        "202":
+          description: Durable recovery generation, original or exact replay
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunResumeResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/tasks/{task_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/TaskID"
+    get:
+      tags: [runs]
+      summary: Inspect one durable task and its exact member outcomes
+      operationId: getTask
+      description: >-
+        The public task_id is the immutable reference returned by a task view and
+        binds the exact run and stored task identity. Implementations must not select
+        an arbitrary same-named task by its stored task component alone.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "200":
+          description: Safe durable task projection
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskView"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/memberships:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [access]
+      summary: List currently authorized membership and grant metadata
+      operationId: listMemberships
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Scoped membership page with collection and resource revisions
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MembershipPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
     post:
       tags: [access]
       summary: Grant a workspace membership
       operationId: grantMembership
       security:
         - PMSession: []
+        - PMBrowserSession: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
         content:
@@ -129,9 +1033,11 @@ paths:
       operationId: revokeMembership
       security:
         - PMSession: []
+        - PMBrowserSession: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
         content:
@@ -168,15 +1074,44 @@ paths:
   /v1/workspaces/{workspace_id}/service-accounts:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [access]
+      summary: List safe service-account scope and revision metadata
+      operationId: listServiceAccounts
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Scoped service-account page; one-time credentials are never returned
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ServiceAccountPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
     post:
       tags: [access]
       summary: Create a PM service account
       operationId: createServiceAccount
       security:
         - PMSession: []
+        - PMBrowserSession: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
         content:
@@ -224,9 +1159,11 @@ paths:
       operationId: revokeServiceAccount
       security:
         - PMSession: []
+        - PMBrowserSession: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
         content:
@@ -263,15 +1200,44 @@ paths:
   /v1/workspaces/{workspace_id}/delegations:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [access]
+      summary: List safe one-hop delegation scope and revision metadata
+      operationId: listDelegations
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Scoped delegation page with distinct requested and effective actors
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DelegationPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
     post:
       tags: [access]
       summary: Create one bounded delegation
       operationId: createDelegation
       security:
         - PMSession: []
+        - PMBrowserSession: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
         content:
@@ -319,9 +1285,11 @@ paths:
       operationId: revokeDelegation
       security:
         - PMSession: []
+        - PMBrowserSession: []
       parameters:
         - $ref: "#/components/parameters/IdempotencyKey"
         - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
       requestBody:
         required: true
         content:
@@ -360,7 +1328,56 @@ components:
     PMSession:
       type: http
       scheme: bearer
+    PMBrowserSession:
+      type: apiKey
+      in: cookie
+      name: __Host-pm_session
+      description: Secure HttpOnly SameSite browser transport; state-changing requests additionally require exact origin and session-bound CSRF.
   parameters:
+    CSRFToken:
+      name: X-CSRF-Token
+      in: header
+      required: false
+      description: Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    Cursor:
+      name: cursor
+      in: query
+      required: false
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 4096
+    LastEventID:
+      name: Last-Event-ID
+      in: header
+      required: false
+      description: >-
+        Optional; when present there MUST be exactly one nonempty opaque signed
+        event cursor. It is bound to the authorized organization, workspace, run
+        and durable sequence; it is not a raw sequence number and cannot select
+        another scope.
+      schema:
+        $ref: "#/components/schemas/EventCursor"
+    PageSize:
+      name: page_size
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+    ConnectionID:
+      name: connection_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
     WorkspaceID:
       name: workspace_id
       in: path
@@ -377,6 +1394,39 @@ components:
         type: string
         minLength: 1
         maxLength: 512
+    RunID:
+      name: run_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    ArtifactID:
+      name: artifact_id
+      in: path
+      required: true
+      description: Private opaque artifact identity; never a bearer capability.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    TaskID:
+      name: task_id
+      in: path
+      required: true
+      description: Deterministic reversible opaque encoding of the exact run and stored task IDs inside the authorized workspace; it is not a bearer capability or alternate selector.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 2048
+    RunStateFilter:
+      name: state
+      in: query
+      required: false
+      description: Restrict the workspace-scoped page to one canonical run state.
+      schema:
+        $ref: "#/components/schemas/RunState"
     IdempotencyKey:
       name: Idempotency-Key
       in: header
@@ -388,7 +1438,15 @@ components:
     IfMatch:
       name: If-Match
       in: header
-      required: true
+      required: false
+      description: Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+  headers:
+    ETag:
+      description: Opaque scope-bound revision validator for this authorized representation; it is not a mutation idempotency key.
       schema:
         type: string
         minLength: 1
@@ -461,6 +1519,441 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    DeviceStart:
+      type: object
+      additionalProperties: false
+      required: [device_id]
+      properties:
+        device_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+    DeviceChallenge:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, user_code, device_proof, verification_uri, expires_at, poll_interval_seconds]
+      properties:
+        challenge_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        user_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+        device_proof:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: One-time PM device proof, never a provider credential.
+        verification_uri:
+          type: string
+          format: uri
+          maxLength: 4096
+        expires_at:
+          type: string
+          format: date-time
+        poll_interval_seconds:
+          type: integer
+          minimum: 1
+          maximum: 60
+    DeviceProof:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, proof]
+      properties:
+        challenge_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        proof:
+          type: string
+          minLength: 1
+          maxLength: 512
+    DeviceApproval:
+      type: object
+      additionalProperties: false
+      required: [challenge_id, user_code]
+      properties:
+        challenge_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        user_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+    Principal:
+      type: object
+      additionalProperties: false
+      required: [kind, principal_id]
+      properties:
+        kind:
+          type: string
+          enum: [user, service_account]
+        principal_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+    PMDeviceSession:
+      type: object
+      additionalProperties: false
+      required: [session_id, pm_session_credential, principal, expires_at]
+      properties:
+        session_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        pm_session_credential:
+          type: string
+          minLength: 1
+          maxLength: 4096
+          description: Original one-time PM login credential for the client's OS credential store, never a provider token.
+        principal:
+          $ref: "#/components/schemas/Principal"
+        expires_at:
+          type: string
+          format: date-time
+    BrowserLoginStart:
+      type: object
+      additionalProperties: false
+      required: [reauthenticate]
+      properties:
+        reauthenticate:
+          type: boolean
+          description: Request a fresh signed OIDC authentication time using max_age=0 and prompt=login.
+    BrowserLoginChallenge:
+      type: object
+      additionalProperties: false
+      required: [authorization_url, expires_at]
+      properties:
+        authorization_url:
+          type: string
+          format: uri
+          maxLength: 16384
+        expires_at:
+          type: string
+          format: date-time
+    BrowserLogin:
+      type: object
+      additionalProperties: false
+      required: [code, state]
+      properties:
+        code:
+          type: string
+          minLength: 1
+          maxLength: 8192
+        state:
+          type: string
+          minLength: 1
+          maxLength: 512
+    CurrentSession:
+      type: object
+      additionalProperties: false
+      required: [principal, transport, expires_at, authenticated_at, memberships]
+      properties:
+        principal:
+          $ref: "#/components/schemas/Principal"
+        transport:
+          type: string
+          enum: [browser_session, device_session]
+        expires_at:
+          type: string
+          format: date-time
+        authenticated_at:
+          type: [string, "null"]
+          format: date-time
+          description: Verified signed OIDC authentication time when present; issuance time is not substituted.
+        memberships:
+          $ref: "#/components/schemas/WorkspacePage"
+    Workspace:
+      type: object
+      additionalProperties: false
+      required: [org_id, workspace_id, name, membership_id, role, membership_revision]
+      properties:
+        org_id:
+          type: string
+        workspace_id:
+          type: string
+        name:
+          type: string
+        membership_id:
+          type: string
+        role:
+          type: string
+        membership_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+    WorkspacePage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Workspace"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
+    Connection:
+      type: object
+      additionalProperties: false
+      required: [org_id, workspace_id, connection_id, connector_id, provider_account_id, credential_ref, display_name, state, revision, revoked_at]
+      properties:
+        org_id:
+          type: string
+        workspace_id:
+          type: string
+        connection_id:
+          type: string
+        connector_id:
+          type: string
+        provider_account_id:
+          type: string
+        credential_ref:
+          type: string
+          description: Opaque server-owned reference only; no key locator, account witness or secret material.
+        display_name:
+          type: string
+        state:
+          type: string
+          enum: [active, revoked]
+        revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+    ConnectionPage:
+      type: object
+      additionalProperties: false
+      required: [items, collection_revision, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Connection"
+        collection_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
+    SafeConnectionInput:
+      type: object
+      additionalProperties: false
+      required: [connector_id, provider_account_id, display_name]
+      properties:
+        connector_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        provider_account_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+    SafeConnectionPatch:
+      type: object
+      additionalProperties: false
+      required: [display_name]
+      properties:
+        display_name:
+          type: string
+          minLength: 1
+          maxLength: 256
+    ConnectionCreateRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, connection]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        connection:
+          $ref: "#/components/schemas/SafeConnectionInput"
+    ConnectionUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, connection]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        connection:
+          $ref: "#/components/schemas/SafeConnectionPatch"
+    ConnectionDeleteRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+    ConnectionMutationResponse:
+      type: object
+      additionalProperties: false
+      required: [connection, result_revision, outcome_reference, result_disposition, replay]
+      properties:
+        connection:
+          $ref: "#/components/schemas/Connection"
+        result_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+        result_disposition:
+          type: string
+          enum: [created, updated, revoked, unchanged]
+        replay:
+          type: boolean
+    Membership:
+      type: object
+      additionalProperties: false
+      required: [membership_ref, principal_ref, role, resource_grants, bound_scope_digest, control_revision, expires_at, revoked_at]
+      properties:
+        membership_ref:
+          type: string
+        principal_ref:
+          type: string
+        role:
+          type: string
+        resource_grants:
+          type: array
+          items:
+            type: string
+        bound_scope_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        control_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        expires_at:
+          type: [string, "null"]
+          format: date-time
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+    MembershipPage:
+      type: object
+      additionalProperties: false
+      required: [items, collection_revision, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Membership"
+        collection_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
+    ServiceAccount:
+      type: object
+      additionalProperties: false
+      required: [service_account_ref, display_name, workspace_scopes, connection_scopes, operation_scopes, grant_revision, control_revision, expires_at, revoked_at]
+      properties:
+        service_account_ref:
+          type: string
+        display_name:
+          type: [string, "null"]
+          maxLength: 256
+        workspace_scopes:
+          type: array
+          items:
+            type: string
+        connection_scopes:
+          type: array
+          items:
+            type: string
+        operation_scopes:
+          type: array
+          items:
+            type: string
+        grant_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        control_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+    ServiceAccountPage:
+      type: object
+      additionalProperties: false
+      required: [items, collection_revision, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ServiceAccount"
+        collection_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
+    Delegation:
+      type: object
+      additionalProperties: false
+      required: [delegation_ref, requested_actor_ref, effective_actor_ref, workspace_scopes, connection_scopes, operation_scopes, scope_digest, control_revision, expires_at, revoked_at]
+      properties:
+        delegation_ref:
+          type: string
+        requested_actor_ref:
+          type: string
+        effective_actor_ref:
+          type: string
+        workspace_scopes:
+          type: array
+          items:
+            type: string
+        connection_scopes:
+          type: array
+          items:
+            type: string
+        operation_scopes:
+          type: array
+          items:
+            type: string
+        scope_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        control_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        expires_at:
+          type: string
+          format: date-time
+        revoked_at:
+          type: [string, "null"]
+          format: date-time
+    DelegationPage:
+      type: object
+      additionalProperties: false
+      required: [items, collection_revision, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/Delegation"
+        collection_revision:
+          type: string
+          pattern: "^[1-9][0-9]*$"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
     ServerInfo:
       type: object
       required: [protocol_major, protocol_version, instance_id, features, required_features]
@@ -501,7 +1994,7 @@ components:
       properties:
         kind:
           type: string
-          enum: [request, run, membership, service_account, delegation]
+          enum: [request, run, connection, membership, service_account, delegation]
         ref:
           type: string
           minLength: 1
@@ -573,6 +2066,418 @@ components:
     RunState:
       type: string
       enum: [accepted, queued, running, awaiting_approval, blocked, reconciling, succeeded, partial, failed, cancelled]
+    RunOrigin:
+      type: string
+      enum: [api, schedule, recovery]
+    OrchestrationCondition:
+      type: string
+      description: Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.
+      enum: [pending, running, completed, failed, cancelled, terminated, timed_out, projection_pending, unknown]
+    EffectState:
+      type: string
+      enum: [unsent, succeeded, unchanged, rejected, unknown]
+    Revision:
+      type: string
+      description: Lossless positive decimal revision for Go and browser consumers.
+      pattern: "^[1-9][0-9]*$"
+    ExactCounter:
+      type: string
+      description: Lossless nonnegative decimal counter for Go and browser consumers.
+      pattern: "^(0|[1-9][0-9]*)$"
+    EventCursor:
+      type: string
+      minLength: 1
+      maxLength: 4096
+      description: Opaque signed cursor bound to one scope, run and durable watermark or committed sequence.
+    EventSafeReference:
+      type: object
+      additionalProperties: false
+      required: [name, ref]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+        ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Canonical opaque reference; never inline provider data or a credential.
+    EventSafeCount:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+        value:
+          $ref: "#/components/schemas/ExactCounter"
+    EventSafePayload:
+      type: object
+      additionalProperties: false
+      required: [references, counts, reason_codes]
+      properties:
+        references:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/EventSafeReference"
+          description: Explicitly present even when empty; reference names are unique.
+        counts:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/EventSafeCount"
+          description: Explicitly present even when empty; count names are unique and values are lossless decimal strings.
+        reason_codes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+          description: Explicitly present even when empty.
+      description: Browser-safe projection of contract.SafePayload; arbitrary values and provider response bodies are forbidden.
+    RunEventSnapshotData:
+      type: object
+      additionalProperties: false
+      required: [run, watermark_sequence, retention_gap, cursor]
+      properties:
+        run:
+          $ref: "#/components/schemas/RunView"
+        watermark_sequence:
+          $ref: "#/components/schemas/ExactCounter"
+        retention_gap:
+          type: boolean
+        cursor:
+          $ref: "#/components/schemas/EventCursor"
+      description: JSON data for event snapshot; its SSE frame has no id field and its required signed cursor names the durable watermark, including zero.
+    RunEventData:
+      type: object
+      additionalProperties: false
+      required: [run_ref, sequence, state_revision, type, safe_payload, committed_at]
+      properties:
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        sequence:
+          $ref: "#/components/schemas/Revision"
+        state_revision:
+          $ref: "#/components/schemas/Revision"
+        type:
+          type: string
+          pattern: "^[a-z][a-z0-9_.-]{0,127}$"
+        safe_payload:
+          $ref: "#/components/schemas/EventSafePayload"
+        committed_at:
+          type: string
+          format: date-time
+      description: JSON data for event run_event; its SSE id is the signed cursor for this committed sequence.
+    RunIntentReference:
+      type: object
+      additionalProperties: false
+      required: [kind, id, revision]
+      properties:
+        kind:
+          type: string
+          enum: [operation, plan]
+        id:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        revision:
+          type: string
+          minLength: 1
+          maxLength: 512
+      description: Safe immutable accepted operation-or-plan identity; it excludes the RunSpec, grant and inputs.
+    RunResultReference:
+      type: object
+      additionalProperties: false
+      required: [result_ref]
+      properties:
+        result_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Opaque immutable server-owned result reference, never an inline provider value or credential.
+    EffectSummary:
+      type: object
+      additionalProperties: false
+      required: [unsent, succeeded, unchanged, rejected, unknown]
+      properties:
+        unsent:
+          $ref: "#/components/schemas/ExactCounter"
+        succeeded:
+          $ref: "#/components/schemas/ExactCounter"
+        unchanged:
+          $ref: "#/components/schemas/ExactCounter"
+        rejected:
+          $ref: "#/components/schemas/ExactCounter"
+        unknown:
+          $ref: "#/components/schemas/ExactCounter"
+      description: Exact durable effect counts; every counter is present, including zero.
+    RunView:
+      type: object
+      additionalProperties: false
+      required: [run_ref, connection_refs, intent, origin, state, effect_summary, unknown_effect_count, cancel_requested, orchestration_condition, projection_observed_at, blocked_reason, revision, result_references]
+      properties:
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        connection_refs:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+          description: Immutable accepted connection context used for authorization; no credential or stored grant data.
+        intent:
+          $ref: "#/components/schemas/RunIntentReference"
+        origin:
+          $ref: "#/components/schemas/RunOrigin"
+        state:
+          $ref: "#/components/schemas/RunState"
+        effect_summary:
+          $ref: "#/components/schemas/EffectSummary"
+        unknown_effect_count:
+          $ref: "#/components/schemas/ExactCounter"
+          description: Must equal effect_summary.unknown; a nonzero value keeps aggregate state reconciling.
+        cancel_requested:
+          type: boolean
+          description: Durable cancellation intent only; false or true does not infer provider termination.
+        orchestration_condition:
+          $ref: "#/components/schemas/OrchestrationCondition"
+        projection_observed_at:
+          type: string
+          format: date-time
+        blocked_reason:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 128
+          description: Safe reason code when blocked or retained under uncertainty; null otherwise.
+        revision:
+          $ref: "#/components/schemas/Revision"
+        result_references:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/RunResultReference"
+      description: Lean authorized projection; never the stored RunSpec, grant, raw inputs, credentials or Temporal history.
+    RunPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/RunView"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
+          description: Opaque continuation cursor bound to the authorized workspace and filters; it does not promise a frozen cross-page snapshot.
+    RunResultResponse:
+      type: object
+      additionalProperties: false
+      required: [run_ref, state, effect_summary, unknown_effect_count, revision, result_references]
+      properties:
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        state:
+          $ref: "#/components/schemas/RunState"
+        effect_summary:
+          $ref: "#/components/schemas/EffectSummary"
+        unknown_effect_count:
+          $ref: "#/components/schemas/ExactCounter"
+          description: Must equal effect_summary.unknown.
+        revision:
+          $ref: "#/components/schemas/Revision"
+        result_references:
+          type: array
+          uniqueItems: true
+          items:
+            $ref: "#/components/schemas/RunResultReference"
+          description: Explicitly empty until immutable result references are available.
+    MemberOutcome:
+      type: object
+      additionalProperties: false
+      required: [member_id, effect_key, dispatch_id, state, observed_at, assertion_refs]
+      properties:
+        member_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        effect_key:
+          type: string
+          minLength: 1
+          maxLength: 512
+        dispatch_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        state:
+          $ref: "#/components/schemas/EffectState"
+        observed_at:
+          type: string
+          format: date-time
+        assertion_refs:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+      description: Exact durable member disposition; aggregate transport success cannot substitute for this record.
+    TaskView:
+      type: object
+      additionalProperties: false
+      required: [task_id, run_ref, operation_id, lane, behavior_id, state, effect_summary, unknown_effect_count, cancel_requested, orchestration_condition, projection_observed_at, blocked_reason, revision, member_outcomes]
+      properties:
+        task_id:
+          type: string
+          minLength: 1
+          maxLength: 2048
+          description: Deterministic reversible opaque encoding of this exact run and stored task identity; ordinary scoped authorization is still required.
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        operation_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        lane:
+          type: string
+          enum: [direct_read, direct_write, etl, reverse_etl, binary_download, binary_upload, sync_transport]
+        behavior_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        state:
+          $ref: "#/components/schemas/RunState"
+        effect_summary:
+          $ref: "#/components/schemas/EffectSummary"
+        unknown_effect_count:
+          $ref: "#/components/schemas/ExactCounter"
+          description: Must equal effect_summary.unknown; a nonzero value keeps task state reconciling.
+        cancel_requested:
+          type: boolean
+        orchestration_condition:
+          $ref: "#/components/schemas/OrchestrationCondition"
+        projection_observed_at:
+          type: string
+          format: date-time
+        blocked_reason:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 128
+        revision:
+          $ref: "#/components/schemas/Revision"
+        member_outcomes:
+          type: array
+          items:
+            $ref: "#/components/schemas/MemberOutcome"
+      description: Durable task state and exact member truth without raw inputs, schemas, grants or orchestration history.
+    TaskPage:
+      type: object
+      additionalProperties: false
+      required: [items, next_cursor]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/TaskView"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
+          description: Opaque continuation cursor bound to the authorized workspace and run; it does not promise a frozen cross-page snapshot.
+    RunCancelRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+    RunCancelResponse:
+      type: object
+      additionalProperties: false
+      required: [command_ref, run_ref, cancel_requested, result_revision, outcome_reference, replay]
+      properties:
+        command_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Stable durable cancellation-command identity.
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        cancel_requested:
+          type: boolean
+          const: true
+          description: Confirms durable intent only, never provider termination.
+        result_revision:
+          $ref: "#/components/schemas/Revision"
+          description: Original safe command-result revision on exact replay.
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+        replay:
+          type: boolean
+    RunResumeRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, recovery_generation, approval_ref]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        recovery_generation:
+          type: string
+          minLength: 1
+          maxLength: 512
+          description: Explicit immutable recovery-generation identity; never inferred from orchestration state.
+        approval_ref:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 512
+          description: Explicit approval context; null records that the selected recovery contract has no approval reference.
+    RunResumeResponse:
+      type: object
+      additionalProperties: false
+      required: [run_ref, recovery_generation, approval_ref, state, effect_summary, unknown_effect_count, result_revision, outcome_reference, replay]
+      properties:
+        run_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        recovery_generation:
+          type: string
+          minLength: 1
+          maxLength: 512
+        approval_ref:
+          type: [string, "null"]
+          minLength: 1
+          maxLength: 512
+        state:
+          $ref: "#/components/schemas/RunState"
+        effect_summary:
+          $ref: "#/components/schemas/EffectSummary"
+        unknown_effect_count:
+          $ref: "#/components/schemas/ExactCounter"
+          description: Must equal effect_summary.unknown; resume never resets unresolved effects.
+        result_revision:
+          $ref: "#/components/schemas/Revision"
+          description: Original safe recovery-command result revision on exact replay.
+        outcome_reference:
+          $ref: "#/components/schemas/SafeOutcomeReference"
+        replay:
+          type: boolean
     AdmissionResponse:
       type: object
       additionalProperties: false
@@ -619,6 +2524,7 @@ components:
           minLength: 1
           maxLength: 512
         input:
+          description: A present typed object keyed by exact logical FieldID values from the selected operation input bindings, not provider wire names. Omitted optional fields remain absent; source defaults are not inserted. Each supplied value retains its declared type and presence, including explicit null, false, zero, empty values, and exact numeric representation.
           $ref: "#/components/schemas/PresentValue"
         result_controls:
           $ref: "#/components/schemas/ResultControls"

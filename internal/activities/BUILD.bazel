@@ -1,0 +1,44 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "activities",
+    srcs = ["service.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/activities",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/app",
+        "//internal/contract",
+        "@io_temporal_go_sdk//activity",
+        "@io_temporal_go_sdk//temporal",
+        "@io_temporal_go_sdk//worker",
+    ],
+)
+
+go_test(
+    name = "activities_test",
+    size = "large",
+    srcs = ["effect_crash_test.go"],
+    embed = [":activities"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "PM_STACK_SECRETS_DIR",
+        "PM_STACK_TEST_CONFIG",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = ["exclusive", "external", "no-remote"],
+    deps = [
+        "//internal/api",
+        "//internal/app",
+        "//internal/config",
+        "//internal/contract",
+        "//internal/store",
+        "//internal/temporal",
+        "//internal/testfixture",
+        "//internal/workflows",
+        "@io_temporal_go_api//enums/v1:enums",
+        "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//converter",
+        "@io_temporal_go_sdk//worker",
+    ],
+)

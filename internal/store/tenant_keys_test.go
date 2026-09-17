@@ -205,7 +205,7 @@ func TestCompositeTenantReferences(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			return RegisterArtifact(ctx, tx, foreign)
+			return RegisterArtifact(ctx, tx, alpha.connection.ConnectionID, foreign)
 		})
 		if !errors.Is(err, ErrScopeMismatch) {
 			t.Fatalf("foreign artifact registration = %v; want ErrScopeMismatch", err)
@@ -476,8 +476,10 @@ func testCrossScopeTaskLease(t *testing.T, ctx context.Context, pool *Pool, alph
 				Present: true, Kind: "cursor", Opaque: []byte{},
 			},
 		},
-		Manifest: ManifestCAS{ResourceID: "lease-scope-manifest", Object: verified},
-		Lease:    alphaLease,
+		Manifest: ManifestCAS{
+			ConnectionID: compositeConnectionID, ResourceID: "lease-scope-manifest", Object: verified,
+		},
+		Lease: alphaLease,
 	}
 	expectScopeMismatch("checkpoint", func(ctx context.Context, tx *Transaction) error {
 		_, err := CommitManifestCheckpoint(ctx, tx, checkpoint)
@@ -562,6 +564,8 @@ func newCompositePlanRequest(t *testing.T, scope contract.Scope, label string) A
 		IdempotencyKey: compositeAdmissionKey,
 	}
 	request.Spec.RunID = compositeRunID
+	rebindAdmissionBudgetForTest(t, &request)
+	request.InputSnapshot.RunID = compositeRunID
 	request.Spec.OperationOrPlanRef = contract.OperationOrPlanRef{
 		Kind: contract.PlanReference, ID: compositePlanID, Revision: "plan-revision-" + label,
 	}
@@ -582,6 +586,8 @@ func newCompositeOperationRequest(t *testing.T, scope contract.Scope, runID, lab
 	t.Helper()
 	request := testAdmissionRequest(t, scope, "operation-key-"+label, label)
 	request.Spec.RunID = runID
+	rebindAdmissionBudgetForTest(t, &request)
+	request.InputSnapshot.RunID = runID
 	binding, err := contract.NewAPIWorkflowBinding(runID)
 	if err != nil {
 		t.Fatal(err)
@@ -647,7 +653,9 @@ func seedCompositeTenantFixture(t *testing.T, ctx context.Context, pool *Pool, f
 			return err
 		}
 		_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-			ResourceID: compositeManifestID, ExpectedRevision: 0, Object: verified,
+			ConnectionID: fixture.connection.ConnectionID,
+			ResourceID:   compositeManifestID,
+			Object:       verified,
 		})
 		return err
 	}); err != nil {
@@ -780,8 +788,12 @@ func testCheckpointPublication(t *testing.T, ctx context.Context, pool *Pool, fi
 			Partition:    "partition-one",
 			Continuation: CheckpointContinuation{Present: true, Kind: "cursor", Opaque: []byte{}},
 		},
-		Manifest: ManifestCAS{ResourceID: "checkpoint-manifest", Object: verified},
-		Lease:    lease,
+		Manifest: ManifestCAS{
+			ConnectionID: fixture.connection.ConnectionID,
+			ResourceID:   "checkpoint-manifest",
+			Object:       verified,
+		},
+		Lease: lease,
 	}
 	publish := func(change ManifestCheckpointCAS, afterWrite error) (Checkpoint, error) {
 		var checkpoint Checkpoint
@@ -895,7 +907,10 @@ func testCheckpointPublication(t *testing.T, ctx context.Context, pool *Pool, fi
 	assertPublished(t, second, nextObject)
 	err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
 		_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-			ResourceID: change.Manifest.ResourceID, ExpectedRevision: 2, Object: verified,
+			ConnectionID:     fixture.connection.ConnectionID,
+			ResourceID:       change.Manifest.ResourceID,
+			ExpectedRevision: 2,
+			Object:           verified,
 		})
 		return err
 	})

@@ -1,0 +1,52 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "testfixture",
+    testonly = True,
+    srcs = [
+        "fixture.go",
+        "worker.go",
+        "worker_config.go",
+        "workflow.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/testfixture",
+    visibility = ["//internal:__subpackages__"],
+    deps = [
+        "//internal/api",
+        "//internal/app",
+        "//internal/auth",
+        "//internal/config",
+        "//internal/contract",
+        "//internal/credentials",
+        "//internal/httpapi",
+        "//internal/store",
+        "@com_github_coreos_go_oidc_v3//oidc",
+        "@com_github_gin_gonic_gin//:gin",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_jackc_pgx_v5//pgconn",
+        "@io_temporal_go_api//common/v1:common",
+        "@io_temporal_go_api//enums/v1:enums",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//client",
+        "@org_golang_google_protobuf//types/known/durationpb",
+        "@org_golang_x_oauth2//:oauth2",
+    ],
+)
+
+go_test(
+    name = "testfixture_test",
+    size = "large",
+    srcs = ["fixture_test.go"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
+    deps = [":testfixture"],
+)

@@ -1,0 +1,60 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "workflows",
+    srcs = [
+        "commands.go",
+        "continue.go",
+        "options.go",
+        "run.go",
+        "scheduled.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/workflows",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/contract",
+        "@io_temporal_go_sdk//worker",
+        "@io_temporal_go_sdk//workflow",
+    ],
+)
+
+go_test(
+    name = "workflows_test",
+    size = "large",
+    srcs = [
+        "continue_test.go",
+        "payload_test.go",
+    ],
+    embed = [":workflows"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "PM_STACK_SECRETS_DIR",
+        "PM_STACK_TEMPORAL_DYNAMIC_CONFIG",
+        "PM_STACK_TEST_CONFIG",
+        "PM_STACK_TEST_ROLLOVER_NAMESPACE",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = ["exclusive", "external", "no-remote"],
+    deps = [
+        "//internal/activities",
+        "//internal/api",
+        "//internal/app",
+        "//internal/contract",
+        "//internal/store",
+        "//internal/temporal",
+        "//internal/testfixture",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@io_temporal_go_api//enums/v1:enums",
+        "@io_temporal_go_api//history/v1:history",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//activity",
+        "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//converter",
+        "@io_temporal_go_sdk//temporal",
+        "@io_temporal_go_sdk//worker",
+        "@io_temporal_go_sdk//workflow",
+        "@org_golang_google_protobuf//proto",
+    ],
+)

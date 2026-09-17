@@ -463,7 +463,7 @@
       "id": "M3",
       "title": "Serve authenticated API and administration",
       "label": "Accepted AUTH mutation boundary; implementation UNEXECUTED",
-      "objective": "Gin strict validation/error/context/proxy boundaries; identity/device/browser/service flows; explicit workspace resources, isolated provider-secret administration and six revision-safe idempotent membership/service-account/delegation POST mutations.",
+      "objective": "Gin strict validation/error/context/proxy boundaries; discovered OIDC identity/device/browser/service flows; embedded minimal browser pages; composed application services and write-only credential ingress; explicit workspace resources and six revision-safe idempotent membership/service-account/delegation POST mutations. Durable invocation dispatch remains unavailable until M4.",
       "prerequisites": [
         "M2"
       ],
@@ -486,65 +486,112 @@
       ],
       "files": [
         "api/admin.openapi.yaml",
+        "cmd/pm-server/BUILD.bazel",
         "cmd/pm-server/main.go",
+        "internal/app/BUILD.bazel",
         "internal/app/connections.go",
+        "internal/app/credentials.go",
         "internal/app/delegations.go",
+        "internal/app/runtime.go",
         "internal/app/service_accounts.go",
         "internal/app/workspaces.go",
+        "internal/auth/BUILD.bazel",
         "internal/auth/authorize.go",
         "internal/auth/authorize_test.go",
         "internal/auth/browser.go",
         "internal/auth/browser_test.go",
+        "internal/auth/credential_ingress_test.go",
         "internal/auth/device.go",
+        "internal/auth/discovery.go",
         "internal/auth/grants.go",
         "internal/auth/identity.go",
         "internal/auth/oidc.go",
+        "internal/auth/receipt_test.go",
         "internal/auth/revocation.go",
         "internal/auth/service.go",
         "internal/auth/service_test.go",
         "internal/auth/sessions.go",
         "internal/auth/sessions_test.go",
+        "internal/auth/test_helpers_test.go",
         "internal/config/server.go",
         "internal/config/server_test.go",
+        "internal/credentials/BUILD.bazel",
         "internal/credentials/boundary_test.go",
         "internal/credentials/redact.go",
         "internal/credentials/refresh.go",
         "internal/credentials/refresh_test.go",
         "internal/credentials/resolve.go",
+        "internal/credentials/test_helpers_test.go",
         "internal/credentials/vault.go",
         "internal/httpapi/admin.gen.go",
         "internal/httpapi/admin.go",
+        "internal/httpapi/admin_service.go",
+        "internal/httpapi/admin_test.go",
         "internal/httpapi/identity.go",
         "internal/httpapi/middleware.go",
-        "internal/httpapi/problem.go",
+        "internal/httpapi/protocol_test.go",
         "internal/httpapi/routes.go",
-        "internal/httpapi/strict.go",
+        "internal/httpapi/service.go",
+        "internal/httpapi/service_config.go",
+        "internal/httpapi/sessions.go",
         "internal/httpapi/strict_test.go",
-        "internal/httpapi/ui/admin-credentials.html",
-        "internal/httpapi/ui/login.html",
+        "internal/server/BUILD.bazel",
+        "internal/server/browser.go",
+        "internal/server/browser_assets/callback.html",
+        "internal/server/browser_assets/callback.js",
+        "internal/server/browser_assets/credentials.html",
+        "internal/server/browser_assets/credentials.js",
+        "internal/server/browser_assets/device.html",
+        "internal/server/browser_assets/device.js",
+        "internal/server/browser_assets/login.html",
+        "internal/server/browser_assets/login.js",
+        "internal/server/browser_assets/pm.css",
+        "internal/server/delegations_integration_test.go",
         "internal/server/health.go",
+        "internal/server/integration_fixture_test.go",
+        "internal/server/integration_test.go",
         "internal/server/lifecycle.go",
-        "internal/server/server.go"
+        "internal/server/lifecycle_test.go",
+        "internal/server/secrets.go",
+        "internal/server/secrets_test.go",
+        "internal/server/server.go",
+        "internal/server/service_accounts_integration_test.go",
+        "internal/store/auth.go",
+        "internal/store/credential_lifecycle.go",
+        "internal/store/identity_mutations.go",
+        "internal/store/migrations/postgres/0003_identity.sql",
+        "internal/store/migrations/postgres/0004_credential_lifecycle.sql",
+        "tools/api_admin_generation.go"
       ],
       "interfaces": [
+        "AdminStoreCredential",
         "AuthorizeResource",
         "BrowserLogin",
         "BuildMiddleware",
         "CompleteOIDCLogin",
+        "CredentialIngress",
+        "DiscoverOIDC",
         "Drain",
         "ExchangeDeviceProof",
+        "Handler",
         "IssuePMSession",
         "NewServer",
+        "Open",
+        "OpenServices",
         "Readiness",
         "Redact",
         "RefreshCAS",
         "RegisterRoutes",
+        "RequestBoundary",
         "ResolveForEffect",
         "RevokeSession",
         "Serve",
+        "Service",
         "StartDeviceLogin",
         "StoreEncryptedCredential",
         "StrictDecode",
+        "TestAuthenticatedApplicationDelegationMutations",
+        "TestAuthenticatedApplicationServiceAccountMutations",
         "TestBundledAndStandaloneInstall",
         "TestCookieCSRFAndDeviceSessions",
         "TestDeviceBootstrapProofs",
@@ -562,10 +609,13 @@
         "main"
       ],
       "schemas_and_migrations": [
-        "api/admin.openapi.yaml"
+        "api/admin.openapi.yaml",
+        "internal/store/migrations/postgres/0003_identity.sql",
+        "internal/store/migrations/postgres/0004_credential_lifecycle.sql"
       ],
       "implementation_sequence": [
-        "Compose only available Gin/config/store/auth services; Temporal/provider runtime wiring is explicitly deferred to its later phase.",
+        "Apply registered PostgreSQL migrations0003 identity and0004 credential lifecycle through the existing migration owner before starting the authenticated API; retain the applied0001/0002 migrations unchanged and keep later migration ordinals in dependency order.",
+        "Compose only the available Gin/config/store/auth/application services, bounded OIDC discovery, descriptor-bound operator secrets and embedded minimal browser assets; Temporal/provider runtime and invocation admission wiring remain explicitly deferred to M4 or their later owner.",
         "Implement OIDC/browser and device/service identity paths with issuer/state/nonce/PKCE/CSRF and one-time exchange rules.",
         "Implement resource membership/delegation authorization, server-admin encryption ingress under operator wrapping-key refs and six exact POST mutation receipts with current authorization, If-Match, scoped keys, 201/200/replay semantics and a one-time service-account credential only on original create.",
         "Override strict decoding/proxy/recovery/problem handling and test zero provider I/O plus no secret leakage on every denial."
@@ -693,7 +743,7 @@
         "internal/httpapi/events.go",
         "internal/httpapi/runs.go",
         "internal/store/commands.go",
-        "internal/store/migrations/postgres/0003_workflow_outbox.sql",
+        "internal/store/migrations/postgres/0005_workflow_outbox.sql",
         "internal/store/workflows.go",
         "internal/temporal/bindings.go",
         "internal/temporal/client.go",
@@ -747,10 +797,10 @@
         "main"
       ],
       "schemas_and_migrations": [
-        "internal/store/migrations/postgres/0003_workflow_outbox.sql"
+        "internal/store/migrations/postgres/0005_workflow_outbox.sql"
       ],
       "implementation_sequence": [
-        "Resolve one finite development or standard profile; under one PG transaction enforce post-reservation workspace/deployment pending counts and nonempty oldest pending-reservation accepted_at age, with both workspace refusals preceding deployment overload when predicates coincide; preserve separate immutable per-run/account budgets, then persist the independent run grant, immutable intent/budgets, pending reservation, audit/event and StartRun outbox before 202; add migration0003 workflow bindings.",
+        "Resolve one finite development or standard profile; under one PG transaction enforce post-reservation workspace/deployment pending counts and nonempty oldest pending-reservation accepted_at age, with both workspace refusals preceding deployment overload when predicates coincide; preserve separate immutable per-run/account budgets, then persist the independent run grant, immutable intent/budgets, pending reservation, audit/event and StartRun outbox before 202; add migration0005 workflow bindings.",
         "Register deterministic run/scheduled coordinator shells and actual activity interfaces, and prove #14 through the actual route plus a controlled durable execution-start transition; provider capabilities and actual provider-worker integration remain unavailable until #16 and their later foundation.",
         "Implement stable workflow start/binding repair, command outbox, idempotent final projection and retained/absent-history branches.",
         "Allocate per-run event sequence under run-row lock; prove replay/rollover and both PG/Temporal crash windows using controlled activity fixtures.",
@@ -1384,7 +1434,7 @@
         "internal/schema/snapshot.go",
         "internal/schema/snapshot_test.go",
         "internal/store/checkpoint_identity_test.go",
-        "internal/store/migrations/postgres/0004_warehouse_schema.sql",
+        "internal/store/migrations/postgres/0006_warehouse_schema.sql",
         "internal/sync/ack_test.go",
         "internal/sync/checkpoint.go",
         "internal/sync/etl.go",
@@ -1439,10 +1489,10 @@
         "main"
       ],
       "schemas_and_migrations": [
-        "internal/store/migrations/postgres/0004_warehouse_schema.sql"
+        "internal/store/migrations/postgres/0006_warehouse_schema.sql"
       ],
       "implementation_sequence": [
-        "Add migration0004 warehouse/schema state, then first create issue #28 official PostgreSQL source.lock/NOTICE/semantics/lifecycle and the reusable native metadata/TLS/read plus bounded keyed/mapped-column transport with separate customer identity; no arbitrary SQL or sync/demo executor.",
+        "Add migration0006 warehouse/schema state, then first create issue #28 official PostgreSQL source.lock/NOTICE/semantics/lifecycle and the reusable native metadata/TLS/read plus bounded keyed/mapped-column transport with separate customer identity; no arbitrary SQL or sync/demo executor.",
         "Implement S3 reservations/unique attempt upload/integrity verification, then PG manifest/checkpoint publication and reference-aware GC.",
         "Implement restricted pm-query child protocol and analytics-only DuckDB import; preserve exact values/presence in Parquet/query results.",
         "Wire ETL page/ack/continuation semantics and account-scoped complete metadata snapshots; prove cross-host rows and every publication crash window."
@@ -1615,7 +1665,7 @@
         "internal/httpapi/profiles.go",
         "internal/store/approvals.go",
         "internal/store/identity_ledger.go",
-        "internal/store/migrations/postgres/0005_profiles_approvals.sql",
+        "internal/store/migrations/postgres/0007_profiles_approvals.sql",
         "internal/store/profiles.go",
         "internal/sync/absence_test.go",
         "internal/sync/approval_test.go",
@@ -1659,10 +1709,10 @@
         "PostgresWarehousePostgresScenario"
       ],
       "schemas_and_migrations": [
-        "internal/store/migrations/postgres/0005_profiles_approvals.sql"
+        "internal/store/migrations/postgres/0007_profiles_approvals.sql"
       ],
       "implementation_sequence": [
-        "Add migration0005 profile/approval/entity/effect state and immutable workset/mapping revisions.",
+        "Add migration0007 profile/approval/entity/effect state and immutable workset/mapping revisions.",
         "Implement preview and complete primary/secondary action approval hashes over request, result, readback and atomic per-run/window capacity reservations.",
         "Register direct/apply/reverse handlers and settle independently correlated outcomes; for PostgreSQL reject missing/ambiguous/duplicate keys before I/O, insert absent keys, assign only changed approved writable columns, preserve unmapped fields and persist exact dispatch/member intent before physical calls.",
         "Prove returned-ID field readback,28-member partial/unknown responses, empty replacement/already-absent behavior and worker death after remote acceptance.",
@@ -1810,7 +1860,7 @@
         "internal/httpapi/flows.go",
         "internal/httpapi/schedules.go",
         "internal/store/flows.go",
-        "internal/store/migrations/postgres/0006_schedules_flows.sql",
+        "internal/store/migrations/postgres/0008_schedules_flows.sql",
         "internal/store/occurrences.go",
         "internal/store/schedule_mutations.go",
         "internal/store/schedules.go",
@@ -1838,10 +1888,10 @@
         "TestUniqueOccurrenceDSTMisfire"
       ],
       "schemas_and_migrations": [
-        "internal/store/migrations/postgres/0006_schedules_flows.sql"
+        "internal/store/migrations/postgres/0008_schedules_flows.sql"
       ],
       "implementation_sequence": [
-        "Add migration0006 typed flows/schedules/occurrence and mutation outbox; expose CRUD/revisions/control routes.",
+        "Add migration0008 typed flows/schedules/occurrence and mutation outbox; expose CRUD/revisions/control routes.",
         "Implement low-level Temporal schedule conflict-token CAS with persistent exact-payload RequestId and stale tombstone defense.",
         "Admit automatic occurrences in their effect-free existing workflow and preserve overlap across full execution; test calendar AND/gap/both folds/catchup.",
         "Enable and test worker deployment versioning/replay/ContinueAsNew commands, explicit grant revocation and measured account fairness across replicas."
@@ -1946,16 +1996,16 @@
       "files": [
         "internal/schema/property_forms.go",
         "internal/schema/refresh.go",
-        "internal/store/migrations/postgres/0007_dynamic_schema.sql"
+        "internal/store/migrations/postgres/0009_dynamic_schema.sql"
       ],
       "interfaces": [
         "RefreshCompleteSnapshot"
       ],
       "schemas_and_migrations": [
-        "internal/store/migrations/postgres/0007_dynamic_schema.sql"
+        "internal/store/migrations/postgres/0009_dynamic_schema.sql"
       ],
       "implementation_sequence": [
-        "Add migration0007 account metadata refresh bookkeeping and dynamic property form projection.",
+        "Add migration0009 account metadata refresh bookkeeping and dynamic property form projection.",
         "Run bounded complete provider discovery through admitted activities; retain partial candidates without active-snapshot replacement.",
         "Compute content/field dependency drift and preserve immutable accepted plan bindings while rechecking current safety predicates.",
         "Resolve or explicitly block Pylon nullability conflict, Gong POST/read form and HubSpot logical/read-only/unique field cases without provider Go branches."

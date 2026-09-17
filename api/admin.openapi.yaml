@@ -1,0 +1,120 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: PM private credential ingress
+  version: 1.0.0
+  description: Server-only admin binding. Never project these inputs into ordinary PM clients or the ordinary public specification.
+paths:
+  /admin/v1/workspaces/{workspace_id}/connections/{connection_id}/credentials:
+    post:
+      operationId: adminStoreCredential
+      tags: [admin]
+      summary: Store a provider credential without readback
+      security:
+        - AdminBrowserSession: []
+      parameters:
+        - name: workspace_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: connection_id
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+        - name: X-CSRF-Token
+          in: header
+          required: false
+          description: Required by authenticated browser ingress; verified against the current session before any key lookup or persistence.
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 512
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AdminCredentialInput"
+      responses:
+        "200":
+          description: Committed opaque status or exact scoped replay; never credential readback
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdminCredentialStatus"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "503":
+          $ref: "#/components/responses/Problem503"
+components:
+  securitySchemes:
+    AdminBrowserSession:
+      type: apiKey
+      in: cookie
+      name: __Host-pm_session
+      description: Current browser identity plus exact origin, session-bound CSRF, verified step-up and connection.credentials.manage are required before persistence.
+  schemas:
+    AdminCredentialInput:
+      type: object
+      additionalProperties: false
+      required: [credential_value, scopes]
+      properties:
+        credential_value:
+          type: string
+          format: byte
+          minLength: 4
+          maxLength: 87384
+          writeOnly: true
+          x-go-type-skip-optional-pointer: true
+          x-omitempty: false
+          description: Base64-encoded credential bytes; accepted only by this private write-only ingress.
+        scopes:
+          type: array
+          uniqueItems: true
+          maxItems: 128
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+    AdminCredentialStatus:
+      type: object
+      additionalProperties: false
+      required: [credential_ref, ciphertext_version, status, lifecycle_revision]
+      properties:
+        credential_ref:
+          type: string
+          minLength: 1
+          maxLength: 512
+        ciphertext_version:
+          type: integer
+          format: int64
+          minimum: 1
+        status:
+          type: string
+          enum: [active]
+          x-enum-varnames: [AdminCredentialActive]
+        lifecycle_revision:
+          type: integer
+          format: int64
+          minimum: 1

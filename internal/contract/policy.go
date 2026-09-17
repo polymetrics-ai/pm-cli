@@ -57,7 +57,7 @@ func (c GrantCeiling) validate(path string) error {
 	if err := validateIdentityList(c.ConnectionIDs, path+".connection_ids", true); err != nil {
 		return err
 	}
-	if err := validateIdentityList(c.OperationIDs, path+".operation_ids", true); err != nil {
+	if err := validateBoundedIdentityList(c.OperationIDs, path+".operation_ids", true, 1024); err != nil {
 		return err
 	}
 	if err := validateIdentityList(c.ApprovalRefs, path+".approval_refs", true); err != nil {
@@ -124,7 +124,7 @@ func (g ExecutionGrant) Validate() error {
 	if err := validateIdentityList(g.ConnectionIDs, "execution_grant.connection_ids", true); err != nil {
 		return err
 	}
-	if err := validateIdentityList(g.OperationIDs, "execution_grant.operation_ids", true); err != nil {
+	if err := validateBoundedIdentityList(g.OperationIDs, "execution_grant.operation_ids", true, 1024); err != nil {
 		return err
 	}
 	if err := validateIdentityList(g.ApprovalRefs, "execution_grant.approval_refs", true); err != nil {

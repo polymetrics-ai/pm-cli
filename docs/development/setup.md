@@ -1,10 +1,10 @@
 # Developer setup
 
-This checkout contains the accepted PM Server documentation baseline and the combined issue #2/#3 foundation. PR #47 landed the reviewed context on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, and BOOT-1 readback verified the approved staging-to-landed relationship. The bounded Darwin foundation checks and fresh-worker discovery below do not substitute for independent review, exact-head Linux CI, or merge records. A working build/toolchain foundation does not implement PM services, client commands, generated bundles, connectors, provider effects, or certification.
+This checkout contains the accepted PM Server documentation baseline, the combined issue #2/#3 foundation, and the authenticated `pm-server` and bounded `pm-worker` candidates. PR #47 landed the reviewed context on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, and BOOT-1 readback verified the approved staging-to-landed relationship. Local application checks below do not substitute for independent review, exact-head Linux CI, or merge records. The server composes authentication, encrypted credential ingress, durable admission, scoped run controls, and bounded PostgreSQL-to-Temporal handoff. The separate worker registers deterministic workflows and authorized activities. Production provider handlers remain unavailable; these foundations do not certify provider execution or a release.
 
 ## What is available now
 
-The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
+The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, authenticated `pm-server` entry point and minimal same-origin browser surface, standalone `pm-worker`, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
 
 ### Resolve and run pinned tools
 
@@ -48,7 +48,7 @@ These Make targets are source-present:
 
 | Command | Boundary exercised |
 | --- | --- |
-| `make build` | Builds the cgo native probe and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
+| `make build` | Builds `.cache/bin/pm-server`, `.cache/bin/pm-worker`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
 | `make test` | Runs the resolved-dependency policy test and the native DuckDB behavioral test |
 | `make vet` | Vets the application module with cgo and the tools module without cgo |
 | `make boundaries` | Checks native-linkage and module ownership boundaries |
@@ -95,6 +95,10 @@ The pure server-configuration boundary is now source-present in `internal/config
 
 The [server schema](../../schemas/server-config.schema.json), [bundled example](../../deploy/server.example.json), and [managed example](../../packaging/config/server.example.json) describe the same backend architecture. The examples contain placeholder references, not provisioned credentials or working endpoints. Admission selects `development` (32 global pending, 8 workspace pending, 2-minute workspace age) or `standard` (256, 32, 10 minutes); explicit finite positive overrides retain presence, and workspace pending cannot exceed global pending.
 
+`limits.run_lifetime` is a required positive duration with no implicit production default. Admission captures it with the resolved resource limits in an immutable run-budget snapshot. Query and metadata deadlines do not supply the run lifetime; the explicit durations in checked-in examples are synthetic configuration values.
+
+`identity.step_up_maximum_age` bounds fresh OIDC authentication for private credential writes. Omission selects `5m`; explicit values must be between `1s` and `15m`, inclusive. Null, numeric seconds and out-of-range durations are rejected. The freshness witness is signed OIDC `auth_time`, not the PM session's creation or expiry time.
+
 Run the pure configuration and packaging-contract checks without starting services:
 
 ```sh
@@ -103,6 +107,68 @@ scripts/install.sh --help
 ```
 
 The offline installer consumes an operator-supplied payload described by the [release-pair schema](../../packaging/release-pair.schema.json) and [install-manifest schema](../../packaging/install-manifest.schema.json). `--check` verifies the plan without creating its destination. Installation checks release identity, artifact roles, target platform, digests, modes, and confined nonconflicting paths; it refuses different existing files and never starts services. This is not release authenticity verification, an upgrade protocol, real-stack readiness, or completed M12 installation/recovery proof.
+
+### Authenticated PM Server entry point
+
+`make build` emits the real server binary at `.cache/bin/pm-server` through the pinned Go wrapper. Its help and version paths are offline: they do not read configuration or secrets, contact PostgreSQL or the identity provider, or start dependencies.
+
+```sh
+make build
+.cache/bin/pm-server --help
+.cache/bin/pm-server --version
+```
+
+The local build reports the source version `development`; that value is not a release identity or attestation. Serving requires each explicit path flag exactly once:
+
+```sh
+.cache/bin/pm-server \
+  --config /absolute/path/to/operator-server.json \
+  --secrets-directory /absolute/path/to/operator-secret-bundles
+```
+
+Those paths are placeholders. The configuration path must name one complete strict typed server document; no environment merge, directory search or alternate configuration source fills missing fields. The checked-in examples contain synthetic endpoints and secret references and are not runnable production configurations. Do not pass an example unchanged or place raw secret values in it.
+
+The separately selected secret directory is the only filesystem root for secret resolution. A `secret://authority/path` reference maps to the confined bundle directory `authority/path` below that root. Startup reads the PostgreSQL endpoint reference's `pm-app-endpoint` and the identity reference's `oidc-client-secret`; credential ingress loads the encryption reference's `wrapping-key` when needed. Each must be a nonempty bounded regular file, and the wrapping key must contain exactly 32 raw bytes. The relay lazily reads `ca.pem`, `client.pem`, and `client-key.pem` from the configured Temporal identity reference when durable work requires a connection. An unavailable Temporal service or identity cannot erase committed admission. Artifact references remain declarations for a component this process does not open. Secret values are never flags, public configuration, or diagnostics.
+
+The process observes existing dependencies and never provisions or migrates them. Startup requires a compatible migrated PostgreSQL application store and reachable configured HTTPS OIDC discovery. The OIDC client must register the exact callback formed by appending `/v1/sessions/browser/callback` to `public_origin`. The bounded relay selects the explicitly configured `pm-control` task queue, not the first queue in a list. It starts or reconciles stable workflow identities and repairs orchestration observations; it does not execute provider effects or register a production workflow worker. Shutdown stops the relay and closes its client before closing the application pool; it never cancels or terminates durable workflows.
+
+The executable opens a plain HTTP listener and accepts no certificate or key flags. Authenticated API and browser traffic must be terminated by an HTTPS edge whose backend address is explicitly admitted by `server.trusted_proxies`. `public_origin` must be HTTPS, the request host must match it, and forwarded HTTPS/host/client fields are accepted only from that trusted peer. Untrusted or ambiguous forwarding is rejected. Plain loopback HTTP is limited to unauthenticated `GET` requests for `/v1/info`, `/health/live`, and `/health/ready`; it never admits cookies or bearer credentials.
+
+The minimal same-origin pages are `/login` for configured OIDC sign-in or reauthentication, `/login/device` for approving or denying a displayed device challenge, and `/admin/credentials` for the private write-only credential ingress. Browser authentication uses the Secure host-only `__Host-pm_oidc`, `__Host-pm_session`, and `__Host-pm_csrf` cookies with `Path=/` and no `Domain`; the OIDC and session cookies are HttpOnly, while the same-origin CSRF cookie is deliberately readable for the matching request header. The credential page clears its password field, does not place the value in the URL or browser storage, and sends it only to the server-side private endpoint. The server encrypts the provider credential under the operator wrapping key and returns opaque status/version metadata, never credential readback.
+
+An unconfirmed credential response is not a refusal. The page treats only HTTP 401/403 as authoritative authorization refusals; other unsuccessful responses and transport loss leave the outcome unknown and lock further submissions for that page lifetime. Check the connection state before reloading. The page neither retains the secret for retry nor silently submits a new request key after an ambiguous result.
+
+`/health/live` can report the process live, but `/health/ready` remains HTTP 503 with dispatch false even when the PostgreSQL admission probe succeeds. The production handler registry is empty, so invocation submission returns unavailable capability rather than fabricating accepted work. The [admission checks](testing.md#authenticated-admission-and-run-controls-m4) register an explicit fixture capability; the [handoff checks](testing.md#temporal-handoff-and-projection-m4) exercise real PostgreSQL and Temporal. Neither makes this process a ready provider-execution backend.
+
+### Scoped event streams and artifact boundaries
+
+`GET /v1/workspaces/{workspace_id}/runs/{run_id}/events` serves authenticated SSE. Both `run.read` and `event.read` must authorize the parent run before event disclosure, and polling rechecks current authority. Foreign scopes and runs remain concealed. The stream begins with an authoritative `snapshot`; committed `run_event` frames follow in durable sequence order. Sequences, state revisions and safe-payload counts are decimal strings, including values beyond JavaScript's exact integer range.
+
+Reconnect with the opaque `Last-Event-ID` from a committed event. When retained history has a gap, use the recovery snapshot's signed `cursor` rather than inventing a sequence. Cursor signatures bind deployment, organization, workspace and run; current actor authority is checked separately. Signing lazily derives a separate key from the configured 32-byte wrapping key and deployment identity; replicas serving the same deployment must use the same key. Missing signing capability returns explicit unavailability, not unsigned cursors.
+
+The subscription queue is capped at the smaller of the configured event-buffer limit and 1,000 messages. Each frame has the configured server write deadline. On an underlying write timeout, the raw transport closes before TLS shutdown can retain a blocked handler. The event handler cancels and joins its producer before returning. Disconnect and server drain end the subscription without cancelling the accepted run. These boundaries have [focused physical checks](testing.md#scoped-events-and-artifact-refusal-m4), including the composed server's signing and drain path; they do not make the provider registry ready.
+
+Artifact upload, inspection and download routes enforce scoped authorization but have no registered byte backend in this milestone. Authorized available metadata does not fabricate downloadable content: the unsupported capability returns HTTP 503. Upload is currently a bodyless capability probe; a raw upload body is rejected with HTTP 400 by the shared protocol boundary. Artifact-byte implementation and verification remain later scope.
+
+### Standalone bounded PM worker
+
+`make build` also emits `.cache/bin/pm-worker`. Its `--help` and `--version` paths are offline. Startup uses the same two explicit path flags as the server:
+
+```sh
+.cache/bin/pm-worker \
+  --config /absolute/path/to/operator-worker.json \
+  --secrets-directory /absolute/path/to/operator-secret-bundles
+```
+
+These are placeholder paths, not a runnable deployment. The complete server configuration document must include the optional `worker` block defined in [the published schema](../../schemas/server-config.schema.json). API-only documents may omit it; `pm-worker` refuses an absent, partial, or null block. All six worker fields are explicit: `task_queue`, `dial_timeout`, `drain_timeout`, `max_concurrent_activities`, `max_concurrent_workflow_tasks`, and `activity_timeouts`. No worker defaults are inferred.
+
+`task_queue` must be `pm-control` and appear in `temporal.task_queues`. Dial and drain timeouts must be positive and at most five minutes; each concurrency bound must be 1–65,536. The nested timeouts require `schedule_to_close > start_to_close > 0`, with positive `heartbeat` and `transport` both below `start_to_close`. Schedule-to-close cannot exceed `limits.run_lifetime`. The Go validator enforces these relational constraints in addition to the JSON Schema's closed shape.
+
+The worker opens the configured application PostgreSQL endpoint and authenticated Temporal client from the confined operator secret bundles. It uses `pm-app-endpoint` and Temporal `ca.pem`, `client.pem`, and `client-key.pem`; it does not provision dependencies, migrate the store, or perform OIDC discovery. Workflow and activity polling share one SDK client. Shutdown stops the worker before closing the client and application resources, without cancelling accepted durable runs.
+
+At each new physical-unit boundary, the worker checks the accepted durable grant against current connection, principal and grant authority. Login-session expiry alone does not revoke accepted work. PostgreSQL account permits are shared across worker instances and connection aliases; authorization checks database-time expiry before committing a new attempt. An expired reservation is not renewed and dispatched in the same acquisition. Workspace admission budgets remain independent. These are the bounded [grant and permit checks](testing.md#current-grants-and-shared-account-permits-m4), not a measured fairness guarantee.
+
+The production provider registry and operation resolver remain unavailable. Registered orchestration is not permission to execute an undeclared provider operation, and schedule admission remains unavailable without its admitted authority. The [worker checks](testing.md#bounded-workflow-and-worker-execution-m4) exercise controlled capabilities through real PostgreSQL and TLS Temporal, including the actual compiled worker's polling and graceful stop; they are not connector certification.
 
 ### Explicit dependency operator and physical qualification
 
@@ -133,7 +199,7 @@ python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./tests/stack -ru
 
 The storage root exercises bounded concurrent nested listing, both gateways and a separate reader process, interrupted multipart publication, and rejection of corrupted or truncated bytes. The database/Temporal root exercises concurrent initialization, exact schema versions and incompatible-version refusal with restoration, denied roles, missing client authentication, unsafe port publication, and managed-stop refusal. Authenticated readiness alone is not byte-transfer proof.
 
-The Bazel target `//tests/stack:stack_test` includes these physical checks. Its `external` and `no-remote` tags prevent cached test success and remote execution without disabling sandboxed compilation. The [test rule](../../tests/stack/BUILD.bazel) explicitly inherits its named fixture, engine and tool settings from the invoking environment. Export those settings, including `PM_STACK_ROOT` set to this checkout; do not substitute an unowned stack. Local fixture results do not establish runner CI, PM API/worker behavior, connector certification, or later installation and recovery proof.
+The Bazel target `//tests/stack:stack_test` includes these physical checks. Its `external` and `no-remote` tags prevent cached test success and remote execution without disabling sandboxed compilation. The [test rule](../../tests/stack/BUILD.bazel) explicitly inherits its named fixture, engine and tool settings from the invoking environment. Export those settings, including `PM_STACK_ROOT` set to this checkout; do not substitute an unowned stack. Results from this dependency-stack target do not establish runner CI, authenticated PM API/worker behavior, connector certification, or later installation and recovery proof.
 
 ### Job-owned CI dependency fixture
 
@@ -145,9 +211,9 @@ The stack inspects the selected Docker engine before lifecycle actions. Ordinary
 
 The manifest is `$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json`. Its exclusive, durable pre-mutation record binds the job attempt, checkout, daemon, project and owned paths; later records retain resource identities. The workflow's `always()` step invokes `with-stack-fixture.py --cleanup ABSOLUTE_PATH`. Cleanup revalidates ownership, removes only the owned resources and synthetic data, and leaves a cleaned receipt that cannot authorize deletion of a replacement directory or recycled resource. Startup, child-command and cleanup failures remain nonzero.
 
-Both physical Bazel targets declare [`exclusive` execution](https://bazel.build/reference/be/common-definitions#common.tags): their schema and role fault cases run serially within a Bazel invocation, including direct Bazel and Make entry points. Other tests retain normal scheduling. Separate manual test invocations must not share a fixture concurrently.
+The physical stack, store, Temporal, and authenticated server targets declare [`exclusive` execution](https://bazel.build/reference/be/common-definitions#common.tags): their schema, role, history, and application cases run serially within a Bazel invocation, including direct Bazel and Make entry points. Other tests retain normal scheduling. Separate manual test invocations must not share a fixture concurrently.
 
-Local checks exercise successful physical tests, child failure, normal cancellation, abrupt termination, partial startup, mismatched-job refusal and cleaned-receipt reuse. These are local development results, not final-head runner CI, runner-network qualification, production recovery or application/provider proof.
+The wrapper's lifecycle checks exercise successful physical tests, child failure, normal cancellation, abrupt termination, partial startup, mismatched-job refusal and cleaned-receipt reuse. Those lifecycle observations are local development results, not final-head runner CI, runner-network qualification, production recovery or application/provider proof; a child command establishes only the exact behavior it asserts.
 
 ### Typed source and value contracts
 
@@ -174,18 +240,24 @@ The ordinary public API is authored once in [OpenAPI 3.1](../../api/pm.openapi.y
 ```sh
 make generate
 make check-generated
-python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./internal/api ./internal/httpapi -count=1 -timeout 5m
+python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./internal/api -count=1 -timeout 5m
 ```
 
 `check-generated` compares every owned output byte against fresh generation and is included in `make check` and the foundation CI command sequence. `TestGeneratedContractBoundary` exercises independent output directories, stale and semantically lossy output, unsupported source projection and generator failure propagation. Required, nullable and composed-schema constraints must survive; no proof-only DTO belongs in the ordinary API.
 
 `TestWireVersionAndEnvelope` covers protocol/required-feature refusal, safe additive responses, distinct admission/error/replay envelopes and exact shared values/selection/filter/pagination. `RegisterPMStrictHandlers` installs the protocol guard before caller middleware and typed binding. Ordinary metadata and replay reject secret-bearing fields; provider-owned data field names remain exact, including a legitimate field named `password`. The sole one-time PM credential response is separate from replay.
 
-This boundary does not start a server, authenticate a caller, commit an admission or execute a provider request. A compiled HTTP package with no tests is compilation evidence only; the generated-router smoke and protocol tests have separate behavioral evidence.
+The SSE and three artifact operations remain in canonical OpenAPI, exact controls and generated named DTOs. Their streaming/manual handlers are deliberately excluded from the ordinary generated client and strict handler interface; the same route registrar applies the shared protocol and authentication boundaries.
+
+Generated-router and protocol checks alone do not prove authentication, durable admission or provider execution. The HTTP package now also contains physical fixture cases; run those through the [owned-fixture wrapper](testing.md#scoped-events-and-artifact-refusal-m4), not as an unconfigured standalone package test.
 
 ### PostgreSQL control store
 
-`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v2`. The migrator owns exact table/column grants. The runtime role cannot create schemas/tables/temporary objects, truncate any PM table, delete history or broaden its authority. Operator reinitialization must preserve those store-owned grants.
+`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v12`; authenticated worker state extends the existing store rather than creating another queue. Workflow handoff adds immutable command intents and append-only reconciliation witnesses. Its bounded migrator-owned claim function returns scoped routes; runtime callers re-enter scoped transactions. The runtime role cannot create schemas/tables/temporary objects, truncate PM tables, delete history, assume the migrator role, or broaden its authority. Operator reinitialization must preserve these store-owned grants.
+
+Migration 0011 backfills each run's durable event watermark across retained scopes. Event allocation continues beyond that watermark even when retained rows have been removed. Its temporary migrator-only policies are transaction-bound and removed before commit; runtime visibility is not widened. Downgrade refuses a watermark that the retained rows cannot represent, rather than rewinding future event identities.
+
+Migration 0012 binds each newly registered artifact descriptor to one trusted, scoped connection in the same atomic insert. The binding is immutable on idempotent replay, retained unbound rows fail closed at public authorization, and downgrade refuses to erase any populated authority binding.
 
 Use only an explicitly owned disposable PostgreSQL fixture. The tests require the selected application's `pm-app-endpoint` and `pm-app-migrator-password` references under `PM_STORE_TEST_SECRETS_DIR`; they do not skip when those inputs are missing. With the dependency fixture above already prepared:
 
@@ -199,11 +271,11 @@ The Bazel target inherits only the named fixture directory and resource controls
 
 Connections, memberships, encrypted credential versions and checkpoints are workspace-scoped. Provider-account coordination is organization-owned: aliases across workspaces and worker replicas share one PostgreSQL capacity reservation, not a per-process counter. A store permit requires a current owner/fence and unexpired authority before it can enter the dispatched state. Dispatched or unknown work stays charged after expiry; no expiry alone proves that a request was unsent. Workspace tombstones retain their immutable key namespaces.
 
-These checks establish PostgreSQL-owned behavior only. `TestDurableAcceptedBefore202` observes committed visibility, not an HTTP response. `TestArtifactCrashWindows` observes unpublished metadata, not object upload/readback. R03–R05 cover the scoped store, composite references and durable permit/CAS boundary; they do not qualify application authentication or checks at the physical provider send. Ciphertext metadata round-tripping does not qualify a wrapping-key service or signer. No store result proves a provider effect, resolution of an unknown external outcome, Temporal workflow execution or recovery.
+The foundational store checks establish PostgreSQL-owned behavior. `TestDurableAcceptedBefore202` additionally exercises the authenticated admission route and independently observes committed records before HTTP 202, as described in the [M4 checks](testing.md#authenticated-admission-and-run-controls-m4). `TestArtifactCrashWindows` observes unpublished metadata, not object upload/readback. R03–R05 cover scoped storage, composite references and durable permit/CAS boundaries, not the physical provider send. Ciphertext metadata round-tripping does not qualify a wrapping-key service or signer. No store result proves a provider effect, resolution of an unknown external outcome, or Temporal execution.
 
 ### Go tool and module pin maintenance
 
-The `tool` block in `tools/go.mod` names three executable packages: oapi-codegen, govulncheck, and Staticcheck. Their modules and two deliberately selected supporting modules form the five exact tools-graph entries in `tools/versions.json`: `github.com/getkin/kin-openapi`, `github.com/oapi-codegen/oapi-codegen/v2`, `go.yaml.in/yaml/v3`, `golang.org/x/vuln`, and `honnef.co/go/tools`. Go may annotate these explicit `require` entries `// indirect` because ordinary non-tool packages do not import them. That annotation does not turn a reviewed root pin into an incidental transitive selection.
+The `tool` block in `tools/go.mod` names three executable packages: oapi-codegen, govulncheck, and Staticcheck. Their modules, two deliberately selected generator dependencies, and the fixture's descriptor-relative filesystem dependency form the six exact tools-graph entries in `tools/versions.json`: `github.com/getkin/kin-openapi`, `github.com/oapi-codegen/oapi-codegen/v2`, `go.yaml.in/yaml/v3`, `golang.org/x/sys`, `golang.org/x/vuln`, and `honnef.co/go/tools`. Go may annotate selected tool-only `require` entries `// indirect` because ordinary packages do not import them. That annotation does not turn a reviewed root pin into an incidental transitive selection. The fixture imports the pinned `golang.org/x/sys/unix` directly; the policy declares that direct dependency explicitly.
 
 Conversely, a version chosen transitively by minimal version selection is not an approved pin merely because it appears in `go list -m all`. The policy requires every selected manifest entry at the exact version and as a direct main-module graph edge; it separately examines the full graph for forbidden identities.
 
