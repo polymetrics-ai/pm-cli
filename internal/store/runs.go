@@ -2,8 +2,6 @@ package store
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -42,7 +40,10 @@ func (command OutboxCommand) validate() error {
 
 type AdmissionRequest struct {
 	Key             AdmissionKey
+	BudgetSnapshot  RunBudgetSnapshot
 	Spec            contract.RunSpec
+	Grant           contract.ExecutionGrant
+	InputSnapshot   RunInputSnapshot
 	WorkflowBinding contract.WorkflowBinding
 	Receipt         Receipt
 	Audit           AuditEntry
@@ -51,10 +52,11 @@ type AdmissionRequest struct {
 }
 
 type AdmissionResult struct {
-	RunID        string
-	IntentDigest contract.SemanticDigest
-	AcceptedAt   time.Time
-	Replayed     bool
+	RunID          string
+	IntentDigest   contract.SemanticDigest
+	AcceptedAt     time.Time
+	Replayed       bool
+	ReceiptExpired bool
 }
 
 type IdempotencyConflictError struct {
@@ -67,6 +69,44 @@ func (err *IdempotencyConflictError) Error() string {
 
 func (err *IdempotencyConflictError) Unwrap() error {
 	return ErrIdempotencyConflict
+}
+
+// ResolveAdmissionReplay serializes one scope-authorized admission identity and
+// classifies it before any fresh capability, staleness, or capacity decision.
+// A missing result leaves the key lock held by the caller's transaction.
+func ResolveAdmissionReplay(
+	ctx context.Context,
+	tx *Transaction,
+	key AdmissionKey,
+	intentDigest contract.SemanticDigest,
+) (AdmissionResult, bool, error) {
+	if _, err := tx.requireScope(); err != nil {
+		return AdmissionResult{}, false, err
+	}
+	if err := key.validate(); err != nil {
+		return AdmissionResult{}, false, err
+	}
+	if err := intentDigest.Validate(); err != nil {
+		return AdmissionResult{}, false, err
+	}
+	if err := lockAdmissionKey(ctx, tx, key); err != nil {
+		return AdmissionResult{}, false, err
+	}
+	existing, err := lookupAdmission(ctx, tx, key)
+	if errors.Is(err, ErrNotFound) {
+		return AdmissionResult{}, false, nil
+	}
+	if err != nil {
+		return AdmissionResult{}, false, err
+	}
+	if existing.IntentDigest != intentDigest {
+		return AdmissionResult{}, true, &IdempotencyConflictError{ExistingRunID: existing.RunID}
+	}
+	existing.Replayed = true
+	if existing.ReceiptExpired {
+		return existing, true, &AdmissionReceiptExpiredError{ExistingRunID: existing.RunID}
+	}
+	return existing, true, nil
 }
 
 func AdmitRun(ctx context.Context, tx *Transaction, request AdmissionRequest) (AdmissionResult, error) {
@@ -104,31 +144,32 @@ func AdmitRun(ctx context.Context, tx *Transaction, request AdmissionRequest) (A
 	if request.WorkflowBinding.RunID != request.Spec.RunID || request.Receipt.RunID != request.Spec.RunID || request.Audit.TargetRef != request.Spec.RunID || request.Outbox.PayloadRef != request.Spec.RunID {
 		return AdmissionResult{}, errors.New("admission side records do not bind the accepted RunID")
 	}
-
-	// Hash the NUL-framed identity locally; PostgreSQL text cannot carry NUL.
-	// This transaction lock serializes immutable admission rows without UPDATE grants.
-	lockMaterial := scope.OrgID + "\x00" + scope.WorkspaceID + "\x00" + request.Key.PrincipalID + "\x00" + request.Key.OperationID + "\x00" + request.Key.TargetID + "\x00" + request.Key.IdempotencyKey
-	lockDigest := sha256.Sum256([]byte(lockMaterial))
-	if _, err := tx.exec(ctx, `SELECT pg_advisory_xact_lock($1)`, int64(binary.BigEndian.Uint64(lockDigest[:8]))); err != nil {
-		return AdmissionResult{}, fmt.Errorf("serialize admission key: %w", err)
+	if err := validateRunBudgetSnapshot(request.BudgetSnapshot); err != nil {
+		return AdmissionResult{}, err
 	}
-	existing, err := lookupAdmission(ctx, tx, request.Key)
-	if err == nil {
-		if existing.IntentDigest == request.Spec.IdempotencyFingerprint {
-			existing.Replayed = true
-			return existing, nil
-		}
-		return AdmissionResult{}, &IdempotencyConflictError{ExistingRunID: existing.RunID}
+	if request.BudgetSnapshot.Binding() != request.Spec.Budget ||
+		request.BudgetSnapshot.RunID != request.Spec.RunID {
+		return AdmissionResult{}, fmt.Errorf("bind admission budget snapshot: %w", ErrImmutableConflict)
 	}
-	if !errors.Is(err, ErrNotFound) {
+	if err := validateRunGrantBinding(request.Spec, request.Grant); err != nil {
 		return AdmissionResult{}, err
 	}
 
-	var acceptedAt time.Time
-	if err := tx.queryRow(ctx, `SELECT clock_timestamp()`).Scan(&acceptedAt); err != nil {
-		return AdmissionResult{}, fmt.Errorf("read admission commit time: %w", err)
+	existing, found, err := ResolveAdmissionReplay(ctx, tx, request.Key, request.Spec.IdempotencyFingerprint)
+	if err != nil {
+		return AdmissionResult{}, err
 	}
-	acceptedAt = acceptedAt.UTC()
+	if found {
+		return existing, nil
+	}
+
+	acceptedAt, err := checkPendingAdmission(ctx, tx, request.BudgetSnapshot.Policy.Pending)
+	if err != nil {
+		return AdmissionResult{}, err
+	}
+	if !request.Grant.ExpiresAt.After(acceptedAt) {
+		return AdmissionResult{}, ErrRunGrantUnavailable
+	}
 	record, err := contract.NewRunRecord(request.Spec, request.WorkflowBinding, acceptedAt)
 	if err != nil {
 		return AdmissionResult{}, fmt.Errorf("construct accepted run record: %w", err)
@@ -148,6 +189,15 @@ func AdmitRun(ctx context.Context, tx *Transaction, request AdmissionRequest) (A
 	`, scope.OrgID, scope.WorkspaceID, request.Spec.RunID, string(request.Spec.IdempotencyFingerprint), json.RawMessage(specJSON), acceptedAt); err != nil {
 		return AdmissionResult{}, fmt.Errorf("insert accepted RunSpec: %w", err)
 	}
+	if err := PutRunBudgetSnapshot(ctx, tx, request.Spec, request.BudgetSnapshot); err != nil {
+		return AdmissionResult{}, err
+	}
+	if err := PutRunInputSnapshot(ctx, tx, request.Spec, request.InputSnapshot, request.BudgetSnapshot.Policy.InputMaxBytes); err != nil {
+		return AdmissionResult{}, err
+	}
+	if err := insertRunExecutionGrant(ctx, tx, request.Spec.RunID, request.Grant); err != nil {
+		return AdmissionResult{}, err
+	}
 	if _, err := tx.exec(ctx, `
 		INSERT INTO pm.runs (
 			org_id, workspace_id, run_id, state, revision, record, updated_at
@@ -155,15 +205,24 @@ func AdmitRun(ctx context.Context, tx *Transaction, request AdmissionRequest) (A
 	`, scope.OrgID, scope.WorkspaceID, request.Spec.RunID, string(record.State), record.Revision, json.RawMessage(recordJSON), acceptedAt); err != nil {
 		return AdmissionResult{}, fmt.Errorf("insert accepted run: %w", err)
 	}
+	result := AdmissionResult{
+		RunID:        request.Spec.RunID,
+		IntentDigest: request.Spec.IdempotencyFingerprint,
+		AcceptedAt:   acceptedAt,
+	}
+	responseJSON, err := encodeAdmissionResponse(result)
+	if err != nil {
+		return AdmissionResult{}, fmt.Errorf("encode safe admission response: %w", err)
+	}
 	if _, err := tx.exec(ctx, `
 		INSERT INTO pm.admission_keys (
 			org_id, workspace_id, principal_id, operation_id, target_id, idempotency_key,
-			intent_digest, run_id, accepted_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+			intent_digest, run_id, accepted_at, safe_response
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 	`,
 		scope.OrgID, scope.WorkspaceID,
 		request.Key.PrincipalID, request.Key.OperationID, request.Key.TargetID, request.Key.IdempotencyKey,
-		string(request.Spec.IdempotencyFingerprint), request.Spec.RunID, acceptedAt,
+		string(request.Spec.IdempotencyFingerprint), request.Spec.RunID, acceptedAt, json.RawMessage(responseJSON),
 	); err != nil {
 		return AdmissionResult{}, fmt.Errorf("insert admission identity: %w", err)
 	}
@@ -186,11 +245,7 @@ func AdmitRun(ctx context.Context, tx *Transaction, request AdmissionRequest) (A
 	if _, err := insertEvent(ctx, tx, request.Spec.RunID, record.Revision, request.Event, acceptedAt); err != nil {
 		return AdmissionResult{}, err
 	}
-	return AdmissionResult{
-		RunID:        request.Spec.RunID,
-		IntentDigest: request.Spec.IdempotencyFingerprint,
-		AcceptedAt:   acceptedAt,
-	}, nil
+	return result, nil
 }
 
 func LookupAdmission(ctx context.Context, tx *Transaction, key AdmissionKey) (AdmissionResult, error) {
@@ -205,13 +260,14 @@ func LookupAdmission(ctx context.Context, tx *Transaction, key AdmissionKey) (Ad
 
 func lookupAdmission(ctx context.Context, tx *Transaction, key AdmissionKey) (AdmissionResult, error) {
 	const query = `
-		SELECT run_id, intent_digest, accepted_at
+		SELECT run_id, intent_digest, accepted_at, safe_response
 		FROM pm.admission_keys
 		WHERE principal_id = $1 AND operation_id = $2 AND target_id = $3 AND idempotency_key = $4
 	`
 	var result AdmissionResult
 	var digest string
-	err := tx.queryRow(ctx, query, key.PrincipalID, key.OperationID, key.TargetID, key.IdempotencyKey).Scan(&result.RunID, &digest, &result.AcceptedAt)
+	var response []byte
+	err := tx.queryRow(ctx, query, key.PrincipalID, key.OperationID, key.TargetID, key.IdempotencyKey).Scan(&result.RunID, &digest, &result.AcceptedAt, &response)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AdmissionResult{}, ErrNotFound
 	}
@@ -223,6 +279,12 @@ func lookupAdmission(ctx context.Context, tx *Transaction, key AdmissionKey) (Ad
 		return AdmissionResult{}, fmt.Errorf("validate stored admission digest: %w", err)
 	}
 	result.AcceptedAt = result.AcceptedAt.UTC()
+	result.ReceiptExpired = response == nil
+	if !result.ReceiptExpired {
+		if err := validateAdmissionResponse(response, result); err != nil {
+			return AdmissionResult{}, err
+		}
+	}
 	return result, nil
 }
 

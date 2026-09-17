@@ -31,7 +31,7 @@ Run focused checks before integration. Broad suites and genuine CI run once at t
 
 ## Build and toolchain entry points
 
-The issue #3 foundation commands are source-present. From the repository root, use the pinned entry points below. The all-target Bazel test command also selects the physical stack checks: prepare and export their [explicitly owned fixture inputs](setup.md#explicit-dependency-operator-and-physical-qualification) first. Missing inputs fail rather than skip.
+The issue #3 foundation commands and current build target are source-present. From the repository root, use the pinned entry points below. The all-target Bazel test command also selects the physical stack, control-store and authenticated-server checks: prepare and export their [explicitly owned fixture inputs](setup.md#explicit-dependency-operator-and-physical-qualification) first. Missing inputs fail rather than skip.
 
 ```sh
 make build test vet boundaries
@@ -45,13 +45,58 @@ make benchmark
 
 ### API generation and PostgreSQL control-store checks
 
-The [generated public API and control-store entry points](setup.md#generated-public-api-boundary) are source-present. Keep generation, compilation, protocol behavior and actual storage execution distinct. In particular, `internal/httpapi` compiling without test files is not an executed handler test.
+The [generated public API and control-store entry points](setup.md#generated-public-api-boundary) are source-present. Keep generation, compilation, protocol behavior and actual storage execution distinct. Compilation does not replace the executed strict HTTP-adapter or authenticated same-stack checks below.
 
-`TestGeneratedContractBoundary` constructs semantically different required/nullable/`allOf` outputs, observes their differences with the pinned JSON Schema consumer and requires qualification against the original source to refuse them. Its independent-directory, stale-output and generator-exit checks remain separate. Temporary emitted-DTO and Gin-router consumers exercise generated code without pretending that application/authentication handlers exist.
+`TestGeneratedContractBoundary` constructs semantically different required/nullable/`allOf` outputs, observes their differences with the pinned JSON Schema consumer and requires qualification against the original source to refuse them. Its independent-directory, stale-output and generator-exit checks remain separate. Temporary emitted-DTO and Gin-router consumers exercise generated code without exercising the application and authentication handlers tested separately below.
 
-The store checks run against the selected owned PostgreSQL fixture, including transaction faults, two-connection visibility, reopen/replay, competing claims, stale fences, scoped cleanup and metadata publication. R03 observes physical backend identity and empty scope after reuse, discards uncertain cleanup connections, and rejects an otherwise valid runtime role with a stray `TRUNCATE` grant on a PM table. R04 checks tenant-local composite bindings and retained namespaces; checkpoint publication also requires the complete prior identity, current writer fence and atomic manifest advancement. R05 exercises shared account capacity across aliases/replicas, unknown-charge retention and fenced outbox claims. The API guard and these store transactions do not jointly establish application authorization, the physical-send gate or a durable HTTP 202 boundary; those integrations remain with their accepted later owners.
+The store checks run against the selected owned PostgreSQL fixture, including transaction faults, two-connection visibility, reopen/replay, competing claims, stale fences, scoped cleanup and metadata publication. R03 observes physical backend identity and empty scope after reuse, discards uncertain cleanup connections, and rejects an otherwise valid runtime role with a stray `TRUNCATE` grant on a PM table. R04 checks tenant-local composite bindings and retained namespaces; checkpoint publication also requires the complete prior identity, current writer fence and atomic manifest advancement. R05 exercises shared account capacity across aliases/replicas, unknown-charge retention and fenced outbox claims. The API generator guard and these store transactions alone do not establish application authorization, a physical-send gate or a durable HTTP 202 boundary. The authenticated integration below separately exercises current M3 application authorization; dispatch and the durable HTTP 202 boundary remain unavailable.
 
-The all-target Bazel command selects both `//internal/store:store_test` and `//tests/stack:stack_test`. Both declare exclusive execution because their fault cases mutate shared fixture schema and roles. Manual runs require the explicit fixture inputs documented in setup. The foundation CI job provisions its [job-owned dependency fixture](setup.md#job-owned-ci-dependency-fixture) on the existing Docker engine and preserves an ownership manifest for unconditional cleanup. Missing prerequisites, failed cleanup and skipped physical checks are not successful validation. Local fixture passes do not substitute for actual candidate CI.
+The all-target Bazel command selects `//internal/store:store_test`, `//internal/server:server_test` and `//tests/stack:stack_test`. All three declare exclusive execution because their fault and application cases mutate shared fixture schema, roles or scoped state. Manual runs require the explicit fixture inputs documented in setup. The foundation CI job provisions its [job-owned dependency fixture](setup.md#job-owned-ci-dependency-fixture) on the existing Docker engine and preserves an ownership manifest for unconditional cleanup. Missing prerequisites, failed cleanup and skipped physical checks are not successful validation. Local fixture passes do not substitute for actual candidate CI.
+
+### Authenticated PM Server M3 checks
+
+The focused same-stack command uses the existing ownership-scoped fixture wrapper. It requires an already available supported Docker CLI and Unix-socket engine; it does not install, start or reconfigure either. Prepare the two existing fixture helpers through pinned Go and make the locked Compose executable available:
+
+```sh
+mkdir -p .cache/bin
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack ./cmd/pm-stack
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-stack-fixture ./cmd/pm-stack-fixture
+python3 tools/bootstrap.py exec docker-compose -- version --short
+```
+
+For a local run outside GitHub Actions, give the wrapper a fresh absolute temporary root and its required numeric manifest identity:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec go -- test -race -mod=readonly \
+  ./internal/httpapi ./internal/server -count=1 -timeout 10m
+```
+
+The wrapper supplies fresh synthetic stack credentials and trusted test certificates to the child, then cleans only its owned resources. `TestGinStrictBoundary` covers exact typed binding and refusal, trusted forwarding provenance, sanitized error/panic handling, and cancellation reaching the standard request context. The `internal/server` cases use a real PostgreSQL store plus a signed loopback HTTPS OIDC provider and trusted edge. They exercise browser and device sessions, logout and one-time exchange, workspace concealment, and registered membership, service-account and delegation mutations with preconditions, exact replay, changed-intent conflict and current authorization before replay disclosure. Service-account proof checks one-time credential use, omission from subsequent responses, revocation and explicit replacement; delegation proof retains distinct actors and bounded parent scopes. Private credential cases cover denial, step-up, encryption, replay and non-readback with an independent database observer. Readiness and invocation submission remain unavailable while dispatch is unwired. `TestAuthenticatedApplicationDrainPreservesAcceptedRun` commits a synthetic pre-existing run through the real store, closes the composed API, and verifies the unchanged record and admission identity through an independent pool; it is not HTTP admission or Temporal execution proof. `TestBoundedLifecycleDrain` separately covers real socket, request-cancellation and subscriber-release bounds.
+
+These tests do not skip when the store secret inputs are absent or malformed; outside the wrapper they fail. Fixture startup, the child command and ownership-scoped cleanup must all succeed. Leave `PM_SERVER_BROWSER_PROBE_READY_FILE`, `PM_SERVER_BROWSER_PROBE_STOP_FILE` and `PM_SERVER_BROWSER_PROBE_TIMEOUT` unset for the standard check: it uses Go HTTP clients and does not launch Chrome. A separately exercised local browser, the synthetic OIDC provider and the disposable dependency stack do not establish a live identity/provider certification, Temporal execution, artifact/provider effects, production readiness or final-head CI. No current M3 CI result is claimed; a runner without its approved Docker CLI and isolated daemon prerequisite cannot turn the missing run into a skip or pass.
+
+### Authenticated admission and run controls M4
+
+After building the two fixture helpers above, run the public admission and scoped-control cases against one disposable TLS/Gin/PostgreSQL fixture:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
+  ./internal/app ./internal/store \
+  -run '^(TestInitialAdmissionAndRegistry|TestDurableAcceptedBefore202)$' \
+  -count=1 -timeout 5m
+```
+
+The combined local check passed all 44 required issue #14 cases and the added expired-cancellation receipt regression on 2026-09-17, with no skips and ownership-scoped fixture cleanup. The cases exercise committed-before-202 acceptance, canonical typed-intent conflicts, lost responses and an independently observed dropped COMMIT reply, current authorization before replay, immutable run inputs/budgets, pending capacity and age limits, scoped run/task views, durable cancellation, and retry-receipt compaction. Expired cancellation receipts reference the admitted run, not the cancellation command. The unavailable resume capability returns a refusal through the actual resume route.
+
+These are local shared-foundation results with synthetic credentials and an explicitly registered fixture capability. They do not establish Temporal handoff, worker/provider execution, live connector certification, PR CI or merge. The current production registry remains empty; tests do not register a dummy production handler.
 
 ### Bounded Darwin development observations
 
@@ -85,4 +130,4 @@ The benchmark completed one cold-output/action-cache build in **47.086722667 sec
 
 The Darwin observations do not qualify a Linux target, release artifact, backend, service process, or deployment. Independent Standards and Spec review, exact-head Linux CI, and merge require their own records. Full BOOT completion must bind those results rather than infer success from this local checkpoint.
 
-The build/toolchain evidence above establishes no PM server, worker, client, connector, provider execution, or demo. The selected dependency operator and its independently exercised storage/database checks have a separate [fixture boundary](setup.md#explicit-dependency-operator-and-physical-qualification); they do not complete application-store or provider-workflow obligations. Source locks, successful downloads, module resolution, SBOM inventory, and developer-tool navigation cannot replace the actual product, same-stack, provider, recovery, release, and two-real-demo checks owned by their accepted issues.
+The historical foundation build/toolchain evidence in this Darwin subsection establishes no additional PM server, worker, client, connector, provider execution, or demo behavior. The selected dependency operator and its independently exercised storage/database checks have a separate [fixture boundary](setup.md#explicit-dependency-operator-and-physical-qualification); they do not complete provider-workflow obligations. Source locks, successful downloads, module resolution, SBOM inventory, and developer-tool navigation cannot replace the actual product, same-stack, provider, recovery, release, and two-real-demo checks owned by their accepted issues.

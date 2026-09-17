@@ -263,6 +263,7 @@ The operator starts dependency services, runs their explicit schema/init jobs, v
     "workspace_active_runs": 4,
     "workflow_payload_bytes": 65536,
     "workflow_fanout": 32,
+    "run_lifetime": "24h",
     "event_buffer": 128,
     "query_children": 1,
     "query_child_memory_bytes": 4294967296,
@@ -274,7 +275,7 @@ The operator starts dependency services, runs their explicit schema/init jobs, v
 }
 ```
 
-Accepted production profiles are development `32/8/2m` and standard `256/32/10m` for deployment pending, workspace pending and workspace oldest-pending age. Generated local development selects development; every deployment explicitly selects one profile. Typed overrides resolve once through the configuration owner, remain finite/strictly positive, require workspace count no larger than deployment count and apply across replicas through one durable authority. `3/2/30s` is test-only. Historical `1000/1h` is not a production default. Exact external config field spelling remains the configuration owner's output; no aliases or second settings reader are permitted.
+Accepted production admission profiles are development `32/8/2m` and standard `256/32/10m` for deployment pending, workspace pending and workspace oldest-pending age. Generated local development selects development; every deployment explicitly selects one profile. Typed overrides resolve once through the configuration owner, remain finite/strictly positive, require workspace count no larger than deployment count and apply across replicas through one durable authority. `3/2/30s` is test-only. Historical `1000/1h` is not a production default. `limits.run_lifetime` is a separate required finite operator value; the synthetic `24h` shown above is an example, not a production default, and query or metadata deadlines are never reused for it. Exact external config field spelling remains the configuration owner's output; no aliases or second settings reader are permitted.
 
 Configuration rejects unknown/duplicate/wrong-type or obsolete keys, zero/negative/unbounded admission values, workspace count above deployment count, invalid ownership, unsupported versions, unsafe origins and impossible budgets. `deploymentOwnership` is bundled/managed per dependency; there is no local/distributed switch. A managed S3 service must pass the same integrity/multipart/access contract as bundled Seaweed. The filer configuration explicitly enables PostgreSQL and TLS; copied defaults are unsuitable. If qualification materially fails, replace the selected service across deployments through a reviewed artifact-contract change, never a hidden file fallback.
 
@@ -558,7 +559,7 @@ For reverse ETL, save a typed mapping from an immutable warehouse snapshot to de
 
 ## 11. Complete proposed file manifest and ownership
 
-**Proposed/Recommended.** Every application path below is future work in the existing setup repository. CREATE means introduce application content after implementation authorization; an already-existing setup file receives a bounded update rather than blind overwrite. GENERATE means disposable output of its named generator. DEFER is outside initial release. The old repository remains frozen reference. No file listed here was implemented during this task.
+**Planning ownership projection, not an execution receipt.** CREATE identifies first implementation ownership after authorization; an existing file receives a bounded update rather than blind overwrite. GENERATE means disposable output of its named generator. DEFER remains outside initial release. The tree includes source-present foundation/M3 candidate files and unimplemented later work; presence does not establish passing behavior, review, CI or release completion. The old repository remains frozen reference.
 
 `FILE-OWNERSHIP.json` is the exact file-level companion: path, preserved group ID, assignment owner, actual Go package, process location, purpose, interface subset, first milestone, allowed dependency direction, later wiring milestones and validation IDs. Group responsibility allocates work; it does not mean every file implements every interface in its group. The tree below lists every proposed path once, including generated and deferred files.
 
@@ -585,6 +586,7 @@ pm-cli/
 │   ├── pm-query/
 │   │   └── main.go [M7 CREATE; R12]
 │   ├── pm-server/
+│   │   ├── BUILD.bazel [M3 CREATE; F11]
 │   │   └── main.go [M3 CREATE; F11]
 │   ├── pm-worker/
 │   │   └── main.go [M4 CREATE; R07]
@@ -790,6 +792,7 @@ pm-cli/
 │   │   ├── types.gen.go [M1 GENERATE; F07]
 │   │   └── version_test.go [M3 CREATE; T_V79]
 │   ├── app/
+│   │   ├── BUILD.bazel [M3 CREATE; F11]
 │   │   ├── account_permits.go [M4 CREATE; R14a]
 │   │   ├── action_approval_test.go [M8 CREATE; T_V71]
 │   │   ├── admission.go [M4 CREATE; F21]
@@ -802,6 +805,7 @@ pm-cli/
 │   │   ├── capabilities_test.go [M4 CREATE; T_V66]
 │   │   ├── catalog.go [M6 CREATE; F18c]
 │   │   ├── connections.go [M3 CREATE; F12]
+│   │   ├── credentials.go [M3 CREATE; N08]
 │   │   ├── delegations.go [M3 CREATE; R20]
 │   │   ├── flows.go [M9 CREATE; F34]
 │   │   ├── flows_test.go [M9 CREATE; T_V44]
@@ -812,23 +816,29 @@ pm-cli/
 │   │   ├── revocation.go [M4 CREATE; R14b]
 │   │   ├── revocation_test.go [M9 CREATE; T_R23]
 │   │   ├── runs.go [M4 CREATE; F21]
+│   │   ├── runtime.go [M3 CREATE; F11]
 │   │   ├── schedules.go [M9 CREATE; R14]
 │   │   ├── service_accounts.go [M3 CREATE; R20]
 │   │   └── workspaces.go [M3 CREATE; R20]
 │   ├── auth/
+│   │   ├── BUILD.bazel [M3 CREATE; F12]
 │   │   ├── authorize.go [M3 CREATE; F12]
 │   │   ├── authorize_test.go [M3 CREATE; T_V14]
 │   │   ├── browser.go [M3 CREATE; R05]
 │   │   ├── browser_test.go [M3 CREATE; T_R07]
+│   │   ├── credential_ingress_test.go [M3 CREATE; T_V16]
 │   │   ├── device.go [M3 CREATE; R05]
+│   │   ├── discovery.go [M3 CREATE; R05]
 │   │   ├── grants.go [M3 CREATE; R05]
 │   │   ├── identity.go [M3 CREATE; R05]
 │   │   ├── oidc.go [M3 CREATE; R05]
+│   │   ├── receipt_test.go [M3 CREATE; T_R08]
 │   │   ├── revocation.go [M3 CREATE; R05]
 │   │   ├── service.go [M3 CREATE; R05]
 │   │   ├── service_test.go [M3 CREATE; T_R08]
 │   │   ├── sessions.go [M3 CREATE; F12]
-│   │   └── sessions_test.go [M3 CREATE; T_V15]
+│   │   ├── sessions_test.go [M3 CREATE; T_V15]
+│   │   └── test_helpers_test.go [M3 CREATE; T_V14]
 │   ├── cli/
 │   │   ├── access.go [M5 CREATE; R21]
 │   │   ├── artifacts.go [M5 CREATE; R10]
@@ -921,15 +931,19 @@ pm-cli/
 │   │   ├── value_test.go [M1 CREATE; T_V02]
 │   │   └── workflow.go [M1 CREATE; R03]
 │   ├── credentials/
+│   │   ├── BUILD.bazel [M3 CREATE; F13]
 │   │   ├── boundary_test.go [M3 CREATE; T_V16]
 │   │   ├── redact.go [M3 CREATE; F13]
 │   │   ├── refresh.go [M3 CREATE; F13]
 │   │   ├── refresh_test.go [M3 CREATE; T_V17]
 │   │   ├── resolve.go [M3 CREATE; F13]
+│   │   ├── test_helpers_test.go [M3 CREATE; T_V17]
 │   │   └── vault.go [M3 CREATE; F13]
 │   ├── httpapi/
 │   │   ├── admin.gen.go [M3 GENERATE; F12g]
 │   │   ├── admin.go [M3 CREATE; N08]
+│   │   ├── admin_service.go [M3 CREATE; N08]
+│   │   ├── admin_test.go [M3 CREATE; T_V16]
 │   │   ├── approvals.go [M8 CREATE; F33]
 │   │   ├── artifacts.go [M4 CREATE; F23]
 │   │   ├── events.go [M4 CREATE; F23]
@@ -937,18 +951,17 @@ pm-cli/
 │   │   ├── identity.go [M3 CREATE; R20]
 │   │   ├── middleware.go [M3 CREATE; R05]
 │   │   ├── plans.go [M8 CREATE; F33]
-│   │   ├── problem.go [M3 CREATE; R05]
 │   │   ├── profiles.go [M8 CREATE; F33]
+│   │   ├── protocol_test.go [M3 CREATE; T_R06]
 │   │   ├── routes.go [M3 CREATE; F11]
 │   │   ├── runs.go [M4 CREATE; F21b]
 │   │   ├── schedules.go [M9 CREATE; F36]
 │   │   ├── schema.go [M7 CREATE; F29]
 │   │   ├── server.gen.go [M1 GENERATE; F07]
-│   │   ├── strict.go [M3 CREATE; R05]
+│   │   ├── service.go [M3 CREATE; R05]
+│   │   ├── service_config.go [M3 CREATE; R05]
+│   │   ├── sessions.go [M3 CREATE; R05]
 │   │   ├── strict_test.go [M3 CREATE; T_R06]
-│   │   ├── ui/
-│   │   │   ├── admin-credentials.html [M3 CREATE; R05]
-│   │   │   └── login.html [M3 CREATE; F12]
 │   │   └── warehouse.go [M7 CREATE; F29]
 │   ├── objects/
 │   │   ├── gc.go [M7 CREATE; R11]
@@ -1003,11 +1016,30 @@ pm-cli/
 │   │   ├── snapshot.go [M7 CREATE; F27]
 │   │   └── snapshot_test.go [M7 CREATE; T_V36]
 │   ├── server/
+│   │   ├── BUILD.bazel [M3 CREATE; F11]
+│   │   ├── browser.go [M3 CREATE; F11]
+│   │   ├── browser_assets/
+│   │   │   ├── callback.html [M3 CREATE; R05]
+│   │   │   ├── callback.js [M3 CREATE; R05]
+│   │   │   ├── credentials.html [M3 CREATE; R05]
+│   │   │   ├── credentials.js [M3 CREATE; R05]
+│   │   │   ├── device.html [M3 CREATE; R05]
+│   │   │   ├── device.js [M3 CREATE; R05]
+│   │   │   ├── login.html [M3 CREATE; F12]
+│   │   │   ├── login.js [M3 CREATE; F12]
+│   │   │   └── pm.css [M3 CREATE; R05]
+│   │   ├── delegations_integration_test.go [M3 CREATE; T_R08]
 │   │   ├── health.go [M3 CREATE; F11]
+│   │   ├── integration_fixture_test.go [M3 CREATE; T_R07]
+│   │   ├── integration_test.go [M3 CREATE; T_R07]
 │   │   ├── lifecycle.go [M3 CREATE; F11]
+│   │   ├── lifecycle_test.go [M3 CREATE; T_V13]
 │   │   ├── observability.go [M12 CREATE; F39]
 │   │   ├── observability_test.go [M12 CREATE; T_V50]
-│   │   └── server.go [M3 CREATE; F11]
+│   │   ├── secrets.go [M3 CREATE; F11]
+│   │   ├── secrets_test.go [M3 CREATE; T_V13]
+│   │   ├── server.go [M3 CREATE; F11]
+│   │   └── service_accounts_integration_test.go [M3 CREATE; T_R08]
 │   ├── store/
 │   │   ├── account_permits_test.go [M2 CREATE; T_R05]
 │   │   ├── admission_test.go [M2 CREATE; T_V09]
@@ -1015,11 +1047,13 @@ pm-cli/
 │   │   ├── artifact_test.go [M2 CREATE; T_V08]
 │   │   ├── artifacts.go [M2 CREATE; F08]
 │   │   ├── audit.go [M2 CREATE; F09]
+│   │   ├── auth.go [M3 CREATE; R05]
 │   │   ├── budgets.go [M2 CREATE; R04]
 │   │   ├── checkpoint_identity_test.go [M7 CREATE; T_V83]
 │   │   ├── checkpoints.go [M2 CREATE; R04]
 │   │   ├── commands.go [M4 CREATE; R08]
 │   │   ├── connections.go [M2 CREATE; R04]
+│   │   ├── credential_lifecycle.go [M3 CREATE; F13]
 │   │   ├── db.go [M2 CREATE; F08]
 │   │   ├── dispatches.go [M2 CREATE; N07]
 │   │   ├── event_test.go [M2 CREATE; T_V11]
@@ -1027,6 +1061,7 @@ pm-cli/
 │   │   ├── flows.go [M9 CREATE; F35]
 │   │   ├── identities.go [M2 CREATE; R04]
 │   │   ├── identity_ledger.go [M8 CREATE; F32]
+│   │   ├── identity_mutations.go [M3 CREATE; R20]
 │   │   ├── lease_test.go [M2 CREATE; T_V10]
 │   │   ├── leases.go [M2 CREATE; F09]
 │   │   ├── manifests.go [M2 CREATE; R04]
@@ -1037,11 +1072,13 @@ pm-cli/
 │   │   │   └── postgres/
 │   │   │       ├── 0001_control.sql [M2 CREATE; F10]
 │   │   │       ├── 0002_tenancy_rls.sql [M2 CREATE; R04]
-│   │   │       ├── 0003_workflow_outbox.sql [M4 CREATE; R08]
-│   │   │       ├── 0004_warehouse_schema.sql [M7 CREATE; R17]
-│   │   │       ├── 0005_profiles_approvals.sql [M8 CREATE; F32]
-│   │   │       ├── 0006_schedules_flows.sql [M9 CREATE; F35]
-│   │   │       └── 0007_dynamic_schema.sql [M10 CREATE; R19]
+│   │   │       ├── 0003_identity.sql [M3 CREATE; R05]
+│   │   │       ├── 0004_credential_lifecycle.sql [M3 CREATE; F13]
+│   │   │       ├── 0005_workflow_outbox.sql [M4 CREATE; R08]
+│   │   │       ├── 0006_warehouse_schema.sql [M7 CREATE; R17]
+│   │   │       ├── 0007_profiles_approvals.sql [M8 CREATE; F32]
+│   │   │       ├── 0008_schedules_flows.sql [M9 CREATE; F35]
+│   │   │       └── 0009_dynamic_schema.sql [M10 CREATE; R19]
 │   │   ├── occurrences.go [M9 CREATE; R13]
 │   │   ├── outbox.go [M2 CREATE; R04]
 │   │   ├── profiles.go [M8 CREATE; F32]
@@ -1188,6 +1225,7 @@ pm-cli/
 │       ├── restore_effects_test.go [M13 CREATE; R16]
 │       └── storage_qualification_test.go [M0 CREATE; T_R02]
 └── tools/
+    ├── api_admin_generation.go [M3 CREATE; F12g]
     ├── atlas/
     │   └── main.go [M6 CREATE; N11]
     ├── dependency_policy_test.go [M0 CREATE; T_V56]

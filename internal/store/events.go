@@ -123,6 +123,11 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	if err := validateCommitSideRecords(commit.Run.Spec.RunID, commit.Receipt, commit.Audit, commit.Event, commit.Outbox); err != nil {
 		return contract.ServerEvent{}, err
 	}
+	if runStateRequiresPendingReservationEvidence(commit.Run.State) {
+		if _, err := lockPendingAdmissions(ctx, tx); err != nil {
+			return contract.ServerEvent{}, err
+		}
+	}
 	stored, err := loadRunForUpdate(ctx, tx, commit.Run.Spec.RunID)
 	if err != nil {
 		return contract.ServerEvent{}, err
@@ -130,9 +135,15 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	if err := validateRunProjectionUpdate(stored, commit.Run); err != nil {
 		return contract.ServerEvent{}, err
 	}
+	releaseReason, releaseNow := pendingReservationRelease(stored, commit.Run)
 	committedAt, err := readDatabaseTime(ctx, tx)
 	if err != nil {
 		return contract.ServerEvent{}, err
+	}
+	if releaseReason != "" {
+		if err := commitPendingReservationRelease(ctx, tx, scope, commit.Run.Spec.RunID, releaseReason, releaseNow, committedAt); err != nil {
+			return contract.ServerEvent{}, err
+		}
 	}
 	recordJSON, err := json.Marshal(commit.Run)
 	if err != nil {
@@ -152,6 +163,11 @@ func CommitRunTransition(ctx context.Context, tx *Transaction, commit RunTransit
 	}
 	if tag.RowsAffected() != 1 {
 		return contract.ServerEvent{}, ErrCASConflict
+	}
+	if terminalStoreRunState(commit.Run.State) {
+		if err := resolveAdmissionReceipt(ctx, tx, commit.Run.Spec.RunID); err != nil {
+			return contract.ServerEvent{}, err
+		}
 	}
 	if err := insertReceipt(ctx, tx, commit.Receipt, committedAt); err != nil {
 		return contract.ServerEvent{}, err
@@ -341,6 +357,87 @@ func terminalStoreRunState(state contract.RunState) bool {
 	default:
 		return false
 	}
+}
+
+const (
+	pendingReleaseReasonExecutionStarted    = "execution_started"
+	pendingReleaseReasonTerminalBeforeStart = "terminal_before_start"
+)
+
+func runStateRequiresPendingReservationEvidence(state contract.RunState) bool {
+	return state == contract.RunStateRunning || terminalStoreRunState(state)
+}
+
+func pendingReservationRelease(stored, proposed contract.RunRecord) (reason string, releaseNow bool) {
+	switch {
+	case proposed.State == contract.RunStateRunning:
+		return pendingReleaseReasonExecutionStarted, !runHasStarted(stored)
+	case terminalStoreRunState(proposed.State):
+		if runHasStarted(stored) {
+			return pendingReleaseReasonExecutionStarted, false
+		}
+		return pendingReleaseReasonTerminalBeforeStart, !terminalStoreRunState(stored.State)
+	default:
+		return "", false
+	}
+}
+
+func runHasStarted(run contract.RunRecord) bool {
+	if run.State == contract.RunStateRunning {
+		return true
+	}
+	for _, transition := range run.History {
+		if transition.To == contract.RunStateRunning {
+			return true
+		}
+	}
+	return false
+}
+
+func commitPendingReservationRelease(
+	ctx context.Context,
+	tx *Transaction,
+	scope contract.Scope,
+	runID string,
+	reason string,
+	releaseNow bool,
+	releasedAt time.Time,
+) error {
+	var storedReleasedAt *time.Time
+	var storedReason *string
+	if err := tx.queryRow(ctx, `
+		SELECT released_at, release_reason
+		FROM pm.pending_reservations
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3
+		FOR UPDATE
+	`, scope.OrgID, scope.WorkspaceID, runID).Scan(&storedReleasedAt, &storedReason); errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("pending reservation evidence is missing: %w", ErrImmutableConflict)
+	} else if err != nil {
+		return fmt.Errorf("lock pending reservation evidence: %w", err)
+	}
+
+	if !releaseNow {
+		if storedReleasedAt == nil || storedReason == nil || *storedReason != reason {
+			return fmt.Errorf("pending reservation evidence is inconsistent: %w", ErrImmutableConflict)
+		}
+		return nil
+	}
+	if storedReleasedAt != nil || storedReason != nil {
+		return fmt.Errorf("pending reservation was released before its state transition: %w", ErrImmutableConflict)
+	}
+	tag, err := tx.exec(ctx, `
+		UPDATE pm.pending_reservations
+		SET released_at = $4, release_reason = $5
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3
+		  AND released_at IS NULL AND release_reason IS NULL
+	`, scope.OrgID, scope.WorkspaceID, runID, releasedAt, reason)
+	if err != nil {
+		return fmt.Errorf("release pending reservation: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return fmt.Errorf("release pending reservation: %w", ErrImmutableConflict)
+	}
+	return nil
 }
 
 func sameTaskIdentity(left, right contract.Task) bool {

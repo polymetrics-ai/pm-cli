@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
@@ -473,4 +474,392 @@ func TestRunProjectionPreservesHistoryAndTerminalState(t *testing.T) {
 		t.Fatalf("commit legitimate terminal observation: %v", err)
 	}
 	assertStored(t, observed, 4)
+}
+
+func TestRunTransitionReleasesPendingReservation(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 4)
+	limits := AdmissionLimits{
+		GlobalPending:          3,
+		WorkspacePending:       2,
+		WorkspaceMaxPendingAge: 30 * time.Second,
+	}
+
+	type transitionFixture struct {
+		scope    contract.Scope
+		request  AdmissionRequest
+		accepted contract.RunRecord
+	}
+	newFixture := func(t *testing.T, seed string) transitionFixture {
+		t.Helper()
+		scope := newTestScope(t)
+		t.Cleanup(func() { cleanupTestScope(t, credentials, scope) })
+		request := testAdmissionRequest(t, scope, "release-"+seed, "release-"+seed)
+		setAdmissionLimitsForTest(t, &request, limits)
+		admitForTest(t, pool, scope, request)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		var accepted contract.RunRecord
+		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			var err error
+			accepted, err = LoadRun(ctx, tx, request.Spec.RunID)
+			return err
+		}); err != nil {
+			t.Fatalf("load accepted run: %v", err)
+		}
+		return transitionFixture{scope: scope, request: request, accepted: accepted}
+	}
+	commitProjection := func(
+		ctx context.Context,
+		fixture transitionFixture,
+		projection contract.RunRecord,
+		suffix string,
+		eventID string,
+	) error {
+		if eventID == "" {
+			eventID = "event-release-" + suffix
+		}
+		return WithinScope(ctx, pool, fixture.scope, testActor(fixture.scope), func(ctx context.Context, tx *Transaction) error {
+			_, err := CommitRunTransition(ctx, tx, RunTransitionCommit{
+				Run:     projection,
+				Receipt: testReceipt("receipt-release-"+suffix, "run_transition", fixture.request.Spec.RunID),
+				Audit:   testAudit("audit-release-"+suffix, "run_transition", fixture.request.Spec.RunID),
+				Event:   testEvent(eventID, "run_transition", fixture.request.Spec.RunID),
+				Outbox:  testOutbox("outbox-release-"+suffix, "project_run", fixture.request.Spec.RunID),
+			})
+			return err
+		})
+	}
+	reservationState := func(t *testing.T, fixture transitionFixture) (
+		count int64,
+		releasedAt *time.Time,
+		reason *string,
+		globalPending int64,
+	) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := WithinScope(ctx, pool, fixture.scope, testActor(fixture.scope), func(ctx context.Context, tx *Transaction) error {
+			return tx.queryRow(ctx, `
+				SELECT
+					(SELECT count(*) FROM pm.pending_reservations WHERE run_id = $1),
+					(SELECT released_at FROM pm.pending_reservations WHERE run_id = $1),
+					(SELECT release_reason FROM pm.pending_reservations WHERE run_id = $1),
+					(SELECT pending_count FROM pm.pending_admission_state WHERE singleton)
+			`, fixture.request.Spec.RunID).Scan(&count, &releasedAt, &reason, &globalPending)
+		}); err != nil {
+			t.Fatalf("load pending reservation state: %v", err)
+		}
+		return count, releasedAt, reason, globalPending
+	}
+	assertOutstanding := func(t *testing.T, fixture transitionFixture) {
+		t.Helper()
+		count, releasedAt, reason, globalPending := reservationState(t, fixture)
+		if count != 1 || releasedAt != nil || reason != nil || globalPending != 1 {
+			t.Fatalf(
+				"pending reservation = count %d, released_at %v, reason %v, global %d; want one outstanding reservation",
+				count, releasedAt, reason, globalPending,
+			)
+		}
+	}
+	assertReleased := func(t *testing.T, fixture transitionFixture, wantReason string) time.Time {
+		t.Helper()
+		count, releasedAt, reason, globalPending := reservationState(t, fixture)
+		if count != 1 || releasedAt == nil || reason == nil || *reason != wantReason || globalPending != 0 {
+			t.Fatalf(
+				"released reservation = count %d, released_at %v, reason %v, global %d; want reason %q and no pending charge",
+				count, releasedAt, reason, globalPending, wantReason,
+			)
+		}
+		return releasedAt.UTC()
+	}
+	assertStored := func(t *testing.T, fixture transitionFixture, want contract.RunRecord) {
+		t.Helper()
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := WithinScope(ctx, pool, fixture.scope, testActor(fixture.scope), func(ctx context.Context, tx *Transaction) error {
+			stored, err := LoadRun(ctx, tx, fixture.request.Spec.RunID)
+			if err != nil {
+				return err
+			}
+			if !reflect.DeepEqual(stored, want) {
+				t.Fatalf("stored run = %#v; want %#v", stored, want)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("load stored run: %v", err)
+		}
+	}
+
+	t.Run("prestart_states_and_orchestration_observation_hold_capacity", func(t *testing.T) {
+		fixture := newFixture(t, "prestart")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		assertOutstanding(t, fixture)
+
+		current := fixture.accepted
+		observedAt := current.ProjectionObservedAt
+		advance := func(next contract.RunState, reason, suffix string) {
+			t.Helper()
+			observedAt = observedAt.Add(time.Second)
+			projection, err := current.Transition(next, reason, observedAt)
+			if err != nil {
+				t.Fatalf("construct %s projection: %v", next, err)
+			}
+			if err := commitProjection(ctx, fixture, projection, "prestart-"+suffix, ""); err != nil {
+				t.Fatalf("commit %s projection: %v", next, err)
+			}
+			current = projection
+			assertOutstanding(t, fixture)
+		}
+
+		advance(contract.RunStateQueued, "queued_for_worker", "queued")
+		observedAt = observedAt.Add(time.Second)
+		orchestrationObserved, err := current.ObserveOrchestration(contract.OrchestrationRunning, observedAt)
+		if err != nil {
+			t.Fatalf("construct orchestration observation: %v", err)
+		}
+		if err := commitProjection(ctx, fixture, orchestrationObserved, "prestart-orchestration", ""); err != nil {
+			t.Fatalf("commit orchestration observation: %v", err)
+		}
+		current = orchestrationObserved
+		assertOutstanding(t, fixture)
+
+		advance(contract.RunStateAwaitingApproval, "approval_required", "awaiting-approval")
+		advance(contract.RunStateBlocked, "policy_blocked", "blocked")
+		advance(contract.RunStateReconciling, "reconciliation_pending", "reconciling")
+	})
+
+	t.Run("execution_start_releases_once_and_later_waiting_does_not_recharge", func(t *testing.T) {
+		fixture := newFixture(t, "execution-started")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		running, err := fixture.accepted.Transition(
+			contract.RunStateRunning,
+			"worker_execution_started",
+			fixture.accepted.ProjectionObservedAt.Add(time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(ctx, fixture, running, "execution-started", ""); err != nil {
+			t.Fatalf("commit execution start: %v", err)
+		}
+		firstRelease := assertReleased(t, fixture, "execution_started")
+
+		waiting, err := running.Transition(
+			contract.RunStateQueued,
+			"worker_waiting",
+			fixture.accepted.ProjectionObservedAt.Add(2*time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(ctx, fixture, waiting, "execution-waiting", ""); err != nil {
+			t.Fatalf("commit post-start waiting state: %v", err)
+		}
+		if waitingRelease := assertReleased(t, fixture, "execution_started"); !waitingRelease.Equal(firstRelease) {
+			t.Fatalf("waiting state retimed release from %v to %v", firstRelease, waitingRelease)
+		}
+
+		runningAgain, err := waiting.Transition(
+			contract.RunStateRunning,
+			"worker_execution_resumed",
+			fixture.accepted.ProjectionObservedAt.Add(3*time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(ctx, fixture, runningAgain, "execution-resumed", ""); err != nil {
+			t.Fatalf("commit resumed execution: %v", err)
+		}
+		if resumedRelease := assertReleased(t, fixture, "execution_started"); !resumedRelease.Equal(firstRelease) {
+			t.Fatalf("resumed execution retimed release from %v to %v", firstRelease, resumedRelease)
+		}
+		assertStored(t, fixture, runningAgain)
+	})
+
+	for _, terminal := range []struct {
+		name   string
+		state  contract.RunState
+		reason string
+	}{
+		{name: "failed", state: contract.RunStateFailed, reason: "startup_failed"},
+		{name: "cancelled", state: contract.RunStateCancelled, reason: "cancelled_before_start"},
+	} {
+		terminal := terminal
+		t.Run("terminal_before_start_"+terminal.name, func(t *testing.T) {
+			fixture := newFixture(t, "terminal-"+terminal.name)
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+
+			projection, err := fixture.accepted.Transition(
+				terminal.state,
+				terminal.reason,
+				fixture.accepted.ProjectionObservedAt.Add(time.Second),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := commitProjection(ctx, fixture, projection, "terminal-"+terminal.name, ""); err != nil {
+				t.Fatalf("commit terminal pre-start state: %v", err)
+			}
+			assertReleased(t, fixture, "terminal_before_start")
+			assertStored(t, fixture, projection)
+		})
+	}
+
+	t.Run("stale_start_projection_cannot_release", func(t *testing.T) {
+		fixture := newFixture(t, "stale")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		queued, err := fixture.accepted.Transition(
+			contract.RunStateQueued,
+			"queued_for_worker",
+			fixture.accepted.ProjectionObservedAt.Add(time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(ctx, fixture, queued, "stale-queued", ""); err != nil {
+			t.Fatalf("commit current queued projection: %v", err)
+		}
+		staleRunning, err := fixture.accepted.Transition(
+			contract.RunStateRunning,
+			"worker_execution_started",
+			fixture.accepted.ProjectionObservedAt.Add(2*time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(ctx, fixture, staleRunning, "stale-running", ""); !errors.Is(err, ErrCASConflict) {
+			t.Fatalf("stale running projection = %v; want ErrCASConflict", err)
+		}
+		assertOutstanding(t, fixture)
+		assertStored(t, fixture, queued)
+	})
+
+	t.Run("later_event_failure_rolls_back_release", func(t *testing.T) {
+		fixture := newFixture(t, "late-event-failure")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+
+		running, err := fixture.accepted.Transition(
+			contract.RunStateRunning,
+			"worker_execution_started",
+			fixture.accepted.ProjectionObservedAt.Add(time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(
+			ctx,
+			fixture,
+			running,
+			"late-event-failure",
+			fixture.request.Event.EventID,
+		); err == nil {
+			t.Fatal("duplicate late event unexpectedly committed transition")
+		}
+		assertOutstanding(t, fixture)
+		assertStored(t, fixture, fixture.accepted)
+	})
+
+	t.Run("missing_reservation_evidence_refuses_start", func(t *testing.T) {
+		fixture := newFixture(t, "missing-evidence")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		migrator, err := pgx.Connect(ctx, credentials.migratorDSN)
+		if err != nil {
+			t.Fatalf("open owned missing-evidence fixture: %T", err)
+		}
+		defer func() {
+			cleanupCtx, cleanupCancel := detachedCleanupContext()
+			defer cleanupCancel()
+			if err := migrator.Close(cleanupCtx); err != nil {
+				t.Errorf("close owned missing-evidence fixture: %T", err)
+			}
+		}()
+		if err := pgx.BeginFunc(ctx, migrator, func(tx pgx.Tx) error {
+			if _, err := tx.Exec(ctx, `
+				SELECT set_config('pm.org_id', $1, true), set_config('pm.workspace_id', $2, true)
+			`, fixture.scope.OrgID, fixture.scope.WorkspaceID); err != nil {
+				return err
+			}
+			tag, err := tx.Exec(ctx, `
+				DELETE FROM pm.pending_reservations
+				WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3
+			`, fixture.scope.OrgID, fixture.scope.WorkspaceID, fixture.request.Spec.RunID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return errors.New("owned pending reservation evidence was not removed")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("prepare missing reservation evidence: %v", err)
+		}
+
+		running, err := fixture.accepted.Transition(
+			contract.RunStateRunning,
+			"worker_execution_started",
+			fixture.accepted.ProjectionObservedAt.Add(time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(ctx, fixture, running, "missing-evidence", ""); !errors.Is(err, ErrImmutableConflict) {
+			t.Fatalf("start without reservation evidence = %v; want ErrImmutableConflict", err)
+		}
+		count, releasedAt, reason, globalPending := reservationState(t, fixture)
+		if count != 0 || releasedAt != nil || reason != nil || globalPending != 0 {
+			t.Fatalf(
+				"missing reservation state = count %d, released_at %v, reason %v, global %d; want absent and uncharged",
+				count, releasedAt, reason, globalPending,
+			)
+		}
+		assertStored(t, fixture, fixture.accepted)
+	})
+
+	t.Run("contradictory_release_evidence_refuses_start", func(t *testing.T) {
+		fixture := newFixture(t, "contradictory-evidence")
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		if err := WithinScope(ctx, pool, fixture.scope, testActor(fixture.scope), func(ctx context.Context, tx *Transaction) error {
+			tag, err := tx.exec(ctx, `
+				UPDATE pm.pending_reservations
+				SET released_at = clock_timestamp(), release_reason = 'terminal_before_start'
+				WHERE run_id = $1 AND released_at IS NULL
+			`, fixture.request.Spec.RunID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return errors.New("pending reservation evidence was not contradicted")
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("contradict pending reservation evidence: %v", err)
+		}
+		contradictoryRelease := assertReleased(t, fixture, "terminal_before_start")
+
+		running, err := fixture.accepted.Transition(
+			contract.RunStateRunning,
+			"worker_execution_started",
+			fixture.accepted.ProjectionObservedAt.Add(time.Second),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := commitProjection(ctx, fixture, running, "contradictory-evidence", ""); !errors.Is(err, ErrImmutableConflict) {
+			t.Fatalf("start with contradictory reservation evidence = %v; want ErrImmutableConflict", err)
+		}
+		if retainedRelease := assertReleased(t, fixture, "terminal_before_start"); !retainedRelease.Equal(contradictoryRelease) {
+			t.Fatalf("refused start retimed contradictory evidence from %v to %v", contradictoryRelease, retainedRelease)
+		}
+		assertStored(t, fixture, fixture.accepted)
+	})
 }

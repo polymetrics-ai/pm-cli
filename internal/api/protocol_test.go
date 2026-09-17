@@ -18,6 +18,51 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+func TestSessionCredentialAndInternalProblems(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		status      int
+		code        string
+		action      string
+		disposition ProblemDisposition
+		reference   *SafeOutcomeReference
+	}{
+		{"device remains pending", 409, "device_authorization_pending", "poll_after_interval", ProblemConfirmedRefusal, nil},
+		{"private ingress requires fresh identity", 403, "reauthentication_required", "reauthenticate", ProblemConfirmedRefusal, nil},
+		{"connection mutation needs reconciliation", 503, "mutation_outcome_unknown", "same_key_reconcile_only", ProblemOutcomeUnknown, &SafeOutcomeReference{Kind: "connection", Ref: "connection-result"}},
+		{"internal failure is not a confirmed refusal", 500, "internal_error", "contact_support_with_incident_id", ProblemDisposition("unclassified_failure"), nil},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			problem := NewInternalProblem(errors.New("synthetic untrusted dependency detail"))
+			problem.Status = test.status
+			problem.Code = test.code
+			problem.SafeRetryAction = test.action
+			problem.OutcomeReference = test.reference
+			document, err := json.Marshal(problem)
+			if err != nil {
+				t.Fatal(err)
+			}
+			decoded, err := DecodeProblem(test.status, "application/problem+json", document)
+			if err != nil {
+				t.Fatalf("decode %s: %v", test.code, err)
+			}
+			if decoded.Disposition != test.disposition || decoded.Value.SafeRetryAction != test.action {
+				t.Fatalf("unsafe classification: disposition=%q action=%q", decoded.Disposition, decoded.Value.SafeRetryAction)
+			}
+			if test.reference != nil {
+				problem.OutcomeReference = nil
+				document, err = json.Marshal(problem)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if _, err := DecodeProblem(test.status, "application/problem+json", document); !errors.Is(err, ErrMalformedEnvelope) {
+					t.Fatalf("unresolved mutation without its reference: %v", err)
+				}
+			}
+		})
+	}
+}
+
 func TestWireVersionAndEnvelope(t *testing.T) {
 	t.Run("E02_C01_supported_API1_and_safe_additive_response", func(t *testing.T) {
 		document := []byte(`{
@@ -116,13 +161,10 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 	}
 
 	t.Run("F01_exact_wire_retry_revision_replay_expiry_recovery_distinctions", func(t *testing.T) {
-		if len(AdmissionProblemRules) != len(f01) {
-			t.Fatalf("AdmissionProblemRules count = %d; want %d", len(AdmissionProblemRules), len(f01))
-		}
 		for _, want := range f01 {
 			want := want
 			t.Run(want.code, func(t *testing.T) {
-				rule, ok := AdmissionProblemRuleFor(want.status, want.code)
+				rule, ok := ProblemRuleFor(want.status, want.code)
 				if !ok {
 					t.Fatalf("missing F01 rule for HTTP %d %s", want.status, want.code)
 				}
@@ -487,6 +529,7 @@ func TestGeneratedContractBoundary(t *testing.T) {
 		"internal/api/client.gen.go",
 		"internal/api/controls.gen.go",
 		"internal/api/types.gen.go",
+		"internal/httpapi/admin.gen.go",
 		"internal/httpapi/server.gen.go",
 	}
 	const fidelityFixture = `
@@ -541,18 +584,28 @@ func TestGeneratedContractBoundary(t *testing.T) {
 		runGenerator(t, generator, root, output, false, "")
 		manifest := string(readFile(t, filepath.Join(output, "api", "generated.sha256")))
 		lines := strings.Split(strings.TrimSpace(manifest), "\n")
-		if len(lines) != len(outputs)-1 {
-			t.Fatalf("digest entries = %d; want %d", len(lines), len(outputs)-1)
-		}
+		digested := make(map[string]struct{}, len(lines))
 		for _, line := range lines {
 			parts := strings.SplitN(line, "  ", 2)
 			if len(parts) != 2 {
 				t.Fatalf("malformed digest line %q", line)
 			}
+			if _, duplicate := digested[parts[1]]; duplicate {
+				t.Fatalf("duplicate digest for %s", parts[1])
+			}
+			digested[parts[1]] = struct{}{}
 			content := readFile(t, filepath.Join(output, filepath.FromSlash(parts[1])))
 			digest := sha256.Sum256(content)
 			if parts[0] != hex.EncodeToString(digest[:]) {
 				t.Fatalf("digest for %s = %s; want %x", parts[1], parts[0], digest)
+			}
+		}
+		for _, path := range outputs {
+			if path == "api/generated.sha256" {
+				continue
+			}
+			if _, exists := digested[path]; !exists {
+				t.Fatalf("generated artifact %s is missing from the digest manifest", path)
 			}
 		}
 	})
@@ -1251,4 +1304,24 @@ func FuzzPublicResponseMetadata(f *testing.F) {
 			t.Fatalf("secret-bearing additive metadata did not fail closed: %v", err)
 		}
 	})
+}
+
+func TestSensitivePMTransportDiagnostics(t *testing.T) {
+	const canary = "synthetic-one-time-pm-transport-canary"
+	for _, test := range []struct {
+		name  string
+		value any
+	}{
+		{"device proof", DeviceProof{Proof: canary}},
+		{"device challenge", DeviceChallenge{DeviceProof: canary}},
+		{"device session", PMDeviceSession{PmSessionCredential: canary}},
+		{"browser code", BrowserLogin{Code: canary}},
+		{"service-account creation", ServiceAccountCreationResponse{PmAutomationCredential: canary}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if strings.Contains(fmt.Sprintf("%v %#v", test.value, test.value), canary) {
+				t.Fatal("one-time PM authentication material leaked through diagnostic formatting")
+			}
+		})
+	}
 }

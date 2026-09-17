@@ -19,6 +19,7 @@ go_library(
         "identity.go",
         "object.go",
         "operation.go",
+        "operation_input.go",
         "policy.go",
         "principal.go",
         "profile.go",
@@ -39,6 +40,7 @@ go_test(
     name = "contract_test",
     srcs = [
         "digest_test.go",
+        "operation_input_test.go",
         "schema_test.go",
         "state_test.go",
         "value_test.go",

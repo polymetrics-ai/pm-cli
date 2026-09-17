@@ -2,7 +2,7 @@ name: PM foundation
 
 on:
   pull_request:
-    branches: [main]
+    branches: [main, omp/pmcli-foundations]
     types: [opened, synchronize, reopened, edited]
 
 permissions:

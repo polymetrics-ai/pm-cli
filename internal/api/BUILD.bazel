@@ -23,6 +23,7 @@ go_test(
     srcs = ["protocol_test.go"],
     data = [
         "//:scripts/generate.sh",
+        "//api:admin.openapi.yaml",
         "//api:controls.json",
         "//api:oapi-codegen.yaml",
         "//api:pm.openapi.json",

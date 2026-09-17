@@ -20,6 +20,16 @@
       "maxLength": 512,
       "pattern": "^(?:\\S|\\S.*\\S)$"
     },
+    "operationArray": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1024,
+        "pattern": "^(?:\\S|\\S.*\\S)$"
+      }
+    },
     "utcInstant": {
       "type": "string",
       "format": "date-time",
@@ -87,7 +97,7 @@
       "properties": {
         "scope": { "$ref": "#/$defs/scope" },
         "connection_ids": { "$ref": "#/$defs/identityArray" },
-        "operation_ids": { "$ref": "#/$defs/identityArray" },
+        "operation_ids": { "$ref": "#/$defs/operationArray" },
         "approval_refs": { "$ref": "#/$defs/identityArray" },
         "expires_at": { "$ref": "#/$defs/utcInstant" }
       }
@@ -133,7 +143,7 @@
         "scope": { "$ref": "#/$defs/scope" },
         "actor": { "$ref": "#/$defs/actor" },
         "connection_ids": { "$ref": "#/$defs/identityArray" },
-        "operation_ids": { "$ref": "#/$defs/identityArray" },
+        "operation_ids": { "$ref": "#/$defs/operationArray" },
         "approval_refs": { "$ref": "#/$defs/identityArray" },
         "expires_at": { "$ref": "#/$defs/utcInstant" },
         "policy_epochs": { "$ref": "#/$defs/policyEpochs" }

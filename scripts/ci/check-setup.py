@@ -260,7 +260,7 @@ def workflow_check(path, actionlint):
     require(isinstance(obj, dict), "workflow must be an object")
     require(set(obj) == {"name", "on", "permissions", "concurrency", "jobs"},
             "unapproved workflow capability")
-    require(obj["on"] == {"pull_request": {"branches": ["main"],
+    require(obj["on"] == {"pull_request": {"branches": ["main", "omp/pmcli-foundations"],
             "types": ["opened", "synchronize", "reopened", "edited"]}},
             "unapproved workflow triggers")
     require(obj["permissions"] == {"contents": "read"}, "excess workflow permissions")

@@ -1,4 +1,5 @@
 exports_files([
+    "admin.openapi.yaml",
     "controls.json",
     "generated.sha256",
     "oapi-codegen.yaml",

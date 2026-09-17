@@ -1,11 +1,18 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "config",
     srcs = [
         "config.go",
+        "server.go",
         "validate.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/config",
     visibility = ["//visibility:public"],
+)
+
+go_test(
+    name = "config_test",
+    srcs = ["server_test.go"],
+    embed = [":config"],
 )

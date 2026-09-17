@@ -125,18 +125,22 @@ func testAdmissionRequest(t *testing.T, scope contract.Scope, key, seed string) 
 	actor := testActor(scope)
 	digest := testDigest(seed)
 	runID := randomUUID(t)
+	budget, err := NewRunBudgetSnapshot(scope, runID, "budget-"+runID, testRunBudgetPolicy())
+	if err != nil {
+		t.Fatalf("construct run budget snapshot: %v", err)
+	}
 	spec := contract.RunSpec{
 		RunID:                  runID,
 		OrgID:                  scope.OrgID,
 		WorkspaceID:            scope.WorkspaceID,
 		Actor:                  actor,
-		ExecutionGrantRef:      "grant-" + seed,
+		ExecutionGrantRef:      "grant-" + runID,
 		Origin:                 contract.RunOriginAPI,
 		OperationOrPlanRef:     contract.OperationOrPlanRef{Kind: contract.OperationReference, ID: "operation-" + seed, Revision: "revision-1"},
-		InputRefs:              []string{},
+		InputRefs:              []string{"input-" + runID},
 		SchemaRefs:             []string{},
 		CapabilityVersions:     []contract.CapabilityRequirement{},
-		Budget:                 contract.BudgetBinding{BudgetRef: "budget-" + seed, Revision: 1, Digest: digest},
+		Budget:                 budget.Binding(),
 		IdempotencyFingerprint: digest,
 	}
 	if err := spec.Validate(); err != nil {
@@ -147,6 +151,21 @@ func testAdmissionRequest(t *testing.T, scope contract.Scope, key, seed string) 
 		t.Fatalf("construct WorkflowBinding: %v", err)
 	}
 	return AdmissionRequest{
+		BudgetSnapshot: budget,
+		InputSnapshot: RunInputSnapshot{
+			Scope: scope, RunID: runID, InputRef: spec.InputRefs[0],
+			ConnectionID: "connection-" + runID,
+			Input: contract.NewObjectValue(map[string]contract.PresentValue{
+				"seed": contract.NewStringValue(seed),
+			}),
+			ResultControls: contract.ResultControls{},
+			ApprovalRef:    contract.AbsentValue(),
+		},
+		Grant: contract.ExecutionGrant{
+			GrantRef: spec.ExecutionGrantRef, GrantEpoch: 1, Scope: scope, Actor: actor,
+			ConnectionIDs: []string{}, OperationIDs: []string{spec.OperationOrPlanRef.ID}, ApprovalRefs: []string{},
+			ExpiresAt: time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC), PolicyEpochs: contract.PolicyEpochs{Membership: 1},
+		},
 		Key: AdmissionKey{
 			PrincipalID:    actor.RequestedActor.PrincipalID,
 			OperationID:    spec.OperationOrPlanRef.ID,
@@ -160,6 +179,58 @@ func testAdmissionRequest(t *testing.T, scope contract.Scope, key, seed string) 
 		Event:           testEvent("event-admission-"+seed, "run_admitted", runID),
 		Outbox:          testOutbox("outbox-admission-"+seed, "start_run", runID),
 	}
+}
+
+func testRunBudgetPolicy() RunBudgetPolicy {
+	return RunBudgetPolicy{
+		Pending: AdmissionLimits{
+			GlobalPending:          256,
+			WorkspacePending:       32,
+			WorkspaceMaxPendingAge: 10 * time.Minute,
+		},
+		RunLifetime:          24 * time.Hour,
+		InputMaxBytes:        1 << 20,
+		WorkspaceActiveRuns:  32,
+		WorkflowPayloadBytes: 1 << 16,
+		WorkflowFanout:       32,
+	}
+}
+
+func setAdmissionPolicyForTest(t *testing.T, request *AdmissionRequest, policy RunBudgetPolicy) {
+	t.Helper()
+	budget, err := NewRunBudgetSnapshot(
+		request.BudgetSnapshot.Scope,
+		request.BudgetSnapshot.RunID,
+		request.BudgetSnapshot.BudgetRef,
+		policy,
+	)
+	if err != nil {
+		t.Fatalf("replace run budget policy: %v", err)
+	}
+	request.BudgetSnapshot = budget
+	request.Spec.Budget = budget.Binding()
+}
+
+func setAdmissionLimitsForTest(t *testing.T, request *AdmissionRequest, limits AdmissionLimits) {
+	t.Helper()
+	policy := request.BudgetSnapshot.Policy
+	policy.Pending = limits
+	setAdmissionPolicyForTest(t, request, policy)
+}
+
+func rebindAdmissionBudgetForTest(t *testing.T, request *AdmissionRequest) {
+	t.Helper()
+	budget, err := NewRunBudgetSnapshot(
+		contract.Scope{OrgID: request.Spec.OrgID, WorkspaceID: request.Spec.WorkspaceID},
+		request.Spec.RunID,
+		"budget-"+request.Spec.RunID,
+		request.BudgetSnapshot.Policy,
+	)
+	if err != nil {
+		t.Fatalf("rebind run budget snapshot: %v", err)
+	}
+	request.BudgetSnapshot = budget
+	request.Spec.Budget = budget.Binding()
 }
 
 func testTask(request AdmissionRequest, taskID string, observedAt time.Time) contract.Task {

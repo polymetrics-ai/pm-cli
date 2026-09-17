@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sign in to PM</title>
+  <link rel="stylesheet" href="/assets/pm.css">
+  <script src="/assets/login.js" defer></script>
+</head>
+<body>
+  <main class="shell" aria-labelledby="page-title">
+    <section class="card">
+      <p class="eyebrow">PM Server</p>
+      <h1 id="page-title">Sign in</h1>
+      <p class="lede">Continue through your organization’s configured identity provider.</p>
+      <form id="login-form" method="post" action="/login">
+        <label class="choice" for="reauthenticate">
+          <input id="reauthenticate" name="reauthenticate" type="checkbox">
+          Require a fresh authentication
+        </label>
+        <button type="submit">Continue to identity provider</button>
+      </form>
+      <p id="status" class="status" role="status" aria-live="polite"></p>
+      <nav aria-label="PM sign-in actions">
+        <a href="/login/device">Approve a device login</a>
+        <a href="/admin/credentials">Store a connection credential</a>
+      </nav>
+    </section>
+  </main>
+</body>
+</html>

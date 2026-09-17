@@ -1,13 +1,46 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "httpapi",
-    srcs = ["server.gen.go"],
+    srcs = [
+        "admin.gen.go",
+        "admin.go",
+        "admin_service.go",
+        "identity.go",
+        "middleware.go",
+        "routes.go",
+        "runs.go",
+        "server.gen.go",
+        "service.go",
+        "service_config.go",
+        "sessions.go",
+    ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/httpapi",
     visibility = ["//visibility:public"],
     deps = [
         "//internal/api",
+        "//internal/app",
+        "//internal/auth",
+        "//internal/contract",
+        "//internal/store",
+        "@com_github_coreos_go_oidc_v3//oidc",
         "@com_github_gin_gonic_gin//:gin",
+        "@com_github_oapi_codegen_nullable//:nullable",
         "@com_github_oapi_codegen_runtime//:runtime",
+    ],
+)
+
+go_test(
+    name = "httpapi_test",
+    srcs = [
+        "admin_test.go",
+        "protocol_test.go",
+        "strict_test.go",
+    ],
+    embed = [":httpapi"],
+    deps = [
+        "//internal/api",
+        "//internal/contract",
+        "@com_github_gin_gonic_gin//:gin",
     ],
 )

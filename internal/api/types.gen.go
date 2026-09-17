@@ -28,33 +28,120 @@ func (e AdmissionResponseState) Valid() bool {
 	}
 }
 
+// Defines values for ConnectionState.
+const (
+	ConnectionStateActive  ConnectionState = "active"
+	ConnectionStateRevoked ConnectionState = "revoked"
+)
+
+// Valid indicates whether the value is a known member of the ConnectionState enum.
+func (e ConnectionState) Valid() bool {
+	switch e {
+	case ConnectionStateActive:
+		return true
+	case ConnectionStateRevoked:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ConnectionMutationResponseResultDisposition.
+const (
+	ConnectionMutationResponseResultDispositionCreated   ConnectionMutationResponseResultDisposition = "created"
+	ConnectionMutationResponseResultDispositionRevoked   ConnectionMutationResponseResultDisposition = "revoked"
+	ConnectionMutationResponseResultDispositionUnchanged ConnectionMutationResponseResultDisposition = "unchanged"
+	ConnectionMutationResponseResultDispositionUpdated   ConnectionMutationResponseResultDisposition = "updated"
+)
+
+// Valid indicates whether the value is a known member of the ConnectionMutationResponseResultDisposition enum.
+func (e ConnectionMutationResponseResultDisposition) Valid() bool {
+	switch e {
+	case ConnectionMutationResponseResultDispositionCreated:
+		return true
+	case ConnectionMutationResponseResultDispositionRevoked:
+		return true
+	case ConnectionMutationResponseResultDispositionUnchanged:
+		return true
+	case ConnectionMutationResponseResultDispositionUpdated:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CurrentSessionTransport.
+const (
+	BrowserSession CurrentSessionTransport = "browser_session"
+	DeviceSession  CurrentSessionTransport = "device_session"
+)
+
+// Valid indicates whether the value is a known member of the CurrentSessionTransport enum.
+func (e CurrentSessionTransport) Valid() bool {
+	switch e {
+	case BrowserSession:
+		return true
+	case DeviceSession:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for EffectState.
+const (
+	EffectStateRejected  EffectState = "rejected"
+	EffectStateSucceeded EffectState = "succeeded"
+	EffectStateUnchanged EffectState = "unchanged"
+	EffectStateUnknown   EffectState = "unknown"
+	EffectStateUnsent    EffectState = "unsent"
+)
+
+// Valid indicates whether the value is a known member of the EffectState enum.
+func (e EffectState) Valid() bool {
+	switch e {
+	case EffectStateRejected:
+		return true
+	case EffectStateSucceeded:
+		return true
+	case EffectStateUnchanged:
+		return true
+	case EffectStateUnknown:
+		return true
+	case EffectStateUnsent:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for InvocationRequestLane.
 const (
-	BinaryDownload InvocationRequestLane = "binary_download"
-	BinaryUpload   InvocationRequestLane = "binary_upload"
-	DirectRead     InvocationRequestLane = "direct_read"
-	DirectWrite    InvocationRequestLane = "direct_write"
-	Etl            InvocationRequestLane = "etl"
-	ReverseEtl     InvocationRequestLane = "reverse_etl"
-	SyncTransport  InvocationRequestLane = "sync_transport"
+	InvocationRequestLaneBinaryDownload InvocationRequestLane = "binary_download"
+	InvocationRequestLaneBinaryUpload   InvocationRequestLane = "binary_upload"
+	InvocationRequestLaneDirectRead     InvocationRequestLane = "direct_read"
+	InvocationRequestLaneDirectWrite    InvocationRequestLane = "direct_write"
+	InvocationRequestLaneEtl            InvocationRequestLane = "etl"
+	InvocationRequestLaneReverseEtl     InvocationRequestLane = "reverse_etl"
+	InvocationRequestLaneSyncTransport  InvocationRequestLane = "sync_transport"
 )
 
 // Valid indicates whether the value is a known member of the InvocationRequestLane enum.
 func (e InvocationRequestLane) Valid() bool {
 	switch e {
-	case BinaryDownload:
+	case InvocationRequestLaneBinaryDownload:
 		return true
-	case BinaryUpload:
+	case InvocationRequestLaneBinaryUpload:
 		return true
-	case DirectRead:
+	case InvocationRequestLaneDirectRead:
 		return true
-	case DirectWrite:
+	case InvocationRequestLaneDirectWrite:
 		return true
-	case Etl:
+	case InvocationRequestLaneEtl:
 		return true
-	case ReverseEtl:
+	case InvocationRequestLaneReverseEtl:
 		return true
-	case SyncTransport:
+	case InvocationRequestLaneSyncTransport:
 		return true
 	default:
 		return false
@@ -63,13 +150,13 @@ func (e InvocationRequestLane) Valid() bool {
 
 // Defines values for MutationReplayResponseReplay.
 const (
-	True MutationReplayResponseReplay = true
+	MutationReplayResponseReplayTrue MutationReplayResponseReplay = true
 )
 
 // Valid indicates whether the value is a known member of the MutationReplayResponseReplay enum.
 func (e MutationReplayResponseReplay) Valid() bool {
 	switch e {
-	case True:
+	case MutationReplayResponseReplayTrue:
 		return true
 	default:
 		return false
@@ -127,6 +214,63 @@ func (e MutationResultResponseReplay) Valid() bool {
 	}
 }
 
+// Defines values for OrchestrationCondition.
+const (
+	OrchestrationConditionCancelled         OrchestrationCondition = "cancelled"
+	OrchestrationConditionCompleted         OrchestrationCondition = "completed"
+	OrchestrationConditionFailed            OrchestrationCondition = "failed"
+	OrchestrationConditionPending           OrchestrationCondition = "pending"
+	OrchestrationConditionProjectionPending OrchestrationCondition = "projection_pending"
+	OrchestrationConditionRunning           OrchestrationCondition = "running"
+	OrchestrationConditionTerminated        OrchestrationCondition = "terminated"
+	OrchestrationConditionTimedOut          OrchestrationCondition = "timed_out"
+	OrchestrationConditionUnknown           OrchestrationCondition = "unknown"
+)
+
+// Valid indicates whether the value is a known member of the OrchestrationCondition enum.
+func (e OrchestrationCondition) Valid() bool {
+	switch e {
+	case OrchestrationConditionCancelled:
+		return true
+	case OrchestrationConditionCompleted:
+		return true
+	case OrchestrationConditionFailed:
+		return true
+	case OrchestrationConditionPending:
+		return true
+	case OrchestrationConditionProjectionPending:
+		return true
+	case OrchestrationConditionRunning:
+		return true
+	case OrchestrationConditionTerminated:
+		return true
+	case OrchestrationConditionTimedOut:
+		return true
+	case OrchestrationConditionUnknown:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for PrincipalKind.
+const (
+	PrincipalKindServiceAccount PrincipalKind = "service_account"
+	PrincipalKindUser           PrincipalKind = "user"
+)
+
+// Valid indicates whether the value is a known member of the PrincipalKind enum.
+func (e PrincipalKind) Valid() bool {
+	switch e {
+	case PrincipalKindServiceAccount:
+		return true
+	case PrincipalKindUser:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ProtocolMetadataWireVersion.
 const (
 	ProtocolMetadataWireVersionPmApiv1 ProtocolMetadataWireVersion = "pm.api/v1"
@@ -136,6 +280,60 @@ const (
 func (e ProtocolMetadataWireVersion) Valid() bool {
 	switch e {
 	case ProtocolMetadataWireVersionPmApiv1:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunCancelResponseCancelRequested.
+const (
+	RunCancelResponseCancelRequestedTrue RunCancelResponseCancelRequested = true
+)
+
+// Valid indicates whether the value is a known member of the RunCancelResponseCancelRequested enum.
+func (e RunCancelResponseCancelRequested) Valid() bool {
+	switch e {
+	case RunCancelResponseCancelRequestedTrue:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunIntentReferenceKind.
+const (
+	Operation RunIntentReferenceKind = "operation"
+	Plan      RunIntentReferenceKind = "plan"
+)
+
+// Valid indicates whether the value is a known member of the RunIntentReferenceKind enum.
+func (e RunIntentReferenceKind) Valid() bool {
+	switch e {
+	case Operation:
+		return true
+	case Plan:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for RunOrigin.
+const (
+	Api      RunOrigin = "api"
+	Recovery RunOrigin = "recovery"
+	Schedule RunOrigin = "schedule"
+)
+
+// Valid indicates whether the value is a known member of the RunOrigin enum.
+func (e RunOrigin) Valid() bool {
+	switch e {
+	case Api:
+		return true
+	case Recovery:
+		return true
+	case Schedule:
 		return true
 	default:
 		return false
@@ -186,25 +384,28 @@ func (e RunState) Valid() bool {
 
 // Defines values for SafeOutcomeReferenceKind.
 const (
-	Delegation     SafeOutcomeReferenceKind = "delegation"
-	Membership     SafeOutcomeReferenceKind = "membership"
-	Request        SafeOutcomeReferenceKind = "request"
-	Run            SafeOutcomeReferenceKind = "run"
-	ServiceAccount SafeOutcomeReferenceKind = "service_account"
+	SafeOutcomeReferenceKindConnection     SafeOutcomeReferenceKind = "connection"
+	SafeOutcomeReferenceKindDelegation     SafeOutcomeReferenceKind = "delegation"
+	SafeOutcomeReferenceKindMembership     SafeOutcomeReferenceKind = "membership"
+	SafeOutcomeReferenceKindRequest        SafeOutcomeReferenceKind = "request"
+	SafeOutcomeReferenceKindRun            SafeOutcomeReferenceKind = "run"
+	SafeOutcomeReferenceKindServiceAccount SafeOutcomeReferenceKind = "service_account"
 )
 
 // Valid indicates whether the value is a known member of the SafeOutcomeReferenceKind enum.
 func (e SafeOutcomeReferenceKind) Valid() bool {
 	switch e {
-	case Delegation:
+	case SafeOutcomeReferenceKindConnection:
 		return true
-	case Membership:
+	case SafeOutcomeReferenceKindDelegation:
 		return true
-	case Request:
+	case SafeOutcomeReferenceKindMembership:
 		return true
-	case Run:
+	case SafeOutcomeReferenceKindRequest:
 		return true
-	case ServiceAccount:
+	case SafeOutcomeReferenceKindRun:
+		return true
+	case SafeOutcomeReferenceKindServiceAccount:
 		return true
 	default:
 		return false
@@ -256,6 +457,39 @@ func (e ServiceAccountCreationResponseResultDisposition) Valid() bool {
 	}
 }
 
+// Defines values for TaskViewLane.
+const (
+	TaskViewLaneBinaryDownload TaskViewLane = "binary_download"
+	TaskViewLaneBinaryUpload   TaskViewLane = "binary_upload"
+	TaskViewLaneDirectRead     TaskViewLane = "direct_read"
+	TaskViewLaneDirectWrite    TaskViewLane = "direct_write"
+	TaskViewLaneEtl            TaskViewLane = "etl"
+	TaskViewLaneReverseEtl     TaskViewLane = "reverse_etl"
+	TaskViewLaneSyncTransport  TaskViewLane = "sync_transport"
+)
+
+// Valid indicates whether the value is a known member of the TaskViewLane enum.
+func (e TaskViewLane) Valid() bool {
+	switch e {
+	case TaskViewLaneBinaryDownload:
+		return true
+	case TaskViewLaneBinaryUpload:
+		return true
+	case TaskViewLaneDirectRead:
+		return true
+	case TaskViewLaneDirectWrite:
+		return true
+	case TaskViewLaneEtl:
+		return true
+	case TaskViewLaneReverseEtl:
+		return true
+	case TaskViewLaneSyncTransport:
+		return true
+	default:
+		return false
+	}
+}
+
 // ActionResult defines model for ActionResult.
 type ActionResult = contract.ActionResult
 
@@ -272,6 +506,106 @@ type AdmissionResponse struct {
 // AdmissionResponseState defines model for AdmissionResponse.State.
 type AdmissionResponseState string
 
+// BrowserLogin defines model for BrowserLogin.
+type BrowserLogin struct {
+	Code  string `json:"code"`
+	State string `json:"state"`
+}
+
+// BrowserLoginChallenge defines model for BrowserLoginChallenge.
+type BrowserLoginChallenge struct {
+	AuthorizationUrl string    `json:"authorization_url"`
+	ExpiresAt        time.Time `json:"expires_at"`
+}
+
+// BrowserLoginStart defines model for BrowserLoginStart.
+type BrowserLoginStart struct {
+	// Reauthenticate Request a fresh signed OIDC authentication time using max_age=0 and prompt=login.
+	Reauthenticate bool `json:"reauthenticate"`
+}
+
+// Connection defines model for Connection.
+type Connection struct {
+	ConnectionId string `json:"connection_id"`
+	ConnectorId  string `json:"connector_id"`
+
+	// CredentialRef Opaque server-owned reference only; no key locator, account witness or secret material.
+	CredentialRef     string                       `json:"credential_ref"`
+	DisplayName       string                       `json:"display_name"`
+	OrgId             string                       `json:"org_id"`
+	ProviderAccountId string                       `json:"provider_account_id"`
+	Revision          string                       `json:"revision"`
+	RevokedAt         nullable.Nullable[time.Time] `json:"revoked_at"`
+	State             ConnectionState              `json:"state"`
+	WorkspaceId       string                       `json:"workspace_id"`
+}
+
+// ConnectionState defines model for Connection.State.
+type ConnectionState string
+
+// ConnectionCreateRequest defines model for ConnectionCreateRequest.
+type ConnectionCreateRequest struct {
+	Connection SafeConnectionInput `json:"connection"`
+	Protocol   ProtocolMetadata    `json:"protocol"`
+}
+
+// ConnectionDeleteRequest defines model for ConnectionDeleteRequest.
+type ConnectionDeleteRequest struct {
+	Protocol ProtocolMetadata `json:"protocol"`
+}
+
+// ConnectionMutationResponse defines model for ConnectionMutationResponse.
+type ConnectionMutationResponse struct {
+	Connection        Connection                                  `json:"connection"`
+	OutcomeReference  SafeOutcomeReference                        `json:"outcome_reference"`
+	Replay            bool                                        `json:"replay"`
+	ResultDisposition ConnectionMutationResponseResultDisposition `json:"result_disposition"`
+	ResultRevision    string                                      `json:"result_revision"`
+}
+
+// ConnectionMutationResponseResultDisposition defines model for ConnectionMutationResponse.ResultDisposition.
+type ConnectionMutationResponseResultDisposition string
+
+// ConnectionPage defines model for ConnectionPage.
+type ConnectionPage struct {
+	CollectionRevision string                    `json:"collection_revision"`
+	Items              []Connection              `json:"items"`
+	NextCursor         nullable.Nullable[string] `json:"next_cursor"`
+}
+
+// ConnectionUpdateRequest defines model for ConnectionUpdateRequest.
+type ConnectionUpdateRequest struct {
+	Connection SafeConnectionPatch `json:"connection"`
+	Protocol   ProtocolMetadata    `json:"protocol"`
+}
+
+// CurrentSession defines model for CurrentSession.
+type CurrentSession struct {
+	// AuthenticatedAt Verified signed OIDC authentication time when present; issuance time is not substituted.
+	AuthenticatedAt nullable.Nullable[time.Time] `json:"authenticated_at"`
+	ExpiresAt       time.Time                    `json:"expires_at"`
+	Memberships     WorkspacePage                `json:"memberships"`
+	Principal       Principal                    `json:"principal"`
+	Transport       CurrentSessionTransport      `json:"transport"`
+}
+
+// CurrentSessionTransport defines model for CurrentSession.Transport.
+type CurrentSessionTransport string
+
+// Delegation defines model for Delegation.
+type Delegation struct {
+	ConnectionScopes  []string                     `json:"connection_scopes"`
+	ControlRevision   string                       `json:"control_revision"`
+	DelegationRef     string                       `json:"delegation_ref"`
+	EffectiveActorRef string                       `json:"effective_actor_ref"`
+	ExpiresAt         time.Time                    `json:"expires_at"`
+	OperationScopes   []string                     `json:"operation_scopes"`
+	RequestedActorRef string                       `json:"requested_actor_ref"`
+	RevokedAt         nullable.Nullable[time.Time] `json:"revoked_at"`
+	ScopeDigest       string                       `json:"scope_digest"`
+	WorkspaceScopes   []string                     `json:"workspace_scopes"`
+}
+
 // DelegationCreateRequest defines model for DelegationCreateRequest.
 type DelegationCreateRequest struct {
 	Delegation struct {
@@ -283,6 +617,13 @@ type DelegationCreateRequest struct {
 		WorkspaceScopes   []string  `json:"workspace_scopes"`
 	} `json:"delegation"`
 	Protocol ProtocolMetadata `json:"protocol"`
+}
+
+// DelegationPage defines model for DelegationPage.
+type DelegationPage struct {
+	CollectionRevision string                    `json:"collection_revision"`
+	Items              []Delegation              `json:"items"`
+	NextCursor         nullable.Nullable[string] `json:"next_cursor"`
 }
 
 // DelegationRevokeRequest defines model for DelegationRevokeRequest.
@@ -297,6 +638,59 @@ type DelegationRevokeRequest struct {
 	Protocol ProtocolMetadata `json:"protocol"`
 }
 
+// DeviceApproval defines model for DeviceApproval.
+type DeviceApproval struct {
+	ChallengeId string `json:"challenge_id"`
+	UserCode    string `json:"user_code"`
+}
+
+// DeviceChallenge defines model for DeviceChallenge.
+type DeviceChallenge struct {
+	ChallengeId string `json:"challenge_id"`
+
+	// DeviceProof One-time PM device proof, never a provider credential.
+	DeviceProof         string    `json:"device_proof"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	PollIntervalSeconds int       `json:"poll_interval_seconds"`
+	UserCode            string    `json:"user_code"`
+	VerificationUri     string    `json:"verification_uri"`
+}
+
+// DeviceProof defines model for DeviceProof.
+type DeviceProof struct {
+	ChallengeId string `json:"challenge_id"`
+	Proof       string `json:"proof"`
+}
+
+// DeviceStart defines model for DeviceStart.
+type DeviceStart struct {
+	DeviceId string `json:"device_id"`
+}
+
+// EffectState defines model for EffectState.
+type EffectState string
+
+// EffectSummary Exact durable effect counts; every counter is present, including zero.
+type EffectSummary struct {
+	// Rejected Lossless nonnegative decimal counter for Go and browser consumers.
+	Rejected ExactCounter `json:"rejected"`
+
+	// Succeeded Lossless nonnegative decimal counter for Go and browser consumers.
+	Succeeded ExactCounter `json:"succeeded"`
+
+	// Unchanged Lossless nonnegative decimal counter for Go and browser consumers.
+	Unchanged ExactCounter `json:"unchanged"`
+
+	// Unknown Lossless nonnegative decimal counter for Go and browser consumers.
+	Unknown ExactCounter `json:"unknown"`
+
+	// Unsent Lossless nonnegative decimal counter for Go and browser consumers.
+	Unsent ExactCounter `json:"unsent"`
+}
+
+// ExactCounter Lossless nonnegative decimal counter for Go and browser consumers.
+type ExactCounter = string
+
 // ExactNumber defines model for ExactNumber.
 type ExactNumber = contract.ExactNumber
 
@@ -305,17 +699,41 @@ type FieldSelection = contract.FieldSelection
 
 // InvocationRequest defines model for InvocationRequest.
 type InvocationRequest struct {
-	ApprovalRef    nullable.Nullable[string] `json:"approval_ref,omitempty"`
-	ConnectionRef  string                    `json:"connection_ref"`
-	Input          PresentValue              `json:"input"`
-	Lane           InvocationRequestLane     `json:"lane"`
-	OperationRef   string                    `json:"operation_ref"`
-	Protocol       ProtocolMetadata          `json:"protocol"`
-	ResultControls ResultControls            `json:"result_controls"`
+	ApprovalRef   nullable.Nullable[string] `json:"approval_ref,omitempty"`
+	ConnectionRef string                    `json:"connection_ref"`
+
+	// Input A present typed object keyed by exact logical FieldID values from the selected operation input bindings, not provider wire names. Omitted optional fields remain absent; source defaults are not inserted. Each supplied value retains its declared type and presence, including explicit null, false, zero, empty values, and exact numeric representation.
+	Input          PresentValue          `json:"input"`
+	Lane           InvocationRequestLane `json:"lane"`
+	OperationRef   string                `json:"operation_ref"`
+	Protocol       ProtocolMetadata      `json:"protocol"`
+	ResultControls ResultControls        `json:"result_controls"`
 }
 
 // InvocationRequestLane defines model for InvocationRequest.Lane.
 type InvocationRequestLane string
+
+// MemberOutcome Exact durable member disposition; aggregate transport success cannot substitute for this record.
+type MemberOutcome struct {
+	AssertionRefs []string    `json:"assertion_refs"`
+	DispatchId    string      `json:"dispatch_id"`
+	EffectKey     string      `json:"effect_key"`
+	MemberId      string      `json:"member_id"`
+	ObservedAt    time.Time   `json:"observed_at"`
+	State         EffectState `json:"state"`
+}
+
+// Membership defines model for Membership.
+type Membership struct {
+	BoundScopeDigest string                       `json:"bound_scope_digest"`
+	ControlRevision  string                       `json:"control_revision"`
+	ExpiresAt        nullable.Nullable[time.Time] `json:"expires_at"`
+	MembershipRef    string                       `json:"membership_ref"`
+	PrincipalRef     string                       `json:"principal_ref"`
+	ResourceGrants   []string                     `json:"resource_grants"`
+	RevokedAt        nullable.Nullable[time.Time] `json:"revoked_at"`
+	Role             string                       `json:"role"`
+}
 
 // MembershipGrantRequest defines model for MembershipGrantRequest.
 type MembershipGrantRequest struct {
@@ -326,6 +744,13 @@ type MembershipGrantRequest struct {
 		Role           string                       `json:"role"`
 	} `json:"membership"`
 	Protocol ProtocolMetadata `json:"protocol"`
+}
+
+// MembershipPage defines model for MembershipPage.
+type MembershipPage struct {
+	CollectionRevision string                    `json:"collection_revision"`
+	Items              []Membership              `json:"items"`
+	NextCursor         nullable.Nullable[string] `json:"next_cursor"`
 }
 
 // MembershipRevokeRequest defines model for MembershipRevokeRequest.
@@ -375,8 +800,30 @@ type MutationResultResponseReplay bool
 // ObjectRef defines model for ObjectRef.
 type ObjectRef = contract.ObjectRef
 
+// OrchestrationCondition Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.
+type OrchestrationCondition string
+
+// PMDeviceSession defines model for PMDeviceSession.
+type PMDeviceSession struct {
+	ExpiresAt time.Time `json:"expires_at"`
+
+	// PmSessionCredential Original one-time PM login credential for the client's OS credential store, never a provider token.
+	PmSessionCredential string    `json:"pm_session_credential"`
+	Principal           Principal `json:"principal"`
+	SessionId           string    `json:"session_id"`
+}
+
 // PresentValue defines model for PresentValue.
 type PresentValue = contract.PresentValue
+
+// Principal defines model for Principal.
+type Principal struct {
+	Kind        PrincipalKind `json:"kind"`
+	PrincipalId string        `json:"principal_id"`
+}
+
+// PrincipalKind defines model for Principal.Kind.
+type PrincipalKind string
 
 // Problem defines model for Problem.
 type Problem struct {
@@ -412,8 +859,151 @@ type ResultControls = contract.ResultControls
 // ResultPagination defines model for ResultPagination.
 type ResultPagination = contract.ResultPagination
 
+// Revision Lossless positive decimal revision for Go and browser consumers.
+type Revision = string
+
+// RunCancelRequest defines model for RunCancelRequest.
+type RunCancelRequest struct {
+	Protocol ProtocolMetadata `json:"protocol"`
+}
+
+// RunCancelResponse defines model for RunCancelResponse.
+type RunCancelResponse struct {
+	// CancelRequested Confirms durable intent only, never provider termination.
+	CancelRequested RunCancelResponseCancelRequested `json:"cancel_requested"`
+
+	// CommandRef Stable durable cancellation-command identity.
+	CommandRef       string               `json:"command_ref"`
+	OutcomeReference SafeOutcomeReference `json:"outcome_reference"`
+	Replay           bool                 `json:"replay"`
+
+	// ResultRevision Original safe command-result revision on exact replay.
+	ResultRevision Revision `json:"result_revision"`
+	RunRef         string   `json:"run_ref"`
+}
+
+// RunCancelResponseCancelRequested Confirms durable intent only, never provider termination.
+type RunCancelResponseCancelRequested bool
+
+// RunIntentReference Safe immutable accepted operation-or-plan identity; it excludes the RunSpec, grant and inputs.
+type RunIntentReference struct {
+	Id       string                 `json:"id"`
+	Kind     RunIntentReferenceKind `json:"kind"`
+	Revision string                 `json:"revision"`
+}
+
+// RunIntentReferenceKind defines model for RunIntentReference.Kind.
+type RunIntentReferenceKind string
+
+// RunOrigin defines model for RunOrigin.
+type RunOrigin string
+
+// RunPage defines model for RunPage.
+type RunPage struct {
+	Items []RunView `json:"items"`
+
+	// NextCursor Opaque continuation cursor bound to the authorized workspace and filters; it does not promise a frozen cross-page snapshot.
+	NextCursor nullable.Nullable[string] `json:"next_cursor"`
+}
+
+// RunResultReference defines model for RunResultReference.
+type RunResultReference struct {
+	// ResultRef Opaque immutable server-owned result reference, never an inline provider value or credential.
+	ResultRef string `json:"result_ref"`
+}
+
+// RunResultResponse defines model for RunResultResponse.
+type RunResultResponse struct {
+	// EffectSummary Exact durable effect counts; every counter is present, including zero.
+	EffectSummary EffectSummary `json:"effect_summary"`
+
+	// ResultReferences Explicitly empty until immutable result references are available.
+	ResultReferences []RunResultReference `json:"result_references"`
+
+	// Revision Lossless positive decimal revision for Go and browser consumers.
+	Revision Revision `json:"revision"`
+	RunRef   string   `json:"run_ref"`
+	State    RunState `json:"state"`
+
+	// UnknownEffectCount Must equal effect_summary.unknown.
+	UnknownEffectCount ExactCounter `json:"unknown_effect_count"`
+}
+
+// RunResumeRequest defines model for RunResumeRequest.
+type RunResumeRequest struct {
+	// ApprovalRef Explicit approval context; null records that the selected recovery contract has no approval reference.
+	ApprovalRef nullable.Nullable[string] `json:"approval_ref"`
+	Protocol    ProtocolMetadata          `json:"protocol"`
+
+	// RecoveryGeneration Explicit immutable recovery-generation identity; never inferred from orchestration state.
+	RecoveryGeneration string `json:"recovery_generation"`
+}
+
+// RunResumeResponse defines model for RunResumeResponse.
+type RunResumeResponse struct {
+	ApprovalRef nullable.Nullable[string] `json:"approval_ref"`
+
+	// EffectSummary Exact durable effect counts; every counter is present, including zero.
+	EffectSummary      EffectSummary        `json:"effect_summary"`
+	OutcomeReference   SafeOutcomeReference `json:"outcome_reference"`
+	RecoveryGeneration string               `json:"recovery_generation"`
+	Replay             bool                 `json:"replay"`
+
+	// ResultRevision Original safe recovery-command result revision on exact replay.
+	ResultRevision Revision `json:"result_revision"`
+	RunRef         string   `json:"run_ref"`
+	State          RunState `json:"state"`
+
+	// UnknownEffectCount Must equal effect_summary.unknown; resume never resets unresolved effects.
+	UnknownEffectCount ExactCounter `json:"unknown_effect_count"`
+}
+
 // RunState defines model for RunState.
 type RunState string
+
+// RunView Lean authorized projection; never the stored RunSpec, grant, raw inputs, credentials or Temporal history.
+type RunView struct {
+	// BlockedReason Safe reason code when blocked or retained under uncertainty; null otherwise.
+	BlockedReason nullable.Nullable[string] `json:"blocked_reason"`
+
+	// CancelRequested Durable cancellation intent only; false or true does not infer provider termination.
+	CancelRequested bool `json:"cancel_requested"`
+
+	// ConnectionRefs Immutable accepted connection context used for authorization; no credential or stored grant data.
+	ConnectionRefs []string `json:"connection_refs"`
+
+	// EffectSummary Exact durable effect counts; every counter is present, including zero.
+	EffectSummary EffectSummary `json:"effect_summary"`
+
+	// Intent Safe immutable accepted operation-or-plan identity; it excludes the RunSpec, grant and inputs.
+	Intent RunIntentReference `json:"intent"`
+
+	// OrchestrationCondition Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.
+	OrchestrationCondition OrchestrationCondition `json:"orchestration_condition"`
+	Origin                 RunOrigin              `json:"origin"`
+	ProjectionObservedAt   time.Time              `json:"projection_observed_at"`
+	ResultReferences       []RunResultReference   `json:"result_references"`
+
+	// Revision Lossless positive decimal revision for Go and browser consumers.
+	Revision Revision `json:"revision"`
+	RunRef   string   `json:"run_ref"`
+	State    RunState `json:"state"`
+
+	// UnknownEffectCount Must equal effect_summary.unknown; a nonzero value keeps aggregate state reconciling.
+	UnknownEffectCount ExactCounter `json:"unknown_effect_count"`
+}
+
+// SafeConnectionInput defines model for SafeConnectionInput.
+type SafeConnectionInput struct {
+	ConnectorId       string `json:"connector_id"`
+	DisplayName       string `json:"display_name"`
+	ProviderAccountId string `json:"provider_account_id"`
+}
+
+// SafeConnectionPatch defines model for SafeConnectionPatch.
+type SafeConnectionPatch struct {
+	DisplayName string `json:"display_name"`
+}
 
 // SafeOutcomeReference defines model for SafeOutcomeReference.
 type SafeOutcomeReference struct {
@@ -436,6 +1026,19 @@ type ServerInfo struct {
 
 // ServerInfoProtocolVersion defines model for ServerInfo.ProtocolVersion.
 type ServerInfoProtocolVersion string
+
+// ServiceAccount defines model for ServiceAccount.
+type ServiceAccount struct {
+	ConnectionScopes  []string                     `json:"connection_scopes"`
+	ControlRevision   string                       `json:"control_revision"`
+	DisplayName       nullable.Nullable[string]    `json:"display_name"`
+	ExpiresAt         time.Time                    `json:"expires_at"`
+	GrantRevision     string                       `json:"grant_revision"`
+	OperationScopes   []string                     `json:"operation_scopes"`
+	RevokedAt         nullable.Nullable[time.Time] `json:"revoked_at"`
+	ServiceAccountRef string                       `json:"service_account_ref"`
+	WorkspaceScopes   []string                     `json:"workspace_scopes"`
+}
 
 // ServiceAccountCreateRequest defines model for ServiceAccountCreateRequest.
 type ServiceAccountCreateRequest struct {
@@ -465,6 +1068,13 @@ type ServiceAccountCreationResponseReplay bool
 // ServiceAccountCreationResponseResultDisposition defines model for ServiceAccountCreationResponse.ResultDisposition.
 type ServiceAccountCreationResponseResultDisposition string
 
+// ServiceAccountPage defines model for ServiceAccountPage.
+type ServiceAccountPage struct {
+	CollectionRevision string                    `json:"collection_revision"`
+	Items              []ServiceAccount          `json:"items"`
+	NextCursor         nullable.Nullable[string] `json:"next_cursor"`
+}
+
 // ServiceAccountRevokeRequest defines model for ServiceAccountRevokeRequest.
 type ServiceAccountRevokeRequest struct {
 	Protocol       ProtocolMetadata `json:"protocol"`
@@ -475,14 +1085,90 @@ type ServiceAccountRevokeRequest struct {
 	} `json:"service_account"`
 }
 
+// TaskPage defines model for TaskPage.
+type TaskPage struct {
+	Items []TaskView `json:"items"`
+
+	// NextCursor Opaque continuation cursor bound to the authorized workspace and run; it does not promise a frozen cross-page snapshot.
+	NextCursor nullable.Nullable[string] `json:"next_cursor"`
+}
+
+// TaskView Durable task state and exact member truth without raw inputs, schemas, grants or orchestration history.
+type TaskView struct {
+	BehaviorId      string                    `json:"behavior_id"`
+	BlockedReason   nullable.Nullable[string] `json:"blocked_reason"`
+	CancelRequested bool                      `json:"cancel_requested"`
+
+	// EffectSummary Exact durable effect counts; every counter is present, including zero.
+	EffectSummary  EffectSummary   `json:"effect_summary"`
+	Lane           TaskViewLane    `json:"lane"`
+	MemberOutcomes []MemberOutcome `json:"member_outcomes"`
+	OperationId    string          `json:"operation_id"`
+
+	// OrchestrationCondition Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.
+	OrchestrationCondition OrchestrationCondition `json:"orchestration_condition"`
+	ProjectionObservedAt   time.Time              `json:"projection_observed_at"`
+
+	// Revision Lossless positive decimal revision for Go and browser consumers.
+	Revision Revision `json:"revision"`
+	RunRef   string   `json:"run_ref"`
+	State    RunState `json:"state"`
+
+	// TaskId Deterministic reversible opaque encoding of this exact run and stored task identity; ordinary scoped authorization is still required.
+	TaskId string `json:"task_id"`
+
+	// UnknownEffectCount Must equal effect_summary.unknown; a nonzero value keeps task state reconciling.
+	UnknownEffectCount ExactCounter `json:"unknown_effect_count"`
+}
+
+// TaskViewLane defines model for TaskView.Lane.
+type TaskViewLane string
+
+// Workspace defines model for Workspace.
+type Workspace struct {
+	MembershipId       string `json:"membership_id"`
+	MembershipRevision string `json:"membership_revision"`
+	Name               string `json:"name"`
+	OrgId              string `json:"org_id"`
+	Role               string `json:"role"`
+	WorkspaceId        string `json:"workspace_id"`
+}
+
+// WorkspacePage defines model for WorkspacePage.
+type WorkspacePage struct {
+	Items      []Workspace               `json:"items"`
+	NextCursor nullable.Nullable[string] `json:"next_cursor"`
+}
+
+// CSRFToken defines model for CSRFToken.
+type CSRFToken = string
+
+// ConnectionID defines model for ConnectionID.
+type ConnectionID = string
+
+// Cursor defines model for Cursor.
+type Cursor = string
+
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
 
 // IfMatch defines model for IfMatch.
 type IfMatch = string
 
+// PageSize defines model for PageSize.
+type PageSize = int
+
 // ResourceID defines model for ResourceID.
 type ResourceID = string
+
+// RunID defines model for RunID.
+type RunID = string
+
+// RunStateFilter defines model for RunStateFilter.
+type RunStateFilter = RunState
+
+// TaskID defines model for TaskID.
+type TaskID = string
 
 // WorkspaceID defines model for WorkspaceID.
 type WorkspaceID = string
@@ -520,16 +1206,101 @@ type Problem500 = Problem
 // Problem503 defines model for Problem503.
 type Problem503 = Problem
 
+// RevokeCurrentSessionParams defines parameters for RevokeCurrentSession.
+type RevokeCurrentSessionParams struct {
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// ApproveDeviceLoginParams defines parameters for ApproveDeviceLogin.
+type ApproveDeviceLoginParams struct {
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// DenyDeviceLoginParams defines parameters for DenyDeviceLogin.
+type DenyDeviceLoginParams struct {
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// GetCurrentSessionParams defines parameters for GetCurrentSession.
+type GetCurrentSessionParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// ListWorkspacesParams defines parameters for ListWorkspaces.
+type ListWorkspacesParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// ListConnectionsParams defines parameters for ListConnections.
+type ListConnectionsParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// CreateConnectionParams defines parameters for CreateConnection.
+type CreateConnectionParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// DeleteConnectionParams defines parameters for DeleteConnection.
+type DeleteConnectionParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// UpdateConnectionParams defines parameters for UpdateConnection.
+type UpdateConnectionParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// ListDelegationsParams defines parameters for ListDelegations.
+type ListDelegationsParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
 // CreateDelegationParams defines parameters for CreateDelegation.
 type CreateDelegationParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-	IfMatch        IfMatch        `json:"If-Match"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
 // RevokeDelegationParams defines parameters for RevokeDelegation.
 type RevokeDelegationParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-	IfMatch        IfMatch        `json:"If-Match"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
 // RevokeDelegation200JSONResponseBody defines parameters for RevokeDelegation.
@@ -540,18 +1311,37 @@ type RevokeDelegation200JSONResponseBody struct {
 // SubmitInvocationParams defines parameters for SubmitInvocation.
 type SubmitInvocationParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// ListMembershipsParams defines parameters for ListMemberships.
+type ListMembershipsParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
 }
 
 // GrantMembershipParams defines parameters for GrantMembership.
 type GrantMembershipParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-	IfMatch        IfMatch        `json:"If-Match"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
 // RevokeMembershipParams defines parameters for RevokeMembership.
 type RevokeMembershipParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-	IfMatch        IfMatch        `json:"If-Match"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
 // RevokeMembership200JSONResponseBody defines parameters for RevokeMembership.
@@ -559,22 +1349,102 @@ type RevokeMembership200JSONResponseBody struct {
 	union json.RawMessage
 }
 
+// ListRunsParams defines parameters for ListRuns.
+type ListRunsParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
+
+	// State Restrict the workspace-scoped page to one canonical run state.
+	State *RunStateFilter `form:"state,omitempty" json:"state,omitempty"`
+}
+
+// CancelRunParams defines parameters for CancelRun.
+type CancelRunParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// ResumeRunParams defines parameters for ResumeRun.
+type ResumeRunParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// ListRunTasksParams defines parameters for ListRunTasks.
+type ListRunTasksParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// ListServiceAccountsParams defines parameters for ListServiceAccounts.
+type ListServiceAccountsParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
 // CreateServiceAccountParams defines parameters for CreateServiceAccount.
 type CreateServiceAccountParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-	IfMatch        IfMatch        `json:"If-Match"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
 // RevokeServiceAccountParams defines parameters for RevokeServiceAccount.
 type RevokeServiceAccountParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
-	IfMatch        IfMatch        `json:"If-Match"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
 // RevokeServiceAccount200JSONResponseBody defines parameters for RevokeServiceAccount.
 type RevokeServiceAccount200JSONResponseBody struct {
 	union json.RawMessage
 }
+
+// CompleteBrowserLoginJSONRequestBody defines body for CompleteBrowserLogin for application/json ContentType.
+type CompleteBrowserLoginJSONRequestBody = BrowserLogin
+
+// StartBrowserLoginJSONRequestBody defines body for StartBrowserLogin for application/json ContentType.
+type StartBrowserLoginJSONRequestBody = BrowserLoginStart
+
+// StartDeviceLoginJSONRequestBody defines body for StartDeviceLogin for application/json ContentType.
+type StartDeviceLoginJSONRequestBody = DeviceStart
+
+// ApproveDeviceLoginJSONRequestBody defines body for ApproveDeviceLogin for application/json ContentType.
+type ApproveDeviceLoginJSONRequestBody = DeviceApproval
+
+// DenyDeviceLoginJSONRequestBody defines body for DenyDeviceLogin for application/json ContentType.
+type DenyDeviceLoginJSONRequestBody = DeviceApproval
+
+// ExchangeDeviceLoginJSONRequestBody defines body for ExchangeDeviceLogin for application/json ContentType.
+type ExchangeDeviceLoginJSONRequestBody = DeviceProof
+
+// CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
+type CreateConnectionJSONRequestBody = ConnectionCreateRequest
+
+// DeleteConnectionJSONRequestBody defines body for DeleteConnection for application/json ContentType.
+type DeleteConnectionJSONRequestBody = ConnectionDeleteRequest
+
+// UpdateConnectionJSONRequestBody defines body for UpdateConnection for application/json ContentType.
+type UpdateConnectionJSONRequestBody = ConnectionUpdateRequest
 
 // CreateDelegationJSONRequestBody defines body for CreateDelegation for application/json ContentType.
 type CreateDelegationJSONRequestBody = DelegationCreateRequest
@@ -590,6 +1460,12 @@ type GrantMembershipJSONRequestBody = MembershipGrantRequest
 
 // RevokeMembershipJSONRequestBody defines body for RevokeMembership for application/json ContentType.
 type RevokeMembershipJSONRequestBody = MembershipRevokeRequest
+
+// CancelRunJSONRequestBody defines body for CancelRun for application/json ContentType.
+type CancelRunJSONRequestBody = RunCancelRequest
+
+// ResumeRunJSONRequestBody defines body for ResumeRun for application/json ContentType.
+type ResumeRunJSONRequestBody = RunResumeRequest
 
 // CreateServiceAccountJSONRequestBody defines body for CreateServiceAccount for application/json ContentType.
 type CreateServiceAccountJSONRequestBody = ServiceAccountCreateRequest

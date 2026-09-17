@@ -65,6 +65,7 @@ const bundledDevelopmentConfiguration = `{
     "workspace_active_runs": 4,
     "workflow_payload_bytes": 65536,
     "workflow_fanout": 32,
+    "run_lifetime": "1h",
     "event_buffer": 128,
     "query_children": 1,
     "query_child_memory_bytes": 4294967296,

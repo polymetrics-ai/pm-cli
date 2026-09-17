@@ -1,0 +1,55 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "server",
+    srcs = [
+        "browser.go",
+        "health.go",
+        "lifecycle.go",
+        "secrets.go",
+        "server.go",
+    ],
+    embedsrcs = glob(["browser_assets/*"]),
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/server",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/app",
+        "//internal/config",
+        "//internal/httpapi",
+        "@com_github_gin_gonic_gin//:gin",
+        "@org_golang_x_net//netutil",
+    ],
+)
+
+go_test(
+    name = "server_test",
+    size = "large",
+    srcs = [
+        "delegations_integration_test.go",
+        "integration_fixture_test.go",
+        "integration_test.go",
+        "lifecycle_test.go",
+        "run_grants_test.go",
+        "secrets_test.go",
+        "service_accounts_integration_test.go",
+    ],
+    embed = [":server"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "PM_STORE_TEST_SECRETS_DIR",
+        "PM_SERVER_BROWSER_PROBE_READY_FILE",
+        "PM_SERVER_BROWSER_PROBE_STOP_FILE",
+        "PM_SERVER_BROWSER_PROBE_TIMEOUT",
+    ],
+    tags = ["exclusive", "external", "no-remote"],
+    deps = [
+        "//internal/auth",
+        "//internal/config",
+        "//internal/contract",
+        "//internal/credentials",
+        "//internal/store",
+        "@com_github_gin_gonic_gin//:gin",
+        "@com_github_jackc_pgx_v5//:pgx",
+    ],
+)

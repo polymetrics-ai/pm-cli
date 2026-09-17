@@ -78,6 +78,9 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if err := validateSecretReference(data.identity.ClientSecretRef, "identity.client_secret_ref"); err != nil {
 		return Configuration{}, err
 	}
+	if data.identity.StepUpMaximumAge < time.Second || data.identity.StepUpMaximumAge > 15*time.Minute {
+		return Configuration{}, diagnostic("identity.step_up_maximum_age", DiagnosticBounds)
+	}
 	if err := validateSecretReference(data.encryption.WrappingKeyRef, "encryption.wrapping_key_ref"); err != nil {
 		return Configuration{}, err
 	}
@@ -89,12 +92,17 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if err := validateResourceLimits(data.limits); err != nil {
 		return Configuration{}, err
 	}
+	if err := validateServer(data.server); err != nil {
+		return Configuration{}, err
+	}
 	if err := validateLifecycle(data, prelaunch); err != nil {
 		return Configuration{}, err
 	}
 
 	temporal := data.temporal
 	temporal.TaskQueues = append([]string(nil), data.temporal.TaskQueues...)
+	server := data.server
+	server.TrustedProxies = append([]string(nil), data.server.TrustedProxies...)
 	return Configuration{
 		schemaVersion:      data.schemaVersion,
 		deploymentID:       data.deploymentID,
@@ -109,6 +117,7 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 		admissionOverrides: data.admissionOverrides,
 		admission:          admission,
 		limits:             data.limits,
+		server:             server,
 	}, nil
 }
 
@@ -345,6 +354,9 @@ func validateResourceLimits(limits ResourceLimits) error {
 		if limit.value > maxConfigInteger {
 			return diagnostic(limit.field, DiagnosticBounds)
 		}
+	}
+	if limits.RunLifetime <= 0 {
+		return diagnostic("limits.run_lifetime", DiagnosticValue)
 	}
 	if limits.QueryChildDeadline <= 0 {
 		return diagnostic("limits.query_child_deadline", DiagnosticValue)

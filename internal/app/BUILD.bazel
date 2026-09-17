@@ -1,0 +1,54 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "app",
+    srcs = [
+        "admission.go",
+        "cancel.go",
+        "capabilities.go",
+        "connections.go",
+        "credentials.go",
+        "delegations.go",
+        "revocation.go",
+        "runs.go",
+        "runtime.go",
+        "service_accounts.go",
+        "workspaces.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/app",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/auth",
+        "//internal/config",
+        "//internal/contract",
+        "//internal/credentials",
+        "//internal/store",
+        "@com_github_jackc_pgx_v5//pgconn",
+        "@com_github_jackc_puddle_v2//:puddle",
+    ],
+)
+
+go_test(
+    name = "app_test",
+    size = "large",
+    srcs = [
+        "capabilities_test.go",
+        "lifecycle_test.go",
+    ],
+    embed = [":app"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = ["exclusive", "external", "no-remote"],
+    deps = [
+        "//internal/api",
+        "//internal/config",
+        "//internal/contract",
+        "//internal/httpapi",
+        "//internal/store",
+        "//internal/testfixture",
+        "@com_github_jackc_pgx_v5//:pgx",
+    ],
+)

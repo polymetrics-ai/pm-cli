@@ -25,6 +25,9 @@ var (
 	ErrStaleFence           = errors.New("stale task fence")
 	ErrObjectNotVerified    = errors.New("object reference was not preverified")
 	ErrUnsupportedDowngrade = errors.New("store schema downgrade is unsupported")
+	// ErrCommitOutcomeUnknown requires reconciliation of the original durable
+	// identity; a failed acknowledgement is not evidence of a rolled-back write.
+	ErrCommitOutcomeUnknown = errors.New("store commit outcome unknown")
 )
 
 const cleanupTimeout = 5 * time.Second
@@ -105,8 +108,25 @@ func WithinTransaction(ctx context.Context, pool *Pool, fn TransactionFunc) (err
 	}
 	if commitErr := pgxTx.Commit(ctx); commitErr != nil {
 		destroy = true
+		var outcomeErr error
+		// Driver retryability is not a transaction outcome witness: a closed-
+		// connection error can follow a COMMIT whose reply was already lost.
+		knownRefusal := errors.Is(commitErr, pgx.ErrTxCommitRollback)
+		var serverErr *pgconn.PgError
+		commitConnection := pgxTx.Conn()
+		if errors.As(commitErr, &serverErr) &&
+			serverErr.Code != "40003" && serverErr.Code != "08007" &&
+			!commitConnection.IsClosed() && commitConnection.PgConn().TxStatus() == 'I' {
+			// A complete server refusal followed by idle ReadyForQuery proves
+			// rollback, except when PostgreSQL explicitly reports uncertainty.
+			knownRefusal = true
+		}
+		if !knownRefusal {
+			outcomeErr = ErrCommitOutcomeUnknown
+		}
 		rollbackErr := rollbackStoreTransaction(cleanupCtx, pool, pgxTx)
 		return joinStoreErrors(
+			outcomeErr,
 			fmt.Errorf("commit store transaction: %w", commitErr),
 			normalizeClosedRollback(rollbackErr),
 		)

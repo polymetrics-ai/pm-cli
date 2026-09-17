@@ -1,10 +1,10 @@
 # Developer setup
 
-This checkout contains the accepted PM Server documentation baseline and the combined issue #2/#3 foundation. PR #47 landed the reviewed context on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, and BOOT-1 readback verified the approved staging-to-landed relationship. The bounded Darwin foundation checks and fresh-worker discovery below do not substitute for independent review, exact-head Linux CI, or merge records. A working build/toolchain foundation does not implement PM services, client commands, generated bundles, connectors, provider effects, or certification.
+This checkout contains the accepted PM Server documentation baseline, the combined issue #2/#3 foundation, and the current authenticated `pm-server` candidate. PR #47 landed the reviewed context on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, and BOOT-1 readback verified the approved staging-to-landed relationship. The bounded Darwin foundation observations and local M3 checks below do not substitute for independent review, exact-head Linux CI, or merge records. The source-present server authenticates browser and device sessions, enforces scoped identity and membership operations, and accepts encrypted provider credentials; durable invocation admission and dispatch, workers, provider execution, and release certification remain unavailable.
 
 ## What is available now
 
-The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
+The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, the authenticated `pm-server` entry point and minimal same-origin browser surface, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
 
 ### Resolve and run pinned tools
 
@@ -48,7 +48,7 @@ These Make targets are source-present:
 
 | Command | Boundary exercised |
 | --- | --- |
-| `make build` | Builds the cgo native probe and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
+| `make build` | Builds `.cache/bin/pm-server`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
 | `make test` | Runs the resolved-dependency policy test and the native DuckDB behavioral test |
 | `make vet` | Vets the application module with cgo and the tools module without cgo |
 | `make boundaries` | Checks native-linkage and module ownership boundaries |
@@ -95,6 +95,10 @@ The pure server-configuration boundary is now source-present in `internal/config
 
 The [server schema](../../schemas/server-config.schema.json), [bundled example](../../deploy/server.example.json), and [managed example](../../packaging/config/server.example.json) describe the same backend architecture. The examples contain placeholder references, not provisioned credentials or working endpoints. Admission selects `development` (32 global pending, 8 workspace pending, 2-minute workspace age) or `standard` (256, 32, 10 minutes); explicit finite positive overrides retain presence, and workspace pending cannot exceed global pending.
 
+`limits.run_lifetime` is a required positive duration with no implicit production default. Admission captures it with the resolved resource limits in an immutable run-budget snapshot. Query and metadata deadlines do not supply the run lifetime; the explicit durations in checked-in examples are synthetic configuration values.
+
+`identity.step_up_maximum_age` bounds fresh OIDC authentication for private credential writes. Omission selects `5m`; explicit values must be between `1s` and `15m`, inclusive. Null, numeric seconds and out-of-range durations are rejected. The freshness witness is signed OIDC `auth_time`, not the PM session's creation or expiry time.
+
 Run the pure configuration and packaging-contract checks without starting services:
 
 ```sh
@@ -103,6 +107,36 @@ scripts/install.sh --help
 ```
 
 The offline installer consumes an operator-supplied payload described by the [release-pair schema](../../packaging/release-pair.schema.json) and [install-manifest schema](../../packaging/install-manifest.schema.json). `--check` verifies the plan without creating its destination. Installation checks release identity, artifact roles, target platform, digests, modes, and confined nonconflicting paths; it refuses different existing files and never starts services. This is not release authenticity verification, an upgrade protocol, real-stack readiness, or completed M12 installation/recovery proof.
+
+### Authenticated PM Server entry point
+
+`make build` emits the real server binary at `.cache/bin/pm-server` through the pinned Go wrapper. Its help and version paths are offline: they do not read configuration or secrets, contact PostgreSQL or the identity provider, or start dependencies.
+
+```sh
+make build
+.cache/bin/pm-server --help
+.cache/bin/pm-server --version
+```
+
+The local build reports the source version `development`; that value is not a release identity or attestation. Serving requires each explicit path flag exactly once:
+
+```sh
+.cache/bin/pm-server \
+  --config /absolute/path/to/operator-server.json \
+  --secrets-directory /absolute/path/to/operator-secret-bundles
+```
+
+Those paths are placeholders. The configuration path must name one complete strict typed server document; no environment merge, directory search or alternate configuration source fills missing fields. The checked-in examples contain synthetic endpoints and secret references and are not runnable production configurations. Do not pass an example unchanged or place raw secret values in it.
+
+The separately selected secret directory is the only filesystem root for secret resolution. A `secret://authority/path` reference maps to the confined bundle directory `authority/path` below that root. Startup reads the PostgreSQL endpoint reference's `pm-app-endpoint` and the identity reference's `oidc-client-secret`; credential ingress loads the encryption reference's `wrapping-key` when needed. Each must be a nonempty bounded regular file, and the wrapping key must contain exactly 32 raw bytes. Temporal and artifact secret references remain typed declarations for components that the current process does not open. Secret values are not accepted through flags, copied into public configuration, or returned in diagnostics.
+
+The process observes existing dependencies and never provisions or migrates them. Startup requires an already compatible migrated PostgreSQL application store plus a reachable configured HTTPS OIDC issuer and discovery endpoint. The OIDC client must register the exact callback formed by appending `/v1/sessions/browser/callback` to the configured `public_origin`, while its client secret remains in the operator bundle. The full typed document still declares PostgreSQL, Temporal, artifact, identity, encryption, admission and resource controls, but this milestone does not connect a Temporal dispatcher, start a worker, or execute an artifact or provider operation.
+
+The executable opens a plain HTTP listener and accepts no certificate or key flags. Authenticated API and browser traffic must be terminated by an HTTPS edge whose backend address is explicitly admitted by `server.trusted_proxies`. `public_origin` must be HTTPS, the request host must match it, and forwarded HTTPS/host/client fields are accepted only from that trusted peer. Untrusted or ambiguous forwarding is rejected. Plain loopback HTTP is limited to unauthenticated `GET` requests for `/v1/info`, `/health/live`, and `/health/ready`; it never admits cookies or bearer credentials.
+
+The minimal same-origin pages are `/login` for configured OIDC sign-in or reauthentication, `/login/device` for approving or denying a displayed device challenge, and `/admin/credentials` for the private write-only credential ingress. Browser authentication uses the Secure host-only `__Host-pm_oidc`, `__Host-pm_session`, and `__Host-pm_csrf` cookies with `Path=/` and no `Domain`; the OIDC and session cookies are HttpOnly, while the same-origin CSRF cookie is deliberately readable for the matching request header. The credential page clears its password field, does not place the value in the URL or browser storage, and sends it only to the server-side private endpoint. The server encrypts the provider credential under the operator wrapping key and returns opaque status/version metadata, never credential readback.
+
+`/health/live` can report the process live, but `/health/ready` remains HTTP 503 with dispatch false even when the PostgreSQL admission probe succeeds. The process now composes durable admission and scoped run/task controls. Its production handler registry is still empty, so invocation submission returns unavailable capability rather than fabricating accepted work. The [M4 physical checks](testing.md#authenticated-admission-and-run-controls-m4) use an explicitly registered fixture capability to prove atomic acceptance, replay and controls; they do not make this process a ready provider-execution backend.
 
 ### Explicit dependency operator and physical qualification
 
@@ -133,7 +167,7 @@ python3 tools/bootstrap.py exec go -- test -race -mod=readonly ./tests/stack -ru
 
 The storage root exercises bounded concurrent nested listing, both gateways and a separate reader process, interrupted multipart publication, and rejection of corrupted or truncated bytes. The database/Temporal root exercises concurrent initialization, exact schema versions and incompatible-version refusal with restoration, denied roles, missing client authentication, unsafe port publication, and managed-stop refusal. Authenticated readiness alone is not byte-transfer proof.
 
-The Bazel target `//tests/stack:stack_test` includes these physical checks. Its `external` and `no-remote` tags prevent cached test success and remote execution without disabling sandboxed compilation. The [test rule](../../tests/stack/BUILD.bazel) explicitly inherits its named fixture, engine and tool settings from the invoking environment. Export those settings, including `PM_STACK_ROOT` set to this checkout; do not substitute an unowned stack. Local fixture results do not establish runner CI, PM API/worker behavior, connector certification, or later installation and recovery proof.
+The Bazel target `//tests/stack:stack_test` includes these physical checks. Its `external` and `no-remote` tags prevent cached test success and remote execution without disabling sandboxed compilation. The [test rule](../../tests/stack/BUILD.bazel) explicitly inherits its named fixture, engine and tool settings from the invoking environment. Export those settings, including `PM_STACK_ROOT` set to this checkout; do not substitute an unowned stack. Results from this dependency-stack target do not establish runner CI, authenticated PM API/worker behavior, connector certification, or later installation and recovery proof.
 
 ### Job-owned CI dependency fixture
 
@@ -143,9 +177,9 @@ The [foundation job](../../scripts/ci/check-foundation.sh) builds the dependency
 
 The manifest is `$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json`. Its exclusive, durable pre-mutation record binds the job attempt, checkout, daemon, project and owned paths; later records retain resource identities. The workflow's `always()` step invokes `with-stack-fixture.py --cleanup ABSOLUTE_PATH`. Cleanup revalidates ownership, removes only the owned resources and synthetic data, and leaves a cleaned receipt that cannot authorize deletion of a replacement directory or recycled resource. Startup, child-command and cleanup failures remain nonzero.
 
-Both physical Bazel targets declare [`exclusive` execution](https://bazel.build/reference/be/common-definitions#common.tags): their schema and role fault cases run serially within a Bazel invocation, including direct Bazel and Make entry points. Other tests retain normal scheduling. Separate manual test invocations must not share a fixture concurrently.
+The physical stack and store targets and the authenticated server target declare [`exclusive` execution](https://bazel.build/reference/be/common-definitions#common.tags): their schema, role and application cases run serially within a Bazel invocation, including direct Bazel and Make entry points. Other tests retain normal scheduling. Separate manual test invocations must not share a fixture concurrently.
 
-Local checks exercise successful physical tests, child failure, normal cancellation, abrupt termination, partial startup, mismatched-job refusal and cleaned-receipt reuse. These are local development results, not final-head runner CI, runner-network qualification, production recovery or application/provider proof.
+The wrapper's lifecycle checks exercise successful physical tests, child failure, normal cancellation, abrupt termination, partial startup, mismatched-job refusal and cleaned-receipt reuse. Those lifecycle observations are local development results, not final-head runner CI, runner-network qualification, production recovery or application/provider proof; a child command establishes only the exact behavior it asserts.
 
 ### Typed source and value contracts
 
@@ -183,7 +217,7 @@ This boundary does not start a server, authenticate a caller, commit an admissio
 
 ### PostgreSQL control store
 
-`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v2`. The migrator owns exact table/column grants. The runtime role cannot create schemas/tables/temporary objects, truncate any PM table, delete history or broaden its authority. Operator reinitialization must preserve those store-owned grants.
+`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v8`. The migrator owns exact table/column grants. The runtime role cannot create schemas/tables/temporary objects, truncate any PM table, delete history or broaden its authority. Operator reinitialization must preserve those store-owned grants.
 
 Use only an explicitly owned disposable PostgreSQL fixture. The tests require the selected application's `pm-app-endpoint` and `pm-app-migrator-password` references under `PM_STORE_TEST_SECRETS_DIR`; they do not skip when those inputs are missing. With the dependency fixture above already prepared:
 

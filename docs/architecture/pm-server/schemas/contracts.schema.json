@@ -1249,6 +1249,9 @@
             "request_bytes": {
               "type": "integer"
             },
+            "run_lifetime": {
+              "type": "string"
+            },
             "workflow_fanout": {
               "type": "integer"
             },
@@ -1266,6 +1269,7 @@
             "query_child_memory_bytes",
             "query_children",
             "request_bytes",
+            "run_lifetime",
             "workflow_fanout",
             "workflow_payload_bytes",
             "workspace_active_runs"

@@ -562,6 +562,8 @@ func newCompositePlanRequest(t *testing.T, scope contract.Scope, label string) A
 		IdempotencyKey: compositeAdmissionKey,
 	}
 	request.Spec.RunID = compositeRunID
+	rebindAdmissionBudgetForTest(t, &request)
+	request.InputSnapshot.RunID = compositeRunID
 	request.Spec.OperationOrPlanRef = contract.OperationOrPlanRef{
 		Kind: contract.PlanReference, ID: compositePlanID, Revision: "plan-revision-" + label,
 	}
@@ -582,6 +584,8 @@ func newCompositeOperationRequest(t *testing.T, scope contract.Scope, runID, lab
 	t.Helper()
 	request := testAdmissionRequest(t, scope, "operation-key-"+label, label)
 	request.Spec.RunID = runID
+	rebindAdmissionBudgetForTest(t, &request)
+	request.InputSnapshot.RunID = runID
 	binding, err := contract.NewAPIWorkflowBinding(runID)
 	if err != nil {
 		t.Fatal(err)

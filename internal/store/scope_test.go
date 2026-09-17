@@ -21,6 +21,8 @@ func TestStructuralScopeIsolation(t *testing.T) {
 	requestA := testAdmissionRequest(t, scopeA, "same-key", "scope-a")
 	requestB := testAdmissionRequest(t, scopeB, "same-key", "scope-b")
 	requestB.Spec.RunID = requestA.Spec.RunID
+	rebindAdmissionBudgetForTest(t, &requestB)
+	requestB.InputSnapshot.RunID = requestB.Spec.RunID
 	requestB.Spec.OperationOrPlanRef = requestA.Spec.OperationOrPlanRef
 	requestB.Key = requestA.Key
 	bindingB, err := contract.NewAPIWorkflowBinding(requestB.Spec.RunID)
