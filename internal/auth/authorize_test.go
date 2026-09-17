@@ -95,6 +95,16 @@ func TestScopeAndInboundPolicy(t *testing.T) {
 			t.Fatalf("authorize existing alpha %s: %v", request.ResourceKind, err)
 		}
 	}
+	t.Run("artifact authority cannot be supplied by the caller", func(t *testing.T) {
+		callerSupplied := alphaCases[4]
+		callerSupplied.ConnectionID = fixture.connection
+		err := store.WithinScope(context.Background(), fixture.pool, fixture.alpha, ada, func(ctx context.Context, tx *store.Transaction) error {
+			_, err := service.AuthorizeResource(ctx, tx, callerSupplied)
+			return err
+		})
+		requireErrorIs(t, err, auth.ErrResourceNotFound)
+	})
+
 	workerAuthorize := auth.NewResourceAuthorizer()
 	var serviceAuthorization, workerAuthorization auth.Authorization
 	if err := store.WithinScope(context.Background(), fixture.pool, fixture.alpha, ada, func(ctx context.Context, tx *store.Transaction) error {

@@ -228,6 +228,72 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 	})
 }
 
+func TestArtifactAuthorityMigrationRetainedData(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 3)
+	scope := newTestScope(t)
+	t.Cleanup(func() {
+		restoreEventWatermarkMigrationFixture(t, credentials, scope)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	connectionID := registerArtifactTestConnections(t, ctx, pool, scope, "migration")[0]
+	ref := testObjectRef(scope, "artifact-migration-authority", "attempt-migration-authority", "migration")
+	verified, err := NewPreverifiedObjectRef(ref, ObjectVerification{
+		ObservedSHA256:            ref.SHA256,
+		ObservedByteLength:        ref.ByteLength,
+		ObservedBackendGeneration: ref.BackendGeneration,
+	})
+	if err != nil {
+		t.Fatalf("construct migration artifact authority: %v", err)
+	}
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return RegisterArtifact(ctx, tx, connectionID, verified)
+	}); err != nil {
+		t.Fatalf("register retained artifact authority: %v", err)
+	}
+	pool.Close()
+
+	err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 12)
+	if err == nil {
+		t.Fatal("artifact authority downgrade succeeded with a retained binding")
+	}
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+		t.Fatalf("retained artifact authority downgrade error = %v; want migration refusal P0001", err)
+	}
+
+	conn, err := pgx.Connect(ctx, credentials.migratorDSN)
+	if err != nil {
+		t.Fatal("connect after retained artifact authority downgrade refusal")
+	}
+	var revision string
+	if err := conn.QueryRow(ctx, `SELECT revision FROM pm.control_schema WHERE singleton`).Scan(&revision); err != nil {
+		_ = conn.Close(context.Background())
+		t.Fatal("read control schema after retained artifact authority downgrade refusal")
+	}
+	if err := conn.Close(ctx); err != nil {
+		t.Fatal("close migrator after retained artifact authority downgrade refusal")
+	}
+	if revision != ControlSchemaRevision {
+		t.Fatalf("control revision after retained artifact authority downgrade refusal = %q; want %q", revision, ControlSchemaRevision)
+	}
+
+	reopened := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+	defer reopened.Close()
+	if err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		storedConnectionID, err := LoadArtifactConnectionID(ctx, tx, ref.ArtifactID)
+		if err != nil {
+			return err
+		}
+		if storedConnectionID != connectionID {
+			t.Fatalf("retained artifact authority = %q; want %q", storedConnectionID, connectionID)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("load retained artifact authority after downgrade refusal: %v", err)
+	}
+}
+
 func TestMigrationRecovery(t *testing.T) {
 	credentials := loadTestStoreCredentials(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)

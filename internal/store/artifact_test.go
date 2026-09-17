@@ -223,6 +223,62 @@ func TestStoreManifestCommit(t *testing.T) {
 	})
 }
 
+func TestArtifactAuthorityBindingIsImmutable(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 3)
+	scope := newTestScope(t)
+	t.Cleanup(func() { cleanupTestScope(t, credentials, scope) })
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	connectionIDs := registerArtifactTestConnections(t, ctx, pool, scope, "primary", "other")
+	ref := testObjectRef(scope, "artifact-authority", "attempt-authority", "authority")
+	verified, err := NewPreverifiedObjectRef(ref, ObjectVerification{
+		ObservedSHA256:            ref.SHA256,
+		ObservedByteLength:        ref.ByteLength,
+		ObservedBackendGeneration: ref.BackendGeneration,
+	})
+	if err != nil {
+		t.Fatalf("construct preverified authority fixture: %v", err)
+	}
+
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		if err := RegisterArtifact(ctx, tx, connectionIDs[0], verified); err != nil {
+			return err
+		}
+		if err := RegisterArtifact(ctx, tx, connectionIDs[0], verified); err != nil {
+			return err
+		}
+		connectionID, err := LoadArtifactConnectionID(ctx, tx, ref.ArtifactID)
+		if err != nil {
+			return err
+		}
+		if connectionID != connectionIDs[0] {
+			t.Fatalf("artifact authority = %q; want %q", connectionID, connectionIDs[0])
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("register and replay exact artifact authority: %v", err)
+	}
+
+	err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return RegisterArtifact(ctx, tx, connectionIDs[1], verified)
+	})
+	if !errors.Is(err, ErrImmutableConflict) {
+		t.Fatalf("conflicting artifact authority = %v; want ErrImmutableConflict", err)
+	}
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		connectionID, err := LoadArtifactConnectionID(ctx, tx, ref.ArtifactID)
+		if err != nil {
+			return err
+		}
+		if connectionID != connectionIDs[0] {
+			t.Fatalf("conflicting replay changed artifact authority to %q; want %q", connectionID, connectionIDs[0])
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("load retained artifact authority: %v", err)
+	}
+}
+
 func registerArtifactTestConnections(
 	t *testing.T,
 	ctx context.Context,
