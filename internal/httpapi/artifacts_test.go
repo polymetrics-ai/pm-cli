@@ -148,6 +148,94 @@ func TestScopedUnavailableArtifactRoutes(t *testing.T) {
 		}
 	})
 
+	t.Run("R16_E02_C04_artifact_connection_authority_is_derived_from_trusted_metadata", func(t *testing.T) {
+		fixture := testfixture.New(t)
+		restrictedConnectionID := fixture.Connection.ConnectionID + "-restricted"
+		fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+			_, err := tx.Exec(ctx, `
+				INSERT INTO pm.connections (
+					org_id, workspace_id, connection_id, connector_id, provider_account_id,
+					revision, credential_ref, display_name, state
+				) VALUES ($1, $2, $3, $4, $5, 1, '', 'Restricted artifact connection', 'active')
+			`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, restrictedConnectionID,
+				fixture.Connection.ConnectorID, fixture.Connection.ProviderAccountID)
+			return err
+		})
+		restricted := registerScopedArtifactMetadata(
+			t,
+			fixture,
+			fixture.Scope,
+			fixture.Actor,
+			restrictedConnectionID,
+			"artifact-restricted-connection",
+		)
+		revoked := registerArtifactMetadata(t, fixture, "artifact-revoked-connection")
+		unbound := insertUnboundArtifactMetadata(t, fixture, "artifact-unbound-legacy")
+		foreign := registerScopedArtifactMetadata(
+			t,
+			fixture,
+			fixture.ForeignScope,
+			fixture.ForeignActor,
+			fixture.ForeignConnection.ConnectionID,
+			"artifact-foreign-workspace",
+		)
+		fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+			tag, err := tx.Exec(ctx, `
+				UPDATE pm.connections
+				SET state = 'revoked',
+				    revoked_at = clock_timestamp(),
+				    revision = revision + 1,
+				    updated_at = clock_timestamp()
+				WHERE org_id = $1 AND workspace_id = $2 AND connection_id = $3
+			`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, fixture.Connection.ConnectionID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return errors.New("artifact connection fixture was not revoked")
+			}
+			return nil
+		})
+
+		for _, test := range []struct {
+			name     string
+			scope    contract.Scope
+			artifact contract.ObjectRef
+		}{
+			{name: "active connection outside actor grant", scope: fixture.Scope, artifact: restricted},
+			{name: "revoked associated connection", scope: fixture.Scope, artifact: revoked},
+			{name: "retained unbound artifact", scope: fixture.Scope, artifact: unbound},
+			{name: "sibling workspace artifact", scope: fixture.Scope, artifact: foreign},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				resource := artifactPath(fixture, test.scope, test.artifact.ArtifactID)
+				for _, route := range []struct {
+					name    string
+					path    string
+					headers map[string]string
+				}{
+					{name: "inspect", path: resource},
+					{name: "download", path: resource + "/content", headers: map[string]string{"Range": "bytes=0-3"}},
+				} {
+					t.Run(route.name, func(t *testing.T) {
+						response := sendArtifactRoute(t, fixture.Client, http.MethodGet, route.path, route.headers)
+						requireArtifactProblem(t, response, http.StatusNotFound, "resource_not_found")
+						for _, canary := range []string{
+							test.artifact.ArtifactID,
+							test.artifact.ObjectAttemptKey,
+							test.artifact.SHA256,
+							artifactCanary,
+						} {
+							if bytes.Contains(response.document, []byte(canary)) {
+								t.Fatalf("concealed artifact response disclosed %q: %s", canary, response.document)
+							}
+						}
+					})
+				}
+			})
+		}
+	})
+
 	t.Run("R16_E02_C03_raw_upload_body_is_refused_at_the_protocol_boundary", func(t *testing.T) {
 		fixture := testfixture.New(t)
 		collection := artifactCollectionPath(fixture, fixture.Scope)
@@ -181,16 +269,26 @@ func TestScopedUnavailableArtifactRoutes(t *testing.T) {
 
 func registerArtifactMetadata(t *testing.T, fixture *testfixture.Fixture, artifactID string) contract.ObjectRef {
 	t.Helper()
-	ref := contract.ObjectRef{
-		OrgID:             fixture.Scope.OrgID,
-		WorkspaceID:       fixture.Scope.WorkspaceID,
-		ArtifactID:        artifactID,
-		ObjectAttemptKey:  artifactID + "-attempt-1",
-		SHA256:            strings.Repeat("a", 64),
-		ByteLength:        int64(len(artifactCanary)),
-		MediaType:         "application/octet-stream",
-		BackendGeneration: "fixture-generation-1",
-	}
+	return registerScopedArtifactMetadata(
+		t,
+		fixture,
+		fixture.Scope,
+		fixture.Actor,
+		fixture.Connection.ConnectionID,
+		artifactID,
+	)
+}
+
+func registerScopedArtifactMetadata(
+	t *testing.T,
+	fixture *testfixture.Fixture,
+	scope contract.Scope,
+	actor contract.Actor,
+	connectionID string,
+	artifactID string,
+) contract.ObjectRef {
+	t.Helper()
+	ref := artifactMetadataRef(scope, artifactID)
 	verified, err := store.NewPreverifiedObjectRef(ref, store.ObjectVerification{
 		ObservedSHA256:            ref.SHA256,
 		ObservedByteLength:        ref.ByteLength,
@@ -201,12 +299,49 @@ func registerArtifactMetadata(t *testing.T, fixture *testfixture.Fixture, artifa
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
-		return store.RegisterArtifact(ctx, tx, fixture.Connection.ConnectionID, verified)
+	if err := store.WithinScope(ctx, fixture.Pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
+		return store.RegisterArtifact(ctx, tx, connectionID, verified)
 	}); err != nil {
 		t.Fatalf("register artifact fixture metadata: %v", err)
 	}
 	return ref
+}
+
+func insertUnboundArtifactMetadata(
+	t *testing.T,
+	fixture *testfixture.Fixture,
+	artifactID string,
+) contract.ObjectRef {
+	t.Helper()
+	ref := artifactMetadataRef(fixture.Scope, artifactID)
+	encoded, err := json.Marshal(ref)
+	if err != nil {
+		t.Fatalf("encode unbound artifact fixture metadata: %v", err)
+	}
+	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO pm.artifacts (
+				org_id, workspace_id, artifact_id, object_attempt_key, sha256,
+				byte_length, media_type, backend_generation, object_ref, registered_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+		`, ref.OrgID, ref.WorkspaceID, ref.ArtifactID, ref.ObjectAttemptKey, ref.SHA256,
+			ref.ByteLength, ref.MediaType, ref.BackendGeneration, json.RawMessage(encoded))
+		return err
+	})
+	return ref
+}
+
+func artifactMetadataRef(scope contract.Scope, artifactID string) contract.ObjectRef {
+	return contract.ObjectRef{
+		OrgID:             scope.OrgID,
+		WorkspaceID:       scope.WorkspaceID,
+		ArtifactID:        artifactID,
+		ObjectAttemptKey:  artifactID + "-attempt-1",
+		SHA256:            strings.Repeat("a", 64),
+		ByteLength:        int64(len(artifactCanary)),
+		MediaType:         "application/octet-stream",
+		BackendGeneration: "fixture-generation-1",
+	}
 }
 
 func grantArtifactWrite(t *testing.T, fixture *testfixture.Fixture) {
