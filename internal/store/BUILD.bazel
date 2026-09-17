@@ -10,6 +10,7 @@ go_library(
         "auth.go",
         "budgets.go",
         "checkpoints.go",
+        "commands.go",
         "connections.go",
         "credential_lifecycle.go",
         "db.go",
@@ -34,6 +35,7 @@ go_library(
         "settlements.go",
         "tasks.go",
         "transaction.go",
+        "workflows.go",
     ],
     embedsrcs = glob(["migrations/postgres/*.sql"]),
     importpath = "github.com/polymetrics-ai/pm-cli/internal/store",
@@ -70,6 +72,7 @@ go_test(
         "store_test.go",
         "tenant_keys_test.go",
         "transaction_outcome_test.go",
+        "workflow_roles_test.go",
     ],
     embed = [":store"],
     env_inherit = [

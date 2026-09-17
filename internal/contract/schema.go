@@ -165,6 +165,13 @@ func validateMediaType(value string) error {
 	return nil
 }
 
+// DecodeStrictRequiredObject decodes one closed JSON object through the
+// contract duplicate, unknown-field, presence, Unicode, null and trailing-data
+// checks. It is intended for typed protocol boundaries outside this package.
+func DecodeStrictRequiredObject(data []byte, target any, required ...string) error {
+	return decodeRequiredObject(data, target, required...)
+}
+
 func decodeContractJSON(data []byte, target any) error {
 	return decodeJSON(data, target, true)
 }

@@ -1,0 +1,62 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "temporal",
+    srcs = [
+        "bindings.go",
+        "client.go",
+        "commands.go",
+        "outbox.go",
+        "projection.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/temporal",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/contract",
+        "//internal/store",
+        "@io_temporal_go_api//enums/v1:enums",
+        "@io_temporal_go_api//history/v1:history",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//converter",
+    ],
+)
+
+go_test(
+    name = "temporal_test",
+    size = "large",
+    srcs = [
+        "outbox_test.go",
+        "physical_test.go",
+        "projection_test.go",
+    ],
+    embed = [":temporal"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "PM_STACK_SECRETS_DIR",
+        "PM_STACK_TEST_CONFIG",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = ["exclusive", "external", "no-remote"],
+    deps = [
+        "//internal/api",
+        "//internal/config",
+        "//internal/contract",
+        "//internal/store",
+        "//internal/testfixture",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@io_temporal_go_api//common/v1:common",
+        "@io_temporal_go_api//enums/v1:enums",
+        "@io_temporal_go_api//history/v1:history",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//activity",
+        "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//converter",
+        "@io_temporal_go_sdk//temporal",
+        "@io_temporal_go_sdk//worker",
+        "@io_temporal_go_sdk//workflow",
+    ],
+)

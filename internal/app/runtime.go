@@ -154,4 +154,9 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 
 func (services *Services) PublicOrigin() string           { return services.publicOrigin }
 func (services *Services) Ping(ctx context.Context) error { return services.pool.Ping(ctx) }
-func (services *Services) Close()                         { services.pool.Close() }
+
+// Store returns the existing runtime pool. Services retains ownership and is
+// solely responsible for closing it.
+func (services *Services) Store() *store.Pool { return services.pool }
+
+func (services *Services) Close() { services.pool.Close() }

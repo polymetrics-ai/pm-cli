@@ -322,14 +322,9 @@ func (service *AdmissionService) newAdmissionRequest(
 	if err != nil {
 		return store.AdmissionRequest{}, err
 	}
-	approvalRefs := []string{}
-	if invocation.ApprovalRef.Presence() == contract.PresenceValue {
-		approvalRef, ok := invocation.ApprovalRef.TextValue()
-		if !ok {
-			return store.AdmissionRequest{}, errors.New("validated approval reference is unavailable")
-		}
-		approvalRefs = append(approvalRefs, approvalRef)
-	}
+	// The client-supplied approval reference is immutable invocation context,
+	// not proof of approval authority. Only an approval owner can add a grant
+	// approval reference together with its policy epoch.
 	grant := contract.ExecutionGrant{
 		GrantRef:      grantRef,
 		GrantEpoch:    1,
@@ -337,7 +332,7 @@ func (service *AdmissionService) newAdmissionRequest(
 		Actor:         actor,
 		ConnectionIDs: []string{invocation.ConnectionRef},
 		OperationIDs:  []string{invocation.OperationRef},
-		ApprovalRefs:  approvalRefs,
+		ApprovalRefs:  []string{},
 		ExpiresAt:     expiresAt,
 		PolicyEpochs:  authorization.PolicyEpochs,
 	}

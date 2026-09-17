@@ -327,6 +327,9 @@ func validateRunProjectionUpdate(stored, proposed contract.RunRecord) error {
 	if proposed.Revision != stored.Revision+1 || !reflect.DeepEqual(proposed.Spec, stored.Spec) {
 		return ErrCASConflict
 	}
+	if err := validateWorkflowBindingProgression(stored.WorkflowBinding, proposed.WorkflowBinding); err != nil {
+		return err
+	}
 	if len(proposed.History) < len(stored.History) ||
 		!reflect.DeepEqual(proposed.History[:len(stored.History)], stored.History) {
 		return ErrCASConflict

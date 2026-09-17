@@ -2,7 +2,10 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/tls"
+	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"io"
 	"net"
@@ -11,15 +14,23 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	sdkclient "go.temporal.io/sdk/client"
+
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
+	pmtemporal "github.com/polymetrics-ai/pm-cli/internal/temporal"
 )
 
 const (
-	oidcRequestTimeout       = 15 * time.Second
-	oidcResponseMaximumBytes = 1 << 20
-	wrappingKeyBytes         = 32
+	oidcRequestTimeout        = 15 * time.Second
+	oidcResponseMaximumBytes  = 1 << 20
+	wrappingKeyBytes          = 32
+	temporalDialTimeout       = 5 * time.Second
+	temporalRequestTimeout    = 20 * time.Second
+	temporalRouteClaimTTL     = time.Minute
+	temporalRelayIdleDelay    = time.Second
+	temporalRelayFailureDelay = 2 * time.Second
 )
 
 const (
@@ -31,11 +42,14 @@ const (
 // Application owns the composed HTTP process and every resource opened for it.
 // It observes existing dependencies only; it never provisions or migrates them.
 type Application struct {
-	handler       http.Handler
-	lifecycle     *Server
-	services      *app.Services
-	secrets       *operatorSecrets
-	oidcTransport *boundedOIDCTransport
+	handler        http.Handler
+	lifecycle      *Server
+	services       *app.Services
+	secrets        *operatorSecrets
+	oidcTransport  *boundedOIDCTransport
+	temporalClient *pmtemporal.Client
+	relayCancel    context.CancelFunc
+	relayDone      <-chan error
 
 	closeOnce sync.Once
 	closeErr  error
@@ -153,12 +167,25 @@ func openWithOIDCFactory(
 		_ = lifecycle.Drain(context.Background())
 		return fail(errors.New("local browser asset composition failed"), services, oidcTransport)
 	}
+	temporalClient, relay, err := composeTemporalRelay(configuration, secrets, services)
+	if err != nil {
+		_ = lifecycle.Drain(context.Background())
+		return fail(errors.New("Temporal relay composition failed"), services, oidcTransport)
+	}
+	relayContext, relayCancel := context.WithCancel(ctx)
+	relayDone := make(chan error, 1)
+	go func() {
+		relayDone <- relay.Run(relayContext)
+	}()
 	return &Application{
-		handler:       router,
-		lifecycle:     lifecycle,
-		services:      services,
-		secrets:       secrets,
-		oidcTransport: oidcTransport,
+		handler:        router,
+		lifecycle:      lifecycle,
+		services:       services,
+		secrets:        secrets,
+		oidcTransport:  oidcTransport,
+		temporalClient: temporalClient,
+		relayCancel:    relayCancel,
+		relayDone:      relayDone,
 	}, nil
 }
 
@@ -179,8 +206,9 @@ func (application *Application) Serve(ctx context.Context, listener net.Listener
 	return application.lifecycle.Serve(ctx, listener, application.handler)
 }
 
-// Close drains requests before closing the control pool, OIDC transport, and
-// descriptor-bound secret root. It is safe to call more than once.
+// Close drains requests, stops the bounded relay, closes its Temporal client,
+// then closes the control pool, OIDC transport, and descriptor-bound secret
+// root. It is safe to call more than once and never cancels a durable workflow.
 func (application *Application) Close() error {
 	if application == nil {
 		return nil
@@ -190,8 +218,19 @@ func (application *Application) Close() error {
 		if application.lifecycle != nil {
 			drainErr = application.lifecycle.Drain(context.Background())
 		}
+		if application.relayCancel != nil {
+			application.relayCancel()
+		}
+		var relayErr error
+		if application.relayDone != nil {
+			relayErr = <-application.relayDone
+		}
+		if application.temporalClient != nil {
+			application.temporalClient.Close()
+		}
 		application.closeErr = errors.Join(
 			drainErr,
+			relayErr,
 			closeApplicationResources(application.services, application.secrets, application.oidcTransport),
 		)
 	})
@@ -211,6 +250,119 @@ func closeApplicationResources(services *app.Services, secrets *operatorSecrets,
 		}
 	}
 	return nil
+}
+
+func composeTemporalRelay(
+	configuration config.Configuration,
+	secrets *operatorSecrets,
+	services *app.Services,
+) (*pmtemporal.Client, *pmtemporal.Relay, error) {
+	if secrets == nil || services == nil || services.Store() == nil {
+		return nil, nil, errors.New("Temporal relay dependencies are required")
+	}
+	temporalConfiguration := configuration.Temporal()
+	controlTaskQueue, err := configuredControlTaskQueue(temporalConfiguration.TaskQueues)
+	if err != nil {
+		return nil, nil, err
+	}
+	randomSuffix := make([]byte, 16)
+	if _, err := rand.Read(randomSuffix); err != nil {
+		return nil, nil, errors.New("Temporal relay identity is unavailable")
+	}
+	ownerID := configuration.DeploymentID() + "/control-relay/" + hex.EncodeToString(randomSuffix)
+	temporalClient, err := pmtemporal.NewClient(pmtemporal.ClientConfig{
+		Namespace:            temporalConfiguration.Namespace,
+		ControlTaskQueue:     controlTaskQueue,
+		WorkflowType:         pmtemporal.RunWorkflowType,
+		ProjectionUpdateName: pmtemporal.ProjectionUpdateName,
+		DialTimeout:          temporalDialTimeout,
+		RequestTimeout:       temporalRequestTimeout,
+		Dial: lazyTemporalDial(
+			secrets,
+			temporalConfiguration.Endpoint,
+			temporalConfiguration.Namespace,
+			temporalConfiguration.ClientIdentityRef,
+			ownerID,
+		),
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	relay, err := pmtemporal.NewRelay(pmtemporal.RelayConfig{
+		Store:        services.Store(),
+		Client:       temporalClient,
+		OwnerID:      ownerID,
+		ClaimLimit:   8,
+		ClaimTTL:     temporalRouteClaimTTL,
+		IdleDelay:    temporalRelayIdleDelay,
+		FailureDelay: temporalRelayFailureDelay,
+	})
+	if err != nil {
+		temporalClient.Close()
+		return nil, nil, err
+	}
+	return temporalClient, relay, nil
+}
+
+func configuredControlTaskQueue(taskQueues []string) (string, error) {
+	for _, taskQueue := range taskQueues {
+		if taskQueue == pmtemporal.ControlTaskQueue {
+			return taskQueue, nil
+		}
+	}
+	return "", errors.New("configured Temporal task queues omit pm-control")
+}
+
+func lazyTemporalDial(
+	secrets *operatorSecrets,
+	endpoint string,
+	namespace string,
+	identityReference string,
+	identity string,
+) pmtemporal.DialFunc {
+	return func(ctx context.Context) (pmtemporal.WorkflowClient, error) {
+		if ctx == nil || ctx.Err() != nil {
+			return nil, errors.New("Temporal dial context is unavailable")
+		}
+		host, _, err := net.SplitHostPort(endpoint)
+		if err != nil {
+			return nil, errors.New("configured Temporal endpoint is invalid")
+		}
+		ca, err := secrets.read(identityReference, "ca.pem")
+		if err != nil {
+			return nil, errors.New("Temporal CA is unavailable")
+		}
+		defer clear(ca)
+		certificatePEM, err := secrets.read(identityReference, "client.pem")
+		if err != nil {
+			return nil, errors.New("Temporal client certificate is unavailable")
+		}
+		defer clear(certificatePEM)
+		privateKeyPEM, err := secrets.read(identityReference, "client-key.pem")
+		if err != nil {
+			return nil, errors.New("Temporal client key is unavailable")
+		}
+		defer clear(privateKeyPEM)
+		roots := x509.NewCertPool()
+		if !roots.AppendCertsFromPEM(ca) {
+			return nil, errors.New("Temporal CA is invalid")
+		}
+		certificate, err := tls.X509KeyPair(certificatePEM, privateKeyPEM)
+		if err != nil {
+			return nil, errors.New("Temporal client identity is invalid")
+		}
+		return sdkclient.DialContext(ctx, sdkclient.Options{
+			HostPort:    endpoint,
+			Namespace:   namespace,
+			Identity:    identity,
+			Credentials: sdkclient.NewMTLSCredentials(certificate),
+			ConnectionOptions: sdkclient.ConnectionOptions{TLS: &tls.Config{
+				MinVersion: tls.VersionTLS12,
+				RootCAs:    roots,
+				ServerName: host,
+			}},
+		})
+	}
 }
 
 func newOIDCHTTPClient() (*http.Client, *boundedOIDCTransport) {

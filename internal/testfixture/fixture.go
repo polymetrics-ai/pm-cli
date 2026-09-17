@@ -708,6 +708,8 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			return
 		}
 		for _, statement := range []string{
+			`DELETE FROM pm.workflow_reconciliation_witnesses WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.workflow_command_intents WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.credential_refresh_leases WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.credential_mutation_receipts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.credential_lifecycles WHERE org_id = $1 AND workspace_id = $2`,

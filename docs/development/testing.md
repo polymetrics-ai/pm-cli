@@ -49,9 +49,9 @@ The [generated public API and control-store entry points](setup.md#generated-pub
 
 `TestGeneratedContractBoundary` constructs semantically different required/nullable/`allOf` outputs, observes their differences with the pinned JSON Schema consumer and requires qualification against the original source to refuse them. Its independent-directory, stale-output and generator-exit checks remain separate. Temporary emitted-DTO and Gin-router consumers exercise generated code without exercising the application and authentication handlers tested separately below.
 
-The store checks run against the selected owned PostgreSQL fixture, including transaction faults, two-connection visibility, reopen/replay, competing claims, stale fences, scoped cleanup and metadata publication. R03 observes physical backend identity and empty scope after reuse, discards uncertain cleanup connections, and rejects an otherwise valid runtime role with a stray `TRUNCATE` grant on a PM table. R04 checks tenant-local composite bindings and retained namespaces; checkpoint publication also requires the complete prior identity, current writer fence and atomic manifest advancement. R05 exercises shared account capacity across aliases/replicas, unknown-charge retention and fenced outbox claims. The API generator guard and these store transactions alone do not establish application authorization, a physical-send gate or a durable HTTP 202 boundary. The authenticated integration below separately exercises current M3 application authorization; dispatch and the durable HTTP 202 boundary remain unavailable.
+The foundational store checks run against the selected owned PostgreSQL fixture, including transaction faults, two-connection visibility, reopen/replay, competing claims, stale fences, scoped cleanup and metadata publication. R03 observes physical backend identity and empty scope after reuse, discards uncertain cleanup connections, and rejects an otherwise valid runtime role with a stray `TRUNCATE` grant on a PM table. R04 checks tenant-local composite bindings and retained namespaces; checkpoint publication also requires the complete prior identity, current writer fence and atomic manifest advancement. R05 exercises shared account capacity across aliases/replicas, unknown-charge retention and fenced outbox claims. Those checks alone do not establish application authorization or a physical-send gate. The M3 checks below separately exercise current application authorization; the M4 checks exercise the durable HTTP 202 boundary and Temporal handoff.
 
-The all-target Bazel command selects `//internal/store:store_test`, `//internal/server:server_test` and `//tests/stack:stack_test`. All three declare exclusive execution because their fault and application cases mutate shared fixture schema, roles or scoped state. Manual runs require the explicit fixture inputs documented in setup. The foundation CI job provisions its [job-owned dependency fixture](setup.md#job-owned-ci-dependency-fixture) on the existing Docker engine and preserves an ownership manifest for unconditional cleanup. Missing prerequisites, failed cleanup and skipped physical checks are not successful validation. Local fixture passes do not substitute for actual candidate CI.
+The all-target Bazel command selects `//internal/store:store_test`, `//internal/temporal:temporal_test`, `//internal/server:server_test` and `//tests/stack:stack_test`. All four declare exclusive execution because their fault and application cases mutate shared fixture schema, roles, history or scoped state. Manual runs require the explicit fixture inputs documented in setup. The foundation CI job provisions its [job-owned dependency fixture](setup.md#job-owned-ci-dependency-fixture) on the existing Docker engine and preserves an ownership manifest for unconditional cleanup. Missing prerequisites, failed cleanup and skipped physical checks are not successful validation. Local fixture passes do not substitute for actual candidate CI.
 
 ### Authenticated PM Server M3 checks
 
@@ -75,7 +75,7 @@ python3 scripts/ci/with-stack-fixture.py \
   ./internal/httpapi ./internal/server -count=1 -timeout 10m
 ```
 
-The wrapper supplies fresh synthetic stack credentials and trusted test certificates to the child, then cleans only its owned resources. `TestGinStrictBoundary` covers exact typed binding and refusal, trusted forwarding provenance, sanitized error/panic handling, and cancellation reaching the standard request context. The `internal/server` cases use a real PostgreSQL store plus a signed loopback HTTPS OIDC provider and trusted edge. They exercise browser and device sessions, logout and one-time exchange, workspace concealment, and registered membership, service-account and delegation mutations with preconditions, exact replay, changed-intent conflict and current authorization before replay disclosure. Service-account proof checks one-time credential use, omission from subsequent responses, revocation and explicit replacement; delegation proof retains distinct actors and bounded parent scopes. Private credential cases cover denial, step-up, encryption, replay and non-readback with an independent database observer. Readiness and invocation submission remain unavailable while dispatch is unwired. `TestAuthenticatedApplicationDrainPreservesAcceptedRun` commits a synthetic pre-existing run through the real store, closes the composed API, and verifies the unchanged record and admission identity through an independent pool; it is not HTTP admission or Temporal execution proof. `TestBoundedLifecycleDrain` separately covers real socket, request-cancellation and subscriber-release bounds.
+The wrapper supplies fresh synthetic stack credentials and trusted test certificates to the child, then cleans only its owned resources. `TestGinStrictBoundary` covers exact typed binding and refusal, trusted forwarding provenance, sanitized error/panic handling, and cancellation reaching the standard request context. The `internal/server` cases use a real PostgreSQL store plus a signed loopback HTTPS OIDC provider and trusted edge. They exercise browser and device sessions, logout and one-time exchange, workspace concealment, and registered membership, service-account and delegation mutations with preconditions, exact replay, changed-intent conflict and current authorization before replay disclosure. Service-account proof checks one-time credential use, omission from subsequent responses, revocation and explicit replacement; delegation proof retains distinct actors and bounded parent scopes. Private credential cases cover denial, step-up, encryption, replay and non-readback with an independent database observer. Production readiness and invocation submission remain unavailable without registered execution handlers and a worker. `TestAuthenticatedApplicationDrainPreservesAcceptedRun` commits a synthetic pre-existing run through the real store, closes the composed API, and verifies the unchanged record and admission identity through an independent pool; it is not HTTP admission or Temporal execution proof. `TestBoundedLifecycleDrain` separately covers real socket, request-cancellation and subscriber-release bounds.
 
 These tests do not skip when the store secret inputs are absent or malformed; outside the wrapper they fail. Fixture startup, the child command and ownership-scoped cleanup must all succeed. Leave `PM_SERVER_BROWSER_PROBE_READY_FILE`, `PM_SERVER_BROWSER_PROBE_STOP_FILE` and `PM_SERVER_BROWSER_PROBE_TIMEOUT` unset for the standard check: it uses Go HTTP clients and does not launch Chrome. A separately exercised local browser, the synthetic OIDC provider and the disposable dependency stack do not establish a live identity/provider certification, Temporal execution, artifact/provider effects, production readiness or final-head CI. No current M3 CI result is claimed; a runner without its approved Docker CLI and isolated daemon prerequisite cannot turn the missing run into a skip or pass.
 
@@ -97,6 +97,40 @@ python3 scripts/ci/with-stack-fixture.py \
 The combined local check passed all 44 required issue #14 cases and the added expired-cancellation receipt regression on 2026-09-17, with no skips and ownership-scoped fixture cleanup. The cases exercise committed-before-202 acceptance, canonical typed-intent conflicts, lost responses and an independently observed dropped COMMIT reply, current authorization before replay, immutable run inputs/budgets, pending capacity and age limits, scoped run/task views, durable cancellation, and retry-receipt compaction. Expired cancellation receipts reference the admitted run, not the cancellation command. The unavailable resume capability returns a refusal through the actual resume route.
 
 These are local shared-foundation results with synthetic credentials and an explicitly registered fixture capability. They do not establish Temporal handoff, worker/provider execution, live connector certification, PR CI or merge. The current production registry remains empty; tests do not register a dummy production handler.
+
+### Temporal handoff and projection M4
+
+After preparing the same fixture helpers, run issue #15's two physical roots and the role/lifecycle checks:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
+  ./internal/temporal ./internal/store ./internal/server \
+  -run '^(TestBothStartHandoffWindows|TestClosedAbsentProjectionRepair|TestWorkflowRouteRoleBoundary|TestApplicationCloseStopsRelayBeforeReturning|TestConfiguredControlTaskQueueSelectsNamedMember)$' \
+  -count=1 -timeout 10m
+```
+
+All ten physical cases passed locally on Darwin arm64 on 2026-09-17, with race checks, no skips, and ownership-scoped fixture cleanup:
+
+| Root and case | Independent observation |
+| --- | --- |
+| R09 E01 C01 | A subprocess exits after committed admission/claim but before start; PostgreSQL remains unacknowledged, Temporal is actually absent, and recovery starts the stable identity. |
+| R09 E01 C02 | A subprocess exits after real Temporal acceptance but before binding/acknowledgement; another client observes that execution, and recovery binds the same run. |
+| R09 E01 C03 | An exact AlreadyStarted race reconciles one execution and one durable binding. |
+| R09 E01 C04 | Retained start input with an unknown JSON member is rejected without adoption, disclosure, termination, or effects. |
+| R09 E01 C05 | A terminal PostgreSQL run cannot start an absent workflow. |
+| R09 E01 C06 | Schedule-origin handoff adopts the existing execution without another Execute call. |
+| R10 E02 C01 | A real update drives an activity through transient failure and PostgreSQL commit; a lost completed response and repeated stable UpdateID do not rerun the activity. |
+| R10 E02 C02 | Closed retained history repairs orchestration condition/time only, without changing business outcomes, effects, or pending capacity. |
+| R10 E02 C03 | Real NotFound for a never-bound run records a scoped no-dispatch witness. |
+| R10 E02 C04 | After an actual returned execution is bound and deleted through the public running-execution API in the owned fixture, exact Describe and History NotFound establish the prerequisite. Repair preserves its PostgreSQL observation and uncertainty without restart. This models missing retained history, not elapsed retention time. |
+
+The role check exercises the existing outbox's bounded routing authority and denies broader runtime mutation. The lifecycle checks cover relay cancellation/wait ordering and the named control queue. Fresh starts are verified through retained start history because a successful SDK start response need not contain a first-execution ID. Open-workflow final projection belongs to the idempotent update/activity; the relay must not consume its projection receipt first.
+
+These are shared-foundation results, not issue #16's production workflow/worker implementation, provider effects, connector certification, current PR CI, or merge. No production handler is fabricated to make readiness succeed.
 
 ### Bounded Darwin development observations
 
