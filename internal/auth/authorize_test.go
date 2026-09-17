@@ -83,7 +83,7 @@ func TestScopeAndInboundPolicy(t *testing.T) {
 		{
 			Scope: fixture.alpha, Actor: ada, Permission: "artifact.read",
 			ResourceKind: auth.ResourceArtifact, ResourceID: fixture.artifact,
-			ConnectionID: fixture.connection, OperationID: "operation-read",
+			OperationID: "operation-read",
 		},
 	}
 	for _, request := range alphaCases {

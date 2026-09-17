@@ -202,7 +202,7 @@ func registerArtifactMetadata(t *testing.T, fixture *testfixture.Fixture, artifa
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
-		return store.RegisterArtifact(ctx, tx, verified)
+		return store.RegisterArtifact(ctx, tx, fixture.Connection.ConnectionID, verified)
 	}); err != nil {
 		t.Fatalf("register artifact fixture metadata: %v", err)
 	}

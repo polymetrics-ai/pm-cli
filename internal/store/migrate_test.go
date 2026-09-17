@@ -43,11 +43,14 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 		}
 		pool.Close()
 
-		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN); err != nil {
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 12); err != nil {
+			t.Fatalf("return owned retained-event fixture to v11: %v", err)
+		}
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 11); err != nil {
 			t.Fatalf("return owned retained-event fixture to v10: %v", err)
 		}
 		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
-			t.Fatalf("migrate retained cross-scope events from v10 to v11: %v", err)
+			t.Fatalf("migrate retained cross-scope events from v10 to current schema: %v", err)
 		}
 
 		reopened := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
@@ -198,7 +201,10 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 		}
 		pool.Close()
 
-		err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN)
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 12); err != nil {
+			t.Fatalf("return retained-tail fixture to v11: %v", err)
+		}
+		err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 11)
 		if err == nil {
 			t.Fatal("event watermark downgrade succeeded after retained tail deletion")
 		}
@@ -216,8 +222,8 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 		if err := conn.QueryRow(ctx, `SELECT revision FROM pm.control_schema WHERE singleton`).Scan(&revision); err != nil {
 			t.Fatal("read control schema after retained-tail downgrade refusal")
 		}
-		if revision != ControlSchemaRevision {
-			t.Fatalf("control revision after retained-tail downgrade refusal = %q; want %q", revision, ControlSchemaRevision)
+		if revision != "pm.control/v11" {
+			t.Fatalf("control revision after retained-tail downgrade refusal = %q; want %q", revision, "pm.control/v11")
 		}
 	})
 }
@@ -370,10 +376,10 @@ func restoreEventWatermarkMigrationFixture(
 	cleanupTestScope(t, credentials, scopes...)
 }
 
-func migrateOneStoreVersionDown(ctx context.Context, connectionString string) error {
+func migrateOneStoreVersionDown(ctx context.Context, connectionString string, expectedCurrent int64) error {
 	configuration, err := pgx.ParseConfig(connectionString)
 	if err != nil {
-		return fmt.Errorf("parse event watermark migration connection: %w", err)
+		return fmt.Errorf("parse migration connection: %w", err)
 	}
 	configuration.DefaultQueryExecMode = pgx.QueryExecModeExec
 	if configuration.RuntimeParams == nil {
@@ -391,7 +397,7 @@ func migrateOneStoreVersionDown(ctx context.Context, connectionString string) er
 	}
 	rooted, err := fs.Sub(migrationFiles, "migrations/postgres")
 	if err != nil {
-		return fmt.Errorf("open event watermark migrations: %w", err)
+		return fmt.Errorf("open store migrations: %w", err)
 	}
 	provider, err := goose.NewProvider(
 		goose.DialectPostgres,
@@ -401,17 +407,17 @@ func migrateOneStoreVersionDown(ctx context.Context, connectionString string) er
 		goose.WithDisableGlobalRegistry(true),
 	)
 	if err != nil {
-		return fmt.Errorf("create event watermark migration provider: %w", err)
+		return fmt.Errorf("create store migration provider: %w", err)
 	}
 	current, _, err := provider.GetVersions(ctx)
 	if err != nil {
-		return fmt.Errorf("read event watermark migration version: %w", err)
+		return fmt.Errorf("read store migration version: %w", err)
 	}
-	if current != 11 {
-		return fmt.Errorf("event watermark migration current version = %d; want 11", current)
+	if current != expectedCurrent {
+		return fmt.Errorf("store migration current version = %d; want %d", current, expectedCurrent)
 	}
 	if _, err := provider.Down(ctx); err != nil {
-		return fmt.Errorf("apply event watermark downgrade: %w", err)
+		return fmt.Errorf("apply store downgrade from version %d: %w", expectedCurrent, err)
 	}
 	return nil
 }
