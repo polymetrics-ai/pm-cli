@@ -204,9 +204,9 @@ func newPhysicalRelay(
 	selection := loadPhysicalTemporalSelection(t)
 	client, err := NewClient(ClientConfig{
 		Namespace:            selection.configuration.Temporal().Namespace,
-		ControlTaskQueue:     ControlTaskQueue,
-		WorkflowType:         RunWorkflowType,
-		ProjectionUpdateName: ProjectionUpdateName,
+		ControlTaskQueue:     contract.ControlTaskQueue,
+		WorkflowType:         contract.RunWorkflowType,
+		ProjectionUpdateName: contract.ProjectionUpdateName,
 		DialTimeout:          physicalTemporalDialTimeout,
 		RequestTimeout:       physicalTemporalRequestTimeout,
 		Dial: func(context.Context) (WorkflowClient, error) {
@@ -379,7 +379,7 @@ func observeWorkflowStart(
 	t testing.TB,
 	client sdkclient.Client,
 	workflowID string,
-) (string, StartRunInput) {
+) (string, contract.StartRunInput) {
 	t.Helper()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
@@ -410,10 +410,10 @@ func observeWorkflowStart(
 		return runID, input
 	}
 	t.Fatalf("Temporal workflow %q was not independently observable before deadline", workflowID)
-	return "", StartRunInput{}
+	return "", contract.StartRunInput{}
 }
 
-func decodePhysicalStartInput(t testing.TB, event *historypb.HistoryEvent) StartRunInput {
+func decodePhysicalStartInput(t testing.TB, event *historypb.HistoryEvent) contract.StartRunInput {
 	t.Helper()
 	if event == nil || event.GetEventType() != enumspb.EVENT_TYPE_WORKFLOW_EXECUTION_STARTED ||
 		event.GetWorkflowExecutionStartedEventAttributes() == nil {
@@ -423,11 +423,11 @@ func decodePhysicalStartInput(t testing.TB, event *historypb.HistoryEvent) Start
 	if len(payloads) != 1 {
 		t.Fatalf("Temporal workflow start payload count = %d; want 1", len(payloads))
 	}
-	var input StartRunInput
+	var input contract.StartRunInput
 	if err := converter.GetDefaultDataConverter().FromPayload(payloads[0], &input); err != nil {
 		t.Fatalf("decode physical Temporal start input: %v", err)
 	}
-	if err := input.Validate(); err != nil {
+	if err := input.ValidateRelayStart(); err != nil {
 		t.Fatalf("validate physical Temporal start input: %v", err)
 	}
 	return input
@@ -641,6 +641,7 @@ func admitScheduledPhysicalRun(
 			RunID:          runID,
 			InputRef:       spec.InputRefs[0],
 			ConnectionID:   fixture.Connection.ConnectionID,
+			Lane:           contract.LaneDirectRead,
 			Input:          contract.NewObjectValue(map[string]contract.PresentValue{}),
 			ResultControls: contract.ResultControls{},
 			ApprovalRef:    contract.AbsentValue(),
@@ -665,7 +666,7 @@ func admitScheduledPhysicalRun(
 func physicalWorkflowOptions(workflowID string, timeout time.Duration) sdkclient.StartWorkflowOptions {
 	return sdkclient.StartWorkflowOptions{
 		ID:                                       workflowID,
-		TaskQueue:                                ControlTaskQueue,
+		TaskQueue:                                contract.ControlTaskQueue,
 		WorkflowExecutionTimeout:                 temporalDuration(timeout),
 		WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 		WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,

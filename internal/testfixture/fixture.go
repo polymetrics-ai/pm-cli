@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"github.com/coreos/go-oidc/v3/oidc"
 	"github.com/gin-gonic/gin"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
@@ -78,6 +80,8 @@ type Fixture struct {
 	Connection        ConnectionRef
 	ForeignConnection ConnectionRef
 	OperationID       string
+	WorkerRegistry    *app.HandlerRegistry
+	ResolveOperation  app.OperationResolver
 
 	// Client authenticates Actor with a real opaque device-session bearer token.
 	// The token is retained privately and is never returned or logged.
@@ -159,17 +163,42 @@ func New(t testing.TB, configure ...ConfigureService) *Fixture {
 // never execute it and it does not certify a production connector.
 func NewAdmitting(t testing.TB) *Fixture {
 	t.Helper()
-	return New(t, func(dependencies ServiceDependencies, configuration *httpapi.ServiceConfig) error {
-		registry := &app.HandlerRegistry{}
-		if err := registry.RegisterHTTP(admittingRegistration()); err != nil {
-			return err
-		}
+	return newAdmitting(t, nil, nil)
+}
+
+// NewExecuting creates the same real authenticated admission fixture and also
+// exposes the exact operation registry and resolver to a production worker.
+func NewExecuting(
+	t testing.TB,
+	execute app.ExecutionCallback,
+	reconcile app.ExecutionCallback,
+) *Fixture {
+	t.Helper()
+	if execute == nil {
+		t.Fatal("controlled worker execution callback is required")
+	}
+	return newAdmitting(t, execute, reconcile)
+}
+
+func newAdmitting(
+	t testing.TB,
+	execute app.ExecutionCallback,
+	reconcile app.ExecutionCallback,
+) *Fixture {
+	t.Helper()
+	registry, _, err := NewExecutionBoundary(ServiceDependencies{}, execute, reconcile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var resolver app.OperationResolver
+	fixture := New(t, func(dependencies ServiceDependencies, configuration *httpapi.ServiceConfig) error {
+		resolver = admittingResolver(dependencies)
 		admission, err := app.NewAdmissionService(app.AdmissionServiceConfig{
 			Pool:             dependencies.Pool,
 			DeploymentID:     dependencies.DeploymentID,
 			Authorize:        configuration.Auth.AuthorizeResource,
 			Registry:         registry,
-			ResolveOperation: admittingResolver(dependencies),
+			ResolveOperation: resolver,
 			Policy:           admittingPolicy(),
 			Random:           rand.Reader,
 		})
@@ -179,6 +208,9 @@ func NewAdmitting(t testing.TB) *Fixture {
 		configuration.Admission = admission
 		return nil
 	})
+	fixture.WorkerRegistry = registry
+	fixture.ResolveOperation = resolver
+	return fixture
 }
 
 // Invocation returns a valid request for the fixture's controlled operation.
@@ -260,34 +292,50 @@ func (fixture *Fixture) SetupSQL(
 	if fixture == nil || fixture.closed || apply == nil {
 		t.Fatal("scoped SQL setup requires an open fixture and callback")
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
+	defer cancel()
+	if err := fixture.WithinSetupSQL(ctx, scope, apply); err != nil {
+		t.Fatalf("apply scoped fixture setup: %v", err)
+	}
+}
+
+// WithinSetupSQL runs a caller-bounded scoped migrator transaction. It exists
+// only for physical fixtures that must coordinate a real database boundary.
+func (fixture *Fixture) WithinSetupSQL(
+	ctx context.Context,
+	scope contract.Scope,
+	apply func(context.Context, pgx.Tx) error,
+) error {
+	if fixture == nil || fixture.closed || ctx == nil || ctx.Err() != nil || apply == nil {
+		return errors.New("scoped SQL setup requires an open fixture, context, and callback")
+	}
 	if !scope.Equal(fixture.Scope) && !scope.Equal(fixture.ForeignScope) {
-		t.Fatal("SQL setup scope is not owned by this fixture")
+		return errors.New("SQL setup scope is not owned by this fixture")
 	}
 	actor := fixture.Actor
 	if scope.Equal(fixture.ForeignScope) {
 		actor = fixture.ForeignActor
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
-	defer cancel()
 	connection, err := pgx.Connect(ctx, fixture.migratorDSN)
 	if err != nil {
-		t.Fatalf("connect scoped fixture setup: %T", err)
+		return fmt.Errorf("connect scoped fixture setup: %w", err)
 	}
 	defer func() { _ = connection.Close(context.Background()) }()
 	tx, err := connection.Begin(ctx)
 	if err != nil {
-		t.Fatalf("begin scoped fixture setup: %T", err)
+		return fmt.Errorf("begin scoped fixture setup: %w", err)
 	}
 	defer func() { _ = tx.Rollback(context.Background()) }()
 	if err := bindScope(ctx, tx, fixture.DeploymentID, scope, actor); err != nil {
-		t.Fatalf("bind scoped fixture setup: %T", err)
+		return fmt.Errorf("bind scoped fixture setup: %w", err)
 	}
 	if err := apply(ctx, tx); err != nil {
-		t.Fatalf("apply scoped fixture setup: %v", err)
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
-		t.Fatalf("commit scoped fixture setup: %T", err)
+		return fmt.Errorf("commit scoped fixture setup: %w", err)
 	}
+	return nil
 }
 
 // Close stops HTTP activity, closes the runtime pool, and removes only records
@@ -727,11 +775,17 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			`DELETE FROM pm.identity_collection_revisions WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.memberships WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.connections WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.dispatch_attempts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.run_specs WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.artifacts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workspace_namespaces WHERE org_id = $1 AND workspace_id = $2`,
 		} {
 			if _, err := tx.Exec(ctx, statement, owned.scope.OrgID, owned.scope.WorkspaceID); err != nil {
+				var databaseError *pgconn.PgError
+				if errors.As(err, &databaseError) {
+					t.Errorf("clean fixture workspace records: SQLSTATE %s table=%s constraint=%s", databaseError.Code, databaseError.TableName, databaseError.ConstraintName)
+					return
+				}
 				t.Errorf("clean fixture workspace records: %T", err)
 				return
 			}
@@ -874,7 +928,30 @@ func admittingSelection(operationID string) app.OperationSelection {
 	}
 }
 
-func admittingRegistration() app.HandlerRegistration {
+// NewExecutionBoundary reconstructs the fixture's exact admitted operation
+// capability in another real worker process. Dependencies contain only safe
+// fixture identities; Pool is not used by the resolver.
+func NewExecutionBoundary(
+	dependencies ServiceDependencies,
+	execute app.ExecutionCallback,
+	reconcile app.ExecutionCallback,
+) (*app.HandlerRegistry, app.OperationResolver, error) {
+	registry := &app.HandlerRegistry{}
+	if err := registry.RegisterHTTP(admittingRegistration(execute, reconcile)); err != nil {
+		return nil, nil, err
+	}
+	return registry, admittingResolver(dependencies), nil
+}
+
+func admittingRegistration(
+	execute app.ExecutionCallback,
+	reconcile app.ExecutionCallback,
+) app.HandlerRegistration {
+	if execute == nil {
+		execute = func(context.Context, app.ExecutionRequest) (app.ExecutionObservation, error) {
+			return app.ExecutionObservation{}, errors.New("controlled admission fixture callback must not execute during admission")
+		}
+	}
 	foundation := contract.FoundationRef{ID: "FND-6", Version: "1.0.0"}
 	return app.HandlerRegistration{
 		Lanes: []contract.Lane{contract.LaneDirectRead},
@@ -884,9 +961,8 @@ func admittingRegistration() app.HandlerRegistration {
 		Capabilities: []contract.CapabilityRequirement{
 			{Capability: "http.execute", Foundation: foundation},
 		},
-		Execute: func(context.Context, app.ExecutionRequest) (app.ExecutionObservation, error) {
-			return app.ExecutionObservation{}, errors.New("controlled admission fixture callback must not execute during admission")
-		},
+		Execute:   execute,
+		Reconcile: reconcile,
 	}
 }
 

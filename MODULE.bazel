@@ -74,5 +74,6 @@ use_repo(
     tools_com_github_getkin_kin_openapi = "com_github_getkin_kin_openapi",
     tools_com_github_oapi_codegen_oapi_codegen_v2 = "com_github_oapi_codegen_oapi_codegen_v2",
     tools_in_yaml_go_yaml_v3 = "in_yaml_go_yaml_v3",
+    tools_org_golang_x_sys = "org_golang_x_sys",
     tools_org_golang_x_vuln = "org_golang_x_vuln",
 )

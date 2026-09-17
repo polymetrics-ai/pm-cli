@@ -132,6 +132,45 @@ The role check exercises the existing outbox's bounded routing authority and den
 
 These are shared-foundation results, not issue #16's production workflow/worker implementation, provider effects, connector certification, current PR CI, or merge. No production handler is fabricated to make readiness succeed.
 
+### Bounded workflow and worker execution M4
+
+Rebuild the fixture helpers from the current source as shown above before using the wrapper: it executes the prebuilt `.cache/bin/pm-stack` and `.cache/bin/pm-stack-fixture` binaries. Run issue #16's physical roots serially in one owned fixture:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
+  ./internal/workflows ./internal/activities \
+  -run '^(TestCommandsAcrossContinueAsNew|TestHistoryAndPayloadBounds|TestWorkerDeathAfterEffect|TestKnownEffectTruthIsIndependentOfResultPublicationAndCallbackError|TestCancelBeforeProviderSendProjectsKnownNoEffect)$' \
+  -count=1 -timeout 10m
+```
+
+All fourteen required cases and the additional effect/cancellation regressions passed locally on Darwin arm64 on 2026-09-17 with the race detector and no skips:
+
+| Root and case | Independent observation |
+| --- | --- |
+| R11 C01 | A committed cancel intent is recovered even when its notification is lost. |
+| R11 C02 | Signal and stable-ID update delivery across a real Continue-As-New chain apply one durable command. |
+| R11 C03 | A genuinely started, buffered control activity drains before rollover; successor identity and the original deadline are preserved. |
+| R11 C04 | A genuine server suggestion rolls the production workflow below its local history limits without losing the command. |
+| R12 C01–C02 | Unknown/raw payloads and forbidden diagnostic channels are rejected before sensitive serialization or server-state leakage. |
+| R12 C03–C04 | Exact safe-reference payloads of 65,535 and 65,536 bytes are accepted; 65,537 bytes are refused. |
+| R12 C05 | Both 1,024- and 1,025-byte diagnostic inputs produce bounded summaries without canaries in Temporal channels. |
+| R12 C06 | Thirty-two active activities prevent the thirty-third unit from starting. |
+| R12 C07–C08 | Real history rolls at the 2,000-event boundary, or earlier when the 2 MiB byte boundary is reached. |
+| R12 C09 | Actual activity options and transport behavior enforce the declared 20s/10s/2s/5s timeout hierarchy. |
+| R13 | A provider acceptance followed by worker-process death preserves the same physical intent as unknown; reconciliation does not resend it. |
+
+The rollover-suggestion case uses a fixture-only dynamic configuration constrained to the job's auxiliary `-rollover` namespace, with a 64-event suggestion threshold. Production dynamic configuration and the ordinary namespace's thresholds are unchanged. Cleanup follows the exact first-execution-fenced workflow chain; it does not terminate a namespace or queue.
+
+The extra regressions preserve valid member-effect truth despite unavailable result publication or a callback error, and project a prepared pre-send cancellation as known no effect without inventing attempts or member outcomes. A negative-control overlay that treated publication/callback failure as unknown made both known-effect cases fail; the candidate passed them. The pre-send cancellation case likewise failed before its projection correction and passed afterward.
+
+A separate disposable smoke driver launched the rebuilt `.cache/bin/pm-worker`, independently observed its actual workflow and activity pollers over TLS, and verified exit zero after SIGTERM. `TestWorkerConfigurationSchemaBoundary` additionally failed when the published schema rejected a Go-valid worker block, then passed after the closed schema projection was corrected. Neither a compiled test binary nor a worker help command substitutes for these physical checks.
+
+These are controlled shared-foundation results, not live-provider certification, issue #17/#18 completion, final-head PR CI, or merge. The command above excludes the disposable compiled-binary smoke driver; it runs the retained behavioral roots and regressions.
+
 ### Bounded Darwin development observations
 
 The following results were observed on 2026-09-15 for the foundation candidate on Darwin arm64. They are local development evidence, not Linux or final-head CI:

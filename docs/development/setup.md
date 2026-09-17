@@ -1,10 +1,10 @@
 # Developer setup
 
-This checkout contains the accepted PM Server documentation baseline, the combined issue #2/#3 foundation, and the authenticated `pm-server` candidate. PR #47 landed the reviewed context on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, and BOOT-1 readback verified the approved staging-to-landed relationship. Local application checks below do not substitute for independent review, exact-head Linux CI, or merge records. The server composes authentication, encrypted credential ingress, durable admission, scoped run controls, and bounded PostgreSQL-to-Temporal handoff. The production execution registry remains empty; workers, provider execution, and release certification remain unavailable.
+This checkout contains the accepted PM Server documentation baseline, the combined issue #2/#3 foundation, and the authenticated `pm-server` and bounded `pm-worker` candidates. PR #47 landed the reviewed context on `main` at `d8e84e1fc78561173feac8abfd64ce669f09f373`, and BOOT-1 readback verified the approved staging-to-landed relationship. Local application checks below do not substitute for independent review, exact-head Linux CI, or merge records. The server composes authentication, encrypted credential ingress, durable admission, scoped run controls, and bounded PostgreSQL-to-Temporal handoff. The separate worker registers deterministic workflows and authorized activities. Production provider handlers remain unavailable; these foundations do not certify provider execution or a release.
 
 ## What is available now
 
-The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, the authenticated `pm-server` entry point and minimal same-origin browser surface, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
+The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, authenticated `pm-server` entry point and minimal same-origin browser surface, standalone `pm-worker`, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
 
 ### Resolve and run pinned tools
 
@@ -48,7 +48,7 @@ These Make targets are source-present:
 
 | Command | Boundary exercised |
 | --- | --- |
-| `make build` | Builds `.cache/bin/pm-server`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
+| `make build` | Builds `.cache/bin/pm-server`, `.cache/bin/pm-worker`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
 | `make test` | Runs the resolved-dependency policy test and the native DuckDB behavioral test |
 | `make vet` | Vets the application module with cgo and the tools module without cgo |
 | `make boundaries` | Checks native-linkage and module ownership boundaries |
@@ -138,6 +138,24 @@ The minimal same-origin pages are `/login` for configured OIDC sign-in or reauth
 
 `/health/live` can report the process live, but `/health/ready` remains HTTP 503 with dispatch false even when the PostgreSQL admission probe succeeds. The production handler registry is empty, so invocation submission returns unavailable capability rather than fabricating accepted work. The [admission checks](testing.md#authenticated-admission-and-run-controls-m4) register an explicit fixture capability; the [handoff checks](testing.md#temporal-handoff-and-projection-m4) exercise real PostgreSQL and Temporal. Neither makes this process a ready provider-execution backend.
 
+### Standalone bounded PM worker
+
+`make build` also emits `.cache/bin/pm-worker`. Its `--help` and `--version` paths are offline. Startup uses the same two explicit path flags as the server:
+
+```sh
+.cache/bin/pm-worker \
+  --config /absolute/path/to/operator-worker.json \
+  --secrets-directory /absolute/path/to/operator-secret-bundles
+```
+
+These are placeholder paths, not a runnable deployment. The complete server configuration document must include the optional `worker` block defined in [the published schema](../../schemas/server-config.schema.json). API-only documents may omit it; `pm-worker` refuses an absent, partial, or null block. All six worker fields are explicit: `task_queue`, `dial_timeout`, `drain_timeout`, `max_concurrent_activities`, `max_concurrent_workflow_tasks`, and `activity_timeouts`. No worker defaults are inferred.
+
+`task_queue` must be `pm-control` and appear in `temporal.task_queues`. Dial and drain timeouts must be positive and at most five minutes; each concurrency bound must be 1–65,536. The nested timeouts require `schedule_to_close > start_to_close > 0`, with positive `heartbeat` and `transport` both below `start_to_close`. Schedule-to-close cannot exceed `limits.run_lifetime`. The Go validator enforces these relational constraints in addition to the JSON Schema's closed shape.
+
+The worker opens the configured application PostgreSQL endpoint and authenticated Temporal client from the confined operator secret bundles. It uses `pm-app-endpoint` and Temporal `ca.pem`, `client.pem`, and `client-key.pem`; it does not provision dependencies, migrate the store, or perform OIDC discovery. Workflow and activity polling share one SDK client. Shutdown stops the worker before closing the client and application resources, without cancelling accepted durable runs.
+
+The production provider registry and operation resolver remain unavailable. Registered orchestration is not permission to execute an undeclared provider operation, and schedule admission remains unavailable without its admitted authority. The [worker checks](testing.md#bounded-workflow-and-worker-execution-m4) exercise controlled capabilities through real PostgreSQL and TLS Temporal, including the actual compiled worker's polling and graceful stop; they are not connector certification.
+
 ### Explicit dependency operator and physical qualification
 
 `scripts/pm-stack` invokes the selected Go toolchain and the dependency operator in `internal/stack`. It is not PM CLI auto-start and does not create a PM API or worker. `check` verifies actual PostgreSQL database/role/schema identities, the authenticated Temporal namespace, and authenticated S3 bucket access. `up` initializes and starts selected bundled dependencies; `migrate` serializes their schema tooling; `drain` stops only selected bundled services. Managed dependencies remain externally owned: lifecycle preflight rejects attempts to mutate or stop them.
@@ -219,7 +237,7 @@ This boundary does not start a server, authenticate a caller, commit an admissio
 
 ### PostgreSQL control store
 
-`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v9`. Workflow handoff adds immutable command intents and append-only reconciliation witnesses, not another queue. Its bounded migrator-owned claim function returns scoped routes; runtime callers re-enter scoped transactions. The runtime role cannot create schemas/tables/temporary objects, truncate PM tables, delete history, assume the migrator role, or broaden its authority. Operator reinitialization must preserve these store-owned grants.
+`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v10`; authenticated worker state extends the existing store rather than creating another queue. Workflow handoff adds immutable command intents and append-only reconciliation witnesses. Its bounded migrator-owned claim function returns scoped routes; runtime callers re-enter scoped transactions. The runtime role cannot create schemas/tables/temporary objects, truncate PM tables, delete history, assume the migrator role, or broaden its authority. Operator reinitialization must preserve these store-owned grants.
 
 Use only an explicitly owned disposable PostgreSQL fixture. The tests require the selected application's `pm-app-endpoint` and `pm-app-migrator-password` references under `PM_STORE_TEST_SECRETS_DIR`; they do not skip when those inputs are missing. With the dependency fixture above already prepared:
 

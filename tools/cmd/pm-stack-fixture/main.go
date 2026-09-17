@@ -14,6 +14,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"math/big"
 	"net"
@@ -24,9 +25,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 )
 
-const maximumServerExampleBytes = 1 << 20
+const (
+	maximumServerExampleBytes  = 1 << 20
+	maximumDynamicConfigBytes  = 1 << 20
+	rolloverNamespaceSuffix    = "-rollover"
+	rolloverHistoryEventTarget = 64
+)
 
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
 
@@ -137,12 +144,12 @@ func (options fixtureOptions) validate() error {
 	if err := validateAbsentRoot(options.root); err != nil {
 		return err
 	}
-	repositoryInfo, err := os.Stat(options.repositoryRoot)
+	repositoryInfo, err := os.Lstat(options.repositoryRoot)
 	if err != nil {
 		return fmt.Errorf("inspect --repo-root: %w", err)
 	}
-	if !repositoryInfo.IsDir() {
-		return errors.New("--repo-root must be a directory")
+	if repositoryInfo.Mode()&os.ModeSymlink != 0 || !repositoryInfo.IsDir() {
+		return errors.New("--repo-root must be a non-symlinked directory")
 	}
 	return nil
 }
@@ -188,9 +195,21 @@ func validateDirectoryPathWithoutSymlinks(path string) error {
 }
 
 func generateFixture(options fixtureOptions, stdout io.Writer) (err error) {
-	example, err := readServerExample(options.repositoryRoot)
+	example, err := readRepositoryRegularFile(
+		options.repositoryRoot,
+		filepath.Join("deploy", "server.example.json"),
+		maximumServerExampleBytes,
+	)
 	if err != nil {
-		return err
+		return fmt.Errorf("read deploy/server.example.json: %w", err)
+	}
+	dynamicConfig, err := readRepositoryRegularFile(
+		options.repositoryRoot,
+		filepath.Join("deploy", "temporal", "dynamicconfig.yaml"),
+		maximumDynamicConfigBytes,
+	)
+	if err != nil {
+		return fmt.Errorf("read deploy/temporal/dynamicconfig.yaml: %w", err)
 	}
 	reservation, err := reservePorts()
 	if err != nil {
@@ -200,7 +219,7 @@ func generateFixture(options fixtureOptions, stdout io.Writer) (err error) {
 		err = errors.Join(err, reservation.Close())
 	}()
 
-	material, err := generateFixtureMaterial(options, example, reservation.ports, time.Now().UTC())
+	material, err := generateFixtureMaterial(options, example, dynamicConfig, reservation.ports, time.Now().UTC())
 	if err != nil {
 		return err
 	}
@@ -213,38 +232,80 @@ func generateFixture(options fixtureOptions, stdout io.Writer) (err error) {
 	return nil
 }
 
-func readServerExample(repositoryRoot string) (contents []byte, err error) {
-	path := filepath.Join(repositoryRoot, "deploy", "server.example.json")
-	pathInfo, err := os.Lstat(path)
+func readRepositoryRegularFile(repositoryRoot, relativePath string, limit int64) (contents []byte, err error) {
+	if !filepath.IsLocal(relativePath) || limit <= 0 {
+		return nil, errors.New("repository file selection is invalid")
+	}
+	rootFD, err := unix.Open(
+		repositoryRoot,
+		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW,
+		0,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("inspect deploy/server.example.json: %w", err)
+		return nil, fmt.Errorf("open repository root without following links: %w", err)
 	}
-	if pathInfo.Mode()&os.ModeSymlink != 0 || !pathInfo.Mode().IsRegular() {
-		return nil, errors.New("deploy/server.example.json must be a regular, non-symlinked file")
+	defer func() {
+		err = errors.Join(err, unix.Close(rootFD))
+	}()
+
+	components := strings.Split(filepath.ToSlash(filepath.Clean(relativePath)), "/")
+	parentFD := rootFD
+	for _, component := range components[:len(components)-1] {
+		nextFD, openErr := unix.Openat(
+			parentFD,
+			component,
+			unix.O_RDONLY|unix.O_CLOEXEC|unix.O_DIRECTORY|unix.O_NOFOLLOW,
+			0,
+		)
+		if openErr != nil {
+			if parentFD != rootFD {
+				openErr = errors.Join(openErr, unix.Close(parentFD))
+			}
+			return nil, fmt.Errorf("walk repository path without following links: %w", openErr)
+		}
+		if parentFD != rootFD {
+			if closeErr := unix.Close(parentFD); closeErr != nil {
+				_ = unix.Close(nextFD)
+				return nil, fmt.Errorf("close traversed repository directory: %w", closeErr)
+			}
+		}
+		parentFD = nextFD
 	}
-	if pathInfo.Size() > maximumServerExampleBytes {
-		return nil, errors.New("deploy/server.example.json exceeds the fixture input bound")
+	if parentFD != rootFD {
+		defer func() {
+			err = errors.Join(err, unix.Close(parentFD))
+		}()
 	}
-	file, err := os.Open(path)
+	fileFD, err := unix.Openat(
+		parentFD,
+		components[len(components)-1],
+		unix.O_RDONLY|unix.O_CLOEXEC|unix.O_NONBLOCK|unix.O_NOFOLLOW,
+		0,
+	)
 	if err != nil {
-		return nil, fmt.Errorf("open deploy/server.example.json: %w", err)
+		return nil, fmt.Errorf("open regular repository file without following links: %w", err)
+	}
+	file := os.NewFile(uintptr(fileFD), relativePath)
+	if file == nil {
+		_ = unix.Close(fileFD)
+		return nil, errors.New("adopt opened repository file descriptor")
 	}
 	defer func() {
 		err = errors.Join(err, file.Close())
 	}()
-	openedInfo, err := file.Stat()
+	info, err := file.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("inspect opened deploy/server.example.json: %w", err)
+		return nil, fmt.Errorf("inspect opened repository file: %w", err)
 	}
-	if !openedInfo.Mode().IsRegular() || !os.SameFile(pathInfo, openedInfo) {
-		return nil, errors.New("deploy/server.example.json changed while opening")
+	if !info.Mode().IsRegular() {
+		return nil, errors.New("repository input must be a regular file")
 	}
-	contents, err = io.ReadAll(io.LimitReader(file, maximumServerExampleBytes+1))
+	contents, err = io.ReadAll(io.LimitReader(file, limit+1))
 	if err != nil {
-		return nil, fmt.Errorf("read deploy/server.example.json: %w", err)
+		return nil, fmt.Errorf("read repository file: %w", err)
 	}
-	if len(contents) > maximumServerExampleBytes {
-		return nil, errors.New("deploy/server.example.json exceeds the fixture input bound")
+	if int64(len(contents)) > limit {
+		return nil, errors.New("repository input exceeds the fixture bound")
 	}
 	return contents, nil
 }
@@ -286,6 +347,7 @@ func (reservation *portReservation) Close() error {
 func generateFixtureMaterial(
 	options fixtureOptions,
 	example []byte,
+	baseDynamicConfig []byte,
 	ports map[string]string,
 	now time.Time,
 ) (fixtureMaterial, error) {
@@ -393,13 +455,20 @@ func generateFixtureMaterial(
 	if err != nil {
 		return fixtureMaterial{}, err
 	}
+	dynamicConfig, rolloverNamespace, err := selectTemporalDynamicConfig(baseDynamicConfig, options.project)
+	if err != nil {
+		return fixtureMaterial{}, err
+	}
 	configurationPath := filepath.Join(options.root, "server.json")
+	dynamicConfigPath := filepath.Join(options.root, "temporal-dynamicconfig.yaml")
 	environment := map[string]string{
 		"PM_STACK_ROOT":                       options.repositoryRoot,
 		"PM_STACK_SECRETS_DIR":                filepath.Join(options.root, "secrets"),
 		"PM_STACK_STATE_DIR":                  filepath.Join(options.root, "state"),
 		"PM_STACK_PROJECT":                    options.project,
+		"PM_STACK_TEMPORAL_DYNAMIC_CONFIG":    dynamicConfigPath,
 		"PM_STACK_TEST_CONFIG":                configurationPath,
+		"PM_STACK_TEST_ROLLOVER_NAMESPACE":    rolloverNamespace,
 		"PM_STACK_TEST_S3_PRIMARY_ENDPOINT":   loopbackHTTPS(ports["S3_PRIMARY"]),
 		"PM_STACK_TEST_S3_SECONDARY_ENDPOINT": loopbackHTTPS(ports["S3_SECONDARY"]),
 		"PM_STORE_TEST_SECRETS_DIR":           postgresDirectory,
@@ -414,9 +483,36 @@ func generateFixtureMaterial(
 	environmentJSON = append(environmentJSON, '\n')
 	files = append(files,
 		privateFile{relativePath: "server.json", contents: configuration},
+		privateFile{relativePath: "temporal-dynamicconfig.yaml", contents: dynamicConfig},
 		privateFile{relativePath: "environment.json", contents: environmentJSON},
 	)
 	return fixtureMaterial{files: files, environment: environmentJSON}, nil
+}
+
+func selectTemporalDynamicConfig(base []byte, project string) ([]byte, string, error) {
+	if !projectNamePattern.MatchString(project) {
+		return nil, "", errors.New("Temporal rollover profile project identity is invalid")
+	}
+	if len(base) == 0 || len(base) > maximumDynamicConfigBytes || !utf8.Valid(base) || bytes.IndexByte(base, 0) >= 0 {
+		return nil, "", errors.New("deploy/temporal/dynamicconfig.yaml is invalid or exceeds the fixture bound")
+	}
+	if bytes.Contains(base, []byte("limit.historyCount.suggestContinueAsNew:")) {
+		return nil, "", errors.New("deploy/temporal/dynamicconfig.yaml already owns the rollover suggestion key")
+	}
+	namespace := project + rolloverNamespaceSuffix
+	profile := bytes.Clone(base)
+	if profile[len(profile)-1] != '\n' {
+		profile = append(profile, '\n')
+	}
+	profile = append(profile, []byte(fmt.Sprintf(
+		"limit.historyCount.suggestContinueAsNew:\n  - value: %d\n    constraints:\n      namespace: %s\n",
+		rolloverHistoryEventTarget,
+		strconv.Quote(namespace),
+	))...)
+	if len(profile) > maximumDynamicConfigBytes {
+		return nil, "", errors.New("selected Temporal dynamic configuration exceeds the fixture bound")
+	}
+	return profile, namespace, nil
 }
 
 func appendCertificateFiles(

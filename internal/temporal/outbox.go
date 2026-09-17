@@ -383,7 +383,7 @@ func (relay *Relay) reconcileStartedExecution(
 	ctx context.Context,
 	route store.WorkflowRoute,
 	intent store.WorkflowCommandIntent,
-	input StartRunInput,
+	input contract.StartRunInput,
 	execution workflowExecution,
 	disposition HandoffDisposition,
 ) (HandoffResult, error) {

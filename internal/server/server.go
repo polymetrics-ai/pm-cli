@@ -18,6 +18,8 @@ import (
 
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/config"
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/credentials"
 	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
 	pmtemporal "github.com/polymetrics-ai/pm-cli/internal/temporal"
 )
@@ -45,7 +47,7 @@ type Application struct {
 	handler        http.Handler
 	lifecycle      *Server
 	services       *app.Services
-	secrets        *operatorSecrets
+	secrets        *credentials.OperatorSecrets
 	oidcTransport  *boundedOIDCTransport
 	temporalClient *pmtemporal.Client
 	relayCancel    context.CancelFunc
@@ -78,21 +80,21 @@ func openWithOIDCFactory(
 	if ctx == nil || configuration.SchemaVersion() != "1" || diagnostics == nil {
 		return nil, errors.New("validated server configuration, context, and diagnostics are required")
 	}
-	secrets, err := openOperatorSecrets(secretsDirectory)
+	secrets, err := credentials.OpenOperatorSecrets(secretsDirectory)
 	if err != nil {
 		return nil, err
 	}
 	fail := func(cause error, services *app.Services, transport *boundedOIDCTransport) (*Application, error) {
 		return nil, errors.Join(cause, closeApplicationResources(services, secrets, transport))
 	}
-	endpoint, err := secrets.text(configuration.Postgres().EndpointRef, "pm-app-endpoint")
+	endpoint, err := secrets.Text(configuration.Postgres().EndpointRef, "pm-app-endpoint")
 	if err != nil {
 		return fail(errors.New("server control store is unavailable"), nil, nil)
 	}
 	identitySettings := configuration.Identity()
 	serverSettings := configuration.Server()
 	wrappingKeyRef := configuration.Encryption().WrappingKeyRef
-	clientSecret, err := secrets.text(identitySettings.ClientSecretRef, oidcClientSecretMember)
+	clientSecret, err := secrets.Text(identitySettings.ClientSecretRef, oidcClientSecretMember)
 	if err != nil {
 		return fail(errors.New("OIDC client secret is unavailable"), nil, nil)
 	}
@@ -118,7 +120,7 @@ func openWithOIDCFactory(
 				if ctx == nil || ctx.Err() != nil || reference != wrappingKeyRef {
 					return nil, errors.New("wrapping key is unavailable")
 				}
-				key, readErr := secrets.read(reference, wrappingKeyMember)
+				key, readErr := secrets.Read(reference, wrappingKeyMember)
 				if readErr != nil {
 					return nil, errors.New("wrapping key is unavailable")
 				}
@@ -237,7 +239,7 @@ func (application *Application) Close() error {
 	return application.closeErr
 }
 
-func closeApplicationResources(services *app.Services, secrets *operatorSecrets, transport *boundedOIDCTransport) error {
+func closeApplicationResources(services *app.Services, secrets *credentials.OperatorSecrets, transport *boundedOIDCTransport) error {
 	if transport != nil {
 		transport.Close()
 	}
@@ -254,7 +256,7 @@ func closeApplicationResources(services *app.Services, secrets *operatorSecrets,
 
 func composeTemporalRelay(
 	configuration config.Configuration,
-	secrets *operatorSecrets,
+	secrets *credentials.OperatorSecrets,
 	services *app.Services,
 ) (*pmtemporal.Client, *pmtemporal.Relay, error) {
 	if secrets == nil || services == nil || services.Store() == nil {
@@ -273,8 +275,8 @@ func composeTemporalRelay(
 	temporalClient, err := pmtemporal.NewClient(pmtemporal.ClientConfig{
 		Namespace:            temporalConfiguration.Namespace,
 		ControlTaskQueue:     controlTaskQueue,
-		WorkflowType:         pmtemporal.RunWorkflowType,
-		ProjectionUpdateName: pmtemporal.ProjectionUpdateName,
+		WorkflowType:         contract.RunWorkflowType,
+		ProjectionUpdateName: contract.ProjectionUpdateName,
 		DialTimeout:          temporalDialTimeout,
 		RequestTimeout:       temporalRequestTimeout,
 		Dial: lazyTemporalDial(
@@ -306,7 +308,7 @@ func composeTemporalRelay(
 
 func configuredControlTaskQueue(taskQueues []string) (string, error) {
 	for _, taskQueue := range taskQueues {
-		if taskQueue == pmtemporal.ControlTaskQueue {
+		if taskQueue == contract.ControlTaskQueue {
 			return taskQueue, nil
 		}
 	}
@@ -314,7 +316,7 @@ func configuredControlTaskQueue(taskQueues []string) (string, error) {
 }
 
 func lazyTemporalDial(
-	secrets *operatorSecrets,
+	secrets *credentials.OperatorSecrets,
 	endpoint string,
 	namespace string,
 	identityReference string,
@@ -328,17 +330,17 @@ func lazyTemporalDial(
 		if err != nil {
 			return nil, errors.New("configured Temporal endpoint is invalid")
 		}
-		ca, err := secrets.read(identityReference, "ca.pem")
+		ca, err := secrets.Read(identityReference, "ca.pem")
 		if err != nil {
 			return nil, errors.New("Temporal CA is unavailable")
 		}
 		defer clear(ca)
-		certificatePEM, err := secrets.read(identityReference, "client.pem")
+		certificatePEM, err := secrets.Read(identityReference, "client.pem")
 		if err != nil {
 			return nil, errors.New("Temporal client certificate is unavailable")
 		}
 		defer clear(certificatePEM)
-		privateKeyPEM, err := secrets.read(identityReference, "client-key.pem")
+		privateKeyPEM, err := secrets.Read(identityReference, "client-key.pem")
 		if err != nil {
 			return nil, errors.New("Temporal client key is unavailable")
 		}

@@ -132,6 +132,17 @@ func exerciseInitialUnavailableHandler(t *testing.T) {
 			fixture := newInitialRunFixture(t)
 			response := submitInitialRun(t, fixture, fixture.Client, fixture.Scope.WorkspaceID, "registered-control")
 			requireFreshInitialAdmission(t, response, "registered-control")
+			var snapshot store.RunInputSnapshot
+			if err := store.WithinScope(context.Background(), fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+				var err error
+				snapshot, err = store.LoadRunInputSnapshot(ctx, tx, response.admission.RunRef)
+				return err
+			}); err != nil {
+				t.Fatalf("load committed admission input: %v", err)
+			}
+			if snapshot.Lane != contract.LaneDirectRead {
+				t.Fatalf("committed admission lane = %q; want requested %q", snapshot.Lane, contract.LaneDirectRead)
+			}
 		})
 	})
 }

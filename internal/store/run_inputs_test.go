@@ -365,6 +365,13 @@ func TestRunInputSnapshotValidationAndByteBound(t *testing.T) {
 	}); err == nil {
 		t.Fatal("invalid logical field ID was accepted")
 	}
+	legacyWithoutLane := snapshot
+	legacyWithoutLane.Lane = ""
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return PutRunInputSnapshot(ctx, tx, spec, legacyWithoutLane, uint64(len(encoded)))
+	}); !errors.Is(err, contract.ErrInvalidContract) {
+		t.Fatalf("lane-less legacy snapshot error = %v; want contract.ErrInvalidContract", err)
+	}
 	invalidControls := snapshot
 	invalidControls.ResultControls.Selection = &contract.FieldSelection{Paths: []contract.FieldPath{}}
 	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
@@ -451,6 +458,7 @@ func testRunInputSnapshot(t *testing.T, scope contract.Scope, seed string) (cont
 		Scope:        scope,
 		RunID:        request.Spec.RunID,
 		InputRef:     inputRef,
+		Lane:         contract.LaneDirectRead,
 		ConnectionID: "connection-" + seed,
 		Input: contract.NewObjectValue(map[string]contract.PresentValue{
 			"absent":       contract.AbsentValue(),
@@ -551,7 +559,7 @@ func requireRunInputNotFound(t *testing.T, ctx context.Context, pool *Pool, scop
 func requireRunInputSnapshotEqual(t *testing.T, want, got RunInputSnapshot) {
 	t.Helper()
 	if !want.Scope.Equal(got.Scope) || want.RunID != got.RunID || want.InputRef != got.InputRef ||
-		want.ConnectionID != got.ConnectionID || !want.Input.Equal(got.Input) ||
+		want.Lane != got.Lane || want.ConnectionID != got.ConnectionID || !want.Input.Equal(got.Input) ||
 		!reflect.DeepEqual(want.ResultControls, got.ResultControls) ||
 		!want.ApprovalRef.Equal(got.ApprovalRef) {
 		t.Fatalf("loaded run input snapshot differs from exact accepted input\nwant: %#v\n got: %#v", want, got)

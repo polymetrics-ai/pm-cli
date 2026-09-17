@@ -154,6 +154,7 @@ func testAdmissionRequest(t *testing.T, scope contract.Scope, key, seed string) 
 		BudgetSnapshot: budget,
 		InputSnapshot: RunInputSnapshot{
 			Scope: scope, RunID: runID, InputRef: spec.InputRefs[0],
+			Lane:         contract.LaneDirectRead,
 			ConnectionID: "connection-" + runID,
 			Input: contract.NewObjectValue(map[string]contract.PresentValue{
 				"seed": contract.NewStringValue(seed),

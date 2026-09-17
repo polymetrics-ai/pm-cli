@@ -267,6 +267,15 @@ func validSourcePointer(value string) bool {
 	return validJSONPointer(value)
 }
 
+// ValidateLane validates one canonical execution lane without duplicating the
+// lane registry in store or application boundaries.
+func ValidateLane(lane Lane) error {
+	if !validLane(lane) {
+		return contractError(ErrInvalidContract, "lane", "lane is unsupported")
+	}
+	return nil
+}
+
 func validLane(lane Lane) bool {
 	switch lane {
 	case LaneDirectRead, LaneDirectWrite, LaneETL, LaneReverseETL,

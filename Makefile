@@ -11,6 +11,7 @@ build: build-api-generator
 	mkdir -p .cache/bin
 	CGO_ENABLED=1 $(GO) build -o .cache/bin/nativeprobe ./build/nativeprobe
 	CGO_ENABLED=0 $(GO) build -o .cache/bin/pm-server ./cmd/pm-server
+	CGO_ENABLED=0 $(GO) build -o .cache/bin/pm-worker ./cmd/pm-worker
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/pm-dependency-check ./cmd/pm-dependency-check
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/staticcheck honnef.co/go/tools/cmd/staticcheck

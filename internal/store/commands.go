@@ -83,7 +83,7 @@ func (route WorkflowRoute) validate() error {
 }
 
 func (plan WorkflowCommandPlan) validate(kind string) error {
-	if !validStoreID(plan.Namespace) || plan.TaskQueue != "pm-control" ||
+	if !validStoreID(plan.Namespace) || plan.TaskQueue != contract.ControlTaskQueue ||
 		!validStoreID(plan.WorkflowType) || !validStoreID(plan.WorkflowID) ||
 		plan.Generation == 0 || plan.Generation > maxStoreFence {
 		return errors.New("workflow command plan contains an invalid identity or generation")

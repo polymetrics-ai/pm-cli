@@ -53,7 +53,7 @@ func (activityFixture *controlledProjectionActivity) configure(
 	activityFixture.firstExecutionRunID = firstExecutionRunID
 }
 
-func (activityFixture *controlledProjectionActivity) execute(ctx context.Context, command ProjectionRetryCommand) error {
+func (activityFixture *controlledProjectionActivity) execute(ctx context.Context, command contract.ProjectionRetryCommand) error {
 	if activityFixture.attempts.Add(1) == 1 {
 		return sdktemporal.NewApplicationError("injected transient projection write", "PhysicalProjectionTransient")
 	}
@@ -142,8 +142,8 @@ func TestClosedAbsentProjectionRepair(t *testing.T) {
 		fixture := testfixture.NewAdmitting(t)
 		workerClient := openPhysicalTemporal(t, randomPhysicalID(t, "r10-c01-worker-"))
 		activityFixture := &controlledProjectionActivity{projected: make(chan time.Time, 1)}
-		controlledWorker := worker.New(workerClient, ControlTaskQueue, worker.Options{})
-		controlledWorker.RegisterWorkflowWithOptions(controlledOpenProjectionWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
+		controlledWorker := worker.New(workerClient, contract.ControlTaskQueue, worker.Options{})
+		controlledWorker.RegisterWorkflowWithOptions(controlledOpenProjectionWorkflow, workflow.RegisterOptions{Name: contract.RunWorkflowType})
 		controlledWorker.RegisterActivityWithOptions(activityFixture.execute, activity.RegisterOptions{Name: controlledProjectionActivityName})
 		if err := controlledWorker.Start(); err != nil {
 			t.Fatalf("start controlled projection worker: %v", err)
@@ -207,7 +207,7 @@ func TestClosedAbsentProjectionRepair(t *testing.T) {
 		updates := recorder.captured()
 		if len(updates) != 2 || updates[0] != updates[1] || updates[0] != (capturedUpdate{
 			updateID: expectedUpdateID, workflowID: startResult.WorkflowID,
-			runID: startResult.TemporalRunID, updateName: ProjectionUpdateName,
+			runID: startResult.TemporalRunID, updateName: contract.ProjectionUpdateName,
 			firstExecutionRunID: startResult.TemporalRunID,
 		}) {
 			t.Fatalf("captured projection updates = %#v; want two identical canonical updates", updates)
@@ -220,8 +220,8 @@ func TestClosedAbsentProjectionRepair(t *testing.T) {
 	t.Run("R10_E02_C02_closed_retained_history", func(t *testing.T) {
 		fixture := testfixture.NewAdmitting(t)
 		workerClient := openPhysicalTemporal(t, randomPhysicalID(t, "r10-c02-worker-"))
-		controlledWorker := worker.New(workerClient, ControlTaskQueue, worker.Options{})
-		controlledWorker.RegisterWorkflowWithOptions(controlledClosedProjectionWorkflow, workflow.RegisterOptions{Name: RunWorkflowType})
+		controlledWorker := worker.New(workerClient, contract.ControlTaskQueue, worker.Options{})
+		controlledWorker.RegisterWorkflowWithOptions(controlledClosedProjectionWorkflow, workflow.RegisterOptions{Name: contract.RunWorkflowType})
 		if err := controlledWorker.Start(); err != nil {
 			t.Fatalf("start controlled closed-workflow worker: %v", err)
 		}
@@ -369,8 +369,8 @@ func TestClosedAbsentProjectionRepair(t *testing.T) {
 	})
 }
 
-func controlledOpenProjectionWorkflow(ctx workflow.Context, input StartRunInput) error {
-	if err := input.Validate(); err != nil {
+func controlledOpenProjectionWorkflow(ctx workflow.Context, input contract.StartRunInput) error {
+	if err := input.ValidateRelayStart(); err != nil {
 		return err
 	}
 	activityOptions := workflow.ActivityOptions{
@@ -383,7 +383,7 @@ func controlledOpenProjectionWorkflow(ctx workflow.Context, input StartRunInput)
 			MaximumAttempts:    2,
 		},
 	}
-	if err := workflow.SetUpdateHandler(ctx, ProjectionUpdateName, func(handlerContext workflow.Context, command ProjectionRetryCommand) error {
+	if err := workflow.SetUpdateHandler(ctx, contract.ProjectionUpdateName, func(handlerContext workflow.Context, command contract.ProjectionRetryCommand) error {
 		if err := command.Validate(); err != nil {
 			return err
 		}
@@ -395,8 +395,8 @@ func controlledOpenProjectionWorkflow(ctx workflow.Context, input StartRunInput)
 	return workflow.Await(ctx, func() bool { return false })
 }
 
-func controlledClosedProjectionWorkflow(_ workflow.Context, input StartRunInput) error {
-	return input.Validate()
+func controlledClosedProjectionWorkflow(_ workflow.Context, input contract.StartRunInput) error {
+	return input.ValidateRelayStart()
 }
 
 func seedBoundPhysicalRun(

@@ -1,6 +1,7 @@
 package contract
 
 import (
+	"context"
 	"strings"
 	"time"
 )
@@ -183,4 +184,657 @@ func validOpaqueUUID(value string) bool {
 		}
 	}
 	return strings.ContainsRune("89ab", rune(value[19]))
+}
+
+const (
+	ControlTaskQueue      = "pm-control"
+	RunWorkflowType       = "pm.run.v1"
+	ScheduledWorkflowType = "pm.scheduled-run.v1"
+	ProjectionUpdateName  = "pm.retry-final-projection.v1"
+	ControlSignalName     = "pm.control-notify.v1"
+	ControlUpdateName     = "pm.control-command.v1"
+	LoadActivityName      = "pm.load-run.v1"
+	ExecuteActivityName   = "pm.execute-unit.v1"
+	CommandActivityName   = "pm.apply-control.v1"
+	ProjectActivityName   = "pm.finalize-run.v1"
+	ScheduleActivityName  = "pm.admit-scheduled-run.v1"
+	StartRunInputSchema   = "pm.workflow-start/v1"
+	ProjectionRetrySchema = "pm.projection-retry/v1"
+)
+
+const MaxWorkflowFanout uint32 = 32
+
+// StartRunInput is the complete safe workflow argument. It carries only
+// durable identities and a sealed semantic digest; raw inputs, actors,
+// credentials, and provider payloads never enter workflow history.
+type StartRunInput struct {
+	Schema       string         `json:"schema"`
+	Scope        Scope          `json:"scope"`
+	RunID        string         `json:"run_id"`
+	CommandID    string         `json:"command_id"`
+	WorkflowID   string         `json:"workflow_id"`
+	Generation   uint64         `json:"generation"`
+	Origin       RunOrigin      `json:"origin"`
+	IntentDigest SemanticDigest `json:"intent_digest"`
+}
+
+func (input *StartRunInput) UnmarshalJSON(data []byte) error {
+	type wire StartRunInput
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded,
+		"schema", "scope", "run_id", "command_id", "workflow_id",
+		"generation", "origin", "intent_digest",
+	); err != nil {
+		return err
+	}
+	value := StartRunInput(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*input = value
+	return nil
+}
+
+func (input StartRunInput) Validate() error {
+	if input.Schema != StartRunInputSchema {
+		return contractError(ErrUnsupportedVersion, "workflow_start.schema", "workflow start input schema is unsupported")
+	}
+	if err := input.Scope.Validate(); err != nil {
+		return err
+	}
+	if !validIdentityPart(input.RunID) || !validIdentityPart(input.CommandID) ||
+		!validIdentityPart(input.WorkflowID) || input.Generation == 0 {
+		return contractError(ErrInvalidIdentity, "workflow_start", "workflow start identity is invalid")
+	}
+	switch input.Origin {
+	case RunOriginAPI:
+		if input.WorkflowID != "pm/run/"+input.RunID {
+			return contractError(ErrInvalidIdentity, "workflow_start.workflow_id", "API workflow must use pm/run/<run_id>")
+		}
+	case RunOriginSchedule, RunOriginRecovery:
+	default:
+		return contractError(ErrInvalidContract, "workflow_start.origin", "workflow start origin is unsupported")
+	}
+	if err := input.IntentDigest.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// ValidateRelayStart preserves the API/recovery start boundary. Scheduled
+// execution is admitted inside PMScheduledRunWorkflow and is never started by
+// the API relay.
+func (input StartRunInput) ValidateRelayStart() error {
+	if err := input.Validate(); err != nil {
+		return err
+	}
+	if input.Origin != RunOriginAPI && input.Origin != RunOriginRecovery {
+		return contractError(ErrInvalidContract, "workflow_start.origin", "API relay cannot start a scheduled workflow")
+	}
+	return nil
+}
+
+func (input StartRunInput) ValidateScheduledStart() error {
+	if err := input.Validate(); err != nil {
+		return err
+	}
+	if input.Origin != RunOriginSchedule {
+		return contractError(ErrInvalidContract, "workflow_start.origin", "scheduled admission must return schedule origin")
+	}
+	return nil
+}
+
+func (input StartRunInput) RunRef() WorkflowRunRef {
+	return WorkflowRunRef{
+		Scope:          input.Scope,
+		RunID:          input.RunID,
+		WorkflowID:     input.WorkflowID,
+		StartCommandID: input.CommandID,
+		Generation:     input.Generation,
+		IntentDigest:   input.IntentDigest,
+	}
+}
+
+// ProjectionRetryCommand asks a running workflow to retry only its owned final
+// PostgreSQL projection. Its digest binds the repair command, not the original
+// workflow-start intent.
+type ProjectionRetryCommand struct {
+	Schema       string         `json:"schema"`
+	Scope        Scope          `json:"scope"`
+	RunID        string         `json:"run_id"`
+	WorkflowID   string         `json:"workflow_id"`
+	Generation   uint64         `json:"generation"`
+	IntentDigest SemanticDigest `json:"intent_digest"`
+}
+
+func (command *ProjectionRetryCommand) UnmarshalJSON(data []byte) error {
+	type wire ProjectionRetryCommand
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded,
+		"schema", "scope", "run_id", "workflow_id", "generation", "intent_digest",
+	); err != nil {
+		return err
+	}
+	value := ProjectionRetryCommand(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*command = value
+	return nil
+}
+
+func (command ProjectionRetryCommand) Validate() error {
+	if command.Schema != ProjectionRetrySchema {
+		return contractError(ErrUnsupportedVersion, "projection_retry.schema", "projection retry schema is unsupported")
+	}
+	if err := command.Scope.Validate(); err != nil {
+		return err
+	}
+	if !validIdentityPart(command.RunID) || !validIdentityPart(command.WorkflowID) || command.Generation == 0 {
+		return contractError(ErrInvalidIdentity, "projection_retry", "projection retry identity is invalid")
+	}
+	if err := command.IntentDigest.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+type WorkflowRunRef struct {
+	Scope          Scope          `json:"scope"`
+	RunID          string         `json:"run_id"`
+	WorkflowID     string         `json:"workflow_id"`
+	StartCommandID string         `json:"start_command_id"`
+	Generation     uint64         `json:"generation"`
+	IntentDigest   SemanticDigest `json:"intent_digest"`
+}
+
+func (reference *WorkflowRunRef) UnmarshalJSON(data []byte) error {
+	type wire WorkflowRunRef
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded,
+		"scope", "run_id", "workflow_id", "start_command_id", "generation", "intent_digest",
+	); err != nil {
+		return err
+	}
+	value := WorkflowRunRef(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*reference = value
+	return nil
+}
+
+func (reference WorkflowRunRef) Validate() error {
+	if err := reference.Scope.Validate(); err != nil {
+		return err
+	}
+	if !validIdentityPart(reference.RunID) || !validIdentityPart(reference.WorkflowID) ||
+		!validIdentityPart(reference.StartCommandID) || reference.Generation == 0 {
+		return contractError(ErrInvalidIdentity, "workflow_run_ref", "workflow run reference is incomplete")
+	}
+	if err := reference.IntentDigest.Validate(); err != nil {
+		return err
+	}
+	return nil
+}
+
+type WorkflowUnitRef struct {
+	TaskID string `json:"task_id"`
+}
+
+func (reference *WorkflowUnitRef) UnmarshalJSON(data []byte) error {
+	type wire WorkflowUnitRef
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "task_id"); err != nil {
+		return err
+	}
+	value := WorkflowUnitRef(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*reference = value
+	return nil
+}
+
+func (reference WorkflowUnitRef) Validate() error {
+	if !validIdentityPart(reference.TaskID) {
+		return contractError(ErrInvalidIdentity, "workflow_unit_ref.task_id", "must identify one durable task")
+	}
+	return nil
+}
+
+type WorkflowCommandRef struct {
+	CommandID string `json:"command_id"`
+}
+
+func (reference *WorkflowCommandRef) UnmarshalJSON(data []byte) error {
+	type wire WorkflowCommandRef
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "command_id"); err != nil {
+		return err
+	}
+	value := WorkflowCommandRef(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*reference = value
+	return nil
+}
+
+func (reference WorkflowCommandRef) Validate() error {
+	if !validIdentityPart(reference.CommandID) {
+		return contractError(ErrInvalidIdentity, "workflow_command_ref.command_id", "must identify one durable command")
+	}
+	return nil
+}
+
+type ActivityTimeouts struct {
+	ScheduleToClose time.Duration `json:"schedule_to_close"`
+	StartToClose    time.Duration `json:"start_to_close"`
+	Heartbeat       time.Duration `json:"heartbeat"`
+	Transport       time.Duration `json:"transport"`
+}
+
+func (timeouts *ActivityTimeouts) UnmarshalJSON(data []byte) error {
+	type wire ActivityTimeouts
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded,
+		"schedule_to_close", "start_to_close", "heartbeat", "transport",
+	); err != nil {
+		return err
+	}
+	value := ActivityTimeouts(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*timeouts = value
+	return nil
+}
+
+func (timeouts ActivityTimeouts) Validate() error {
+	if timeouts.ScheduleToClose <= 0 || timeouts.StartToClose <= 0 ||
+		timeouts.Heartbeat <= 0 || timeouts.Transport <= 0 {
+		return contractError(ErrInvalidContract, "activity_timeouts", "all activity timeouts must be finite and positive")
+	}
+	if timeouts.ScheduleToClose <= timeouts.StartToClose {
+		return contractError(ErrInvalidContract, "activity_timeouts.schedule_to_close", "must exceed the per-attempt timeout")
+	}
+	if timeouts.Heartbeat >= timeouts.StartToClose {
+		return contractError(ErrInvalidContract, "activity_timeouts.heartbeat", "must be shorter than the per-attempt timeout")
+	}
+	if timeouts.Transport >= timeouts.StartToClose {
+		return contractError(ErrInvalidContract, "activity_timeouts.transport", "must be shorter than the per-attempt timeout")
+	}
+	return nil
+}
+
+type WorkflowRunSnapshot struct {
+	Run             WorkflowRunRef       `json:"run"`
+	Deadline        time.Time            `json:"deadline"`
+	Timeouts        ActivityTimeouts     `json:"timeouts"`
+	Units           []WorkflowUnitRef    `json:"units"`
+	Commands        []WorkflowCommandRef `json:"commands"`
+	Done            bool                 `json:"done"`
+	CancelRequested bool                 `json:"cancel_requested"`
+	Fanout          uint32               `json:"fanout"`
+}
+
+func (snapshot *WorkflowRunSnapshot) UnmarshalJSON(data []byte) error {
+	type wire WorkflowRunSnapshot
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded,
+		"run", "deadline", "timeouts", "units", "commands",
+		"done", "cancel_requested", "fanout",
+	); err != nil {
+		return err
+	}
+	value := WorkflowRunSnapshot(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*snapshot = value
+	return nil
+}
+
+func (snapshot WorkflowRunSnapshot) Validate() error {
+	if err := snapshot.Run.Validate(); err != nil {
+		return err
+	}
+	if err := validateUTCInstant(snapshot.Deadline, "workflow_run_snapshot.deadline"); err != nil {
+		return err
+	}
+	if err := snapshot.Timeouts.Validate(); err != nil {
+		return err
+	}
+	if snapshot.Units == nil || snapshot.Commands == nil {
+		return contractError(ErrInvalidContract, "workflow_run_snapshot", "unit and command references must be explicitly present")
+	}
+	if snapshot.Fanout == 0 || snapshot.Fanout > MaxWorkflowFanout {
+		return contractError(ErrInvalidContract, "workflow_run_snapshot.fanout", "must be between one and 32")
+	}
+	seenUnits := make(map[string]struct{}, len(snapshot.Units))
+	for _, unit := range snapshot.Units {
+		if err := unit.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seenUnits[unit.TaskID]; duplicate {
+			return contractError(ErrDuplicateField, "workflow_run_snapshot.units", "task identity is duplicated")
+		}
+		seenUnits[unit.TaskID] = struct{}{}
+	}
+	seenCommands := make(map[string]struct{}, len(snapshot.Commands))
+	for _, command := range snapshot.Commands {
+		if err := command.Validate(); err != nil {
+			return err
+		}
+		if _, duplicate := seenCommands[command.CommandID]; duplicate {
+			return contractError(ErrDuplicateField, "workflow_run_snapshot.commands", "command identity is duplicated")
+		}
+		seenCommands[command.CommandID] = struct{}{}
+	}
+	return nil
+}
+
+type WorkflowUnitRequest struct {
+	Run  WorkflowRunRef  `json:"run"`
+	Unit WorkflowUnitRef `json:"unit"`
+}
+
+func (request *WorkflowUnitRequest) UnmarshalJSON(data []byte) error {
+	type wire WorkflowUnitRequest
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "run", "unit"); err != nil {
+		return err
+	}
+	value := WorkflowUnitRequest(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*request = value
+	return nil
+}
+
+func (request WorkflowUnitRequest) Validate() error {
+	if err := request.Run.Validate(); err != nil {
+		return err
+	}
+	return request.Unit.Validate()
+}
+
+type WorkflowUnitResult struct {
+	TaskID             string   `json:"task_id"`
+	State              RunState `json:"state"`
+	UnknownEffectCount uint64   `json:"unknown_effect_count"`
+	ResultRef          string   `json:"result_ref"`
+}
+
+func (result *WorkflowUnitResult) UnmarshalJSON(data []byte) error {
+	type wire WorkflowUnitResult
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded,
+		"task_id", "state", "unknown_effect_count", "result_ref",
+	); err != nil {
+		return err
+	}
+	value := WorkflowUnitResult(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*result = value
+	return nil
+}
+
+func (result WorkflowUnitResult) Validate() error {
+	if !validIdentityPart(result.TaskID) || !validIdentityPart(result.ResultRef) {
+		return contractError(ErrInvalidIdentity, "workflow_unit_result", "task and result references are required")
+	}
+	if !validRunState(result.State) {
+		return contractError(ErrInvalidContract, "workflow_unit_result.state", "run state is unsupported")
+	}
+	if result.UnknownEffectCount != 0 && result.State != RunStateReconciling {
+		return contractError(ErrInvalidContract, "workflow_unit_result.state", "unknown effects require reconciling state")
+	}
+	return nil
+}
+
+type WorkflowCommandRequest struct {
+	Run     WorkflowRunRef     `json:"run"`
+	Command WorkflowCommandRef `json:"command"`
+}
+
+func (request *WorkflowCommandRequest) UnmarshalJSON(data []byte) error {
+	type wire WorkflowCommandRequest
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "run", "command"); err != nil {
+		return err
+	}
+	value := WorkflowCommandRequest(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*request = value
+	return nil
+}
+
+func (request WorkflowCommandRequest) Validate() error {
+	if err := request.Run.Validate(); err != nil {
+		return err
+	}
+	return request.Command.Validate()
+}
+
+type WorkflowCommandResult struct {
+	CommandID       string `json:"command_id"`
+	Applied         bool   `json:"applied"`
+	CancelRequested bool   `json:"cancel_requested"`
+}
+
+func (result *WorkflowCommandResult) UnmarshalJSON(data []byte) error {
+	type wire WorkflowCommandResult
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "command_id", "applied", "cancel_requested"); err != nil {
+		return err
+	}
+	value := WorkflowCommandResult(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*result = value
+	return nil
+}
+
+func (result WorkflowCommandResult) Validate() error {
+	if !validIdentityPart(result.CommandID) {
+		return contractError(ErrInvalidIdentity, "workflow_command_result.command_id", "must identify one durable command")
+	}
+	return nil
+}
+
+type WorkflowProjectionRequest struct {
+	Run                WorkflowRunRef `json:"run"`
+	RepairIntentDigest SemanticDigest `json:"repair_intent_digest"`
+}
+
+func (request *WorkflowProjectionRequest) UnmarshalJSON(data []byte) error {
+	type wire WorkflowProjectionRequest
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "run", "repair_intent_digest"); err != nil {
+		return err
+	}
+	value := WorkflowProjectionRequest(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*request = value
+	return nil
+}
+
+func (request WorkflowProjectionRequest) Validate() error {
+	if err := request.Run.Validate(); err != nil {
+		return err
+	}
+	if request.RepairIntentDigest == "" {
+		return nil
+	}
+	if err := request.RepairIntentDigest.Validate(); err != nil {
+		return err
+	}
+	if request.RepairIntentDigest == request.Run.IntentDigest {
+		return contractError(ErrInvalidIdentity, "workflow_projection_request.repair_intent_digest", "repair digest must differ from the start intent digest")
+	}
+	return nil
+}
+
+type WorkflowProjectionResult struct {
+	RunID    string   `json:"run_id"`
+	Revision uint64   `json:"revision"`
+	State    RunState `json:"state"`
+}
+
+func (result *WorkflowProjectionResult) UnmarshalJSON(data []byte) error {
+	type wire WorkflowProjectionResult
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "run_id", "revision", "state"); err != nil {
+		return err
+	}
+	value := WorkflowProjectionResult(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*result = value
+	return nil
+}
+
+func (result WorkflowProjectionResult) Validate() error {
+	if !validIdentityPart(result.RunID) || result.Revision == 0 {
+		return contractError(ErrInvalidIdentity, "workflow_projection_result", "run identity and positive revision are required")
+	}
+	if !validRunState(result.State) {
+		return contractError(ErrInvalidContract, "workflow_projection_result.state", "run state is unsupported")
+	}
+	return nil
+}
+
+type WorkflowProgress struct {
+	RunID       string `json:"run_id"`
+	TaskID      string `json:"task_id"`
+	ProgressRef string `json:"progress_ref"`
+}
+
+func (progress *WorkflowProgress) UnmarshalJSON(data []byte) error {
+	type wire WorkflowProgress
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "run_id", "task_id", "progress_ref"); err != nil {
+		return err
+	}
+	value := WorkflowProgress(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*progress = value
+	return nil
+}
+
+func (progress WorkflowProgress) Validate() error {
+	if !validIdentityPart(progress.RunID) || !validIdentityPart(progress.TaskID) ||
+		!validIdentityPart(progress.ProgressRef) {
+		return contractError(ErrInvalidIdentity, "workflow_progress", "run, task, and progress references are required")
+	}
+	return nil
+}
+
+type WorkflowExecution struct {
+	Namespace  string `json:"namespace"`
+	WorkflowID string `json:"workflow_id"`
+	RunID      string `json:"run_id"`
+}
+
+func (execution *WorkflowExecution) UnmarshalJSON(data []byte) error {
+	type wire WorkflowExecution
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "namespace", "workflow_id", "run_id"); err != nil {
+		return err
+	}
+	value := WorkflowExecution(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*execution = value
+	return nil
+}
+
+func (execution WorkflowExecution) Validate() error {
+	if !validIdentityPart(execution.Namespace) || !validIdentityPart(execution.WorkflowID) ||
+		!validIdentityPart(execution.RunID) {
+		return contractError(ErrInvalidIdentity, "workflow_execution", "trusted Temporal execution identity is incomplete")
+	}
+	return nil
+}
+
+// WorkflowContinuationObservation is private verification evidence produced
+// from Temporal's actual Describe and history APIs. It is never workflow wire
+// data and carries no caller-selected scope or actor authority.
+type WorkflowContinuationObservation struct {
+	Execution           WorkflowExecution
+	FirstExecutionRunID string
+	PreviousRunID       string
+	WorkflowType        string
+	TaskQueue           string
+	ExecutionTimeout    time.Duration
+}
+
+func (observation WorkflowContinuationObservation) Validate() error {
+	if err := observation.Execution.Validate(); err != nil {
+		return err
+	}
+	if !validIdentityPart(observation.FirstExecutionRunID) ||
+		!validIdentityPart(observation.PreviousRunID) {
+		return contractError(ErrInvalidIdentity, "workflow_continuation_observation", "verified chain identity is incomplete")
+	}
+	if observation.Execution.RunID == observation.FirstExecutionRunID ||
+		observation.Execution.RunID == observation.PreviousRunID {
+		return contractError(ErrInvalidIdentity, "workflow_continuation_observation", "execution is not a new continuation member")
+	}
+	if observation.WorkflowType != RunWorkflowType || observation.TaskQueue != ControlTaskQueue {
+		return contractError(ErrInvalidContract, "workflow_continuation_observation", "continued coordinator protocol is invalid")
+	}
+	if observation.ExecutionTimeout <= 0 {
+		return contractError(ErrInvalidContract, "workflow_continuation_observation.execution_timeout", "must be finite and positive")
+	}
+	return nil
+}
+
+type WorkflowContinuationObserver func(
+	context.Context,
+	WorkflowExecution,
+) (WorkflowContinuationObservation, error)
+
+type ScheduledRunInput struct {
+	Scope      Scope  `json:"scope"`
+	ScheduleID string `json:"schedule_id"`
+	Revision   uint64 `json:"revision"`
+}
+
+func (input *ScheduledRunInput) UnmarshalJSON(data []byte) error {
+	type wire ScheduledRunInput
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "scope", "schedule_id", "revision"); err != nil {
+		return err
+	}
+	value := ScheduledRunInput(decoded)
+	if err := value.Validate(); err != nil {
+		return err
+	}
+	*input = value
+	return nil
+}
+
+func (input ScheduledRunInput) Validate() error {
+	if err := input.Scope.Validate(); err != nil {
+		return err
+	}
+	if !validIdentityPart(input.ScheduleID) || input.Revision == 0 {
+		return contractError(ErrInvalidIdentity, "scheduled_run_input", "schedule identity and positive revision are required")
+	}
+	return nil
 }

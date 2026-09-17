@@ -77,6 +77,34 @@ type authoritySet struct {
 	policyEpochs contract.PolicyEpochs
 }
 
+// ResourceAuthorization is the session-free current-authority surface shared
+// by authenticated request services and workers. Both methods require the
+// caller's already installed scoped transaction.
+type ResourceAuthorization interface {
+	AuthorizeResource(context.Context, *store.Transaction, AuthorizationRequest) (Authorization, error)
+	RecheckGrant(context.Context, *store.Transaction, GrantCheck) (Authorization, error)
+}
+
+// ResourceAuthorizer contains no identity-session, OIDC, device, or inbound
+// policy state. All current authority is loaded through the supplied scoped
+// transaction by the same implementation used by Service.
+type ResourceAuthorizer struct{}
+
+func NewResourceAuthorizer() *ResourceAuthorizer {
+	return &ResourceAuthorizer{}
+}
+
+func (authorizer *ResourceAuthorizer) AuthorizeResource(
+	ctx context.Context,
+	tx *store.Transaction,
+	request AuthorizationRequest,
+) (Authorization, error) {
+	if authorizer == nil {
+		return Authorization{}, ErrAuthorizationDenied
+	}
+	return authorizeResource(ctx, tx, request)
+}
+
 // AuthorizeResource evaluates current membership/service/delegation and
 // connection authority inside the caller-owned scoped transaction. It performs
 // no session lookup and is therefore safe to compose atomically with a later
@@ -86,7 +114,18 @@ func (service *Service) AuthorizeResource(
 	tx *store.Transaction,
 	request AuthorizationRequest,
 ) (Authorization, error) {
-	if service == nil || rejectNilContext(ctx) != nil || tx == nil ||
+	if service == nil {
+		return Authorization{}, ErrAuthorizationDenied
+	}
+	return authorizeResource(ctx, tx, request)
+}
+
+func authorizeResource(
+	ctx context.Context,
+	tx *store.Transaction,
+	request AuthorizationRequest,
+) (Authorization, error) {
+	if rejectNilContext(ctx) != nil || tx == nil ||
 		request.Permission == "" || !validOpaque(request.Permission, 128) {
 		return Authorization{}, ErrAuthorizationDenied
 	}
@@ -120,7 +159,7 @@ func (service *Service) AuthorizeResource(
 	if err != nil {
 		return Authorization{}, err
 	}
-	current, err := service.loadActorAuthority(ctx, tx, request.Actor, now)
+	current, err := loadActorAuthority(ctx, tx, request.Actor, now)
 	if err != nil {
 		return Authorization{}, err
 	}
@@ -175,7 +214,7 @@ func (service *Service) AuthorizeResource(
 	}, nil
 }
 
-func (service *Service) loadActorAuthority(
+func loadActorAuthority(
 	ctx context.Context,
 	tx *store.Transaction,
 	actor contract.Actor,
@@ -357,6 +396,24 @@ type GrantCheck struct {
 // durable grant, current identity/connection epochs, and an approval epoch
 // supplied by the caller that owns approval state.
 func (service *Service) RecheckGrant(ctx context.Context, tx *store.Transaction, check GrantCheck) (Authorization, error) {
+	if service == nil {
+		return Authorization{}, ErrGrantUnavailable
+	}
+	return recheckGrant(ctx, tx, check)
+}
+
+func (authorizer *ResourceAuthorizer) RecheckGrant(
+	ctx context.Context,
+	tx *store.Transaction,
+	check GrantCheck,
+) (Authorization, error) {
+	if authorizer == nil {
+		return Authorization{}, ErrGrantUnavailable
+	}
+	return recheckGrant(ctx, tx, check)
+}
+
+func recheckGrant(ctx context.Context, tx *store.Transaction, check GrantCheck) (Authorization, error) {
 	if err := check.Grant.Validate(); err != nil {
 		return Authorization{}, ErrGrantUnavailable
 	}
@@ -373,7 +430,7 @@ func (service *Service) RecheckGrant(ctx context.Context, tx *store.Transaction,
 		(check.CurrentApprovalEpoch == 0 || check.CurrentApprovalEpoch != check.Grant.PolicyEpochs.Approval) {
 		return Authorization{}, ErrGrantUnavailable
 	}
-	authorization, err := service.AuthorizeResource(ctx, tx, AuthorizationRequest{
+	authorization, err := authorizeResource(ctx, tx, AuthorizationRequest{
 		Scope:           check.Grant.Scope,
 		Actor:           check.Grant.Actor,
 		AutomationScope: check.Grant.Actor.RequestedActor.Kind == contract.PrincipalServiceAccount,

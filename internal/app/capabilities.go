@@ -23,18 +23,24 @@ var (
 // ExecutionRequest is the in-process input to one admitted worker callback. It
 // is not a workflow payload and does not carry provider credentials.
 type ExecutionRequest struct {
-	Scope    contract.Scope
-	Run      contract.RunSpec
-	Task     contract.Task
-	Dispatch contract.Dispatch
-	Attempt  contract.Attempt
-	Input    contract.PresentValue
-	Controls contract.ResultControls
-	Deadline time.Time
+	Scope              contract.Scope
+	ConnectionID       string
+	PermitRef          string
+	ReconciliationOnly bool
+	Run                contract.RunSpec
+	Task               contract.Task
+	Dispatch           contract.Dispatch
+	Attempt            contract.Attempt
+	Input              contract.PresentValue
+	Controls           contract.ResultControls
+	Deadline           time.Time
 }
 
 // ExecutionObservation is the immediate typed observation returned by an
-// execution or reconciliation callback.
+// execution or reconciliation callback. Result is not a durable publication
+// witness. Provider-member outcomes remain independently authoritative, while
+// result delivery stays unavailable unless an admitted integration durably
+// publishes an actual result reference.
 type ExecutionObservation struct {
 	Result   *contract.ActionResult
 	Outcomes []contract.MemberOutcome

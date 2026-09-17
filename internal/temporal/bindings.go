@@ -24,14 +24,28 @@ type workflowExecution struct {
 	WorkflowID          string
 	RunID               string
 	FirstExecutionRunID string
+	PreviousRunID       string
 	WorkflowType        string
 	TaskQueue           string
 	ExecutionTimeout    time.Duration
 	Status              enumspb.WorkflowExecutionStatus
 	StartedAt           time.Time
-	StartInput          StartRunInput
+	StartInput          contract.StartRunInput
 	HasStartInput       bool
 }
+
+type describeWorkflowExecutionFunc func(
+	context.Context,
+	string,
+	string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error)
+
+type workflowHistoryEventFunc func(
+	context.Context,
+	string,
+	string,
+	enumspb.HistoryEventFilterType,
+) (*historypb.HistoryEvent, error)
 
 func (relay *Relay) lookupWorkflowExecution(
 	ctx context.Context,
@@ -40,9 +54,46 @@ func (relay *Relay) lookupWorkflowExecution(
 	runID string,
 	decodeStartInput bool,
 ) (workflowExecution, error) {
-	response, err := routeRPC(ctx, relay, route, func(callCtx context.Context, backend WorkflowClient) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
-		return backend.DescribeWorkflowExecution(callCtx, workflowID, runID)
-	})
+	return readWorkflowExecution(
+		ctx,
+		workflowID,
+		runID,
+		decodeStartInput,
+		func(
+			callCtx context.Context,
+			requestWorkflowID string,
+			requestRunID string,
+		) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+			return routeRPC(callCtx, relay, route, func(
+				rpcCtx context.Context,
+				backend WorkflowClient,
+			) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+				return backend.DescribeWorkflowExecution(rpcCtx, requestWorkflowID, requestRunID)
+			})
+		},
+		func(
+			callCtx context.Context,
+			requestWorkflowID string,
+			requestRunID string,
+			filter enumspb.HistoryEventFilterType,
+		) (*historypb.HistoryEvent, error) {
+			return relay.historyEvent(callCtx, route, requestWorkflowID, requestRunID, filter)
+		},
+	)
+}
+
+func readWorkflowExecution(
+	ctx context.Context,
+	workflowID string,
+	runID string,
+	decodeStartInput bool,
+	describe describeWorkflowExecutionFunc,
+	historyEvent workflowHistoryEventFunc,
+) (workflowExecution, error) {
+	if ctx == nil || describe == nil || historyEvent == nil {
+		return workflowExecution{}, errors.New("Temporal execution evidence reader is invalid")
+	}
+	response, err := describe(ctx, workflowID, runID)
 	if err != nil {
 		return workflowExecution{}, err
 	}
@@ -61,7 +112,12 @@ func (relay *Relay) lookupWorkflowExecution(
 		return workflowExecution{}, ErrWorkflowBindingMismatch
 	}
 
-	startedEvent, err := relay.historyEvent(ctx, route, execution.WorkflowID, execution.RunID, enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT)
+	startedEvent, err := historyEvent(
+		ctx,
+		execution.WorkflowID,
+		execution.RunID,
+		enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT,
+	)
 	if err != nil {
 		return workflowExecution{}, err
 	}
@@ -71,9 +127,11 @@ func (relay *Relay) lookupWorkflowExecution(
 	}
 	attributes := startedEvent.GetWorkflowExecutionStartedEventAttributes()
 	execution.FirstExecutionRunID = attributes.GetFirstExecutionRunId()
+	execution.PreviousRunID = attributes.GetContinuedExecutionRunId()
 	execution.WorkflowType = attributes.GetWorkflowType().GetName()
 	execution.TaskQueue = attributes.GetTaskQueue().GetName()
-	if !validTemporalIdentity(execution.FirstExecutionRunID) || !validTemporalIdentity(execution.WorkflowType) ||
+	if !validTemporalIdentity(execution.FirstExecutionRunID) ||
+		!validTemporalIdentity(execution.WorkflowType) ||
 		!validTemporalIdentity(execution.TaskQueue) {
 		return workflowExecution{}, ErrWorkflowHistoryMissing
 	}
@@ -90,8 +148,10 @@ func (relay *Relay) lookupWorkflowExecution(
 	if decodeStartInput {
 		inputAttributes := attributes
 		if execution.RunID != execution.FirstExecutionRunID {
-			firstEvent, err := relay.historyEvent(
-				ctx, route, execution.WorkflowID, execution.FirstExecutionRunID,
+			firstEvent, err := historyEvent(
+				ctx,
+				execution.WorkflowID,
+				execution.FirstExecutionRunID,
 				enumspb.HISTORY_EVENT_FILTER_TYPE_ALL_EVENT,
 			)
 			if err != nil {
@@ -121,7 +181,7 @@ func (relay *Relay) lookupWorkflowExecution(
 		if string(payload.GetMetadata()[converter.MetadataEncoding]) != converter.MetadataEncodingJSON {
 			return workflowExecution{}, ErrWorkflowBindingMismatch
 		}
-		var decoded StartRunInput
+		var decoded contract.StartRunInput
 		if err := contract.DecodeStrictRequiredObject(
 			payload.GetData(),
 			&decoded,
@@ -130,7 +190,7 @@ func (relay *Relay) lookupWorkflowExecution(
 		); err != nil {
 			return workflowExecution{}, ErrWorkflowBindingMismatch
 		}
-		if err := decoded.Validate(); err != nil {
+		if err := decoded.ValidateRelayStart(); err != nil {
 			return workflowExecution{}, ErrWorkflowBindingMismatch
 		}
 		execution.StartInput = decoded
@@ -146,28 +206,44 @@ func (relay *Relay) historyEvent(
 	runID string,
 	filter enumspb.HistoryEventFilterType,
 ) (*historypb.HistoryEvent, error) {
-	return routeRPC(ctx, relay, route, func(callCtx context.Context, backend WorkflowClient) (*historypb.HistoryEvent, error) {
-		iterator := backend.GetWorkflowHistory(callCtx, workflowID, runID, false, filter)
-		if iterator == nil || !iterator.HasNext() {
-			return nil, ErrWorkflowHistoryMissing
-		}
-		event, err := iterator.Next()
-		if err != nil {
-			if workflowNotFound(err) {
-				return nil, ErrWorkflowHistoryMissing
-			}
-			return nil, err
-		}
-		if event == nil {
-			return nil, ErrWorkflowHistoryMissing
-		}
-		return event, nil
+	return routeRPC(ctx, relay, route, func(
+		callCtx context.Context,
+		backend WorkflowClient,
+	) (*historypb.HistoryEvent, error) {
+		return readWorkflowHistoryEvent(callCtx, backend, workflowID, runID, filter)
 	})
+}
+
+func readWorkflowHistoryEvent(
+	ctx context.Context,
+	backend WorkflowClient,
+	workflowID string,
+	runID string,
+	filter enumspb.HistoryEventFilterType,
+) (*historypb.HistoryEvent, error) {
+	if ctx == nil || backend == nil {
+		return nil, errors.New("Temporal history reader is invalid")
+	}
+	iterator := backend.GetWorkflowHistory(ctx, workflowID, runID, false, filter)
+	if iterator == nil || !iterator.HasNext() {
+		return nil, ErrWorkflowHistoryMissing
+	}
+	event, err := iterator.Next()
+	if err != nil {
+		if workflowNotFound(err) {
+			return nil, ErrWorkflowHistoryMissing
+		}
+		return nil, err
+	}
+	if event == nil {
+		return nil, ErrWorkflowHistoryMissing
+	}
+	return event, nil
 }
 
 func verifyStartedExecution(
 	execution workflowExecution,
-	input StartRunInput,
+	input contract.StartRunInput,
 	intent store.WorkflowCommandIntent,
 ) error {
 	if !execution.HasStartInput || execution.StartInput != input ||

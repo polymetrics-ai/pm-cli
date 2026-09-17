@@ -21,6 +21,7 @@ type RunInputSnapshot struct {
 	Scope          contract.Scope          `json:"scope"`
 	RunID          string                  `json:"run_id"`
 	InputRef       string                  `json:"input_ref"`
+	Lane           contract.Lane           `json:"lane"`
 	ConnectionID   string                  `json:"connection_id"`
 	Input          contract.PresentValue   `json:"input"`
 	ResultControls contract.ResultControls `json:"result_controls"`
@@ -152,6 +153,9 @@ func validateRunInputSnapshot(snapshot RunInputSnapshot) error {
 	}
 	if !validStoreID(snapshot.RunID) || !validStoreID(snapshot.InputRef) || !validStoreID(snapshot.ConnectionID) {
 		return errors.New("run input snapshot contains an invalid identity")
+	}
+	if err := contract.ValidateLane(snapshot.Lane); err != nil {
+		return fmt.Errorf("validate run input lane: %w", err)
 	}
 	if snapshot.Input.Presence() != contract.PresenceValue || snapshot.Input.Kind() != contract.ValueKindObject {
 		return errors.New("run input snapshot must contain a present logical field-ID object")

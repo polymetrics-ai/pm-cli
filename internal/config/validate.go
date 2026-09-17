@@ -95,6 +95,9 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if err := validateServer(data.server); err != nil {
 		return Configuration{}, err
 	}
+	if err := validateWorker(data.worker, data.temporal, data.limits); err != nil {
+		return Configuration{}, err
+	}
 	if err := validateLifecycle(data, prelaunch); err != nil {
 		return Configuration{}, err
 	}
@@ -118,6 +121,7 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 		admission:          admission,
 		limits:             data.limits,
 		server:             server,
+		worker:             data.worker,
 	}, nil
 }
 

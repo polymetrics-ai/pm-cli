@@ -272,9 +272,9 @@ func TestBothStartHandoffWindows(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		run, err := starter.ExecuteWorkflow(ctx, sdkclient.StartWorkflowOptions{
 			ID:                       workflowID,
-			TaskQueue:                ControlTaskQueue,
+			TaskQueue:                contract.ControlTaskQueue,
 			WorkflowExecutionTimeout: 30 * time.Minute,
-		}, RunWorkflowType)
+		}, contract.RunWorkflowType)
 		cancel()
 		if err != nil {
 			t.Fatalf("start scheduled fixture workflow: %v", err)
@@ -343,9 +343,9 @@ func runPhysicalCrashChild(t *testing.T, requestPath string) {
 	}
 	client, err := NewClient(ClientConfig{
 		Namespace:            selection.configuration.Temporal().Namespace,
-		ControlTaskQueue:     ControlTaskQueue,
-		WorkflowType:         RunWorkflowType,
-		ProjectionUpdateName: ProjectionUpdateName,
+		ControlTaskQueue:     contract.ControlTaskQueue,
+		WorkflowType:         contract.RunWorkflowType,
+		ProjectionUpdateName: contract.ProjectionUpdateName,
 		DialTimeout:          physicalTemporalDialTimeout,
 		RequestTimeout:       physicalTemporalRequestTimeout,
 		Dial:                 func(context.Context) (WorkflowClient, error) { return crashing, nil },
@@ -449,7 +449,7 @@ func (client *alreadyStartedRaceClient) ExecuteWorkflow(
 	client.executeCalls.Add(1)
 	externalArguments := append([]any(nil), arguments...)
 	if client.mismatch {
-		input, ok := externalArguments[0].(StartRunInput)
+		input, ok := externalArguments[0].(contract.StartRunInput)
 		if !ok {
 			return nil, errors.New("expected typed StartRunInput in race fixture")
 		}
@@ -525,7 +525,14 @@ func exerciseAlreadyStartedRace(t *testing.T, mismatch bool) {
 	}
 	workflowID := "pm/run/" + admitted.RunRef
 	observer := openPhysicalTemporal(t, randomPhysicalID(t, key+"-observer-"))
-	observedRunID, observedInput := observeWorkflowStart(t, observer, workflowID)
+	var observedRunID string
+	var observedInput contract.StartRunInput
+	if mismatch {
+		description := describeWorkflowForRace(t, observer, workflowID, "")
+		observedRunID = description.GetWorkflowExecutionInfo().GetExecution().GetRunId()
+	} else {
+		observedRunID, observedInput = observeWorkflowStart(t, observer, workflowID)
+	}
 	terminatePhysicalWorkflow(t, observer, workflowID, observedRunID)
 	if tracing.describeCalls.Load() != 2 || tracing.executeCalls.Load() != 1 {
 		t.Fatalf(

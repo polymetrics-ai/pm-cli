@@ -28,7 +28,7 @@ type RunGrantCheck struct {
 func RecheckRunGrant(
 	ctx context.Context,
 	tx *store.Transaction,
-	authorization *auth.Service,
+	authorization auth.ResourceAuthorization,
 	check RunGrantCheck,
 ) (contract.ExecutionGrant, error) {
 	if ctx == nil || tx == nil || authorization == nil || !validApplicationID(check.RunID) {

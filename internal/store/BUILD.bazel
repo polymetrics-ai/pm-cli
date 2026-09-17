@@ -36,6 +36,7 @@ go_library(
         "tasks.go",
         "transaction.go",
         "workflows.go",
+        "workers.go",
     ],
     embedsrcs = glob(["migrations/postgres/*.sql"]),
     importpath = "github.com/polymetrics-ai/pm-cli/internal/store",

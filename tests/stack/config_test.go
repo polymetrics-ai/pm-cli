@@ -1,6 +1,7 @@
 package stack_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -976,4 +977,72 @@ func TestOIDCClientIdentifierRemainsOpaque(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestWorkerConfigurationSchemaBoundary(t *testing.T) {
+	path, err := filepath.Abs(filepath.Join("..", "..", "schemas", "server-config.schema.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer file.Close()
+	schemaDocument, err := jsonschema.UnmarshalJSON(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	compiler := jsonschema.NewCompiler()
+	compiler.DefaultDraft(jsonschema.Draft2020)
+	compiler.UseLoader(jsonschema.SchemeURLLoader{})
+	if err := compiler.AddResource(path, schemaDocument); err != nil {
+		t.Fatal(err)
+	}
+	schema, err := compiler.Compile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const worker = `{"task_queue":"pm-control","dial_timeout":"5s","drain_timeout":"5s","max_concurrent_activities":32,"max_concurrent_workflow_tasks":4,"activity_timeouts":{"schedule_to_close":"20s","start_to_close":"10s","heartbeat":"2s","transport":"5s"}}`
+	for _, test := range []struct {
+		name   string
+		worker string
+		valid  bool
+	}{
+		{name: "complete_worker", worker: worker, valid: true},
+		{name: "api_only", valid: true},
+		{name: "missing_transport", worker: strings.Replace(worker, `,"transport":"5s"`, "", 1)},
+		{name: "unknown_authority_control", worker: strings.Replace(worker, `"task_queue"`, `"approval":true,"task_queue"`, 1)},
+		{name: "explicit_null", worker: "null"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var configuration map[string]json.RawMessage
+			if err := json.Unmarshal([]byte(bundledDevelopmentConfiguration), &configuration); err != nil {
+				t.Fatal(err)
+			}
+			if test.worker != "" {
+				configuration["worker"] = json.RawMessage(test.worker)
+			}
+			raw, err := json.Marshal(configuration)
+			if err != nil {
+				t.Fatal(err)
+			}
+			document, loadErr := config.Load(bytes.NewReader(raw))
+			var validationErr error
+			if loadErr == nil {
+				_, validationErr = config.Validate(document, config.Prelaunch{})
+			}
+			if accepted := loadErr == nil && validationErr == nil; accepted != test.valid {
+				t.Fatalf("typed configuration accepted=%t; want %t: load=%v validation=%v", accepted, test.valid, loadErr, validationErr)
+			}
+			value, err := jsonschema.UnmarshalJSON(bytes.NewReader(raw))
+			if err != nil {
+				t.Fatal(err)
+			}
+			schemaErr := schema.Validate(value)
+			if (schemaErr == nil) != test.valid {
+				t.Fatalf("published schema accepted=%t; want %t: %v", schemaErr == nil, test.valid, schemaErr)
+			}
+		})
+	}
 }

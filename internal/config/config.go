@@ -177,6 +177,7 @@ type Configuration struct {
 	admission          AdmissionLimits
 	limits             ResourceLimits
 	server             ServerConfiguration
+	worker             WorkerConfiguration
 }
 
 func (c Configuration) SchemaVersion() string {
@@ -233,6 +234,10 @@ func (c Configuration) Limits() ResourceLimits {
 	return c.limits
 }
 
+func (c Configuration) Worker() WorkerConfiguration {
+	return c.worker
+}
+
 type documentData struct {
 	schemaVersion      string
 	deploymentID       string
@@ -246,6 +251,7 @@ type documentData struct {
 	admissionOverrides AdmissionOverrides
 	limits             ResourceLimits
 	server             ServerConfiguration
+	worker             WorkerConfiguration
 }
 
 type optionalUint64 struct {
@@ -318,6 +324,9 @@ func Load(reader io.Reader) (Document, error) {
 	if result.server, err = decodeServer(root["server"]); err != nil {
 		return Document{}, err
 	}
+	if result.worker, err = decodeWorker(root["worker"]); err != nil {
+		return Document{}, err
+	}
 	return Document{data: result, loaded: true}, nil
 }
 
@@ -334,7 +343,7 @@ var rootFields = []string{
 	"limits",
 }
 
-var allowedRootFields = append([]string{"server"}, rootFields...)
+var allowedRootFields = append([]string{"server", "worker"}, rootFields...)
 
 func decodePostgres(raw json.RawMessage) (PostgresConfiguration, error) {
 	fields := []string{"ownership", "database", "endpoint_ref"}

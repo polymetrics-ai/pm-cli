@@ -13,80 +13,6 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
-const (
-	ControlTaskQueue      = "pm-control"
-	RunWorkflowType       = "pm.run.v1"
-	ProjectionUpdateName  = "pm.retry-final-projection.v1"
-	StartRunInputSchema   = "pm.workflow-start/v1"
-	ProjectionRetrySchema = "pm.projection-retry/v1"
-)
-
-// StartRunInput is the complete safe workflow argument. The sealed intent
-// digest binds namespace, queue, workflow type, timeout and immutable budget;
-// raw inputs, actors, credentials and provider payloads never enter history.
-type StartRunInput struct {
-	Schema       string                  `json:"schema"`
-	Scope        contract.Scope          `json:"scope"`
-	RunID        string                  `json:"run_id"`
-	CommandID    string                  `json:"command_id"`
-	WorkflowID   string                  `json:"workflow_id"`
-	Generation   uint64                  `json:"generation"`
-	Origin       contract.RunOrigin      `json:"origin"`
-	IntentDigest contract.SemanticDigest `json:"intent_digest"`
-}
-
-func (input StartRunInput) Validate() error {
-	if input.Schema != StartRunInputSchema {
-		return errors.New("workflow start input schema is invalid")
-	}
-	if err := input.Scope.Validate(); err != nil {
-		return err
-	}
-	if !validTemporalIdentity(input.RunID) || !validTemporalIdentity(input.CommandID) ||
-		!validTemporalIdentity(input.WorkflowID) || input.Generation == 0 {
-		return errors.New("workflow start input identity is invalid")
-	}
-	switch input.Origin {
-	case contract.RunOriginAPI, contract.RunOriginRecovery:
-	default:
-		return errors.New("workflow start input origin is invalid")
-	}
-	if input.Origin == contract.RunOriginAPI && input.WorkflowID != "pm/run/"+input.RunID {
-		return errors.New("API workflow start identity is invalid")
-	}
-	if err := input.IntentDigest.Validate(); err != nil {
-		return fmt.Errorf("validate workflow start intent digest: %w", err)
-	}
-	return nil
-}
-
-// ProjectionRetryCommand asks a running workflow to retry only its owned final
-// PostgreSQL projection. It does not assert a workflow or provider outcome.
-type ProjectionRetryCommand struct {
-	Schema       string                  `json:"schema"`
-	Scope        contract.Scope          `json:"scope"`
-	RunID        string                  `json:"run_id"`
-	WorkflowID   string                  `json:"workflow_id"`
-	Generation   uint64                  `json:"generation"`
-	IntentDigest contract.SemanticDigest `json:"intent_digest"`
-}
-
-func (command ProjectionRetryCommand) Validate() error {
-	if command.Schema != ProjectionRetrySchema {
-		return errors.New("projection retry schema is invalid")
-	}
-	if err := command.Scope.Validate(); err != nil {
-		return err
-	}
-	if !validTemporalIdentity(command.RunID) || !validTemporalIdentity(command.WorkflowID) || command.Generation == 0 {
-		return errors.New("projection retry identity is invalid")
-	}
-	if err := command.IntentDigest.Validate(); err != nil {
-		return err
-	}
-	return nil
-}
-
 func workflowCommandPlan(handoff store.WorkflowHandoff, configuration ClientConfig, kind string) (store.WorkflowCommandPlan, error) {
 	binding := handoff.Record.WorkflowBinding
 	plan := store.WorkflowCommandPlan{
@@ -108,9 +34,9 @@ func workflowCommandPlan(handoff store.WorkflowHandoff, configuration ClientConf
 	return plan, nil
 }
 
-func startRunInput(claim store.OutboxClaim, intent store.WorkflowCommandIntent) (StartRunInput, error) {
-	input := StartRunInput{
-		Schema:       StartRunInputSchema,
+func startRunInput(claim store.OutboxClaim, intent store.WorkflowCommandIntent) (contract.StartRunInput, error) {
+	input := contract.StartRunInput{
+		Schema:       contract.StartRunInputSchema,
 		Scope:        claim.Scope,
 		RunID:        claim.RunID,
 		CommandID:    claim.Command.CommandID,
@@ -119,15 +45,15 @@ func startRunInput(claim store.OutboxClaim, intent store.WorkflowCommandIntent) 
 		Origin:       intent.Plan.Origin,
 		IntentDigest: intent.Digest,
 	}
-	if err := input.Validate(); err != nil {
-		return StartRunInput{}, err
+	if err := input.ValidateRelayStart(); err != nil {
+		return contract.StartRunInput{}, err
 	}
 	return input, nil
 }
 
-func projectionRetryCommand(intent store.WorkflowCommandIntent) (ProjectionRetryCommand, error) {
-	command := ProjectionRetryCommand{
-		Schema:       ProjectionRetrySchema,
+func projectionRetryCommand(intent store.WorkflowCommandIntent) (contract.ProjectionRetryCommand, error) {
+	command := contract.ProjectionRetryCommand{
+		Schema:       contract.ProjectionRetrySchema,
 		Scope:        intent.Scope,
 		RunID:        intent.RunID,
 		WorkflowID:   intent.Plan.WorkflowID,
@@ -135,7 +61,7 @@ func projectionRetryCommand(intent store.WorkflowCommandIntent) (ProjectionRetry
 		IntentDigest: intent.Digest,
 	}
 	if err := command.Validate(); err != nil {
-		return ProjectionRetryCommand{}, err
+		return contract.ProjectionRetryCommand{}, err
 	}
 	return command, nil
 }
@@ -149,7 +75,7 @@ func projectionUpdateID(intent store.WorkflowCommandIntent) (string, error) {
 		Generation uint64                  `json:"generation"`
 		Digest     contract.SemanticDigest `json:"digest"`
 	}{
-		Schema: ProjectionRetrySchema, Scope: intent.Scope, RunID: intent.RunID,
+		Schema: contract.ProjectionRetrySchema, Scope: intent.Scope, RunID: intent.RunID,
 		CommandID: intent.CommandID, Generation: intent.Plan.Generation, Digest: intent.Digest,
 	})
 	if err != nil {

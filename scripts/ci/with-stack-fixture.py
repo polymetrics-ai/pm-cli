@@ -28,6 +28,7 @@ PROJECT_PREFIX = "pmci-"
 PARENT_PREFIX = "pm-stack-job-"
 TOKEN_PATTERN = re.compile(r"[0-9a-f]{20}\Z")
 PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
+TEMPORAL_NAMESPACE_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{2,254}\Z")
 MANIFEST_NAME_PATTERN = re.compile(r"pmcli-foundation-([0-9]+)-([0-9]+)\.json\Z")
 CONTAINER_ID_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_DAEMON_VALUE = re.compile(r"[A-Za-z0-9_.:+/=-]{1,256}\Z")
@@ -50,7 +51,9 @@ ENVIRONMENT_KEYS = frozenset(
         "PM_STACK_SECRETS_DIR",
         "PM_STACK_STATE_DIR",
         "PM_STACK_PROJECT",
+        "PM_STACK_TEMPORAL_DYNAMIC_CONFIG",
         "PM_STACK_TEST_CONFIG",
+        "PM_STACK_TEST_ROLLOVER_NAMESPACE",
         "PM_STACK_TEST_S3_PRIMARY_ENDPOINT",
         "PM_STACK_TEST_S3_SECONDARY_ENDPOINT",
         "PM_STORE_TEST_SECRETS_DIR",
@@ -225,9 +228,28 @@ def safe_error(message: str) -> None:
     print(f"with-stack-fixture: {message}", file=sys.stderr)
 
 
-def read_limited(path: Path, limit: int = MAX_JSON_BYTES) -> bytes:
+def open_regular_file(path: Path) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", None)
+    if nofollow is None:
+        raise FixtureError("platform cannot safely open fixture files without following symlinks")
     try:
-        with path.open("rb") as stream:
+        descriptor = os.open(path, flags | nofollow)
+        status = os.fstat(descriptor)
+    except OSError as exc:
+        if "descriptor" in locals():
+            os.close(descriptor)
+        raise FixtureError(f"cannot open required file {path.name}: {exc.strerror or exc}") from exc
+    if not stat.S_ISREG(status.st_mode):
+        os.close(descriptor)
+        raise FixtureError(f"required file {path.name} is not regular")
+    return descriptor
+
+
+def read_limited(path: Path, limit: int = MAX_JSON_BYTES) -> bytes:
+    descriptor = open_regular_file(path)
+    try:
+        with os.fdopen(descriptor, "rb") as stream:
             value = stream.read(limit + 1)
     except OSError as exc:
         raise FixtureError(f"cannot read required file {path.name}: {exc.strerror or exc}") from exc
@@ -247,11 +269,16 @@ def load_json_file(path: Path, context: str) -> Any:
     return decode_json_bytes(read_limited(path), context)
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path: Path, limit: int | None = None) -> str:
     digest = hashlib.sha256()
+    total = 0
+    descriptor = open_regular_file(path)
     try:
-        with path.open("rb") as stream:
+        with os.fdopen(descriptor, "rb") as stream:
             for chunk in iter(lambda: stream.read(1 << 20), b""):
+                total += len(chunk)
+                if limit is not None and total > limit:
+                    raise FixtureError(f"required file {path.name} exceeds its size limit")
                 digest.update(chunk)
     except OSError as exc:
         raise FixtureError(f"cannot hash required file {path.name}: {exc.strerror or exc}") from exc
@@ -768,12 +795,25 @@ def parse_loopback_endpoint(value: str, expected_port: str, name: str) -> None:
         raise FixtureError(f"generated {name} endpoint is not the selected loopback endpoint")
 
 
+def expected_temporal_profile(base: bytes, namespace: str) -> bytes:
+    if not base:
+        raise FixtureError("repository Temporal dynamic configuration is empty")
+    if not base.endswith(b"\n"):
+        base += b"\n"
+    return base + (
+        "limit.historyCount.suggestContinueAsNew:\n"
+        "  - value: 64\n"
+        "    constraints:\n"
+        f"      namespace: {json.dumps(namespace)}\n"
+    ).encode()
+
+
 def validate_generated_environment(
     stdout: bytes,
     fixture_root: Path,
     repo_root: Path,
     project: str,
-) -> tuple[dict[str, str], str, str]:
+) -> tuple[dict[str, str], str, str, str]:
     if len(stdout) > MAX_GENERATOR_OUTPUT:
         raise FixtureError("fixture generator output exceeds its limit")
     value = parse_single_json(stdout, "fixture generator")
@@ -791,12 +831,23 @@ def validate_generated_environment(
     require_exact_path(environment["PM_STACK_ROOT"], repo_root, "repository root")
     require_exact_path(environment["PM_STACK_SECRETS_DIR"], fixture_root / "secrets", "secret root")
     require_exact_path(environment["PM_STACK_STATE_DIR"], fixture_root / "state", "state root")
+    require_exact_path(
+        environment["PM_STACK_TEMPORAL_DYNAMIC_CONFIG"],
+        fixture_root / "temporal-dynamicconfig.yaml",
+        "Temporal dynamic configuration",
+    )
     require_exact_path(environment["PM_STACK_TEST_CONFIG"], fixture_root / "server.json", "configuration")
     require_exact_path(
         environment["PM_STORE_TEST_SECRETS_DIR"],
         fixture_root / "secrets" / "operator" / "postgres",
         "store secret root",
     )
+    rollover_namespace = environment["PM_STACK_TEST_ROLLOVER_NAMESPACE"]
+    if (
+        rollover_namespace != project + "-rollover"
+        or TEMPORAL_NAMESPACE_PATTERN.fullmatch(rollover_namespace) is None
+    ):
+        raise FixtureError("fixture rollover namespace is not the exact auxiliary namespace")
     seen_ports: set[int] = set()
     for name in PORT_KEYS:
         value_string = environment[name]
@@ -821,6 +872,11 @@ def validate_generated_environment(
     environment_bytes = read_limited(environment_path)
     if decode_json_bytes(environment_bytes, "fixture environment file") != environment:
         raise FixtureError("fixture environment file disagrees with generator output")
+    dynamic_config_path = fixture_root / "temporal-dynamicconfig.yaml"
+    dynamic_config_bytes = read_limited(dynamic_config_path)
+    base_dynamic_config = read_limited(repo_root / "deploy" / "temporal" / "dynamicconfig.yaml")
+    if dynamic_config_bytes != expected_temporal_profile(base_dynamic_config, rollover_namespace):
+        raise FixtureError("generated Temporal profile changed primary settings or auxiliary constraint")
     config_path = fixture_root / "server.json"
     configuration = load_json_file(config_path, "fixture server configuration")
     template = load_json_file(repo_root / "deploy" / "server.example.json", "server configuration template")
@@ -842,7 +898,12 @@ def validate_generated_environment(
     if configuration != expected:
         raise FixtureError("generated configuration is not the bounded template projection")
     validate_private_tree(fixture_root)
-    return environment, hashlib.sha256(environment_bytes).hexdigest(), sha256_file(config_path)
+    return (
+        environment,
+        hashlib.sha256(environment_bytes).hexdigest(),
+        sha256_file(config_path, MAX_JSON_BYTES),
+        sha256_file(dynamic_config_path, MAX_JSON_BYTES),
+    )
 
 
 def reserve_ports(environment: Mapping[str, str]) -> list[socket.socket]:
@@ -1325,7 +1386,7 @@ def expected_mounts(service: str, fixture_root: Path, repo_root: Path) -> set[tu
     if service == "temporal":
         return {
             mount(state / "temporal.yaml", "/etc/temporal/pm-stack.yaml", False),
-            mount(repo_root / "deploy" / "temporal" / "dynamicconfig.yaml", "/etc/temporal/dynamicconfig.yaml", False),
+            mount(fixture_root / "temporal-dynamicconfig.yaml", "/etc/temporal/dynamicconfig.yaml", False),
             mount(postgres / "ca.pem", "/run/secrets/postgres-ca.pem", False),
             mount(temporal / "ca.pem", "/run/secrets/temporal-ca.pem", False),
             mount(temporal / "server.pem", "/run/secrets/temporal-server.pem", False),
@@ -1860,12 +1921,15 @@ def fixture_record(
     environment: Mapping[str, str],
     environment_digest: str,
     config_digest: str,
+    dynamic_config_digest: str,
 ) -> dict[str, Any]:
     return {
         "root_identity": path_identity(fixture_root),
         "environment": dict(environment),
         "environment_sha256": environment_digest,
         "config_sha256": config_digest,
+        "rollover_namespace": environment["PM_STACK_TEST_ROLLOVER_NAMESPACE"],
+        "temporal_dynamic_config_sha256": dynamic_config_digest,
     }
 
 
@@ -1876,6 +1940,8 @@ def validate_fixture_record(manifest: OwnershipManifest) -> dict[str, str]:
         "environment",
         "environment_sha256",
         "config_sha256",
+        "rollover_namespace",
+        "temporal_dynamic_config_sha256",
     }:
         raise FixtureError("ownership manifest fixture identity is invalid")
     environment = fixture.get("environment")
@@ -1889,12 +1955,24 @@ def validate_fixture_record(manifest: OwnershipManifest) -> dict[str, str]:
     require_exact_path(environment["PM_STACK_ROOT"], manifest.repo_root, "repository root")
     require_exact_path(environment["PM_STACK_SECRETS_DIR"], manifest.fixture_root / "secrets", "secret root")
     require_exact_path(environment["PM_STACK_STATE_DIR"], manifest.fixture_root / "state", "state root")
+    require_exact_path(
+        environment["PM_STACK_TEMPORAL_DYNAMIC_CONFIG"],
+        manifest.fixture_root / "temporal-dynamicconfig.yaml",
+        "Temporal dynamic configuration",
+    )
     require_exact_path(environment["PM_STACK_TEST_CONFIG"], manifest.fixture_root / "server.json", "configuration")
     require_exact_path(
         environment["PM_STORE_TEST_SECRETS_DIR"],
         manifest.fixture_root / "secrets" / "operator" / "postgres",
         "store secret root",
     )
+    rollover_namespace = environment["PM_STACK_TEST_ROLLOVER_NAMESPACE"]
+    if (
+        fixture["rollover_namespace"] != rollover_namespace
+        or rollover_namespace != manifest.project + "-rollover"
+        or TEMPORAL_NAMESPACE_PATTERN.fullmatch(rollover_namespace) is None
+    ):
+        raise FixtureError("ownership manifest rollover namespace is invalid")
     seen_ports: set[int] = set()
     for name in PORT_KEYS:
         try:
@@ -1921,7 +1999,7 @@ def validate_fixture_record(manifest: OwnershipManifest) -> dict[str, str]:
         or any(not isinstance(value, int) for value in root_identity.values())
     ):
         raise FixtureError("ownership manifest root identity is invalid")
-    for name in ("environment_sha256", "config_sha256"):
+    for name in ("environment_sha256", "config_sha256", "temporal_dynamic_config_sha256"):
         if not isinstance(fixture[name], str) or re.fullmatch(r"[0-9a-f]{64}", fixture[name]) is None:
             raise FixtureError("ownership manifest fixture digest is invalid")
     return environment
@@ -2152,6 +2230,19 @@ def safe_diagnostic(code: str, resources: Mapping[str, Any] | None = None, error
         value["resources"] = resource_manifest(resources)
     return value
 
+def verify_immutable_fixture_files(manifest: OwnershipManifest, environment: Mapping[str, str]) -> None:
+    fixture = manifest.document["fixture"]
+    environment_path = manifest.fixture_root / "environment.json"
+    config_path = manifest.fixture_root / "server.json"
+    dynamic_config_path = manifest.fixture_root / "temporal-dynamicconfig.yaml"
+    if (
+        sha256_file(environment_path, MAX_JSON_BYTES) != fixture["environment_sha256"]
+        or decode_json_bytes(read_limited(environment_path), "fixture environment file") != environment
+        or sha256_file(config_path, MAX_JSON_BYTES) != fixture["config_sha256"]
+        or sha256_file(dynamic_config_path, MAX_JSON_BYTES) != fixture["temporal_dynamic_config_sha256"]
+    ):
+        raise FixtureError("fixture files changed after ownership was recorded")
+
 
 def cleanup_fixture(
     manifest: OwnershipManifest,
@@ -2210,16 +2301,8 @@ def cleanup_fixture(
         and os.path.lexists(manifest.fixture_root)
         and not manifest.document["fixture_deletion_authorized"]
     ):
-        fixture = manifest.document["fixture"]
-        environment_path = manifest.fixture_root / "environment.json"
-        config_path = manifest.fixture_root / "server.json"
         try:
-            if (
-                sha256_file(environment_path) != fixture["environment_sha256"]
-                or decode_json_bytes(read_limited(environment_path), "fixture environment file") != environment
-                or sha256_file(config_path) != fixture["config_sha256"]
-            ):
-                raise FixtureError("fixture files changed after ownership was recorded")
+            verify_immutable_fixture_files(manifest, environment)
         except FixtureError:
             try:
                 manifest.update("cleanup_failed", diagnostic=safe_diagnostic("fixture-file-mismatch"))
@@ -2596,13 +2679,19 @@ def run_mode(
         )
         if generator_code != 0:
             raise CommandFailure("generate private stack fixture", generator_code)
-        environment, environment_digest, config_digest = validate_generated_environment(
+        environment, environment_digest, config_digest, dynamic_config_digest = validate_generated_environment(
             stdout,
             fixture_root,
             repo_root,
             project,
         )
-        record = fixture_record(fixture_root, environment, environment_digest, config_digest)
+        record = fixture_record(
+            fixture_root,
+            environment,
+            environment_digest,
+            config_digest,
+            dynamic_config_digest,
+        )
         manifest.update("generated", fixture=record)
         reservations = reserve_ports(environment)
         require_empty_before_start(

@@ -576,6 +576,7 @@ func admitIntegrationActorRunGrant(
 		BudgetSnapshot: budget,
 		InputSnapshot: store.RunInputSnapshot{
 			Scope: fixture.scope, RunID: runID, InputRef: "input-" + runID,
+			Lane:           contract.LaneDirectRead,
 			ConnectionID:   fixture.connectionID,
 			Input:          contract.NewObjectValue(map[string]contract.PresentValue{}),
 			ResultControls: contract.ResultControls{},

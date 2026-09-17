@@ -372,6 +372,7 @@ func (service *AdmissionService) newAdmissionRequest(
 			Scope:          scope,
 			RunID:          runID,
 			InputRef:       inputRef,
+			Lane:           invocation.Lane,
 			ConnectionID:   invocation.ConnectionRef,
 			Input:          invocation.Input,
 			ResultControls: invocation.ResultControls,

@@ -9,6 +9,8 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	sdkclient "go.temporal.io/sdk/client"
+
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
 var ErrClientClosed = errors.New("Temporal client is closed")
@@ -50,13 +52,13 @@ func NewClient(configuration ClientConfig) (*Client, error) {
 	if !validTemporalIdentity(configuration.Namespace) {
 		return nil, errors.New("Temporal namespace is invalid")
 	}
-	if configuration.ControlTaskQueue != ControlTaskQueue {
+	if configuration.ControlTaskQueue != contract.ControlTaskQueue {
 		return nil, errors.New("Temporal control task queue must be pm-control")
 	}
-	if configuration.WorkflowType != RunWorkflowType {
+	if configuration.WorkflowType != contract.RunWorkflowType {
 		return nil, errors.New("Temporal run workflow type is invalid")
 	}
-	if configuration.ProjectionUpdateName != ProjectionUpdateName {
+	if configuration.ProjectionUpdateName != contract.ProjectionUpdateName {
 		return nil, errors.New("Temporal projection update name is invalid")
 	}
 	if configuration.DialTimeout <= 0 || configuration.RequestTimeout <= 0 ||

@@ -1,4 +1,4 @@
-package server
+package credentials
 
 import (
 	"bytes"
@@ -15,7 +15,7 @@ func TestOperatorSecretStartupBoundary(t *testing.T) {
 	if err := os.MkdirAll(bundle, 0700); err != nil {
 		t.Fatal(err)
 	}
-	secrets, err := openOperatorSecrets(root)
+	secrets, err := OpenOperatorSecrets(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -26,7 +26,7 @@ func TestOperatorSecretStartupBoundary(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(bundle, "key"), key, 0600); err != nil {
 			t.Fatal(err)
 		}
-		actual, err := secrets.read("secret://fixture/wrapping", "key")
+		actual, err := secrets.Read("secret://fixture/wrapping", "key")
 		if err != nil || !bytes.Equal(actual, key) {
 			t.Fatalf("binary secret bytes were changed: %v", err)
 		}
@@ -41,7 +41,7 @@ func TestOperatorSecretStartupBoundary(t *testing.T) {
 		if err := os.Symlink(outside, filepath.Join(bundle, "escape")); err != nil {
 			t.Fatal(err)
 		}
-		if value, err := secrets.read("secret://fixture/wrapping", "escape"); err == nil || len(value) != 0 {
+		if value, err := secrets.Read("secret://fixture/wrapping", "escape"); err == nil || len(value) != 0 {
 			t.Fatal("out-of-root secret bytes crossed the startup boundary")
 		}
 	})
@@ -53,7 +53,7 @@ func TestOperatorSecretStartupBoundary(t *testing.T) {
 		}
 		result := make(chan error, 1)
 		go func() {
-			_, err := secrets.read("secret://fixture/wrapping", "fifo")
+			_, err := secrets.Read("secret://fixture/wrapping", "fifo")
 			result <- err
 		}()
 		select {
@@ -73,7 +73,7 @@ func TestOperatorSecretStartupBoundary(t *testing.T) {
 			case <-time.After(time.Second):
 				t.Fatal("blocked secret reader could not be released")
 			}
-			t.Fatal("FIFO open blocked server startup")
+			t.Fatal("FIFO open blocked process startup")
 		}
 	})
 
@@ -87,7 +87,7 @@ func TestOperatorSecretStartupBoundary(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(originalBundle, "key"), []byte("original-owned-key"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		mounted, err := openOperatorSecrets(path)
+		mounted, err := OpenOperatorSecrets(path)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -101,7 +101,7 @@ func TestOperatorSecretStartupBoundary(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(originalBundle, "key"), []byte("replacement-key"), 0600); err != nil {
 			t.Fatal(err)
 		}
-		value, err := mounted.read("secret://fixture/wrapping", "key")
+		value, err := mounted.Read("secret://fixture/wrapping", "key")
 		if err != nil || string(value) != "original-owned-key" {
 			t.Fatalf("a replaced pathname changed the owned secret root: %v", err)
 		}

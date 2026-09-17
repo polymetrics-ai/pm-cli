@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/json"
 	"net"
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -78,6 +81,138 @@ func TestRunRefusesExistingOrSymlinkedRootsWithoutClobbering(t *testing.T) {
 			t.Fatal("fixture generation touched the symlink target")
 		}
 	})
+}
+
+func TestGeneratedTemporalRolloverProfileIsAuxiliaryAndOwned(t *testing.T) {
+	repositoryRoot := realTemporaryDirectory(t)
+	writeExampleConfiguration(t, repositoryRoot)
+	root := filepath.Join(realTemporaryDirectory(t), "fixture")
+	var stdout, stderr bytes.Buffer
+	if status := run([]string{
+		"--root", root,
+		"--project", "pm-fixture-test",
+		"--repo-root", repositoryRoot,
+	}, &stdout, &stderr); status != 0 {
+		t.Fatalf("generate fixture status = %d: %s", status, stderr.String())
+	}
+	var environment map[string]string
+	if err := json.Unmarshal(stdout.Bytes(), &environment); err != nil {
+		t.Fatalf("decode generated environment: %v", err)
+	}
+	profilePath := filepath.Join(root, "temporal-dynamicconfig.yaml")
+	if environment["PM_STACK_TEMPORAL_DYNAMIC_CONFIG"] != profilePath {
+		t.Fatalf("dynamic config path = %q; want %q", environment["PM_STACK_TEMPORAL_DYNAMIC_CONFIG"], profilePath)
+	}
+	auxiliary := "pm-fixture-test-rollover"
+	if environment["PM_STACK_TEST_ROLLOVER_NAMESPACE"] != auxiliary {
+		t.Fatalf("rollover namespace = %q; want %q", environment["PM_STACK_TEST_ROLLOVER_NAMESPACE"], auxiliary)
+	}
+	info, err := os.Lstat(profilePath)
+	if err != nil {
+		t.Fatalf("inspect generated Temporal profile: %v", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm() != 0o600 {
+		t.Fatalf("generated Temporal profile mode = %v; want regular 0600", info.Mode())
+	}
+	profile, err := os.ReadFile(profilePath)
+	if err != nil {
+		t.Fatalf("read generated Temporal profile: %v", err)
+	}
+	text := string(profile)
+	var (
+		constraintCount int
+		constraintValue int
+		namespace       string
+	)
+	lines := strings.Split(text, "\n")
+	for index, line := range lines {
+		if strings.TrimSpace(line) != "limit.historyCount.suggestContinueAsNew:" {
+			continue
+		}
+		constraintCount++
+		for _, member := range lines[index+1:] {
+			if member != "" && member[0] != ' ' {
+				break
+			}
+			trimmed := strings.TrimSpace(member)
+			switch {
+			case strings.HasPrefix(trimmed, "- value:"):
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "- value:"))
+				if err := json.Unmarshal([]byte(raw), &constraintValue); err != nil {
+					t.Fatalf("decode generated Temporal rollover value %q: %v", raw, err)
+				}
+			case strings.HasPrefix(trimmed, "namespace:"):
+				raw := strings.TrimSpace(strings.TrimPrefix(trimmed, "namespace:"))
+				switch {
+				case strings.HasPrefix(raw, `"`):
+					if err := json.Unmarshal([]byte(raw), &namespace); err != nil {
+						t.Fatalf("decode generated Temporal rollover namespace %q: %v", raw, err)
+					}
+				case len(raw) >= 2 && raw[0] == '\'' && raw[len(raw)-1] == '\'':
+					namespace = strings.ReplaceAll(raw[1:len(raw)-1], "''", "'")
+				default:
+					namespace = raw
+				}
+			}
+		}
+	}
+	if !strings.Contains(text, "system.enableDeployments:") ||
+		constraintCount != 1 ||
+		constraintValue != 64 ||
+		namespace != auxiliary {
+		t.Fatalf("generated Temporal profile did not preserve base settings plus the exact auxiliary constraint: %s", text)
+	}
+	if namespace == "pm-fixture-test" {
+		t.Fatal("generated Temporal rollover threshold also constrained the primary namespace")
+	}
+}
+
+func TestRepositoryReaderRefusesSymlinksAndFIFOsWithoutBlocking(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("FIFO and symlink controls are POSIX-only")
+	}
+	root := realTemporaryDirectory(t)
+	if err := os.WriteFile(filepath.Join(root, "regular"), []byte("selected\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("regular", filepath.Join(root, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readRepositoryRegularFile(root, "link", 1024); err == nil {
+		t.Fatal("repository reader followed a symlink")
+	}
+	if err := os.Mkdir(filepath.Join(root, "actual-directory"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(root, "actual-directory", "member"),
+		[]byte("selected\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("actual-directory", filepath.Join(root, "linked-directory")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readRepositoryRegularFile(root, filepath.Join("linked-directory", "member"), 1024); err == nil {
+		t.Fatal("repository reader followed a symlink while walking a member path")
+	}
+	if err := syscall.Mkfifo(filepath.Join(root, "fifo"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	returned := make(chan error, 1)
+	go func() {
+		_, err := readRepositoryRegularFile(root, "fifo", 1024)
+		returned <- err
+	}()
+	select {
+	case err := <-returned:
+		if err == nil {
+			t.Fatal("repository reader accepted a FIFO")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("repository reader blocked opening a FIFO")
+	}
 }
 
 func TestGeneratedCertificateBundlesVerifyProtocolIdentities(t *testing.T) {
@@ -241,6 +376,9 @@ func writeExampleConfiguration(t *testing.T, repositoryRoot string) {
 	if err := os.Mkdir(deploy, 0o700); err != nil {
 		t.Fatalf("create test deployment directory: %v", err)
 	}
+	if err := os.Mkdir(filepath.Join(deploy, "temporal"), 0o700); err != nil {
+		t.Fatalf("create test Temporal deployment directory: %v", err)
+	}
 	contents := []byte(`{
   "schema_version": "1",
   "deployment_id": "pm-development",
@@ -266,5 +404,12 @@ func writeExampleConfiguration(t *testing.T, repositoryRoot string) {
 `)
 	if err := os.WriteFile(filepath.Join(deploy, "server.example.json"), contents, 0o600); err != nil {
 		t.Fatalf("write test server example: %v", err)
+	}
+	if err := os.WriteFile(
+		filepath.Join(deploy, "temporal", "dynamicconfig.yaml"),
+		[]byte("system.enableDeployments:\n  - value: true\n    constraints: {}\n"),
+		0o600,
+	); err != nil {
+		t.Fatalf("write test Temporal dynamic config: %v", err)
 	}
 }

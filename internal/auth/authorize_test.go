@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
@@ -93,6 +94,22 @@ func TestScopeAndInboundPolicy(t *testing.T) {
 		if err != nil {
 			t.Fatalf("authorize existing alpha %s: %v", request.ResourceKind, err)
 		}
+	}
+	workerAuthorize := auth.NewResourceAuthorizer()
+	var serviceAuthorization, workerAuthorization auth.Authorization
+	if err := store.WithinScope(context.Background(), fixture.pool, fixture.alpha, ada, func(ctx context.Context, tx *store.Transaction) error {
+		var err error
+		serviceAuthorization, err = service.AuthorizeResource(ctx, tx, alphaCases[2])
+		if err != nil {
+			return err
+		}
+		workerAuthorization, err = workerAuthorize.AuthorizeResource(ctx, tx, alphaCases[2])
+		return err
+	}); err != nil {
+		t.Fatalf("compare worker-safe resource authorization: %v", err)
+	}
+	if !reflect.DeepEqual(workerAuthorization, serviceAuthorization) {
+		t.Fatalf("worker-safe authorization differed from the canonical service policy\nworker: %#v\nservice: %#v", workerAuthorization, serviceAuthorization)
 	}
 
 	// No membership conceals the sibling scope; this is not a revoked known grant.
