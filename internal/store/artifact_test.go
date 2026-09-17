@@ -25,8 +25,11 @@ func TestArtifactCrashWindows(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	connectionID := registerArtifactTestConnections(t, ctx, pool, scope, "primary")[0]
 	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		_, err := CommitManifestCAS(ctx, tx, ManifestCAS{ResourceID: "result", ExpectedRevision: 0, Object: priorVerified})
+		_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
+			ConnectionID: connectionID, ResourceID: "result", ExpectedRevision: 0, Object: priorVerified,
+		})
 		return err
 	}); err != nil {
 		t.Fatalf("commit prior manifest: %v", err)
@@ -43,12 +46,14 @@ func TestArtifactCrashWindows(t *testing.T) {
 			t.Fatal(err)
 		}
 		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			return RegisterArtifact(ctx, tx, orphan)
+			return RegisterArtifact(ctx, tx, connectionID, orphan)
 		}); err != nil {
 			t.Fatalf("register controlled orphan metadata: %v", err)
 		}
 		err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{ResourceID: "result", ExpectedRevision: 0, Object: orphan})
+			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
+				ConnectionID: connectionID, ResourceID: "result", ExpectedRevision: 0, Object: orphan,
+			})
 			return err
 		})
 		if !errors.Is(err, ErrCASConflict) {
@@ -98,10 +103,14 @@ func TestStoreManifestCommit(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
+	connectionID := registerArtifactTestConnections(t, ctx, pool, scope, "primary")[0]
+	registerArtifactTestConnections(t, ctx, pool, foreignScope, "foreign")
 	var prior Manifest
 	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
 		var err error
-		prior, err = CommitManifestCAS(ctx, tx, ManifestCAS{ResourceID: "result", ExpectedRevision: 0, Object: priorVerified})
+		prior, err = CommitManifestCAS(ctx, tx, ManifestCAS{
+			ConnectionID: connectionID, ResourceID: "result", ExpectedRevision: 0, Object: priorVerified,
+		})
 		return err
 	}); err != nil {
 		t.Fatalf("commit prior manifest: %v", err)
@@ -131,7 +140,10 @@ func TestStoreManifestCommit(t *testing.T) {
 			t.Fatal(err)
 		}
 		err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{ResourceID: "result", ExpectedRevision: prior.Revision, Object: foreignVerified})
+			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
+				ConnectionID: connectionID, ResourceID: "result",
+				ExpectedRevision: prior.Revision, Object: foreignVerified,
+			})
 			return err
 		})
 		if !errors.Is(err, ErrScopeMismatch) {
@@ -151,7 +163,10 @@ func TestStoreManifestCommit(t *testing.T) {
 
 	t.Run("cas_loss_preserves_prior_manifest", func(t *testing.T) {
 		err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{ResourceID: "result", ExpectedRevision: 0, Object: candidateVerified})
+			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
+				ConnectionID: connectionID, ResourceID: "result",
+				ExpectedRevision: 0, Object: candidateVerified,
+			})
 			return err
 		})
 		if !errors.Is(err, ErrCASConflict) {
@@ -163,7 +178,10 @@ func TestStoreManifestCommit(t *testing.T) {
 	t.Run("rollback_after_candidate_write_preserves_prior_and_orphan_metadata", func(t *testing.T) {
 		injected := errors.New("injected manifest commit loss")
 		err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			if _, err := CommitManifestCAS(ctx, tx, ManifestCAS{ResourceID: "result", ExpectedRevision: prior.Revision, Object: candidateVerified}); err != nil {
+			if _, err := CommitManifestCAS(ctx, tx, ManifestCAS{
+				ConnectionID: connectionID, ResourceID: "result",
+				ExpectedRevision: prior.Revision, Object: candidateVerified,
+			}); err != nil {
 				return err
 			}
 			return injected
@@ -182,7 +200,10 @@ func TestStoreManifestCommit(t *testing.T) {
 	})
 	t.Run("current_cas_publishes_only_the_preverified_reference", func(t *testing.T) {
 		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{ResourceID: "result", ExpectedRevision: prior.Revision, Object: candidateVerified})
+			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
+				ConnectionID: connectionID, ResourceID: "result",
+				ExpectedRevision: prior.Revision, Object: candidateVerified,
+			})
 			return err
 		}); err != nil {
 			t.Fatalf("publish verified replacement: %v", err)
@@ -200,6 +221,52 @@ func TestStoreManifestCommit(t *testing.T) {
 			t.Fatal(err)
 		}
 	})
+}
+
+func registerArtifactTestConnections(
+	t *testing.T,
+	ctx context.Context,
+	pool *Pool,
+	scope contract.Scope,
+	labels ...string,
+) []string {
+	t.Helper()
+	connectionIDs := make([]string, len(labels))
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		if err := RegisterWorkspace(ctx, tx, WorkspaceIdentity{
+			Scope: scope,
+			Name:  "artifact-workspace",
+		}); err != nil {
+			return err
+		}
+		account := ProviderAccount{
+			OrgID:          scope.OrgID,
+			AccountID:      "artifact-account",
+			Provider:       "artifact-provider",
+			AccountWitness: "artifact-account-witness",
+			Capacity:       8,
+			Revision:       1,
+		}
+		if err := RegisterProviderAccount(ctx, tx, account); err != nil {
+			return err
+		}
+		for index, label := range labels {
+			connectionIDs[index] = "artifact-connection-" + label
+			if err := RegisterConnection(ctx, tx, Connection{
+				Scope:             scope,
+				ConnectionID:      connectionIDs[index],
+				ConnectorID:       "artifact-connector",
+				ProviderAccountID: account.AccountID,
+				Revision:          1,
+			}); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("register artifact test connections: %v", err)
+	}
+	return connectionIDs
 }
 
 func testObjectRef(scope contract.Scope, artifactID, attemptKey, seed string) contract.ObjectRef {

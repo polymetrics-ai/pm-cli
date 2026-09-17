@@ -327,10 +327,10 @@ func cleanupTestScope(t *testing.T, credentials testStoreCredentials, scopes ...
 			`DELETE FROM pm.plan_bindings WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.identity_mutation_keys WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.memberships WHERE org_id = $1 AND workspace_id = $2`,
-			`DELETE FROM pm.connections WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.dispatch_attempts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.manifests WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.artifacts WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.connections WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.run_specs WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workspace_namespaces WHERE org_id = $1 AND workspace_id = $2`,
 		} {

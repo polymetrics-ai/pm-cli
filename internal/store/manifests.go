@@ -29,6 +29,9 @@ func CommitManifestCheckpoint(ctx context.Context, tx *Transaction, change Manif
 	if change.Manifest.ResourceID == "" {
 		return Checkpoint{}, errors.New("manifest identity is required")
 	}
+	if change.Manifest.ConnectionID != change.Next.ConnectionID {
+		return Checkpoint{}, ErrImmutableConflict
+	}
 	connection, err := LoadConnection(ctx, tx, change.Next.ConnectionID)
 	if err != nil {
 		return Checkpoint{}, err

@@ -772,6 +772,7 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			`DELETE FROM pm.account_permits WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.checkpoints WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.manifests WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.artifacts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.run_plan_bindings WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.approval_bindings WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.plan_bindings WHERE org_id = $1 AND workspace_id = $2`,
@@ -781,7 +782,6 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			`DELETE FROM pm.connections WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.dispatch_attempts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.run_specs WHERE org_id = $1 AND workspace_id = $2`,
-			`DELETE FROM pm.artifacts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workspace_namespaces WHERE org_id = $1 AND workspace_id = $2`,
 		} {
 			if _, err := tx.Exec(ctx, statement, owned.scope.OrgID, owned.scope.WorkspaceID); err != nil {

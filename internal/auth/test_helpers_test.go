@@ -260,12 +260,26 @@ func seedFixtureWorkspace(
 	`, scope.OrgID, scope.WorkspaceID, runID, eventID); err != nil {
 		return err
 	}
+	digest = strings.Repeat("0", 64)
 	_, err := tx.Exec(ctx, `
 		INSERT INTO pm.artifacts (
 			org_id, workspace_id, artifact_id, object_attempt_key, sha256,
-			byte_length, media_type, backend_generation, object_ref, registered_at
-		) VALUES ($1, $2, $3, $4, $5, 0, 'application/octet-stream', 'fixture-generation', '{}'::jsonb, clock_timestamp())
-	`, scope.OrgID, scope.WorkspaceID, artifactID, "attempt-"+scope.WorkspaceID, strings.Repeat("0", 64))
+			byte_length, media_type, backend_generation, connection_id, object_ref, registered_at
+		) VALUES (
+			$1, $2, $3, $4, $5, 0, 'application/octet-stream', 'fixture-generation', $6,
+			jsonb_build_object(
+				'org_id', $1::text,
+				'workspace_id', $2::text,
+				'artifact_id', $3::text,
+				'object_attempt_key', $4::text,
+				'sha256', $5::text,
+				'byte_length', 0,
+				'media_type', 'application/octet-stream',
+				'backend_generation', 'fixture-generation'
+			),
+			clock_timestamp()
+		)
+	`, scope.OrgID, scope.WorkspaceID, artifactID, "attempt-"+scope.WorkspaceID, digest, connectionID)
 	return err
 }
 
@@ -336,11 +350,11 @@ func (fixture *authFixture) cleanup(t *testing.T) {
 			`DELETE FROM pm.identity_mutation_keys WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.identity_collection_revisions WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.memberships WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.artifacts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.connections WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.server_events WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.runs WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.run_specs WHERE org_id = $1 AND workspace_id = $2`,
-			`DELETE FROM pm.artifacts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workspace_namespaces WHERE org_id = $1 AND workspace_id = $2`,
 		} {
 			arguments := []any{scope.OrgID, scope.WorkspaceID}
