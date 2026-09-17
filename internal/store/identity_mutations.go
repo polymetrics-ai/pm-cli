@@ -167,7 +167,7 @@ func BeginIdentityMutation(
 			},
 		}, nil
 	}
-	receipt, err := loadMutationReceipt(ctx, tx, key, true)
+	receipt, responseExpired, err := loadMutationReceipt(ctx, tx, key, true)
 	if err != nil {
 		return MutationBegin{}, err
 	}
@@ -176,6 +176,11 @@ func BeginIdentityMutation(
 	}
 	switch receipt.State {
 	case MutationReceiptResolved:
+		if responseExpired {
+			return MutationBegin{}, &MutationReceiptExpiredError{
+				ResultRef: receipt.ResultRef, ResultRevision: receipt.ResultRevision,
+			}
+		}
 		return MutationBegin{Receipt: receipt}, nil
 	case MutationReceiptCompacted:
 		return MutationBegin{}, &MutationReceiptExpiredError{
@@ -288,18 +293,19 @@ func CompactIdentityMutationReceipts(ctx context.Context, tx *Transaction, throu
 	return uint32(tag.RowsAffected()), nil
 }
 
-func loadMutationReceipt(ctx context.Context, tx *Transaction, key MutationReceiptKey, lock bool) (MutationReceipt, error) {
+func loadMutationReceipt(ctx context.Context, tx *Transaction, key MutationReceiptKey, lock bool) (MutationReceipt, bool, error) {
 	if err := tx.requireMatchingScope(key.Scope); err != nil {
-		return MutationReceipt{}, err
+		return MutationReceipt{}, false, err
 	}
 	if err := key.validate(); err != nil {
-		return MutationReceipt{}, err
+		return MutationReceipt{}, false, err
 	}
 	query := `
 		SELECT intent_digest, expected_revision, receipt_state,
 		       COALESCE(result_ref, ''), COALESCE(result_revision, 0),
 		       COALESCE(response_status, 0), COALESCE(safe_result, 'null'::jsonb),
-		       resolved_at, response_expires_at
+		       resolved_at, response_expires_at,
+		       COALESCE(response_expires_at <= clock_timestamp(), false)
 		FROM pm.identity_mutation_keys
 		WHERE principal_id = $1 AND operation_id = $2 AND target_id = $3 AND idempotency_key = $4
 	`
@@ -309,6 +315,7 @@ func loadMutationReceipt(ctx context.Context, tx *Transaction, key MutationRecei
 	receipt := MutationReceipt{Key: key}
 	var digest string
 	var encoded []byte
+	var responseExpired bool
 	if err := tx.queryRow(ctx, query, key.PrincipalID, key.OperationID, key.TargetID, key.IdempotencyKey).Scan(
 		&digest,
 		&receipt.IntentRevision,
@@ -319,17 +326,18 @@ func loadMutationReceipt(ctx context.Context, tx *Transaction, key MutationRecei
 		&encoded,
 		&receipt.ResolvedAt,
 		&receipt.ResponseExpiresAt,
+		&responseExpired,
 	); errors.Is(err, pgx.ErrNoRows) {
-		return MutationReceipt{}, ErrNotFound
+		return MutationReceipt{}, false, ErrNotFound
 	} else if err != nil {
-		return MutationReceipt{}, fmt.Errorf("load identity mutation receipt: %w", err)
+		return MutationReceipt{}, false, fmt.Errorf("load identity mutation receipt: %w", err)
 	}
 	receipt.IntentDigest = contract.SemanticDigest(digest)
 	if receipt.State == MutationReceiptResolved {
 		receipt.SafeResult = append(json.RawMessage(nil), encoded...)
 	}
 	normalizeReceiptTimes(&receipt)
-	return receipt, nil
+	return receipt, responseExpired, nil
 }
 
 func normalizeReceiptTimes(receipt *MutationReceipt) {
