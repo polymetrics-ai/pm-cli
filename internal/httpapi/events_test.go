@@ -245,9 +245,9 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 			t.Fatal("first committed event did not carry an opaque reconnect cursor")
 		}
 
-		// Stop consuming with a two-event application buffer, a small owned TCP
-		// receive window, and a 100 ms write bound. Allow the committed replay to
-		// reach socket backpressure before resuming reads.
+		// Stop consuming with a two-event application buffer, bounded fixture
+		// TCP send/receive buffers, and a 100 ms write bound. Bounding only the
+		// receiver lets Linux's send buffer absorb the whole replay.
 		time.Sleep(10 * eventWriteTimeout)
 		drained := make(chan error, 1)
 		go func() {

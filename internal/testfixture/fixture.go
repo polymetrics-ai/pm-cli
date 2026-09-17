@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -370,6 +371,30 @@ func (fixture *Fixture) migrate(t testing.TB) {
 	}
 }
 
+// boundedWriteListener keeps an owned loopback socket from buffering an entire
+// replay before a nonreading client can exercise the HTTP write deadline.
+// The bound is applied before TLS wraps the accepted connection.
+type boundedWriteListener struct {
+	net.Listener
+}
+
+func (listener boundedWriteListener) Accept() (net.Conn, error) {
+	connection, err := listener.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	tcpConnection, ok := connection.(*net.TCPConn)
+	if !ok {
+		_ = connection.Close()
+		return nil, errors.New("fixture listener accepted a non-TCP connection")
+	}
+	if err := tcpConnection.SetWriteBuffer(4 * 1024); err != nil {
+		_ = connection.Close()
+		return nil, fmt.Errorf("bound owned fixture TCP write buffer: %w", err)
+	}
+	return connection, nil
+}
+
 func (fixture *Fixture) open(t testing.TB) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), fixtureTimeout)
@@ -388,6 +413,7 @@ func (fixture *Fixture) open(t testing.TB) {
 	fixture.Pool = pool
 
 	server := httptest.NewUnstartedServer(http.NotFoundHandler())
+	server.Listener = boundedWriteListener{Listener: server.Listener}
 	fixture.server = server
 	origin := "https://" + server.Listener.Addr().String()
 	parsedOrigin, err := url.Parse(origin)
