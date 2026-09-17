@@ -2,14 +2,14 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "testfixture",
+    testonly = True,
     srcs = [
         "fixture.go",
+        "worker.go",
         "worker_config.go",
         "workflow.go",
-        "worker.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/testfixture",
-    testonly = True,
     visibility = ["//internal:__subpackages__"],
     deps = [
         "//internal/api",
@@ -43,6 +43,10 @@ go_test(
         "GOMEMLIMIT",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [":testfixture"],
 )

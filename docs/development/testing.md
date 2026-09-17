@@ -212,17 +212,17 @@ python3 scripts/ci/with-stack-fixture.py \
   --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
   -- python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
   ./internal/httpapi ./internal/store ./internal/server \
-  -run '^(TestScopedDurableEventRoutes|TestScopedUnavailableArtifactRoutes|TestEventWatermarkMigrationRetainedData|TestAuthenticatedApplicationDrainPreservesAcceptedRun)$' \
+  -run '^(TestScopedDurableEventRoutes|TestScopedUnavailableArtifactRoutes|TestEventWatermarkMigrationRetainedData|TestIdentityArraysUseCanonicalByteOrder|TestAuthenticatedApplicationDrainPreservesAcceptedRun)$' \
   -count=1 -timeout 10m
 ```
 
-These roots passed locally on Darwin arm64 on 2026-09-17 with the race detector and no skips. The wrapper also completed ownership-scoped fixture cleanup.
+The current slow-subscriber and composed-drain cases passed locally on Darwin arm64 with the race detector and no skips. The wrapper completed ownership-scoped fixture cleanup. Final-head Linux CI remains a separate qualification.
 
 | Boundary | Independent observation |
 | --- | --- |
 | R10 E01 C01, C08 | Foreign scopes/runs are concealed; neither `run.read` nor `event.read` alone permits event disclosure. |
 | R10 E01 C02 | A retained-history gap returns terminal run truth and a recovery cursor; later events preserve sequence and exact decimal counters without replacing that truth. |
-| R10 E01 C03 | A non-consuming reader reaches bounded closure and reconnects from its last observed committed cursor. The owned TCP send buffer is bounded before TLS, alongside the receive buffer; the 100 ms write deadline and two-event application buffer are unchanged. |
+| R10 E01 C03 | Before the client closes, the timed-out request is canceled and the real HTTP handler count reaches zero; handler return also joins its producer. The 100 ms write deadline, two-event queue and original two-second observation bound remain unchanged. An unexpired-deadline control retains one live handler. Reconnect starts at the last observed committed cursor. |
 | R10 E01 C04 | Disconnect and server drain release subscriptions without durable run cancellation. |
 | R10 E01 C05–C06 | Tampered and foreign cursors are refused; restart/cross-replica replay follows committed event order. |
 | R10 E01 C07 | Missing signing capability returns unavailability before reading event rows. |
@@ -232,13 +232,15 @@ These roots passed locally on Darwin arm64 on 2026-09-17 with the race detector 
 | Migration 0012 | New artifact bindings are scoped and immutable; downgrade refuses retained authority without discarding its binding. |
 | Composed server | Real browser authentication opens a signed SSE snapshot through the configured server; drain ends the stream while an independent database observer sees the accepted run unchanged. |
 
-The slow-reader case failed when a compiler overlay disabled only the per-frame write deadline, before the client request timeout, and passed with the production deadline. The separate permission and migration probes failed for missing `event.read` authorization, RLS-hidden backfill, and unsafe downgrade before their fixes, then passed. The corrected cancellation oracle accepts the existing HTTP 202 contract; this is not a new cancellation behavior.
+Disabling only the per-frame write deadline makes the slow-reader resource oracle fail before the client timeout, with an uncanceled request and one active handler. The same case passes with the production deadline; a separate unexpired-deadline control remains live throughout the observation window. The permission and migration probes failed for missing `event.read` authorization, RLS-hidden backfill, and unsafe downgrade before their fixes, then passed. The cancellation API check accepts the existing HTTP 202 contract; this is not a new cancellation behavior.
 
-The receive-only fixture passed locally but did not induce reliable backpressure on Linux: PR50 head `c2cf7de` passed 17 of 18 Bazel targets, including the stack target and strict cleanup, but C03 remained live. The corrected fixture also bounds accepted TCP send buffers. Its local positive control passes; disabling only the per-frame deadline still fails at the original liveness oracle before the client timeout. Linux verification must bind the corrected candidate, not the earlier local pass.
+Earlier local passes did not establish Linux resource release. [Linux diagnostic run 35260552029](https://github.com/polymetrics-ai/pm-cli/actions/runs/35260552029), at PR50 head `de141d78`, observed a roughly 100 ms socket write timeout and request cancellation, but TLS close-notify retained the handler until about 3.23 seconds. Cancellation alone therefore cannot qualify this boundary. The shared listener policy closes the timed-out raw connection beneath TLS, and the event handler cancels and joins its producer. The fixture counts actual handler entry and return rather than inferring release from `Context.Done()` or client EOF. Final Linux verification must bind the corrected candidate, not the diagnostic head or an earlier local pass.
 
 Review regressions also exercise expired identity receipts before compaction and credential-free loopback discovery through composed middleware. In a managed Chromium session, the actual credential-page assets were exercised with synthetic HTTP 500/408 responses, HTTP 403, success and transport loss. Ambiguous outcomes retain the page lock and cannot mint a second request key; authorization refusals and success release it. The field clears and browser storage remains unused. This browser fault probe does not claim a live backend commit.
 
 The corrected `auth`, `store`, `app`, `httpapi` and `server` suites passed together with the race detector, no skips and ownership-scoped cleanup. Before the shared authorization fix, restricted, revoked and unbound artifact cases returned HTTP 503 instead of concealed 404, and caller-supplied authority was accepted. The same cases pass after deriving connection authority from persisted metadata; the immutable-binding and downgrade tests pass independently.
+
+Canonical identity arrays use PostgreSQL `COLLATE "C"` to match Go's bytewise grant intersection. A real-PostgreSQL regression accepts the canonical mixed-case order under both C and English caller collations and rejects reversed byte order; it failed before the shared constraint fix and passes afterward. The original Linux auth failure exposed only a `PgError` type, so no historical SQLSTATE or particular constraint name is claimed.
 
 These are controlled local HTTP/TLS/PostgreSQL checks. They do not establish live provider effects, artifact-byte support, final-head Linux CI, cleanup of another job's fixtures, or merge.
 

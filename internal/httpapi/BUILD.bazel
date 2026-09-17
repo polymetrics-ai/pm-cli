@@ -16,6 +16,7 @@ go_library(
         "service.go",
         "service_config.go",
         "sessions.go",
+        "write_timeout_listener.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/httpapi",
     visibility = ["//visibility:public"],
@@ -48,7 +49,11 @@ go_test(
         "GOMEMLIMIT",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
         "//internal/api",
         "//internal/contract",

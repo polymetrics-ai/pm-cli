@@ -153,17 +153,26 @@ func (service *Service) StreamRunEvents(c *gin.Context) {
 	}
 	defer func() { _ = controller.SetWriteDeadline(time.Time{}) }()
 
+	producerContext, cancelProducer := context.WithCancel(c.Request.Context())
 	messages := make(chan eventStreamMessage, int(pageSize))
-	go service.produceRunEventStream(
-		c.Request.Context(),
-		state.identity.Actor,
-		scope,
-		runID,
-		after,
-		uint32(pageSize),
-		initial,
-		messages,
-	)
+	producerDone := make(chan struct{})
+	go func() {
+		defer close(producerDone)
+		service.produceRunEventStream(
+			producerContext,
+			state.identity.Actor,
+			scope,
+			runID,
+			after,
+			uint32(pageSize),
+			initial,
+			messages,
+		)
+	}()
+	defer func() {
+		cancelProducer()
+		<-producerDone
+	}()
 
 	c.Header("Content-Type", "text/event-stream; charset=utf-8")
 	c.Header("Cache-Control", "no-store")

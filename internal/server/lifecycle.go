@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/polymetrics-ai/pm-cli/internal/config"
+	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
 	"golang.org/x/net/netutil"
 )
 
@@ -142,7 +143,8 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener, handler 
 		case <-server.stopped:
 		}
 	}()
-	err := server.http.Serve(netutil.LimitListener(listener, int(server.settings.MaxConnections)))
+	transportListener := httpapi.CloseOnWriteTimeout(listener)
+	err := server.http.Serve(netutil.LimitListener(transportListener, int(server.settings.MaxConnections)))
 	server.beginDrain()
 	<-server.stopped
 	<-watchStopped

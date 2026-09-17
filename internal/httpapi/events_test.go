@@ -198,12 +198,30 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 	})
 
 	t.Run("R10_E01_C03_slow_reader_closes_with_bounds_and_reconnects", func(t *testing.T) {
-		t.Cleanup(func() {
-			t.Error("DIAGNOSTIC CAPTURE ONLY: exposing bounded transport logs from the Linux probe; not a correctness verdict")
-		})
-		for range 3 {
-			t.Run("transport_probe", func(t *testing.T) {
-				fixture := newEventFixture(t, true)
+		for _, testCase := range []struct {
+			name             string
+			writeTimeout     time.Duration
+			closedByDeadline bool
+		}{
+			{name: "selected_deadline", writeTimeout: eventWriteTimeout, closedByDeadline: true},
+			// This deadline outlives the observation window; it does not relax
+			// the selected-deadline case's 100 ms write or 2 s observation bound.
+			{name: "unexpired_deadline_control", writeTimeout: 10 * time.Second},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				subscriberContexts := make(chan context.Context, 1)
+				fixture := newEventFixture(t, true, func(_ testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
+					configuration.EventWriteTimeout = testCase.writeTimeout
+					resolveKey := configuration.ResolveEventCursorKey
+					configuration.ResolveEventCursorKey = func(ctx context.Context) ([]byte, error) {
+						select {
+						case subscriberContexts <- ctx:
+						default:
+						}
+						return resolveKey(ctx)
+					}
+					return nil
+				})
 				runID := admitEventRun(
 					t,
 					fixture,
@@ -234,8 +252,7 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 				}}
 				slowClient := fixture.ClientFor(t, fixture.Actor)
 				stream := openEventStream(t, slowClient, eventPath(fixture, fixture.Scope, runID), "", trace)
-				slowConnection := receiveConnection.Load()
-				if slowConnection == nil {
+				if receiveConnection.Load() == nil {
 					stream.close()
 					t.Fatal("slow-reader request did not configure its owned TCP receive buffer")
 				}
@@ -250,29 +267,50 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 					stream.close()
 					t.Fatal("first committed event did not carry an opaque reconnect cursor")
 				}
-
-				// Stop consuming with a two-event application buffer, bounded fixture
-				// TCP send/receive buffers, and a 100 ms write bound.
-				time.Sleep(10 * eventWriteTimeout)
-				// Backpressure has exercised the write deadline. Restore the receive
-				// window before observing EOF: Linux can otherwise spend the entire
-				// closure bound draining bytes already queued by the closed writer.
-				// Without the write deadline the stream remains live after reopening
-				// the window, so the same closure oracle must still fail.
-				if err := slowConnection.SetReadBuffer(64 * 1024); err != nil {
-					stream.close()
-					t.Fatalf("restore owned receive window for closure observation: %v", err)
-				}
-				drained := make(chan error, 1)
-				go func() {
-					_, err := io.Copy(io.Discard, stream.response.Body)
-					drained <- err
-				}()
+				var subscriberContext context.Context
 				select {
-				case <-drained:
-				case <-time.After(2 * time.Second):
+				case subscriberContext = <-subscriberContexts:
+				default:
 					stream.close()
-					t.Fatal("slow event writer remained live beyond its bounded write timeout")
+					t.Fatal("registered event handler did not expose its subscriber context")
+				}
+
+				// Stop consuming with the same two-event application buffer and
+				// bounded TCP buffers in both the deadline case and its control.
+				time.Sleep(10 * eventWriteTimeout)
+				// Cancellation alone does not release a handler blocked in TLS close.
+				// The handler joins its producer before returning; observe both its
+				// canceled request and actual return before closing the client.
+				observation := time.NewTimer(2 * time.Second)
+				defer observation.Stop()
+				poll := time.NewTicker(10 * time.Millisecond)
+				defer poll.Stop()
+				expired := false
+				for {
+					canceled := subscriberContext.Err() != nil
+					active := fixture.ActiveRequests()
+					if testCase.closedByDeadline {
+						if canceled && active == 0 {
+							break
+						}
+						if expired {
+							stream.close()
+							t.Fatalf("slow event subscriber remained live beyond its bounded write timeout: canceled=%t active_handlers=%d", canceled, active)
+						}
+					} else {
+						if canceled || active != 1 {
+							stream.close()
+							t.Fatalf("unexpired-deadline control lost its live subscriber: canceled=%t active_handlers=%d", canceled, active)
+						}
+						if expired {
+							break
+						}
+					}
+					select {
+					case <-observation.C:
+						expired = true
+					case <-poll.C:
+					}
 				}
 				stream.close()
 
@@ -289,7 +327,10 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 
 	t.Run("R10_E01_C04_disconnect_and_server_drain_release_stream_without_durable_cancellation", func(t *testing.T) {
 		draining := make(chan struct{})
-		fixture := newEventFixture(t, true, draining)
+		fixture := newEventFixture(t, true, func(_ testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
+			configuration.Draining = draining
+			return nil
+		})
 		runID := admitEventRun(
 			t,
 			fixture,
@@ -511,23 +552,22 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 	})
 }
 
-func newEventFixture(t *testing.T, signerAvailable bool, draining ...<-chan struct{}) *testfixture.Fixture {
+func newEventFixture(t *testing.T, signerAvailable bool, configure ...testfixture.ConfigureService) *testfixture.Fixture {
 	t.Helper()
-	if len(draining) > 1 {
-		t.Fatal("event fixture accepts at most one drain signal")
-	}
-	return testfixture.NewAdmitting(t, func(_ testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
+	return testfixture.NewAdmitting(t, func(dependencies testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
 		configuration.EventBufferSize = 2
 		configuration.EventWriteTimeout = eventWriteTimeout
-		if len(draining) == 1 {
-			configuration.Draining = draining[0]
-		}
 		if signerAvailable {
 			configuration.ResolveEventCursorKey = func(ctx context.Context) ([]byte, error) {
 				if ctx == nil || ctx.Err() != nil {
 					return nil, errors.New("event cursor key request is not live")
 				}
 				return bytes.Clone(eventCursorFixtureKey[:]), nil
+			}
+		}
+		for _, apply := range configure {
+			if err := apply(dependencies, configuration); err != nil {
+				return err
 			}
 		}
 		return nil

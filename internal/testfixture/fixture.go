@@ -14,7 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -90,15 +90,15 @@ type Fixture struct {
 	Client  *http.Client
 	BaseURL string
 
-	runtimeDSN           string
-	migratorDSN          string
-	configure            ConfigureService
-	server               *httptest.Server
-	transportDiagnostics *boundedTransportDiagnostics
-	sessionTokens        map[contract.Principal]string
-	clients              []*http.Client
-	seeded               bool
-	closed               bool
+	runtimeDSN     string
+	migratorDSN    string
+	configure      ConfigureService
+	server         *httptest.Server
+	activeRequests atomic.Int64
+	sessionTokens  map[contract.Principal]string
+	clients        []*http.Client
+	seeded         bool
+	closed         bool
 }
 
 // String redacts fixture database and session material.
@@ -106,6 +106,15 @@ func (*Fixture) String() string { return "authenticated PostgreSQL/Gin fixture [
 
 // GoString redacts fixture database and session material.
 func (fixture *Fixture) GoString() string { return fixture.String() }
+
+// ActiveRequests reports real HTTP handlers that have entered the fixture
+// router and have not yet returned.
+func (fixture *Fixture) ActiveRequests() int64 {
+	if fixture == nil {
+		return 0
+	}
+	return fixture.activeRequests.Load()
+}
 
 // New creates one isolated fixture. At most one optional service configurator
 // may be supplied. Its default admission service is real but truthfully has no
@@ -375,319 +384,9 @@ func (fixture *Fixture) migrate(t testing.TB) {
 
 // boundedWriteListener keeps an owned loopback socket from buffering an entire
 // replay before a nonreading client can exercise the HTTP write deadline.
-// The bound and temporary transport diagnostics are applied before TLS wraps
-// the accepted connection.
+// The bound is applied before TLS wraps the accepted connection.
 type boundedWriteListener struct {
 	net.Listener
-	diagnostics *boundedTransportDiagnostics
-}
-
-const (
-	postTimeoutDeadlineTraceLimit = 4
-	eventHandlerReturnTraceLimit  = 2
-)
-
-type boundedTransportDiagnostics struct {
-	t testing.TB
-
-	mu               sync.Mutex
-	nextConnectionID uint64
-	stopped          bool
-}
-
-type boundedTransportConnection struct {
-	*net.TCPConn
-
-	diagnostics *boundedTransportDiagnostics
-	id          uint64
-	acceptedAt  time.Time
-
-	mu                            sync.Mutex
-	writeDeadline                 time.Time
-	writeDeadlineSource           string
-	writeDeadlineSetElapsed       time.Duration
-	writeTimeoutSeen              bool
-	writeTimeoutElapsed           time.Duration
-	postTimeoutDeadlineTraces     int
-	postTimeoutDeadlineSuppressed bool
-	eventContext                  context.Context
-	eventHandlersActive           uint64
-	eventHandlerReturns           uint64
-	closeStarted                  bool
-	closeStartedElapsed           time.Duration
-	closeReturned                 bool
-	closeReturnedElapsed          time.Duration
-}
-
-type boundedTransportConnectionContextKey struct{}
-
-type netConnUnwrapper interface {
-	NetConn() net.Conn
-}
-
-func (diagnostics *boundedTransportDiagnostics) wrap(
-	connection *net.TCPConn,
-	acceptedAt time.Time,
-) net.Conn {
-	diagnostics.mu.Lock()
-	diagnostics.nextConnectionID++
-	connectionID := diagnostics.nextConnectionID
-	diagnostics.mu.Unlock()
-	return &boundedTransportConnection{
-		TCPConn:     connection,
-		diagnostics: diagnostics,
-		id:          connectionID,
-		acceptedAt:  acceptedAt,
-	}
-}
-
-func (diagnostics *boundedTransportDiagnostics) logf(format string, arguments ...any) {
-	diagnostics.mu.Lock()
-	defer diagnostics.mu.Unlock()
-	if diagnostics.stopped || diagnostics.t == nil {
-		return
-	}
-	diagnostics.t.Logf(format, arguments...)
-}
-
-func (diagnostics *boundedTransportDiagnostics) stop() {
-	diagnostics.mu.Lock()
-	diagnostics.stopped = true
-	diagnostics.t = nil
-	diagnostics.mu.Unlock()
-}
-
-func (connection *boundedTransportConnection) Write(p []byte) (int, error) {
-	written, err := connection.TCPConn.Write(p)
-	if transportWriteTimedOut(err) {
-		connection.recordFirstWriteTimeout()
-	}
-	return written, err
-}
-
-func (connection *boundedTransportConnection) SetDeadline(deadline time.Time) error {
-	err := connection.TCPConn.SetDeadline(deadline)
-	connection.recordWriteDeadline("connection", deadline, err)
-	return err
-}
-
-func (connection *boundedTransportConnection) SetWriteDeadline(deadline time.Time) error {
-	err := connection.TCPConn.SetWriteDeadline(deadline)
-	connection.recordWriteDeadline("write", deadline, err)
-	return err
-}
-
-func (connection *boundedTransportConnection) Close() error {
-	startedElapsed := time.Since(connection.acceptedAt)
-	connection.mu.Lock()
-	firstClose := !connection.closeStarted
-	if firstClose {
-		connection.closeStarted = true
-		connection.closeStartedElapsed = startedElapsed
-	}
-	connection.mu.Unlock()
-
-	err := connection.TCPConn.Close()
-	if !firstClose {
-		return err
-	}
-
-	returnedElapsed := time.Since(connection.acceptedAt)
-	connection.mu.Lock()
-	connection.closeReturned = true
-	connection.closeReturnedElapsed = returnedElapsed
-	timeoutSeen := connection.writeTimeoutSeen
-	activeHandlers := connection.eventHandlersActive
-	returnedHandlers := connection.eventHandlerReturns
-	connection.mu.Unlock()
-	if timeoutSeen || activeHandlers+returnedHandlers > 0 {
-		result := "ok"
-		if err != nil {
-			result = "error"
-		}
-		connection.diagnostics.logf(
-			"fixture transport conn=%d socket_close start_elapsed=%s return_elapsed=%s result=%s timeout_seen=%t event_handlers_active=%d event_handler_returns=%d",
-			connection.id,
-			startedElapsed,
-			returnedElapsed,
-			result,
-			timeoutSeen,
-			activeHandlers,
-			returnedHandlers,
-		)
-	}
-	return err
-}
-
-func (connection *boundedTransportConnection) recordFirstWriteTimeout() {
-	observedAt := time.Now()
-	elapsed := observedAt.Sub(connection.acceptedAt)
-	connection.mu.Lock()
-	if connection.writeTimeoutSeen {
-		connection.mu.Unlock()
-		return
-	}
-	connection.writeTimeoutSeen = true
-	connection.writeTimeoutElapsed = elapsed
-	deadline := connection.writeDeadline
-	deadlineSource := connection.writeDeadlineSource
-	deadlineSetElapsed := connection.writeDeadlineSetElapsed
-	connection.mu.Unlock()
-
-	if deadline.IsZero() {
-		connection.diagnostics.logf(
-			"fixture transport conn=%d first_write_timeout elapsed=%s active_write_deadline=false",
-			connection.id,
-			elapsed,
-		)
-		return
-	}
-	connection.diagnostics.logf(
-		"fixture transport conn=%d first_write_timeout elapsed=%s active_write_deadline=true deadline_source=%s deadline_set_elapsed=%s deadline_overrun=%s",
-		connection.id,
-		elapsed,
-		deadlineSource,
-		deadlineSetElapsed,
-		observedAt.Sub(deadline),
-	)
-}
-
-func (connection *boundedTransportConnection) recordWriteDeadline(
-	source string,
-	deadline time.Time,
-	err error,
-) {
-	elapsed := time.Since(connection.acceptedAt)
-	connection.mu.Lock()
-	if err == nil {
-		connection.writeDeadline = deadline
-		connection.writeDeadlineSource = source
-		if deadline.IsZero() {
-			connection.writeDeadlineSetElapsed = 0
-		} else {
-			connection.writeDeadlineSetElapsed = elapsed
-		}
-	}
-	requestCanceled := connection.eventContext != nil && connection.eventContext.Err() == context.Canceled
-	trace := false
-	suppressed := false
-	if connection.writeTimeoutSeen {
-		if connection.postTimeoutDeadlineTraces < postTimeoutDeadlineTraceLimit {
-			connection.postTimeoutDeadlineTraces++
-			trace = true
-		} else if !connection.postTimeoutDeadlineSuppressed {
-			connection.postTimeoutDeadlineSuppressed = true
-			suppressed = true
-		}
-	}
-	connection.mu.Unlock()
-
-	if trace {
-		result := "ok"
-		if err != nil {
-			result = "error"
-		}
-		if deadline.IsZero() {
-			connection.diagnostics.logf(
-				"fixture transport conn=%d post_timeout_deadline elapsed=%s source=%s action=clear result=%s request_canceled=%t",
-				connection.id,
-				elapsed,
-				source,
-				result,
-				requestCanceled,
-			)
-		} else {
-			connection.diagnostics.logf(
-				"fixture transport conn=%d post_timeout_deadline elapsed=%s source=%s action=set deadline_in=%s result=%s request_canceled=%t",
-				connection.id,
-				elapsed,
-				source,
-				time.Until(deadline),
-				result,
-				requestCanceled,
-			)
-		}
-	}
-	if suppressed {
-		connection.diagnostics.logf(
-			"fixture transport conn=%d additional_post_timeout_deadlines_suppressed limit=%d",
-			connection.id,
-			postTimeoutDeadlineTraceLimit,
-		)
-	}
-}
-
-func (connection *boundedTransportConnection) eventHandlerStarted(ctx context.Context) time.Time {
-	startedAt := time.Now()
-	connection.mu.Lock()
-	connection.eventContext = ctx
-	connection.eventHandlersActive++
-	connection.mu.Unlock()
-	return startedAt
-}
-
-func (connection *boundedTransportConnection) eventHandlerReturned(startedAt time.Time) {
-	elapsed := time.Since(connection.acceptedAt)
-	handlerElapsed := time.Since(startedAt)
-	connection.mu.Lock()
-	if connection.eventHandlersActive > 0 {
-		connection.eventHandlersActive--
-	}
-	connection.eventHandlerReturns++
-	returnCount := connection.eventHandlerReturns
-	timeoutSeen := connection.writeTimeoutSeen
-	timeoutElapsed := connection.writeTimeoutElapsed
-	closeStarted := connection.closeStarted
-	closeStartedElapsed := connection.closeStartedElapsed
-	closeReturned := connection.closeReturned
-	closeReturnedElapsed := connection.closeReturnedElapsed
-	connection.mu.Unlock()
-	if returnCount > eventHandlerReturnTraceLimit {
-		return
-	}
-	connection.diagnostics.logf(
-		"fixture transport conn=%d event_handler_return elapsed=%s handler_elapsed=%s timeout_seen=%t timeout_elapsed=%s close_started=%t close_start_elapsed=%s close_returned=%t close_return_elapsed=%s",
-		connection.id,
-		elapsed,
-		handlerElapsed,
-		timeoutSeen,
-		timeoutElapsed,
-		closeStarted,
-		closeStartedElapsed,
-		closeReturned,
-		closeReturnedElapsed,
-	)
-}
-
-func transportWriteTimedOut(err error) bool {
-	if err == nil {
-		return false
-	}
-	if errors.Is(err, os.ErrDeadlineExceeded) {
-		return true
-	}
-	var netErr net.Error
-	return errors.As(err, &netErr) && netErr.Timeout()
-}
-
-func boundedTransportConnectionFor(connection net.Conn) *boundedTransportConnection {
-	if traced, ok := connection.(*boundedTransportConnection); ok {
-		return traced
-	}
-	unwrapper, ok := connection.(netConnUnwrapper)
-	if !ok {
-		return nil
-	}
-	traced, _ := unwrapper.NetConn().(*boundedTransportConnection)
-	return traced
-}
-
-func boundedTransportConnectionFromContext(ctx context.Context) *boundedTransportConnection {
-	if ctx == nil {
-		return nil
-	}
-	traced, _ := ctx.Value(boundedTransportConnectionContextKey{}).(*boundedTransportConnection)
-	return traced
 }
 
 func (listener boundedWriteListener) Accept() (net.Conn, error) {
@@ -695,7 +394,6 @@ func (listener boundedWriteListener) Accept() (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
-	acceptedAt := time.Now()
 	tcpConnection, ok := connection.(*net.TCPConn)
 	if !ok {
 		_ = connection.Close()
@@ -705,10 +403,7 @@ func (listener boundedWriteListener) Accept() (net.Conn, error) {
 		_ = connection.Close()
 		return nil, fmt.Errorf("bound owned fixture TCP write buffer: %w", err)
 	}
-	if listener.diagnostics == nil {
-		return connection, nil
-	}
-	return listener.diagnostics.wrap(tcpConnection, acceptedAt), nil
+	return connection, nil
 }
 
 func (fixture *Fixture) open(t testing.TB) {
@@ -728,21 +423,11 @@ func (fixture *Fixture) open(t testing.TB) {
 	}
 	fixture.Pool = pool
 
-	transportDiagnostics := &boundedTransportDiagnostics{t: t}
 	server := httptest.NewUnstartedServer(http.NotFoundHandler())
-	server.Listener = boundedWriteListener{
-		Listener:    server.Listener,
-		diagnostics: transportDiagnostics,
-	}
-	server.Config.ConnContext = func(ctx context.Context, connection net.Conn) context.Context {
-		traced := boundedTransportConnectionFor(connection)
-		if traced == nil {
-			return ctx
-		}
-		return context.WithValue(ctx, boundedTransportConnectionContextKey{}, traced)
-	}
+	server.Listener = httpapi.CloseOnWriteTimeout(
+		boundedWriteListener{Listener: server.Listener},
+	)
 	fixture.server = server
-	fixture.transportDiagnostics = transportDiagnostics
 	origin := "https://" + server.Listener.Addr().String()
 	parsedOrigin, err := url.Parse(origin)
 	if err != nil {
@@ -857,16 +542,9 @@ func (fixture *Fixture) open(t testing.TB) {
 		t.Fatalf("register real fixture Gin routes: %v", err)
 	}
 	server.Config.Handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		traced := boundedTransportConnectionFromContext(request.Context())
-		eventStream := traced != nil && strings.Contains(request.Header.Get("Accept"), "text/event-stream")
-		var handlerStartedAt time.Time
-		if eventStream {
-			handlerStartedAt = traced.eventHandlerStarted(request.Context())
-		}
+		fixture.activeRequests.Add(1)
+		defer fixture.activeRequests.Add(-1)
 		router.ServeHTTP(writer, request)
-		if eventStream {
-			traced.eventHandlerReturned(handlerStartedAt)
-		}
 	})
 	server.StartTLS()
 	if server.URL != origin {
@@ -959,10 +637,6 @@ func (fixture *Fixture) closeHTTP() {
 		fixture.server.CloseClientConnections()
 		fixture.server.Close()
 		fixture.server = nil
-	}
-	if fixture.transportDiagnostics != nil {
-		fixture.transportDiagnostics.stop()
-		fixture.transportDiagnostics = nil
 	}
 	fixture.BaseURL = ""
 }
