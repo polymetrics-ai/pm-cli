@@ -134,13 +134,9 @@
       });
       requestBody = "";
       if (!response.ok) {
-        if (response.status >= 400 && response.status < 500) {
+        if (response.status === 401 || response.status === 403) {
           submissionLocked = false;
-          if (response.status === 401 || response.status === 403) {
-            status.textContent = "Current authorization or recent reauthentication is required.";
-          } else {
-            status.textContent = "The credential was not accepted. Check the connection, scope, and current authorization.";
-          }
+          status.textContent = "Current authorization or recent reauthentication is required.";
           return;
         }
         status.textContent = unknownOutcomeMessage;
