@@ -479,7 +479,7 @@ func testCrossScopeTaskLease(t *testing.T, ctx context.Context, pool *Pool, alph
 		Manifest: ManifestCAS{
 			ConnectionID: compositeConnectionID, ResourceID: "lease-scope-manifest", Object: verified,
 		},
-		Lease:    alphaLease,
+		Lease: alphaLease,
 	}
 	expectScopeMismatch("checkpoint", func(ctx context.Context, tx *Transaction) error {
 		_, err := CommitManifestCheckpoint(ctx, tx, checkpoint)
@@ -793,7 +793,7 @@ func testCheckpointPublication(t *testing.T, ctx context.Context, pool *Pool, fi
 			ResourceID:   "checkpoint-manifest",
 			Object:       verified,
 		},
-		Lease:    lease,
+		Lease: lease,
 	}
 	publish := func(change ManifestCheckpointCAS, afterWrite error) (Checkpoint, error) {
 		var checkpoint Checkpoint
@@ -907,8 +907,8 @@ func testCheckpointPublication(t *testing.T, ctx context.Context, pool *Pool, fi
 	assertPublished(t, second, nextObject)
 	err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
 		_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-			ConnectionID: fixture.connection.ConnectionID,
-			ResourceID:   change.Manifest.ResourceID,
+			ConnectionID:     fixture.connection.ConnectionID,
+			ResourceID:       change.Manifest.ResourceID,
 			ExpectedRevision: 2,
 			Object:           verified,
 		})

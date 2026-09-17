@@ -222,15 +222,23 @@ These roots passed locally on Darwin arm64 on 2026-09-17 with the race detector 
 | --- | --- |
 | R10 E01 C01, C08 | Foreign scopes/runs are concealed; neither `run.read` nor `event.read` alone permits event disclosure. |
 | R10 E01 C02 | A retained-history gap returns terminal run truth and a recovery cursor; later events preserve sequence and exact decimal counters without replacing that truth. |
-| R10 E01 C03 | A non-consuming reader reaches bounded closure and reconnects from its last observed committed cursor. Only the test-owned TCP receive buffer is constrained. |
+| R10 E01 C03 | A non-consuming reader reaches bounded closure and reconnects from its last observed committed cursor. The owned TCP send buffer is bounded before TLS, alongside the receive buffer; the 100 ms write deadline and two-event application buffer are unchanged. |
 | R10 E01 C04 | Disconnect and server drain release subscriptions without durable run cancellation. |
 | R10 E01 C05–C06 | Tampered and foreign cursors are refused; restart/cross-replica replay follows committed event order. |
 | R10 E01 C07 | Missing signing capability returns unavailability before reading event rows. |
 | R16 E02 C01–C03 | Unauthorized artifacts remain concealed; an absent backend fabricates neither bytes nor metadata; raw upload bodies fail at the protocol boundary. |
+| R16 E02 C04 | Inspection and download conceal artifacts whose stored connection is restricted or revoked, legacy unbound artifacts and sibling-workspace artifacts. Callers cannot supply replacement connection authority. |
 | Migration 0011 | Retained v10 events in two scopes backfill and continue their sequences; downgrade refuses a removed-tail gap without changing v11. |
+| Migration 0012 | New artifact bindings are scoped and immutable; downgrade refuses retained authority without discarding its binding. |
 | Composed server | Real browser authentication opens a signed SSE snapshot through the configured server; drain ends the stream while an independent database observer sees the accepted run unchanged. |
 
 The slow-reader case failed when a compiler overlay disabled only the per-frame write deadline, before the client request timeout, and passed with the production deadline. The separate permission and migration probes failed for missing `event.read` authorization, RLS-hidden backfill, and unsafe downgrade before their fixes, then passed. The corrected cancellation oracle accepts the existing HTTP 202 contract; this is not a new cancellation behavior.
+
+The receive-only fixture passed locally but did not induce reliable backpressure on Linux: PR50 head `c2cf7de` passed 17 of 18 Bazel targets, including the stack target and strict cleanup, but C03 remained live. The corrected fixture also bounds accepted TCP send buffers. Its local positive control passes; disabling only the per-frame deadline still fails at the original liveness oracle before the client timeout. Linux verification must bind the corrected candidate, not the earlier local pass.
+
+Review regressions also exercise expired identity receipts before compaction and credential-free loopback discovery through composed middleware. In a managed Chromium session, the actual credential-page assets were exercised with synthetic HTTP 500/408 responses, HTTP 403, success and transport loss. Ambiguous outcomes retain the page lock and cannot mint a second request key; authorization refusals and success release it. The field clears and browser storage remains unused. This browser fault probe does not claim a live backend commit.
+
+The corrected `auth`, `store`, `app`, `httpapi` and `server` suites passed together with the race detector, no skips and ownership-scoped cleanup. Before the shared authorization fix, restricted, revoked and unbound artifact cases returned HTTP 503 instead of concealed 404, and caller-supplied authority was accepted. The same cases pass after deriving connection authority from persisted metadata; the immutable-binding and downgrade tests pass independently.
 
 These are controlled local HTTP/TLS/PostgreSQL checks. They do not establish live provider effects, artifact-byte support, final-head Linux CI, cleanup of another job's fixtures, or merge.
 
