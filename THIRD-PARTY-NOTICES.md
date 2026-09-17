@@ -268,7 +268,7 @@ Locked source archive/binary hashes and installed-content hashes emitted by an S
 | `github.com/pressly/goose/v3@v3.28.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/pressly/goose/v3@v3.28.0) |
 | `github.com/prometheus/procfs@v0.22.0` | application | Apache-2.0 (`LICENSE, NOTICE`) | [source](https://pkg.go.dev/github.com/prometheus/procfs@v0.22.0) |
 | `github.com/quic-go/qpack@v0.6.0` | application | MIT (`LICENSE.md`) | [source](https://pkg.go.dev/github.com/quic-go/qpack@v0.6.0) |
-| `github.com/quic-go/quic-go@v0.59.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/quic-go/quic-go@v0.59.0) |
+| `github.com/quic-go/quic-go@v0.59.1` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/quic-go/quic-go@v0.59.1) |
 | `github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/remyoudompheng/bigfft@v0.0.0-20230129092748-24d4a6f8daec) |
 | `github.com/robfig/cron@v1.2.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/robfig/cron@v1.2.0) |
 | `github.com/rogpeppe/go-internal@v1.11.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/rogpeppe/go-internal@v1.11.0) |
