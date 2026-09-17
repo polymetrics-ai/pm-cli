@@ -209,7 +209,7 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 		)
 		seedBulkEventHistory(t, fixture, runID, 1000)
 
-		var receiveWindowConfigured atomic.Bool
+		var receiveConnection atomic.Pointer[net.TCPConn]
 		trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
 			tlsConnection, ok := info.Conn.(*tls.Conn)
 			if !ok {
@@ -225,11 +225,12 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 				t.Errorf("bound owned slow-reader receive buffer: %v", err)
 				return
 			}
-			receiveWindowConfigured.Store(true)
+			receiveConnection.Store(tcpConnection)
 		}}
 		slowClient := fixture.ClientFor(t, fixture.Actor)
 		stream := openEventStream(t, slowClient, eventPath(fixture, fixture.Scope, runID), "", trace)
-		if !receiveWindowConfigured.Load() {
+		slowConnection := receiveConnection.Load()
+		if slowConnection == nil {
 			stream.close()
 			t.Fatal("slow-reader request did not configure its owned TCP receive buffer")
 		}
@@ -246,9 +247,17 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 		}
 
 		// Stop consuming with a two-event application buffer, bounded fixture
-		// TCP send/receive buffers, and a 100 ms write bound. Bounding only the
-		// receiver lets Linux's send buffer absorb the whole replay.
+		// TCP send/receive buffers, and a 100 ms write bound.
 		time.Sleep(10 * eventWriteTimeout)
+		// Backpressure has exercised the write deadline. Restore the receive
+		// window before observing EOF: Linux can otherwise spend the entire
+		// closure bound draining bytes already queued by the closed writer.
+		// Without the write deadline the stream remains live after reopening
+		// the window, so the same closure oracle must still fail.
+		if err := slowConnection.SetReadBuffer(64 * 1024); err != nil {
+			stream.close()
+			t.Fatalf("restore owned receive window for closure observation: %v", err)
+		}
 		drained := make(chan error, 1)
 		go func() {
 			_, err := io.Copy(io.Discard, stream.response.Body)
