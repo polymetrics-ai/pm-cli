@@ -1,4 +1,4 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "stack",
@@ -18,4 +18,10 @@ go_library(
         "@io_temporal_go_sdk//client",
         "@org_golang_google_protobuf//types/known/durationpb",
     ],
+)
+
+go_test(
+    name = "identity_test",
+    srcs = ["identity_test.go"],
+    embed = [":stack"],
 )

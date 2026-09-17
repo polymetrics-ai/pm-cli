@@ -1138,6 +1138,12 @@ func (rt *runtime) composeArguments(configuration config.Configuration, argument
 }
 
 func (rt *runtime) compose(ctx context.Context, configuration config.Configuration, arguments ...string) error {
+	// Bind-mounted private files must be read as their owner in the selected
+	// daemon's user namespace. Rootless Docker maps container root to the
+	// unprivileged daemon owner, not to host root.
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return err
+	}
 	command := exec.CommandContext(ctx, "python3", rt.composeArguments(configuration, arguments...)...)
 	command.Dir = rt.root
 	command.Env = rt.composeEnvironment()
@@ -1147,6 +1153,43 @@ func (rt *runtime) compose(ctx context.Context, configuration config.Configurati
 		return fmt.Errorf("docker compose command failed: %w", err)
 	}
 	return nil
+}
+
+func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	command := exec.CommandContext(ctx, "docker", "info", "--format", "{{json .SecurityOptions}}")
+	command.Dir = rt.root
+	output, err := command.Output()
+	if err != nil {
+		return fmt.Errorf("inspect Docker user namespace: %w", err)
+	}
+	uid, gid, err := containerIdentity(output, os.Getuid(), os.Getgid())
+	if err != nil {
+		return err
+	}
+	rt.uid, rt.gid = uid, gid
+	return nil
+}
+
+func containerIdentity(output []byte, uid, gid int) (string, string, error) {
+	var options []string
+	if err := json.Unmarshal(output, &options); err != nil || options == nil {
+		return "", "", fmt.Errorf("Docker security options are invalid")
+	}
+	rootless, remapped := false, false
+	for _, option := range options {
+		name, _, _ := strings.Cut(option, ",")
+		rootless = rootless || name == "name=rootless"
+		remapped = remapped || name == "name=userns"
+	}
+	if rootless {
+		return "0", "0", nil
+	}
+	if remapped {
+		return "", "", fmt.Errorf("rootful Docker userns-remap requires an explicit bind-mount ownership mapping")
+	}
+	return strconv.Itoa(uid), strconv.Itoa(gid), nil
 }
 
 func (rt *runtime) validateCompose(ctx context.Context, configuration config.Configuration) error {
