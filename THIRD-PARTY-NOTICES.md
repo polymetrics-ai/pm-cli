@@ -13,7 +13,7 @@ This file records the third-party source identities selected by the build/toolch
 
 ## Selected Go source identities
 
-`tools/versions.json` is the machine-readable selected-direct-module policy. It pins 31 application entries and five generator/quality-tool entries: 34 unique identities because `github.com/getkin/kin-openapi@v0.149.0` and `go.yaml.in/yaml/v3@v3.0.5` are selected in both scopes. The resolved lists contain every selected pin, including DuckDB Go `v2.10505.0`, bindings `v0.10505.0`, oapi-codegen `v2.8.0`, Staticcheck `v0.8.1`, and govulncheck `v1.8.0`. The only selected forbidden identity is exactly `github.com/goreleaser/goreleaser/v2@v2.18.1`; no broader GoReleaser family policy is asserted.
+`tools/versions.json` is the machine-readable selected-direct-module policy for the application, generators, quality tools, and fixture tooling. The resolved lists contain every selected pin, including DuckDB Go `v2.10505.0`, bindings `v0.10505.0`, oapi-codegen `v2.8.0`, Staticcheck `v0.8.1`, govulncheck `v1.8.0`, and the fixture's direct `golang.org/x/sys@v0.48.0` dependency. The latter was already present in the resolved tools graph and license inventory; its descriptor-relative filesystem use now makes it an explicit selected root. The only selected forbidden identity is exactly `github.com/goreleaser/goreleaser/v2@v2.18.1`; no broader GoReleaser family policy is asserted.
 
 ## Native and external source notices
 

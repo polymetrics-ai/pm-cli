@@ -222,6 +222,12 @@
         "source_url": "https://github.com/yaml/go-yaml/tree/e16c7af9361b241fa02d91582fb59ce4954d8afc"
       },
       {
+        "path": "golang.org/x/sys",
+        "version": "v0.48.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/sys/+/613e2570718ecde85c04e69ebd5585c3881c442c"
+      },
+      {
         "path": "golang.org/x/vuln",
         "version": "v1.8.0",
         "license": "BSD-3-Clause",
