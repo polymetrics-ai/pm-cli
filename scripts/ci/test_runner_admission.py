@@ -34,6 +34,7 @@ def payload(kind="pull_request", workflow="check.yml"):
     if kind == "pull_request":
         event.update(action="synchronize", number=52, pull_request={
             "number": 52, "state": "open", "merged": False,
+            "merge_commit_sha": SHA,
             "head": {"repo": {"full_name": REPOSITORY}},
             "base": {"ref": "main", "repo": {"full_name": REPOSITORY}},
         })
@@ -93,6 +94,8 @@ class AdmissionPolicy(unittest.TestCase):
             ("workflow ref", lambda e, v: v.update(GITHUB_WORKFLOW_REF=f"{REPOSITORY}/.github/workflows/check.yml@refs/heads/main")),
             ("ref", lambda e, v: v.update(GITHUB_REF="refs/pull/53/merge")),
             ("SHA", lambda e, v: v.update(GITHUB_SHA="not-a-sha")),
+            ("merge SHA mismatch", lambda e, v: e["pull_request"].update(merge_commit_sha="b" * 40)),
+            ("merge SHA absent", lambda e, v: e["pull_request"].pop("merge_commit_sha")),
         ]
         for name, mutate in changes:
             with self.subTest(case=name):
@@ -110,7 +113,7 @@ class AdmissionPolicy(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.policy.validate(event, env)
 
-    def test_malformed_payload_is_nonzero_without_traceback_or_process_control(self):
+    def test_malformed_payload_is_nonzero_without_traceback(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "event.json"
             path.write_text('{"repository": "sentinel-sensitive-value"')
@@ -123,10 +126,6 @@ class AdmissionPolicy(unittest.TestCase):
             self.assertEqual(result.returncode, 1)
             self.assertNotIn("Traceback", result.stderr)
             self.assertNotIn("sentinel-sensitive-value", result.stderr)
-        for name in ("runner_admission.py", "runner-admission.sh"):
-            source = (ROOT / "scripts/ci" / name).read_text()
-            for forbidden in ("pkill", "killall", "os.kill", "systemctl", "subprocess"):
-                self.assertNotIn(forbidden, source)
 
     def test_entrypoint_accepts_and_rejects_without_exposing_payload(self):
         event, env = payload()

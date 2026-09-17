@@ -35,6 +35,7 @@ def validate(event, env):
             require(type(pr["number"]) is int and pr["number"] == number)
             require(event["action"] in ("opened", "synchronize", "reopened", "edited"))
             require(pr["state"] == "open" and pr["merged"] is False)
+            require(pr["merge_commit_sha"] == sha)
             require(pr["head"]["repo"]["full_name"] == REPOSITORY)
             require(pr["base"]["repo"]["full_name"] == REPOSITORY)
             require(pr["base"]["ref"] == "main")

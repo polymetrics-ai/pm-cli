@@ -41,10 +41,13 @@ shellcheck --shell=sh scripts/ci/runner-admission.sh
 ```
 
 For an authorized host update: verify runner identity and idle state; preserve
-the current root-owned wrapper and its hash; install the reviewed policy first,
-then atomically replace the wrapper; compare installed hashes and ownership.
+the current root-owned wrapper and its hash; install the reviewed policy first
+as root:root mode 0644, then atomically replace the executable wrapper as
+root:root mode 0755; compare installed hashes, ownership and modes.
 Retain the existing confinement and Docker/network setup. Verify accepted and
-rejected synthetic events under the runner identity, then a real PR job. A
+rejected synthetic events under the runner identity and independently confirm
+that the listener PID, service restart count and Docker process survive refusal,
+then exercise a real PR job. Synthetic admission is not live workflow proof. A
 rollback restores the exact saved files only after stopping new admissions
 through the runner's normal service lifecycle, not UID-wide signals. Do not
 automatically restore a known listener-killing hook.
