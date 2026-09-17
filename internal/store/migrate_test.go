@@ -16,6 +16,42 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
+func TestIdentityArraysUseCanonicalByteOrder(t *testing.T) {
+	credentials := loadTestStoreCredentials(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatalf("establish identity ordering schema: %T", err)
+	}
+	connection, err := pgx.Connect(ctx, credentials.migratorDSN)
+	if err != nil {
+		t.Fatalf("connect identity ordering fixture: %T", err)
+	}
+	defer func() {
+		cleanupCtx, cleanupCancel := detachedCleanupContext()
+		defer cleanupCancel()
+		if err := connection.Close(cleanupCtx); err != nil {
+			t.Errorf("close identity ordering fixture: %T", err)
+		}
+	}()
+
+	var canonicalC, canonicalEnglish, reversedEnglish bool
+	err = connection.QueryRow(ctx, `
+		SELECT pm.text_array_is_strictly_sorted(ARRAY['Z', 'a'] COLLATE "C"),
+		       pm.text_array_is_strictly_sorted(ARRAY['Z', 'a'] COLLATE "en-US-x-icu"),
+		       pm.text_array_is_strictly_sorted(ARRAY['a', 'Z'] COLLATE "en-US-x-icu")
+	`).Scan(&canonicalC, &canonicalEnglish, &reversedEnglish)
+	if err != nil {
+		t.Fatalf("evaluate identity ordering under explicit collations: %T", err)
+	}
+	if !canonicalC || !canonicalEnglish || reversedEnglish {
+		t.Fatalf(
+			"identity byte ordering: canonical C=%t English=%t, reversed English=%t; want true/true/false",
+			canonicalC, canonicalEnglish, reversedEnglish,
+		)
+	}
+}
+
 func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 	credentials := loadTestStoreCredentials(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)

@@ -40,7 +40,8 @@ AS $$
            SELECT 1
            FROM unnest($1) WITH ORDINALITY AS item(value, position)
            WHERE item.position > 1
-             AND item.value <= $1[(item.position - 1)::integer]
+             -- Grant intersection uses Go's bytewise ordering, not caller locale.
+             AND item.value COLLATE "C" <= $1[(item.position - 1)::integer]
        )
 $$;
 REVOKE ALL ON FUNCTION pm.text_array_is_strictly_sorted(text[]) FROM PUBLIC, pm_app_runtime;

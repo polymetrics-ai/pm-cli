@@ -201,86 +201,90 @@ func TestScopedDurableEventRoutes(t *testing.T) {
 		t.Cleanup(func() {
 			t.Error("DIAGNOSTIC CAPTURE ONLY: exposing bounded transport logs from the Linux probe; not a correctness verdict")
 		})
-		fixture := newEventFixture(t, true)
-		runID := admitEventRun(
-			t,
-			fixture,
-			fixture.Client,
-			fixture.Scope,
-			fixture.Connection.ConnectionID,
-			"event-slow-reader",
-		)
-		seedBulkEventHistory(t, fixture, runID, 1000)
+		for range 3 {
+			t.Run("transport_probe", func(t *testing.T) {
+				fixture := newEventFixture(t, true)
+				runID := admitEventRun(
+					t,
+					fixture,
+					fixture.Client,
+					fixture.Scope,
+					fixture.Connection.ConnectionID,
+					"event-slow-reader",
+				)
+				seedBulkEventHistory(t, fixture, runID, 1000)
 
-		var receiveConnection atomic.Pointer[net.TCPConn]
-		trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
-			tlsConnection, ok := info.Conn.(*tls.Conn)
-			if !ok {
-				t.Errorf("slow-reader connection is %T, want TLS", info.Conn)
-				return
-			}
-			tcpConnection, ok := tlsConnection.NetConn().(*net.TCPConn)
-			if !ok {
-				t.Errorf("slow-reader underlying connection is %T, want TCP", tlsConnection.NetConn())
-				return
-			}
-			if err := tcpConnection.SetReadBuffer(1024); err != nil {
-				t.Errorf("bound owned slow-reader receive buffer: %v", err)
-				return
-			}
-			receiveConnection.Store(tcpConnection)
-		}}
-		slowClient := fixture.ClientFor(t, fixture.Actor)
-		stream := openEventStream(t, slowClient, eventPath(fixture, fixture.Scope, runID), "", trace)
-		slowConnection := receiveConnection.Load()
-		if slowConnection == nil {
-			stream.close()
-			t.Fatal("slow-reader request did not configure its owned TCP receive buffer")
-		}
-		snapshot := requireEventSnapshot(t, stream.next(t))
-		if snapshot.WatermarkSequence != "1001" || snapshot.RetentionGap {
-			stream.close()
-			t.Fatalf("slow-reader snapshot = %#v; want complete watermark without a gap", snapshot)
-		}
-		first := stream.next(t)
-		requireRunEvent(t, first, runID, 1, 1, "run_accepted")
-		if first.ID == "" {
-			stream.close()
-			t.Fatal("first committed event did not carry an opaque reconnect cursor")
-		}
+				var receiveConnection atomic.Pointer[net.TCPConn]
+				trace := &httptrace.ClientTrace{GotConn: func(info httptrace.GotConnInfo) {
+					tlsConnection, ok := info.Conn.(*tls.Conn)
+					if !ok {
+						t.Errorf("slow-reader connection is %T, want TLS", info.Conn)
+						return
+					}
+					tcpConnection, ok := tlsConnection.NetConn().(*net.TCPConn)
+					if !ok {
+						t.Errorf("slow-reader underlying connection is %T, want TCP", tlsConnection.NetConn())
+						return
+					}
+					if err := tcpConnection.SetReadBuffer(1024); err != nil {
+						t.Errorf("bound owned slow-reader receive buffer: %v", err)
+						return
+					}
+					receiveConnection.Store(tcpConnection)
+				}}
+				slowClient := fixture.ClientFor(t, fixture.Actor)
+				stream := openEventStream(t, slowClient, eventPath(fixture, fixture.Scope, runID), "", trace)
+				slowConnection := receiveConnection.Load()
+				if slowConnection == nil {
+					stream.close()
+					t.Fatal("slow-reader request did not configure its owned TCP receive buffer")
+				}
+				snapshot := requireEventSnapshot(t, stream.next(t))
+				if snapshot.WatermarkSequence != "1001" || snapshot.RetentionGap {
+					stream.close()
+					t.Fatalf("slow-reader snapshot = %#v; want complete watermark without a gap", snapshot)
+				}
+				first := stream.next(t)
+				requireRunEvent(t, first, runID, 1, 1, "run_accepted")
+				if first.ID == "" {
+					stream.close()
+					t.Fatal("first committed event did not carry an opaque reconnect cursor")
+				}
 
-		// Stop consuming with a two-event application buffer, bounded fixture
-		// TCP send/receive buffers, and a 100 ms write bound.
-		time.Sleep(10 * eventWriteTimeout)
-		// Backpressure has exercised the write deadline. Restore the receive
-		// window before observing EOF: Linux can otherwise spend the entire
-		// closure bound draining bytes already queued by the closed writer.
-		// Without the write deadline the stream remains live after reopening
-		// the window, so the same closure oracle must still fail.
-		if err := slowConnection.SetReadBuffer(64 * 1024); err != nil {
-			stream.close()
-			t.Fatalf("restore owned receive window for closure observation: %v", err)
-		}
-		drained := make(chan error, 1)
-		go func() {
-			_, err := io.Copy(io.Discard, stream.response.Body)
-			drained <- err
-		}()
-		select {
-		case <-drained:
-		case <-time.After(2 * time.Second):
-			stream.close()
-			t.Fatal("slow event writer remained live beyond its bounded write timeout")
-		}
-		stream.close()
+				// Stop consuming with a two-event application buffer, bounded fixture
+				// TCP send/receive buffers, and a 100 ms write bound.
+				time.Sleep(10 * eventWriteTimeout)
+				// Backpressure has exercised the write deadline. Restore the receive
+				// window before observing EOF: Linux can otherwise spend the entire
+				// closure bound draining bytes already queued by the closed writer.
+				// Without the write deadline the stream remains live after reopening
+				// the window, so the same closure oracle must still fail.
+				if err := slowConnection.SetReadBuffer(64 * 1024); err != nil {
+					stream.close()
+					t.Fatalf("restore owned receive window for closure observation: %v", err)
+				}
+				drained := make(chan error, 1)
+				go func() {
+					_, err := io.Copy(io.Discard, stream.response.Body)
+					drained <- err
+				}()
+				select {
+				case <-drained:
+				case <-time.After(2 * time.Second):
+					stream.close()
+					t.Fatal("slow event writer remained live beyond its bounded write timeout")
+				}
+				stream.close()
 
-		reconnected := openEventStream(t, fixture.Client, eventPath(fixture, fixture.Scope, runID), first.ID)
-		defer reconnected.close()
-		reconnectSnapshot := requireEventSnapshot(t, reconnected.next(t))
-		if reconnectSnapshot.WatermarkSequence != "1001" || reconnectSnapshot.RetentionGap {
-			t.Fatalf("reconnect snapshot = %#v; want the same durable watermark", reconnectSnapshot)
+				reconnected := openEventStream(t, fixture.Client, eventPath(fixture, fixture.Scope, runID), first.ID)
+				defer reconnected.close()
+				reconnectSnapshot := requireEventSnapshot(t, reconnected.next(t))
+				if reconnectSnapshot.WatermarkSequence != "1001" || reconnectSnapshot.RetentionGap {
+					t.Fatalf("reconnect snapshot = %#v; want the same durable watermark", reconnectSnapshot)
+				}
+				requireRunEvent(t, reconnected.next(t), runID, 2, 1, "fixture_bulk_committed")
+			})
 		}
-		requireRunEvent(t, reconnected.next(t), runID, 2, 1, "fixture_bulk_committed")
 	})
 
 	t.Run("R10_E01_C04_disconnect_and_server_drain_release_stream_without_durable_cancellation", func(t *testing.T) {
