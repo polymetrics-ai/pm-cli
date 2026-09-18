@@ -44,20 +44,24 @@ func Execute(ctx context.Context, options Options) int {
 	}
 
 	command, runtime := newRoot(options)
-	if options.Catalog == nil && dynamicCommandCandidate(command, options.Args) {
-		prepared, err := prepareDynamicCatalog(ctx, options)
-		if err != nil {
-			code, message := classifyCommandError(err)
-			fmt.Fprintf(stderr, "error: %s\n", message)
-			return code
-		}
-		runtime.options = prepared
-		invoke := prepared.DynamicInvoke
-		if invoke == nil {
-			invoke = runtime.invokeDynamic
-		}
-		if err := BuildCommandTree(command, *prepared.Catalog, invoke); err != nil {
-			command.PersistentPreRunE = func(*cobra.Command, []string) error { return err }
+	if options.Catalog == nil {
+		if dynamicCommandCandidate(command, options.Args) {
+			prepared, err := prepareDynamicCatalog(ctx, options)
+			if err != nil {
+				code, message := classifyCommandError(err)
+				fmt.Fprintf(stderr, "error: %s\n", message)
+				return code
+			}
+			runtime.options = prepared
+			invoke := prepared.DynamicInvoke
+			if invoke == nil {
+				invoke = runtime.invokeDynamic
+			}
+			if err := BuildCommandTree(command, *prepared.Catalog, invoke); err != nil {
+				command.PersistentPreRunE = func(*cobra.Command, []string) error { return err }
+			}
+		} else if offlineDocumentationCandidate(command, options.Args) {
+			projectOfflineCatalog(command, options)
 		}
 	}
 	if err := command.ExecuteContext(ctx); err != nil {

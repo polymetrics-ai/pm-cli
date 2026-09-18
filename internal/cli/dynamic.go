@@ -2,10 +2,14 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -71,6 +75,7 @@ func BuildCommandTree(root *cobra.Command, snapshot pmapi.CatalogSnapshot, invok
 			used[alias] = struct{}{}
 		}
 	}
+	projected := make([]*cobra.Command, 0, len(snapshot.Commands))
 	for _, source := range snapshot.Commands {
 		descriptor := source
 		if err := validateDescriptorForTree(snapshot.Binding, descriptor); err != nil {
@@ -79,20 +84,26 @@ func BuildCommandTree(root *cobra.Command, snapshot pmapi.CatalogSnapshot, invok
 		if len(descriptor.AvailableLanes) == 0 {
 			continue
 		}
-		for _, name := range append([]string{descriptor.Name}, descriptor.Aliases...) {
-			if _, collision := used[name]; collision {
-				return fmt.Errorf("%w: generated command name or alias %q collides with the executable tree", errUsage, name)
+		if _, collision := used[descriptor.Name]; collision {
+			return fmt.Errorf("%w: generated command name or alias %q collides with the executable tree", errUsage, descriptor.Name)
+		}
+		for _, alias := range descriptor.Aliases {
+			if _, collision := used[alias]; collision {
+				return fmt.Errorf("%w: generated command name or alias %q collides with the executable tree", errUsage, alias)
 			}
 		}
 		command, err := projectedCommand(snapshot.Binding, descriptor, invoke)
 		if err != nil {
 			return err
 		}
-		root.AddCommand(command)
+		projected = append(projected, command)
 		used[descriptor.Name] = struct{}{}
 		for _, alias := range descriptor.Aliases {
 			used[alias] = struct{}{}
 		}
+	}
+	if len(projected) != 0 {
+		root.AddCommand(projected...)
 	}
 	return nil
 }
@@ -471,6 +482,13 @@ func prepareDynamicCatalog(ctx context.Context, options Options) (Options, error
 	if err != nil {
 		return options, err
 	}
+	if err := storeCatalogProjection(options, config.profile, snapshot); err != nil {
+		writer := options.Stderr
+		if writer == nil {
+			writer = io.Discard
+		}
+		_, _ = fmt.Fprintln(writer, "notice: fresh catalog was qualified, but its offline documentation projection could not be stored safely")
+	}
 	options.Catalog = &snapshot
 	options.CatalogCache = cache
 	options.prepared = &preparedCatalog{bundle: bundle}
@@ -481,38 +499,48 @@ func dynamicCommandCandidate(root *cobra.Command, arguments []string) bool {
 	if root == nil {
 		return false
 	}
-	for _, token := range arguments {
-		present, enabled, valid := explicitHelpFlag(token)
-		if present && (!valid || enabled) {
-			return false
-		}
+	scan, err := scanBoundedArguments(arguments, nil)
+	if err != nil || scan.helpEnabled || scan.helpInvalid || len(scan.positionals) == 0 {
+		return false
 	}
-	for index := 0; index < len(arguments); index++ {
-		token := arguments[index]
-		if present, _, _ := explicitHelpFlag(token); present {
-			continue
-		}
-		_, inline, kind, recognized := rootControlToken(token)
-		if recognized {
-			if inline == nil && kind == "string" {
-				index++
-			}
-			continue
-		}
-		if strings.HasPrefix(token, "-") || token == "help" {
-			return false
-		}
-		for _, command := range root.Commands() {
-			if token == command.Name() {
-				return false
-			}
-			for _, alias := range command.Aliases {
-				if token == alias {
-					return false
-				}
-			}
-		}
+	name := scan.positionals[0]
+	return name != "help" && !rootCommandNamed(root, name)
+}
+
+func offlineDocumentationCandidate(root *cobra.Command, arguments []string) bool {
+	if root == nil {
+		return false
+	}
+	scan, err := scanBoundedArguments(arguments, nil)
+	if err != nil || scan.helpInvalid {
+		return false
+	}
+	if len(scan.positionals) == 0 {
+		return scan.helpEnabled
+	}
+	switch scan.positionals[0] {
+	case "manual", "completion":
 		return true
+	case "help":
+		if len(scan.positionals) == 1 {
+			return true
+		}
+		return !rootCommandNamed(root, scan.positionals[1])
+	default:
+		return scan.helpEnabled && !rootCommandNamed(root, scan.positionals[0])
+	}
+}
+
+func rootCommandNamed(root *cobra.Command, name string) bool {
+	for _, command := range root.Commands() {
+		if name == command.Name() {
+			return true
+		}
+		for _, alias := range command.Aliases {
+			if name == alias {
+				return true
+			}
+		}
 	}
 	return false
 }
@@ -535,40 +563,13 @@ func applyBootstrapFlags(arguments []string, flags *rootFlags) error {
 	if flags == nil {
 		return errUsage
 	}
-	for index := 0; index < len(arguments); index++ {
-		token := arguments[index]
-		if token == "--" {
-			return nil
-		}
-		name, inline, kind, recognized := rootControlToken(token)
-		if !recognized {
-			continue
-		}
+	_, err := scanBoundedArguments(arguments, func(name, kind, value string) error {
 		if kind == "bool" {
-			value := "true"
-			if inline != nil {
-				value = *inline
-			}
-			if err := setBootstrapBool(flags, name, value); err != nil {
-				return err
-			}
-			continue
+			return setBootstrapBool(flags, name, value)
 		}
-		var value string
-		if inline != nil {
-			value = *inline
-		} else {
-			if index+1 >= len(arguments) || arguments[index+1] == "" || strings.HasPrefix(arguments[index+1], "--") {
-				return fmt.Errorf("%w: --%s requires one bounded non-empty value", errUsage, name)
-			}
-			index++
-			value = arguments[index]
-		}
-		if err := setBootstrapString(flags, name, value); err != nil {
-			return err
-		}
-	}
-	return nil
+		return setBootstrapString(flags, name, value)
+	})
+	return err
 }
 
 func rootControlToken(token string) (string, *string, string, bool) {
@@ -627,6 +628,309 @@ func setBootstrapBool(flags *rootFlags, name, value string) error {
 	}
 	target.name = name
 	return target.Set(value)
+}
+
+const (
+	catalogProjectionSchemaVersion = "pm.cli-catalog-projection/v1"
+	catalogProjectionDirectory     = "catalog-projections"
+	maximumCatalogProjectionBytes  = contract.MaxContractDocumentBytes
+)
+
+// A persisted projection is always stale: only fresh server qualification can
+// establish execution authority. Its full binding is retained solely to make
+// offline command documentation explicit and auditable.
+type catalogProjectionStatus string
+
+const (
+	catalogProjectionMissing catalogProjectionStatus = "missing"
+	catalogProjectionStale   catalogProjectionStatus = "stale"
+	catalogProjectionCorrupt catalogProjectionStatus = "corrupt"
+	catalogProjectionForeign catalogProjectionStatus = "foreign"
+)
+
+type catalogProjectionWire struct {
+	SchemaVersion    string                    `json:"schema_version"`
+	ProfileName      string                    `json:"profile_name"`
+	ServerURL        string                    `json:"server_url"`
+	SessionHandle    string                    `json:"session_handle"`
+	ServerInstanceID string                    `json:"server_instance_id"`
+	Principal        pmapi.Principal           `json:"principal"`
+	WorkspaceID      pmapi.WorkspaceID         `json:"workspace_id"`
+	ConnectionID     string                    `json:"connection_id"`
+	CatalogRevision  string                    `json:"catalog_revision"`
+	Commands         []pmapi.CommandDescriptor `json:"commands"`
+}
+
+type offlineCatalogProjection struct {
+	snapshot *pmapi.CatalogSnapshot
+	status   catalogProjectionStatus
+}
+
+func projectOfflineCatalog(root *cobra.Command, options Options) {
+	projection := loadOfflineCatalogProjection(options)
+	if projection.snapshot != nil {
+		err := BuildCommandTree(root, *projection.snapshot, func(context.Context, DynamicInvocation) error {
+			return usageFailure(errors.New("cached catalog metadata cannot authorize execution"))
+		})
+		if err != nil {
+			projection = offlineCatalogProjection{status: catalogProjectionCorrupt}
+		}
+	}
+	reportOfflineCatalogProjection(options.Stderr, projection)
+}
+
+func reportOfflineCatalogProjection(writer io.Writer, projection offlineCatalogProjection) {
+	if writer == nil {
+		writer = io.Discard
+	}
+	switch projection.status {
+	case catalogProjectionStale:
+		binding := projection.snapshot.Binding
+		_, _ = fmt.Fprintf(
+			writer,
+			"notice: generated documentation uses cached catalog revision %s bound to principal %s/%s; cached metadata is stale until server revalidation and is not current execution authority\n",
+			binding.CatalogRevision,
+			binding.Principal.Kind,
+			binding.Principal.PrincipalId,
+		)
+	case catalogProjectionCorrupt:
+		_, _ = fmt.Fprintln(writer, "notice: generated command metadata is unavailable because the scoped cached catalog projection is corrupt or unsafe")
+	case catalogProjectionForeign:
+		_, _ = fmt.Fprintln(writer, "notice: generated command metadata is unavailable because the cached projection does not match the explicit server, profile, workspace, and connection")
+	default:
+		_, _ = fmt.Fprintln(writer, "notice: generated command metadata is unavailable because no matching scoped cached catalog projection was selected")
+	}
+}
+
+func loadOfflineCatalogProjection(options Options) offlineCatalogProjection {
+	selectors, err := ParseSelectors(options.Args)
+	if err != nil || selectors.ServerProfile == "" || selectors.Workspace == "" || selectors.Connection == "" {
+		return offlineCatalogProjection{status: catalogProjectionMissing}
+	}
+	profilesPath, err := catalogProfilesPath(options)
+	if err != nil {
+		return offlineCatalogProjection{status: catalogProjectionMissing}
+	}
+	profile, err := pmapi.LoadServerProfile(profilesPath, selectors.ServerProfile)
+	if err != nil {
+		return offlineCatalogProjection{status: catalogProjectionMissing}
+	}
+	path, err := catalogProjectionPath(
+		profilesPath,
+		profile,
+		pmapi.WorkspaceID(selectors.Workspace),
+		selectors.Connection,
+	)
+	if err != nil {
+		return offlineCatalogProjection{status: catalogProjectionMissing}
+	}
+	wire, status := readCatalogProjection(path)
+	if status != catalogProjectionStale {
+		return offlineCatalogProjection{status: status}
+	}
+	if wire.ProfileName != profile.Name || wire.ServerURL != profile.ServerURL ||
+		wire.SessionHandle != profile.SessionHandle || wire.ServerInstanceID != profile.InstanceID ||
+		wire.WorkspaceID != pmapi.WorkspaceID(selectors.Workspace) || wire.ConnectionID != selectors.Connection {
+		return offlineCatalogProjection{status: catalogProjectionForeign}
+	}
+	snapshot := pmapi.CatalogSnapshot{
+		Binding: pmapi.CatalogBinding{
+			ServerInstanceID: wire.ServerInstanceID,
+			Principal:        wire.Principal,
+			WorkspaceID:      wire.WorkspaceID,
+			ConnectionID:     wire.ConnectionID,
+			CatalogRevision:  wire.CatalogRevision,
+		},
+		Commands: wire.Commands,
+	}
+	copy, err := validatedCatalogProjectionSnapshot(snapshot)
+	if err != nil {
+		return offlineCatalogProjection{status: catalogProjectionCorrupt}
+	}
+	return offlineCatalogProjection{snapshot: &copy, status: catalogProjectionStale}
+}
+
+func storeCatalogProjection(options Options, profile pmapi.ServerProfile, snapshot pmapi.CatalogSnapshot) error {
+	copy, err := validatedCatalogProjectionSnapshot(snapshot)
+	if err != nil || copy.Binding.ServerInstanceID != profile.InstanceID {
+		return pmapi.ErrCatalogEnvelope
+	}
+	profilesPath, err := catalogProfilesPath(options)
+	if err != nil {
+		return err
+	}
+	path, err := catalogProjectionPath(profilesPath, profile, copy.Binding.WorkspaceID, copy.Binding.ConnectionID)
+	if err != nil {
+		return err
+	}
+	wire := catalogProjectionWire{
+		SchemaVersion:    catalogProjectionSchemaVersion,
+		ProfileName:      profile.Name,
+		ServerURL:        profile.ServerURL,
+		SessionHandle:    profile.SessionHandle,
+		ServerInstanceID: copy.Binding.ServerInstanceID,
+		Principal:        copy.Binding.Principal,
+		WorkspaceID:      copy.Binding.WorkspaceID,
+		ConnectionID:     copy.Binding.ConnectionID,
+		CatalogRevision:  copy.Binding.CatalogRevision,
+		Commands:         copy.Commands,
+	}
+	document, err := json.Marshal(wire)
+	if err != nil || len(document)+1 > maximumCatalogProjectionBytes {
+		return pmapi.ErrCatalogEnvelope
+	}
+	document = append(document, '\n')
+	return writeCatalogProjection(path, document)
+}
+
+func validatedCatalogProjectionSnapshot(snapshot pmapi.CatalogSnapshot) (pmapi.CatalogSnapshot, error) {
+	cache := pmapi.NewCatalogCache()
+	if err := cache.Store(snapshot); err != nil {
+		return pmapi.CatalogSnapshot{}, err
+	}
+	copy, present := cache.Load(snapshot.Binding)
+	if !present {
+		return pmapi.CatalogSnapshot{}, pmapi.ErrCatalogEnvelope
+	}
+	return copy, nil
+}
+
+func catalogProfilesPath(options Options) (string, error) {
+	path := options.ProfilesPath
+	if path == "" {
+		var err error
+		path, err = pmapi.DefaultProfilesPath()
+		if err != nil {
+			return "", err
+		}
+	}
+	if !filepath.IsAbs(path) {
+		return "", errors.New("catalog projection requires an absolute profile path")
+	}
+	return filepath.Clean(path), nil
+}
+
+func catalogProjectionPath(
+	profilesPath string,
+	profile pmapi.ServerProfile,
+	workspaceID pmapi.WorkspaceID,
+	connectionID string,
+) (string, error) {
+	if profilesPath == "" || !filepath.IsAbs(profilesPath) || profile.Name == "" ||
+		profile.ServerURL == "" || profile.InstanceID == "" || profile.SessionHandle == "" ||
+		!boundedIdentity(string(workspaceID), 512) || !boundedIdentity(connectionID, 512) {
+		return "", pmapi.ErrCatalogEnvelope
+	}
+	digest := sha256.New()
+	for _, part := range []string{
+		catalogProjectionSchemaVersion,
+		profile.Name,
+		profile.ServerURL,
+		profile.InstanceID,
+		profile.SessionHandle,
+		string(workspaceID),
+		connectionID,
+	} {
+		_, _ = io.WriteString(digest, part)
+		_, _ = digest.Write([]byte{0})
+	}
+	name := hex.EncodeToString(digest.Sum(nil)) + ".json"
+	return filepath.Join(filepath.Dir(profilesPath), catalogProjectionDirectory, name), nil
+}
+
+func readCatalogProjection(path string) (catalogProjectionWire, catalogProjectionStatus) {
+	directoryInformation, directoryErr := os.Lstat(filepath.Dir(path))
+	if errors.Is(directoryErr, os.ErrNotExist) {
+		return catalogProjectionWire{}, catalogProjectionMissing
+	}
+	if directoryErr != nil || directoryInformation.Mode()&os.ModeSymlink != 0 ||
+		!directoryInformation.IsDir() || directoryInformation.Mode().Perm()&0o077 != 0 {
+		return catalogProjectionWire{}, catalogProjectionCorrupt
+	}
+	information, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return catalogProjectionWire{}, catalogProjectionMissing
+	}
+	if err != nil || information.Mode()&os.ModeSymlink != 0 || !information.Mode().IsRegular() ||
+		information.Mode().Perm()&0o077 != 0 || information.Size() <= 0 ||
+		information.Size() > int64(maximumCatalogProjectionBytes) {
+		return catalogProjectionWire{}, catalogProjectionCorrupt
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return catalogProjectionWire{}, catalogProjectionCorrupt
+	}
+	defer file.Close()
+	document, err := io.ReadAll(io.LimitReader(file, int64(maximumCatalogProjectionBytes)+1))
+	if err != nil || len(document) == 0 || len(document) > maximumCatalogProjectionBytes {
+		return catalogProjectionWire{}, catalogProjectionCorrupt
+	}
+	var wire catalogProjectionWire
+	if err := contract.DecodeStrictRequiredObject(
+		document,
+		&wire,
+		"schema_version",
+		"profile_name",
+		"server_url",
+		"session_handle",
+		"server_instance_id",
+		"principal",
+		"workspace_id",
+		"connection_id",
+		"catalog_revision",
+		"commands",
+	); err != nil || wire.SchemaVersion != catalogProjectionSchemaVersion {
+		return catalogProjectionWire{}, catalogProjectionCorrupt
+	}
+	return wire, catalogProjectionStale
+}
+
+func writeCatalogProjection(path string, document []byte) error {
+	if path == "" || !filepath.IsAbs(path) || len(document) == 0 || len(document) > maximumCatalogProjectionBytes {
+		return errors.New("catalog projection destination is invalid")
+	}
+	directory := filepath.Dir(path)
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		return errors.New("catalog projection directory is unavailable")
+	}
+	information, err := os.Lstat(directory)
+	if err != nil || information.Mode()&os.ModeSymlink != 0 || !information.IsDir() ||
+		information.Mode().Perm()&0o077 != 0 {
+		return errors.New("catalog projection directory is unsafe")
+	}
+	if information, err := os.Lstat(path); err == nil {
+		if information.Mode()&os.ModeSymlink != 0 || !information.Mode().IsRegular() ||
+			information.Mode().Perm()&0o077 != 0 {
+			return errors.New("existing catalog projection is unsafe")
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return errors.New("catalog projection destination is unavailable")
+	}
+	temporary, err := os.CreateTemp(directory, ".catalog-*")
+	if err != nil {
+		return errors.New("catalog projection temporary file is unavailable")
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if err := temporary.Chmod(0o600); err != nil {
+		temporary.Close()
+		return errors.New("catalog projection permissions could not be set")
+	}
+	if _, err := temporary.Write(document); err != nil {
+		temporary.Close()
+		return errors.New("catalog projection could not be written")
+	}
+	if err := temporary.Sync(); err != nil {
+		temporary.Close()
+		return errors.New("catalog projection could not be synchronized")
+	}
+	if err := temporary.Close(); err != nil {
+		return errors.New("catalog projection could not be closed")
+	}
+	if err := os.Rename(temporaryName, path); err != nil {
+		return errors.New("catalog projection could not be committed")
+	}
+	return nil
 }
 
 func (runtime *commandRuntime) invokeDynamic(ctx context.Context, invocation DynamicInvocation) error {
