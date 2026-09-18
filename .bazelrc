@@ -53,6 +53,8 @@ build:macos --host_copt=-gdwarf-4
 
 test --test_env=PM_GO
 test --test_env=PM_REPO_ROOT
+# Nested bootstrap calls must reuse the caller's verified tool cache.
+test --test_env=PM_TOOLS_CACHE
 test --test_env=GOCACHE
 test --test_env=GOMODCACHE
 test --test_env=GOWORK=off
