@@ -99,6 +99,44 @@ func TestProviderHTTPPolicySelection(t *testing.T) {
 	}
 }
 
+// providerHTTPTrustRootPair is the optional operator-owned provider egress
+// trust root reference. Its bundle member is ca.pem.
+const providerHTTPTrustRootPair = `"tls_trust_root_ref":"secret://fixture/provider-http"`
+
+func TestProviderHTTPTrustRootReference(t *testing.T) {
+	t.Run("absence keeps the process system root store", func(t *testing.T) {
+		for _, raw := range []string{
+			startupConfiguration,
+			configuredProviderHTTPDocument(providerHTTPConfiguration),
+		} {
+			reference, declared := loadProviderHTTPConfiguration(t, raw).ProviderHTTP().TLSTrustRootRef()
+			if declared || reference != "" {
+				t.Fatalf("absent provider HTTP trust root = (%q, %t); want empty, false", reference, declared)
+			}
+		}
+	})
+
+	t.Run("declared reference is retained exactly", func(t *testing.T) {
+		selector := loadProviderHTTPConfiguration(
+			t,
+			configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(providerHTTPTrustRootPair)),
+		).ProviderHTTP()
+		if !selector.Configured() {
+			t.Fatal("declared provider HTTP trust root removed HTTP authority")
+		}
+		reference, declared := selector.TLSTrustRootRef()
+		if !declared || reference != "secret://fixture/provider-http" {
+			t.Fatalf("declared provider HTTP trust root = (%q, %t); want exact declared reference, true", reference, declared)
+		}
+	})
+}
+
+// withProviderHTTPTrustRootPairs inserts raw trust root key/value text (one or
+// more pairs) ahead of the required destinations.
+func withProviderHTTPTrustRootPairs(pairs string) string {
+	return strings.Replace(providerHTTPConfiguration, `"destinations":`, pairs+`,"destinations":`, 1)
+}
+
 func TestProviderHTTPConfigurationRefusals(t *testing.T) {
 	withoutAttempt := strings.Replace(providerHTTPConfiguration, `,"max_attempts":3`, ``, 1)
 	unknownLimit := strings.Replace(providerHTTPConfiguration, `"max_request_bytes":1048576`, `"max_request_bytes":1048576,"request_bytes":1048576`, 1)
@@ -304,6 +342,66 @@ func TestProviderHTTPConfigurationRefusals(t *testing.T) {
 			document: configuredProviderHTTPDocument(duplicateBinding),
 			field:    "provider_http.destinations[1].connection_id",
 			kind:     config.DiagnosticDuplicate,
+		},
+		{
+			name:     "unknown trust root alias",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root":"secret://fixture/provider-http"`)),
+			field:    "provider_http.tls_trust_root",
+			kind:     config.DiagnosticUnknown,
+		},
+		{
+			name:     "wrong-case trust root field",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"TLS_TRUST_ROOT_REF":"secret://fixture/provider-http"`)),
+			field:    "provider_http.TLS_TRUST_ROOT_REF",
+			kind:     config.DiagnosticUnknown,
+		},
+		{
+			name:     "duplicate trust root field",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(providerHTTPTrustRootPair + "," + providerHTTPTrustRootPair)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticDuplicate,
+		},
+		{
+			name:     "null trust root reference",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":null`)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticType,
+		},
+		{
+			name:     "numeric trust root reference",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":7`)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticType,
+		},
+		{
+			name:     "empty trust root reference",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":""`)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticValue,
+		},
+		{
+			name:     "non-secret trust root scheme",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":"https://fixture/provider-http"`)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticValue,
+		},
+		{
+			name:     "trust root reference without a bundle path",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":"secret://provider-http"`)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticValue,
+		},
+		{
+			name:     "query-bearing trust root reference",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":"secret://fixture/provider-http?version=1"`)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticValue,
+		},
+		{
+			name:     "oversized trust root reference",
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":"secret://fixture/`+strings.Repeat("r", 2048)+`"`)),
+			field:    "provider_http.tls_trust_root_ref",
+			kind:     config.DiagnosticValue,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {

@@ -1,0 +1,163 @@
+{
+  "schema_version": "pm.semantics/v1",
+  "connector_id": "github",
+  "source_digest": "sha256:fff38010473f610d326243e39d732cfb2b076752885c98284245633029feef3e",
+  "revision": "sha256:c08e79455d3ca0bf410d1f4dcf790240ec70c0ecc9249b784c8c8f83b05f1ff8",
+  "operations": [
+    {
+      "operation_id": "issues/list-for-repo",
+      "source_refs": [
+        {
+          "source_id": "github-rest-api-description",
+          "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+        }
+      ],
+      "http": {
+        "origins": [
+          "https://api.github.com"
+        ],
+        "witness": {
+          "proof_id": "github-list-for-repo-http-origin",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/servers/0"
+            }
+          ]
+        }
+      },
+      "record_extraction": {
+        "records_pointer": "",
+        "witness": {
+          "proof_id": "github-list-for-repo-record-array",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json/schema"
+            }
+          ]
+        }
+      },
+      "pagination": {
+        "kind": "link",
+        "link_request_field": "query.page",
+        "link_response_header": "Link",
+        "limit_request_field": "query.per-page",
+        "witness": {
+          "proof_id": "github-list-for-repo-link-continuation",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/headers/Link"
+            },
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/components/headers/link"
+            }
+          ]
+        }
+      },
+      "retry": {
+        "classification": "safe",
+        "http_statuses": [
+          500,
+          502,
+          503,
+          504
+        ],
+        "witness": {
+          "proof_id": "github-list-for-repo-read-method-safety",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+            }
+          ]
+        }
+      },
+      "lanes": [
+        {
+          "lane": "direct_read",
+          "classification": "eligible",
+          "reason": "admitted read-only GET list operation with declared JSON record array and source Link continuation",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+            },
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+            }
+          ]
+        },
+        {
+          "lane": "direct_write",
+          "classification": "not_applicable",
+          "reason": "the accepted operation is a read-only GET and declares no provider mutation; GitHub write operations are not part of this connector slice",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+            }
+          ]
+        },
+        {
+          "lane": "etl",
+          "classification": "unproven",
+          "reason": "the operation can supply bounded records, but this slice admits no accepted ETL checkpoint or warehouse publication path, so the lane stays unproven",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+            }
+          ]
+        },
+        {
+          "lane": "reverse_etl",
+          "classification": "not_applicable",
+          "reason": "the accepted operation declares no destination mapping or provider write, which reverse ETL requires",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+            }
+          ]
+        },
+        {
+          "lane": "binary_download",
+          "classification": "not_applicable",
+          "reason": "every declared response media type of the accepted operation is application/json; no binary media type is declared",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+            }
+          ]
+        },
+        {
+          "lane": "binary_upload",
+          "classification": "not_applicable",
+          "reason": "the accepted operation declares no request body and no binary media type",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+            }
+          ]
+        },
+        {
+          "lane": "sync_transport",
+          "classification": "unproven",
+          "reason": "durable scheduled transport with cadence, deduplication and checkpoint semantics is not implemented in this slice; PostgreSQL logical CDC remains deferred",
+          "source_refs": [
+            {
+              "source_id": "github-rest-api-description",
+              "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

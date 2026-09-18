@@ -231,6 +231,14 @@ func (service *WorkerService) LoadWorkflow(
 			if task.Lane != state.input.Lane {
 				return workerFailure(ErrWorkerConflict, errors.New("task lane differs from the immutable admission lane"))
 			}
+			// A task with no durable dispatch becomes runnable only through the
+			// production planner, which persists the exact effect, dispatch and
+			// member intent before any provider I/O. It never creates send
+			// authority and never derives a plan from a provider response, a
+			// desired row or a cached proof.
+			if err := service.planWorkerTaskDispatch(ctx, tx, state, task); err != nil {
+				return err
+			}
 			dispatch, coordinated, err := workerTaskCoordination(ctx, tx, state.route.Scope, task)
 			if err != nil {
 				return err

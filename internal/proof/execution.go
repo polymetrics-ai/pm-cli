@@ -206,6 +206,10 @@ func (executor *PMPathExecutor) ExecuteStep(ctx context.Context, request StepReq
 		return StepExecution{}, err
 	}
 	started := executor.now()
+	baseline, err := executor.journal.entries()
+	if err != nil {
+		return StepExecution{}, err
+	}
 	runID, err := executor.submit(ctx, client, descriptor, input, controls, request.RequestKey)
 	if err != nil {
 		return StepExecution{}, err
@@ -217,7 +221,7 @@ func (executor *PMPathExecutor) ExecuteStep(ctx context.Context, request StepReq
 	if err != nil {
 		return StepExecution{}, err
 	}
-	entry, err := executor.journal.lookup(runID)
+	entry, err := executor.journal.takeAfter(len(baseline))
 	if err != nil {
 		return StepExecution{}, err
 	}
@@ -886,23 +890,39 @@ type providerObservation struct {
 }
 
 // providerJournal is the controlled destination's own record of what it
-// received and returned. The runner only reads it; a fake receipt without this
+// received and returned, in arrival order. The controlled endpoint cannot know
+// a PM run identity, so correlation is single-flight: the runner records the
+// entry count before a case executes and requires exactly one new entry
+// afterwards. The runner only reads the journal; a fake receipt without this
 // independent provider observation cannot be produced.
 type providerJournal struct {
-	entries map[string]providerJournalEntry
+	path    string
+	maximum int64
 }
 
 func openProviderJournal(path string, maximum int64) (*providerJournal, error) {
 	if maximum <= 0 || maximum > JournalBound {
 		return nil, errors.New("provider observation journal bound is invalid")
 	}
-	document, err := readBoundedProofFile(path, maximum)
+	journal := &providerJournal{path: path, maximum: maximum}
+	if _, err := journal.entries(); err != nil {
+		return nil, err
+	}
+	return journal, nil
+}
+
+// entries re-reads the bounded journal and returns its observations in order.
+func (journal *providerJournal) entries() ([]providerJournalEntry, error) {
+	if journal == nil {
+		return nil, errors.New("controlled provider observation is required")
+	}
+	document, err := readBoundedProofFile(journal.path, journal.maximum)
 	if err != nil {
 		return nil, fmt.Errorf("read controlled provider observation journal: %w", err)
 	}
-	entries := make(map[string]providerJournalEntry)
+	entries := make([]providerJournalEntry, 0, 8)
 	scanner := bufio.NewScanner(bytes.NewReader(document))
-	scanner.Buffer(make([]byte, 0, 64<<10), int(maximum))
+	scanner.Buffer(make([]byte, 0, 64<<10), int(journal.maximum))
 	for lineNumber := 1; scanner.Scan(); lineNumber++ {
 		line := bytes.TrimSpace(scanner.Bytes())
 		if len(line) == 0 {
@@ -910,46 +930,31 @@ func openProviderJournal(path string, maximum int64) (*providerJournal, error) {
 		}
 		var entry providerJournalEntry
 		if err := contract.DecodeStrictRequiredObject(line, &entry,
-			"run_id", "task_id", "method", "target", "media_type", "status", "response_media_type",
+			"method", "target", "media_type", "status", "response_media_type",
 			"request_fields", "response_fields", "redactions"); err != nil {
 			return nil, fmt.Errorf("decode controlled provider observation line %d: %w", lineNumber, err)
 		}
-		if entry.RunID == "" || entry.Status < 100 || entry.Status > 599 {
+		if entry.Method == "" || entry.Target == "" || entry.Status < 100 || entry.Status > 599 {
 			return nil, fmt.Errorf("controlled provider observation line %d is incomplete", lineNumber)
 		}
-		key := entry.RunID + "\x00" + entry.TaskID
-		if _, duplicate := entries[key]; duplicate {
-			return nil, errors.New("controlled provider observation journal repeats one run and task")
-		}
-		entries[key] = entry
+		entries = append(entries, entry)
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, fmt.Errorf("scan controlled provider observation journal: %w", err)
 	}
-	if len(entries) == 0 {
-		return nil, errors.New("controlled provider observation journal contains no observation")
-	}
-	return &providerJournal{entries: entries}, nil
+	return entries, nil
 }
 
-func (journal *providerJournal) lookup(runID string) (providerObservation, error) {
-	if journal == nil {
-		return providerObservation{}, errors.New("controlled provider observation is required")
+// takeAfter requires exactly one new observation since baseline and returns it.
+func (journal *providerJournal) takeAfter(baseline int) (providerObservation, error) {
+	entries, err := journal.entries()
+	if err != nil {
+		return providerObservation{}, err
 	}
-	var chosen *providerJournalEntry
-	for key, entry := range journal.entries {
-		if !strings.HasPrefix(key, runID+"\x00") {
-			continue
-		}
-		if chosen != nil {
-			return providerObservation{}, errors.New("controlled provider observed more than one attempt for one run")
-		}
-		candidate := entry
-		chosen = &candidate
+	if len(entries) != baseline+1 {
+		return providerObservation{}, errors.New("controlled provider did not record exactly one observation for this step")
 	}
-	if chosen == nil {
-		return providerObservation{}, errors.New("controlled provider recorded no observation for this run")
-	}
+	chosen := entries[baseline]
 	requestFields, err := sanitizedFields(chosen.RequestFields)
 	if err != nil {
 		return providerObservation{}, err
@@ -1008,8 +1013,6 @@ func redactions(values []contract.ProofRedaction) []contract.ProofRedaction {
 }
 
 type providerJournalEntry struct {
-	RunID              string                     `json:"run_id"`
-	TaskID             string                     `json:"task_id"`
 	Method             string                     `json:"method"`
 	Target             string                     `json:"target"`
 	MediaType          string                     `json:"media_type"`

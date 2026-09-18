@@ -41,6 +41,26 @@ type Transaction struct {
 
 type TransactionFunc func(context.Context, *Transaction) error
 
+type transactionContextKey struct{}
+
+// ScopedTransaction returns the transaction whose callback is currently
+// executing. The value is installed only for the duration of a
+// WithinTransaction callback, so WithinScope, WithinPrincipalScope,
+// WithinWorkerScope and WithAuthDeployment callbacks observe it while
+// unrelated contexts never do. The transaction is unusable once its callback
+// returns; callers MUST NOT retain it, and callers MUST NOT install authority
+// that the callback did not already hold.
+func ScopedTransaction(ctx context.Context) (*Transaction, bool) {
+	if ctx == nil {
+		return nil, false
+	}
+	tx, present := ctx.Value(transactionContextKey{}).(*Transaction)
+	if !present || tx == nil {
+		return nil, false
+	}
+	return tx, true
+}
+
 func WithinTransaction(ctx context.Context, pool *Pool, fn TransactionFunc) (err error) {
 	if ctx == nil {
 		return errors.New("transaction context is required")
@@ -88,7 +108,7 @@ func WithinTransaction(ctx context.Context, pool *Pool, fn TransactionFunc) (err
 		}
 	}()
 
-	callbackErr := fn(ctx, tx)
+	callbackErr := fn(context.WithValue(ctx, transactionContextKey{}, tx), tx)
 	cleanupCtx, cancelCleanup := detachedCleanupContext()
 	defer cancelCleanup()
 	var clearErr error
@@ -181,6 +201,16 @@ func (tx *Transaction) queryRow(ctx context.Context, sql string, arguments ...an
 		return errorRow{err: errors.New("store transaction is required")}
 	}
 	return tx.tx.QueryRow(ctx, sql, arguments...)
+}
+
+// Scope returns the scope installed in this transaction, or the zero scope
+// when a transaction carries no tenant scope. It is a read-only accessor: the
+// returned value never grants authority the transaction did not already hold.
+func (tx *Transaction) Scope() contract.Scope {
+	if tx == nil || !tx.scoped {
+		return contract.Scope{}
+	}
+	return tx.scope
 }
 
 func (tx *Transaction) requireScope() (contract.Scope, error) {

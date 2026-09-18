@@ -19,6 +19,7 @@ go_test(
     name = "config_test",
     srcs = [
         "artifacts_test.go",
+        "connectors_test.go",
         "provider_http_test.go",
         "server_test.go",
         "worker_test.go",

@@ -180,6 +180,7 @@ type Configuration struct {
 	server             ServerConfiguration
 	worker             WorkerConfiguration
 	providerHTTP       ProviderHTTPConfiguration
+	connectors         ConnectorsConfiguration
 }
 
 func (c Configuration) SchemaVersion() string {
@@ -244,6 +245,12 @@ func (c Configuration) ProviderHTTP() ProviderHTTPConfiguration {
 	return c.providerHTTP.clone()
 }
 
+// Connectors returns the declared generated execution bundles. The returned
+// slice is a copy; an absent or empty declaration configures no connector.
+func (c Configuration) Connectors() ConnectorsConfiguration {
+	return c.connectors.clone()
+}
+
 type documentData struct {
 	schemaVersion      string
 	deploymentID       string
@@ -259,6 +266,7 @@ type documentData struct {
 	server             ServerConfiguration
 	worker             WorkerConfiguration
 	providerHTTP       ProviderHTTPConfiguration
+	connectors         ConnectorsConfiguration
 }
 
 type optionalUint64 struct {
@@ -337,6 +345,9 @@ func Load(reader io.Reader) (Document, error) {
 	if result.providerHTTP, err = decodeProviderHTTP(root["provider_http"]); err != nil {
 		return Document{}, err
 	}
+	if result.connectors, err = decodeConnectors(root["connectors"]); err != nil {
+		return Document{}, err
+	}
 	return Document{data: result, loaded: true}, nil
 }
 
@@ -353,7 +364,7 @@ var rootFields = []string{
 	"limits",
 }
 
-var allowedRootFields = append([]string{"server", "worker", "provider_http"}, rootFields...)
+var allowedRootFields = append([]string{"server", "worker", "provider_http", "connectors"}, rootFields...)
 
 func decodePostgres(raw json.RawMessage) (PostgresConfiguration, error) {
 	fields := []string{"ownership", "database", "endpoint_ref"}
@@ -869,4 +880,43 @@ func normalizeRoot(field string) string {
 		return ""
 	}
 	return field
+}
+
+// ConnectorsConfiguration declares the generated execution bundles this
+// deployment admits. The object is optional; an absent or empty declaration
+// installs no connector and therefore claims no bundled capability.
+type ConnectorsConfiguration struct {
+	bundlePaths []string
+}
+
+// Configured reports whether at least one generated execution bundle is
+// declared. An unconfigured deployment resolves no bundled operation.
+func (configuration ConnectorsConfiguration) Configured() bool {
+	return len(configuration.bundlePaths) > 0
+}
+
+// BundlePaths returns the declared absolute bundle paths in declaration order.
+func (configuration ConnectorsConfiguration) BundlePaths() []string {
+	return append([]string(nil), configuration.bundlePaths...)
+}
+
+func (configuration ConnectorsConfiguration) clone() ConnectorsConfiguration {
+	return ConnectorsConfiguration{bundlePaths: configuration.BundlePaths()}
+}
+
+var connectorsFields = []string{"bundles"}
+
+func decodeConnectors(raw json.RawMessage) (ConnectorsConfiguration, error) {
+	if len(raw) == 0 {
+		return ConnectorsConfiguration{}, nil
+	}
+	object, err := decodeObject(raw, "connectors", connectorsFields, connectorsFields)
+	if err != nil {
+		return ConnectorsConfiguration{}, err
+	}
+	bundles, err := decodeStringArray(object, "bundles", "connectors.bundles")
+	if err != nil {
+		return ConnectorsConfiguration{}, err
+	}
+	return ConnectorsConfiguration{bundlePaths: bundles}, nil
 }

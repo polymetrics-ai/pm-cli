@@ -16,14 +16,16 @@ import (
 // ProviderHTTPConfiguration is absent unless the operator explicitly declares
 // complete finite HTTP controls and at least one scoped connection destination.
 type ProviderHTTPConfiguration struct {
-	maxRequestBytes  uint64
-	maxResponseBytes uint64
-	maxDNSAnswers    uint32
-	maxAttempts      uint32
-	maxRetryDelay    time.Duration
-	destinations     []providerHTTPDestination
-	policies         map[providerHTTPDestinationKey]contract.HTTPExecutionPolicy
-	configured       bool
+	maxRequestBytes      uint64
+	maxResponseBytes     uint64
+	maxDNSAnswers        uint32
+	maxAttempts          uint32
+	maxRetryDelay        time.Duration
+	destinations         []providerHTTPDestination
+	policies             map[providerHTTPDestinationKey]contract.HTTPExecutionPolicy
+	tlsTrustRootRef      string
+	tlsTrustRootDeclared bool
+	configured           bool
 }
 
 type providerHTTPDestination struct {
@@ -40,6 +42,18 @@ type providerHTTPDestinationKey struct {
 
 func (configuration ProviderHTTPConfiguration) Configured() bool {
 	return configuration.configured
+}
+
+// TLSTrustRootRef returns the exact declared operator secret reference for the
+// provider egress trust root. The declaration is optional: an absent reference
+// returns false and leaves provider egress on the process system root store. A
+// declared reference is retained verbatim and never falls back to another
+// reference or to the system store.
+func (configuration ProviderHTTPConfiguration) TLSTrustRootRef() (string, bool) {
+	if !configuration.configured || !configuration.tlsTrustRootDeclared {
+		return "", false
+	}
+	return configuration.tlsTrustRootRef, true
 }
 
 // Policy returns a value copy only for the exact configured organization,
@@ -70,7 +84,7 @@ func (configuration ProviderHTTPConfiguration) clone() ProviderHTTPConfiguration
 	return cloned
 }
 
-var providerHTTPFields = []string{
+var providerHTTPRequiredFields = []string{
 	"max_request_bytes",
 	"max_response_bytes",
 	"max_dns_answers",
@@ -78,6 +92,13 @@ var providerHTTPFields = []string{
 	"max_retry_delay",
 	"destinations",
 }
+
+// The operator-owned provider egress trust root is the only optional key; every
+// other accepted key is part of the complete finite control set.
+var providerHTTPFields = append(
+	append([]string(nil), providerHTTPRequiredFields...),
+	"tls_trust_root_ref",
+)
 
 var providerHTTPDestinationFields = []string{
 	"org_id",
@@ -90,7 +111,7 @@ func decodeProviderHTTP(raw json.RawMessage) (ProviderHTTPConfiguration, error) 
 	if len(raw) == 0 {
 		return ProviderHTTPConfiguration{}, nil
 	}
-	object, err := decodeObject(raw, "provider_http", providerHTTPFields, providerHTTPFields)
+	object, err := decodeObject(raw, "provider_http", providerHTTPFields, providerHTTPRequiredFields)
 	if err != nil {
 		return ProviderHTTPConfiguration{}, err
 	}
@@ -132,6 +153,16 @@ func decodeProviderHTTP(raw json.RawMessage) (ProviderHTTPConfiguration, error) 
 	}
 	if configuration.destinations, err = decodeProviderHTTPDestinations(object["destinations"]); err != nil {
 		return ProviderHTTPConfiguration{}, err
+	}
+	if _, declared := object["tls_trust_root_ref"]; declared {
+		configuration.tlsTrustRootDeclared = true
+		if configuration.tlsTrustRootRef, err = decodeString(
+			object,
+			"tls_trust_root_ref",
+			"provider_http.tls_trust_root_ref",
+		); err != nil {
+			return ProviderHTTPConfiguration{}, err
+		}
 	}
 	return configuration, nil
 }
@@ -191,6 +222,14 @@ func resolveProviderHTTP(configuration ProviderHTTPConfiguration) (ProviderHTTPC
 	if len(configuration.destinations) == 0 {
 		return ProviderHTTPConfiguration{}, diagnostic("provider_http.destinations", DiagnosticBounds)
 	}
+	if configuration.tlsTrustRootDeclared {
+		if err := validateSecretReference(
+			configuration.tlsTrustRootRef,
+			"provider_http.tls_trust_root_ref",
+		); err != nil {
+			return ProviderHTTPConfiguration{}, err
+		}
+	}
 	policies := make(map[providerHTTPDestinationKey]contract.HTTPExecutionPolicy, len(configuration.destinations))
 	for index, destination := range configuration.destinations {
 		path := "provider_http.destinations[" + strconv.Itoa(index) + "]"
@@ -219,7 +258,12 @@ func resolveProviderHTTP(configuration ProviderHTTPConfiguration) (ProviderHTTPC
 		}
 		policies[key] = policy
 	}
-	return ProviderHTTPConfiguration{configured: true, policies: policies}, nil
+	return ProviderHTTPConfiguration{
+		configured:           true,
+		policies:             policies,
+		tlsTrustRootRef:      configuration.tlsTrustRootRef,
+		tlsTrustRootDeclared: configuration.tlsTrustRootDeclared,
+	}, nil
 }
 
 func providerHTTPScopeDiagnostic(err error, path string) error {

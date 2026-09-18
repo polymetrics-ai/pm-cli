@@ -121,6 +121,24 @@ func openWithOIDCFactory(
 		}
 		return key, nil
 	}
+	artifacts, err = app.OpenArtifactResources(configuration.Artifacts(), secrets)
+	if err != nil {
+		return fail(err, nil, oidcTransport)
+	}
+	providerHTTPTLS, err := app.LoadProviderHTTPTLS(secrets, configuration.ProviderHTTP())
+	if err != nil {
+		return fail(err, nil, oidcTransport)
+	}
+	var artifactBackend app.ArtifactBackend
+	artifactExecution := app.ArtifactExecution{}
+	if artifacts != nil {
+		artifactBackend = artifacts.Backend
+		artifactExecution = app.ArtifactExecution{
+			Backend:            artifacts.Backend,
+			Limits:             artifacts.Limits,
+			MaximumObjectBytes: int64(configuration.Artifacts().Execution.MaxObjectBytes),
+		}
+	}
 	services, err := app.OpenServices(ctx, app.ServicesConfig{
 		DeploymentID:      configuration.DeploymentID(),
 		PublicOrigin:      configuration.PublicOrigin(),
@@ -132,6 +150,9 @@ func openWithOIDCFactory(
 		OIDCHTTPClient:    oidcClient,
 		RunPolicy:         runPolicy,
 		ResolveHTTPPolicy: configuration.ProviderHTTP().Policy,
+		ProviderHTTPTLS:   providerHTTPTLS,
+		ConnectorBundles:  configuration.Connectors().BundlePaths(),
+		Artifacts:         artifactExecution,
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,
@@ -140,14 +161,6 @@ func openWithOIDCFactory(
 	})
 	if err != nil {
 		return fail(err, nil, oidcTransport)
-	}
-	artifacts, err = app.OpenArtifactResources(configuration.Artifacts(), secrets)
-	if err != nil {
-		return fail(err, services, oidcTransport)
-	}
-	var artifactBackend app.ArtifactBackend
-	if artifacts != nil {
-		artifactBackend = artifacts.Backend
 	}
 	lifecycle, err := New(configuration, services.Ping, nil, diagnostics)
 	if err != nil {

@@ -2,15 +2,33 @@ package app
 
 import (
 	"context"
+	"crypto/tls"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
-	"github.com/polymetrics-ai/pm-cli/internal/connectors"
+	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
+
+// ArtifactExecution carries the artifact byte resources this process already
+// opened for its own artifact surface and shares with the HTTP direct-read
+// registration. The opening process keeps ownership: this carrier never opens,
+// mutates or closes them, and it is empty when byte execution is
+// intentionally unconfigured.
+type ArtifactExecution struct {
+	Backend            *objects.S3
+	Limits             store.ObjectCapacityLimits
+	MaximumObjectBytes int64
+}
+
+// Configured reports whether this process has artifact byte execution.
+func (execution ArtifactExecution) Configured() bool {
+	return execution.Backend != nil && execution.MaximumObjectBytes > 0
+}
 
 // ServicesConfig carries resolved startup controls and operator-loaded secret
 // values. It is never a public request or an independently resolved config file.
@@ -26,6 +44,9 @@ type ServicesConfig struct {
 	CredentialIngress CredentialIngressConfig
 	RunPolicy         store.RunBudgetPolicy
 	ResolveHTTPPolicy HTTPPolicyResolver
+	ProviderHTTPTLS   *tls.Config
+	ConnectorBundles  []string
+	Artifacts         ArtifactExecution
 }
 
 func (ServicesConfig) String() string                 { return "application services configuration [REDACTED]" }
@@ -59,6 +80,12 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		return nil, errors.New("configured public origin is invalid")
 	}
 	publicOrigin := (&url.URL{Scheme: origin.Scheme, Host: origin.Host}).String()
+	composition, err := OpenConnectorComposition(ConnectorCompositionConfig{
+		BundlePaths: configuration.ConnectorBundles,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("declared connector bundles are unavailable: %w", err)
+	}
 	startupContext, cancel := context.WithTimeout(ctx, configuration.StoreProbeTimeout)
 	pool, err := store.OpenPool(startupContext, store.PoolConfig{
 		ConnectionString:  configuration.PostgresEndpoint,
@@ -124,15 +151,21 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 	if err != nil {
 		return nil, errors.New("credential application composition failed")
 	}
-	handlers := &HandlerRegistry{}
-	registry, err := connectors.NewRegistry()
+	continuations, err := openHTTPContinuations(pool, configuration.Artifacts)
 	if err != nil {
-		return nil, errors.New("connector bundle registry composition failed")
+		return nil, err
+	}
+	handlers := &HandlerRegistry{}
+	if err := composition.RegisterDirectRead(handlers, HTTPDirectReadDependencies{
+		TLSConfig:     configuration.ProviderHTTPTLS,
+		Continuations: continuations,
+	}); err != nil {
+		return nil, errors.Join(errors.New("connector direct-read registration failed"), err)
 	}
 	catalog, err := ServeCatalog(CatalogServiceConfig{
 		Pool:      pool,
 		Authorize: authentication.AuthorizeResource,
-		Registry:  registry,
+		Registry:  composition.Registry(),
 		Handlers:  handlers,
 	})
 	if err != nil {
@@ -143,6 +176,7 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		DeploymentID:      configuration.DeploymentID,
 		Authorize:         authentication.AuthorizeResource,
 		Registry:          handlers,
+		ResolveOperation:  composition.Resolver(),
 		Policy:            configuration.RunPolicy,
 		ResolveHTTPPolicy: configuration.ResolveHTTPPolicy,
 	})
@@ -179,3 +213,28 @@ func (services *Services) Ping(ctx context.Context) error { return services.pool
 func (services *Services) Store() *store.Pool { return services.pool }
 
 func (services *Services) Close() { services.pool.Close() }
+
+// openHTTPContinuations composes the artifact publisher and the continuation
+// service the shared HTTP direct-read registration depends on, using the
+// artifact byte resources this process already opened. It returns nil without
+// object I/O when byte execution is intentionally unconfigured, so an
+// undeclared deployment stays truthfully unavailable.
+func openHTTPContinuations(pool *store.Pool, execution ArtifactExecution) (*ContinuationService, error) {
+	if !execution.Configured() {
+		return nil, nil
+	}
+	publisher, err := objects.NewPublisher(pool, execution.Backend, execution.Limits)
+	if err != nil {
+		return nil, errors.Join(errors.New("HTTP continuation artifact publisher is unavailable"), err)
+	}
+	continuations, err := NewContinuationService(
+		pool,
+		publisher,
+		execution.Backend,
+		execution.MaximumObjectBytes,
+	)
+	if err != nil {
+		return nil, errors.Join(errors.New("HTTP continuation service is unavailable"), err)
+	}
+	return continuations, nil
+}

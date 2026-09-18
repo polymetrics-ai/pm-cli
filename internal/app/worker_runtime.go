@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -83,6 +84,10 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 	if err != nil {
 		return fail(err)
 	}
+	providerHTTPTLS, err := LoadProviderHTTPTLS(secrets, configuration.Configuration.ProviderHTTP())
+	if err != nil {
+		return fail(err)
+	}
 
 	startupContext, cancel := context.WithTimeout(ctx, workerConfiguration.DialTimeout)
 	defer cancel()
@@ -102,6 +107,12 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 	artifacts, err = OpenArtifactResources(artifactConfiguration, secrets)
 	if err != nil {
 		return fail(errors.Join(errors.New("worker artifact resources are unavailable"), err))
+	}
+	composition, err := OpenConnectorComposition(ConnectorCompositionConfig{
+		BundlePaths: configuration.Configuration.Connectors().BundlePaths(),
+	})
+	if err != nil {
+		return fail(fmt.Errorf("declared connector bundles are unavailable: %w", err))
 	}
 	var artifactPublisher *objects.Publisher
 	var continuationService *ContinuationService
@@ -125,9 +136,18 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 	if registry == nil {
 		registry = &HandlerRegistry{}
 	}
+	if err := composition.RegisterDirectRead(registry, HTTPDirectReadDependencies{
+		TLSConfig:     providerHTTPTLS,
+		Continuations: continuationService,
+	}); err != nil {
+		return fail(errors.Join(errors.New("worker connector direct-read registration failed"), err))
+	}
 	resolver := configuration.ResolveOperation
 	if resolver == nil {
 		resolver = unavailableWorkerOperation
+		if composition.Configured() {
+			resolver = composition.Resolver()
+		}
 	}
 	authorization := configuration.Authorization
 	if authorization == nil {

@@ -1,0 +1,3285 @@
+[
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-exact-repository",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.exact-page",
+        "kind": "fixture",
+        "value": "fixture.github.issues.exact-page"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_page_one",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "data-is-record-array",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/data/type",
+        "expected": "array"
+      },
+      {
+        "assertion_id": "exact-id",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-number",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-repository",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets"
+        }
+      },
+      {
+        "assertion_id": "fetched-count",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/pagination/fetched_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "returned-count",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/pagination/returned_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "emitted-count",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/pagination/emitted_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "effective-wire-limit",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/pagination/effective_wire_limit",
+        "expected": 2
+      },
+      {
+        "assertion_id": "not-exhausted",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/pagination/source_exhausted",
+        "expected": false
+      },
+      {
+        "assertion_id": "continuation-present",
+        "step_id": "read_page_one",
+        "kind": "contains",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "value"
+        }
+      },
+      {
+        "assertion_id": "no-extra-record",
+        "step_id": "read_page_one",
+        "kind": "absent",
+        "pointer": "/data/elements/2",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-next-page",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.two-pages",
+        "kind": "fixture",
+        "value": "fixture.github.issues.two-pages"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_page_one",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      },
+      {
+        "step_id": "read_page_two",
+        "kind": "invoke",
+        "depends_on": [
+          "read_page_one"
+        ],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 2
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "exact-id",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-number",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-repository",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets"
+        }
+      },
+      {
+        "assertion_id": "page-one-count",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/pagination/emitted_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "page-one-continuation",
+        "step_id": "read_page_one",
+        "kind": "contains",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "value"
+        }
+      },
+      {
+        "assertion_id": "page-one-not-exhausted",
+        "step_id": "read_page_one",
+        "kind": "equals",
+        "pointer": "/pagination/source_exhausted",
+        "expected": false
+      },
+      {
+        "assertion_id": "page-two-id",
+        "step_id": "read_page_two",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9003",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "page-two-number",
+        "step_id": "read_page_two",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "19",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "page-two-count",
+        "step_id": "read_page_two",
+        "kind": "equals",
+        "pointer": "/pagination/emitted_count",
+        "expected": 1
+      },
+      {
+        "assertion_id": "page-two-exhausted",
+        "step_id": "read_page_two",
+        "kind": "equals",
+        "pointer": "/pagination/source_exhausted",
+        "expected": true
+      },
+      {
+        "assertion_id": "page-two-no-continuation",
+        "step_id": "read_page_two",
+        "kind": "absent",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "page-two-no-extra-record",
+        "step_id": "read_page_two",
+        "kind": "absent",
+        "pointer": "/data/elements/1",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-provider-clamp",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.provider-clamp",
+        "kind": "fixture",
+        "value": "fixture.github.issues.provider-clamp"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_clamped",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 5,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "requested-limit-reported",
+        "step_id": "read_clamped",
+        "kind": "equals",
+        "pointer": "/pagination/effective_wire_limit",
+        "expected": 2
+      },
+      {
+        "assertion_id": "fetched-count",
+        "step_id": "read_clamped",
+        "kind": "equals",
+        "pointer": "/pagination/fetched_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "returned-count",
+        "step_id": "read_clamped",
+        "kind": "equals",
+        "pointer": "/pagination/returned_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "emitted-count",
+        "step_id": "read_clamped",
+        "kind": "equals",
+        "pointer": "/pagination/emitted_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "clamped-second-entry-kept",
+        "step_id": "read_clamped",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9002",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "clamp-keeps-continuation",
+        "step_id": "read_clamped",
+        "kind": "contains",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "value"
+        }
+      },
+      {
+        "assertion_id": "clamp-not-exhausted",
+        "step_id": "read_clamped",
+        "kind": "equals",
+        "pointer": "/pagination/source_exhausted",
+        "expected": false
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-local-record-cap",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.five-record-page",
+        "kind": "fixture",
+        "value": "fixture.github.issues.five-record-page"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_capped",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 5,
+          "query.page": 1
+        },
+        "captures": [],
+        "result_controls": {
+          "total_record_cap": 2
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "cap-emitted",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/pagination/emitted_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "cap-returned",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/pagination/returned_count",
+        "expected": 5
+      },
+      {
+        "assertion_id": "cap-fetched",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/pagination/fetched_count",
+        "expected": 5
+      },
+      {
+        "assertion_id": "cap-declared",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/pagination/total_record_cap",
+        "expected": 2
+      },
+      {
+        "assertion_id": "cap-wire-limit",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/pagination/effective_wire_limit",
+        "expected": 5
+      },
+      {
+        "assertion_id": "cap-first-record",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "cap-second-record",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9002",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "cap-no-third-emitted",
+        "step_id": "read_capped",
+        "kind": "absent",
+        "pointer": "/data/elements/2",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "unread-tail-third",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/pagination/unread_tail/2/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9003",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "unread-tail-exact-size",
+        "step_id": "read_capped",
+        "kind": "absent",
+        "pointer": "/pagination/unread_tail/3",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "cap-keeps-continuation",
+        "step_id": "read_capped",
+        "kind": "contains",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "value"
+        }
+      },
+      {
+        "assertion_id": "cap-not-exhausted",
+        "step_id": "read_capped",
+        "kind": "equals",
+        "pointer": "/pagination/source_exhausted",
+        "expected": false
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-mixed-entries",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.mixed-issue-and-pull-request",
+        "kind": "fixture",
+        "value": "fixture.github.issues.mixed-issue-and-pull-request"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_mixed",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "exact-id",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-number",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-repository",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets"
+        }
+      },
+      {
+        "assertion_id": "pr-entry-kept",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9002",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "pr-entry-number",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "18",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "pr-discriminator-type",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/pull_request/type",
+        "expected": "object"
+      },
+      {
+        "assertion_id": "pr-nested-url",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/pull_request/fields/url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets/pulls/18"
+        }
+      },
+      {
+        "assertion_id": "pr-nested-null",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/pull_request/fields/merged_at",
+        "expected": {
+          "presence": "null"
+        }
+      },
+      {
+        "assertion_id": "pr-title",
+        "step_id": "read_mixed",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/title",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "Fix widget"
+        }
+      },
+      {
+        "assertion_id": "mixed-no-dropped-entry",
+        "step_id": "read_mixed",
+        "kind": "absent",
+        "pointer": "/data/elements/2",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-complete-nested-presence",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.mixed-issue-and-pull-request",
+        "kind": "fixture",
+        "value": "fixture.github.issues.mixed-issue-and-pull-request"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_presence",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "false-preserved",
+        "step_id": "read_presence",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/locked",
+        "expected": {
+          "presence": "value",
+          "type": "bool",
+          "boolean": false
+        }
+      },
+      {
+        "assertion_id": "zero-preserved",
+        "step_id": "read_presence",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/comments",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "0",
+          "precision": 1,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "empty-array-preserved",
+        "step_id": "read_presence",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/assignees",
+        "expected": {
+          "presence": "value",
+          "type": "array",
+          "elements": []
+        }
+      },
+      {
+        "assertion_id": "explicit-null-assignee",
+        "step_id": "read_presence",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/assignee",
+        "expected": {
+          "presence": "null"
+        }
+      },
+      {
+        "assertion_id": "explicit-null-milestone",
+        "step_id": "read_presence",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/milestone",
+        "expected": {
+          "presence": "null"
+        }
+      },
+      {
+        "assertion_id": "absent-field-stays-absent",
+        "step_id": "read_presence",
+        "kind": "absent",
+        "pointer": "/data/elements/0/fields/state_reason",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "nested-user-login",
+        "step_id": "read_presence",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/user/fields/login",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "ada"
+        }
+      },
+      {
+        "assertion_id": "nested-label-name",
+        "step_id": "read_presence",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/labels/elements/0/fields/name",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "bug"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-explicit-field-selection",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.mixed-issue-and-pull-request",
+        "kind": "fixture",
+        "value": "fixture.github.issues.mixed-issue-and-pull-request"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_selected",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "result_controls": {
+          "selection": {
+            "paths": [
+              [
+                "id"
+              ],
+              [
+                "number"
+              ],
+              [
+                "pull_request"
+              ]
+            ]
+          }
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "selected-id",
+        "step_id": "read_selected",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "selected-number",
+        "step_id": "read_selected",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "selected-nested-value",
+        "step_id": "read_selected",
+        "kind": "equals",
+        "pointer": "/data/elements/1/fields/pull_request/fields/url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets/pulls/18"
+        }
+      },
+      {
+        "assertion_id": "unselected-title-dropped",
+        "step_id": "read_selected",
+        "kind": "absent",
+        "pointer": "/data/elements/0/fields/title",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-explicit-record-filter",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.mixed-issue-and-pull-request",
+        "kind": "fixture",
+        "value": "fixture.github.issues.mixed-issue-and-pull-request"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_filtered",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "result_controls": {
+          "filter": {
+            "path": [
+              "pull_request"
+            ],
+            "operator": "is_absent"
+          }
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "filter-emitted",
+        "step_id": "read_filtered",
+        "kind": "equals",
+        "pointer": "/pagination/emitted_count",
+        "expected": 1
+      },
+      {
+        "assertion_id": "filter-kept-issue",
+        "step_id": "read_filtered",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "filter-removed-pull-request",
+        "step_id": "read_filtered",
+        "kind": "absent",
+        "pointer": "/data/elements/1",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "filter-returned-is-unfiltered",
+        "step_id": "read_filtered",
+        "kind": "equals",
+        "pointer": "/pagination/returned_count",
+        "expected": 2
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-filtered-page-continuation",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.mixed-issue-and-pull-request",
+        "kind": "fixture",
+        "value": "fixture.github.issues.mixed-issue-and-pull-request"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_zero_match",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "result_controls": {
+          "filter": {
+            "path": [
+              "state"
+            ],
+            "operator": "equal",
+            "value": {
+              "presence": "value",
+              "type": "string",
+              "text": "no-such-state"
+            }
+          }
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "zero-emitted",
+        "step_id": "read_zero_match",
+        "kind": "equals",
+        "pointer": "/pagination/emitted_count",
+        "expected": 0
+      },
+      {
+        "assertion_id": "zero-returned-unfiltered",
+        "step_id": "read_zero_match",
+        "kind": "equals",
+        "pointer": "/pagination/returned_count",
+        "expected": 2
+      },
+      {
+        "assertion_id": "zero-data-empty",
+        "step_id": "read_zero_match",
+        "kind": "equals",
+        "pointer": "/data/elements",
+        "expected": []
+      },
+      {
+        "assertion_id": "zero-not-exhaustion",
+        "step_id": "read_zero_match",
+        "kind": "equals",
+        "pointer": "/pagination/source_exhausted",
+        "expected": false
+      },
+      {
+        "assertion_id": "zero-keeps-continuation",
+        "step_id": "read_zero_match",
+        "kind": "contains",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "value"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-unsafe-continuation-malformed",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.exact-page",
+        "kind": "fixture",
+        "value": "fixture.github.issues.exact-page"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_malformed_continuation",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "result_controls": {
+          "continuation": {
+            "presence": "value",
+            "type": "string",
+            "text": "pmc1.malformed-not-sealed"
+          }
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "malformed-no-records",
+        "step_id": "read_malformed_continuation",
+        "kind": "absent",
+        "pointer": "/data",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "malformed-no-continuation",
+        "step_id": "read_malformed_continuation",
+        "kind": "absent",
+        "pointer": "/pagination",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-unsafe-continuation-foreign-host",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.foreign-host-continuation",
+        "kind": "fixture",
+        "value": "fixture.github.issues.foreign-host-continuation"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_foreign_host",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "foreign-no-followable-continuation",
+        "step_id": "read_foreign_host",
+        "kind": "absent",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "foreign-no-foreign-records",
+        "step_id": "read_foreign_host",
+        "kind": "absent",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-unsafe-continuation-redirect",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.redirected-continuation",
+        "kind": "fixture",
+        "value": "fixture.github.issues.redirected-continuation"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_redirect",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "redirect-no-followable-continuation",
+        "step_id": "read_redirect",
+        "kind": "absent",
+        "pointer": "/pagination/continuation",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "redirect-no-foreign-records",
+        "step_id": "read_redirect",
+        "kind": "absent",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-wrong-workspace",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.exact-page",
+        "kind": "fixture",
+        "value": "fixture.github.issues.exact-page"
+      },
+      {
+        "requirement_id": "service.authorized-connection",
+        "kind": "service",
+        "value": "deployment/acme-widgets-github-read-authorized"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_refused",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "connection_ref": "acme-widgets-github-read-foreign-workspace"
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "refused-no-records",
+        "step_id": "read_refused",
+        "kind": "absent",
+        "pointer": "/data",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "refused-no-continuation",
+        "step_id": "read_refused",
+        "kind": "absent",
+        "pointer": "/pagination",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-denied-connection",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.exact-page",
+        "kind": "fixture",
+        "value": "fixture.github.issues.exact-page"
+      },
+      {
+        "requirement_id": "service.authorized-connection",
+        "kind": "service",
+        "value": "deployment/acme-widgets-github-read-authorized"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_refused",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "connection_ref": "acme-widgets-github-read-denied"
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "refused-no-records",
+        "step_id": "read_refused",
+        "kind": "absent",
+        "pointer": "/data",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "refused-no-continuation",
+        "step_id": "read_refused",
+        "kind": "absent",
+        "pointer": "/pagination",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-revoked-connection",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.exact-page",
+        "kind": "fixture",
+        "value": "fixture.github.issues.exact-page"
+      },
+      {
+        "requirement_id": "service.authorized-connection",
+        "kind": "service",
+        "value": "deployment/acme-widgets-github-read-authorized"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_refused",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "connection_ref": "acme-widgets-github-read-revoked"
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "refused-no-records",
+        "step_id": "read_refused",
+        "kind": "absent",
+        "pointer": "/data",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "refused-no-continuation",
+        "step_id": "read_refused",
+        "kind": "absent",
+        "pointer": "/pagination",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-wrong-record-id",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.wrong-record-id",
+        "kind": "fixture",
+        "value": "fixture.github.issues.wrong-record-id"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_wrong_id",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "exact-id",
+        "step_id": "read_wrong_id",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-number",
+        "step_id": "read_wrong_id",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-repository",
+        "step_id": "read_wrong_id",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-wrong-record-number",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.wrong-record-number",
+        "kind": "fixture",
+        "value": "fixture.github.issues.wrong-record-number"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_wrong_number",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "exact-id",
+        "step_id": "read_wrong_number",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-number",
+        "step_id": "read_wrong_number",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-repository",
+        "step_id": "read_wrong_number",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-wrong-record-repository",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.wrong-record-repository",
+        "kind": "fixture",
+        "value": "fixture.github.issues.wrong-record-repository"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_wrong_repository",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "exact-id",
+        "step_id": "read_wrong_repository",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-number",
+        "step_id": "read_wrong_repository",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "exact-repository",
+        "step_id": "read_wrong_repository",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/repository_url",
+        "expected": {
+          "presence": "value",
+          "type": "string",
+          "text": "https://api.github.com/repos/acme/widgets"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-missing-required-field",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.missing-required-field",
+        "kind": "fixture",
+        "value": "fixture.github.issues.missing-required-field"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_missing_field",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "required-id-present",
+        "step_id": "read_missing_field",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      },
+      {
+        "assertion_id": "required-number-present",
+        "step_id": "read_missing_field",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/number",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "17",
+          "precision": 2,
+          "scale": 0
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-wrong-field-type",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.wrong-field-type",
+        "kind": "fixture",
+        "value": "fixture.github.issues.wrong-field-type"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_wrong_type",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": []
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "id-remains-integer",
+        "step_id": "read_wrong_type",
+        "kind": "equals",
+        "pointer": "/data/elements/0/fields/id",
+        "expected": {
+          "presence": "value",
+          "type": "integer",
+          "exact": "9001",
+          "precision": 4,
+          "scale": 0
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  },
+  {
+    "scenario_version": "pm.scenario/v1",
+    "scenario_id": "github-read-invalid-result-controls",
+    "connector_id": "github",
+    "lane": "direct_read",
+    "operation_id": "issues/list-for-repo",
+    "source_refs": [
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+      },
+      {
+        "source_id": "github-rest-api-description",
+        "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get/responses/200/content/application~1json"
+      }
+    ],
+    "requirements": [
+      {
+        "requirement_id": "service.public-path",
+        "kind": "service",
+        "value": "pm.client-api-worker.public-path"
+      },
+      {
+        "requirement_id": "secret.pm-connection",
+        "kind": "secret_reference",
+        "value": "connection/acme-widgets-github-read"
+      },
+      {
+        "requirement_id": "capability.http.execute",
+        "kind": "capability",
+        "value": "http.execute"
+      },
+      {
+        "requirement_id": "capability.value.serialize",
+        "kind": "capability",
+        "value": "value.serialize"
+      },
+      {
+        "requirement_id": "capability.effect.authorize",
+        "kind": "capability",
+        "value": "effect.authorize"
+      },
+      {
+        "requirement_id": "capability.effect.limit",
+        "kind": "capability",
+        "value": "effect.limit"
+      },
+      {
+        "requirement_id": "capability.http.paginate",
+        "kind": "capability",
+        "value": "http.paginate"
+      },
+      {
+        "requirement_id": "foundation.http.execute",
+        "kind": "foundation",
+        "value": "FND-06@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.value.serialize",
+        "kind": "foundation",
+        "value": "FND-03@1.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.authorize",
+        "kind": "foundation",
+        "value": "FND-05@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.effect.limit",
+        "kind": "foundation",
+        "value": "FND-10@2.0.0"
+      },
+      {
+        "requirement_id": "foundation.http.paginate",
+        "kind": "foundation",
+        "value": "FND-08@1.0.0"
+      },
+      {
+        "requirement_id": "fixture.github.issues.exact-page",
+        "kind": "fixture",
+        "value": "fixture.github.issues.exact-page"
+      }
+    ],
+    "steps": [
+      {
+        "step_id": "read_invalid_controls",
+        "kind": "invoke",
+        "depends_on": [],
+        "action": "issues/list-for-repo",
+        "input": {
+          "path.owner": "acme",
+          "path.repo": "widgets",
+          "query.per-page": 2,
+          "query.page": 1
+        },
+        "captures": [],
+        "result_controls": {
+          "selection": {
+            "paths": [
+              [
+                "no_such_provider_field"
+              ]
+            ]
+          }
+        }
+      }
+    ],
+    "assertions": [
+      {
+        "assertion_id": "invalid-no-records",
+        "step_id": "read_invalid_controls",
+        "kind": "absent",
+        "pointer": "/data",
+        "expected": {
+          "presence": "absent"
+        }
+      },
+      {
+        "assertion_id": "invalid-no-pagination",
+        "step_id": "read_invalid_controls",
+        "kind": "absent",
+        "pointer": "/pagination",
+        "expected": {
+          "presence": "absent"
+        }
+      }
+    ],
+    "cleanup": {
+      "always": true,
+      "owned_id_captures": [],
+      "steps": []
+    }
+  }
+]

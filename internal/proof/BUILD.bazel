@@ -25,6 +25,7 @@ go_test(
     srcs = [
         "currentness_test.go",
         "oracle_contract_test.go",
+        "oracle_test.go",
         "runner_mechanics_test.go",
     ],
     embed = [":proof"],
