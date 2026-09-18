@@ -1213,7 +1213,7 @@
         "assertion_id": "nested-label-name",
         "step_id": "read_presence",
         "kind": "equals",
-        "pointer": "/data/elements/0/fields/labels/elements/0/fields/name",
+        "pointer": "/data/elements/0/fields/labels/elements/0/member/fields/name",
         "expected": {
           "presence": "value",
           "type": "string",

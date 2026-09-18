@@ -19,7 +19,7 @@
         {
           "behavior_id": "github-read-complete-nested-presence",
           "case_id": "github-read-complete-nested-presence",
-          "scenario_hash": "sha256:4fec3d1e56494f9ae52a0209ed94d5906ce37c13edbe81ac6b9e67a6ab898317",
+          "scenario_hash": "sha256:364ff20a7df597cb3c7e97a70bea6432c32732869a8d001a2e25ffeb4a4e6df5",
           "scenario": {
             "scenario_version": "pm.scenario/v1",
             "scenario_id": "github-read-complete-nested-presence",
@@ -196,7 +196,7 @@
                 "assertion_id": "nested-label-name",
                 "step_id": "read_presence",
                 "kind": "equals",
-                "pointer": "/data/elements/0/fields/labels/elements/0/fields/name",
+                "pointer": "/data/elements/0/fields/labels/elements/0/member/fields/name",
                 "expected": {
                   "presence": "value",
                   "type": "string",
