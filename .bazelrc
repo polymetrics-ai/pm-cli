@@ -14,6 +14,11 @@ build --experimental_fsvc_threads=2
 build --noexperimental_merged_skyframe_analysis_execution
 build --local_resources=cpu=2
 build --local_resources=memory=2048
+# Linux CI exhausted its shared 256-task budget during a link-heavy build.
+# Reserve listener headroom by bounding action concurrency and nested Go work.
+build:linux --jobs=1
+build:linux --action_env=GOMAXPROCS=2
+test:linux --test_env=GOMAXPROCS=2
 build --spawn_strategy=processwrapper-sandbox
 build --repo_env=CC
 build --repo_env=CXX
