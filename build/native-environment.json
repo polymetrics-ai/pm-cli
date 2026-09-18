@@ -54,10 +54,10 @@
       "total_bytes": 9029756
     },
     {
-      "entry_count": 2632,
+      "entry_count": 2677,
       "path": "/usr/lib/x86_64-linux-gnu",
-      "sha256": "42274d4fb7922bd13e6a6c433b660354524b2542b5bbb9ad9ad0a29d86b46c1b",
-      "total_bytes": 269723860
+      "sha256": "9277f834f33e57397bd7ec3ae45d069292e45b13ef36301347b7199ddce0bc06",
+      "total_bytes": 459112876
     }
   ]
 }
