@@ -9,7 +9,10 @@ go_library(
         "tls.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/testfixture/githubcompat",
-    visibility = ["//cmd/pm-github-fixture:__pkg__"],
+    visibility = [
+        "//cmd/pm-github-fixture:__pkg__",
+        "//internal/app:__pkg__",
+    ],
     deps = ["//internal/contract"],
 )
 
