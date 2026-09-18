@@ -39,6 +39,35 @@ func (lease Lease) validate() error {
 	return nil
 }
 
+// ReleaseTaskLease ends one bounded planning lease without granting any
+// authority. It succeeds only for the exact owner and fence that still hold the
+// lease, so a stale planner can never release another worker's claim.
+func ReleaseTaskLease(ctx context.Context, tx *Transaction, lease Lease) error {
+	scope, err := tx.requireScope()
+	if err != nil {
+		return err
+	}
+	if err := lease.validate(); err != nil {
+		return err
+	}
+	if !scope.Equal(lease.Scope) {
+		return ErrScopeMismatch
+	}
+	tag, err := tx.exec(ctx, `
+		UPDATE pm.task_leases
+		SET lease_expires_at = claimed_at
+		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND task_id = $4
+		  AND owner_id = $5 AND fence = $6 AND lease_expires_at > claimed_at
+	`, scope.OrgID, scope.WorkspaceID, lease.Task.RunID, lease.Task.TaskID, lease.OwnerID, lease.Fence)
+	if err != nil {
+		return safeMetadataWriteError("release task lease", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrClaimLost
+	}
+	return nil
+}
+
 func ClaimTask(ctx context.Context, tx *Transaction, request ClaimRequest) (Lease, error) {
 	scope, err := tx.requireScope()
 	if err != nil {

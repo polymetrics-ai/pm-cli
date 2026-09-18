@@ -141,7 +141,13 @@ func (service *WorkerService) planWorkerTaskDispatch(
 	if err != nil {
 		return err
 	}
-	return store.PrepareDispatch(ctx, tx, lease, dispatch)
+	if err := store.PrepareDispatch(ctx, tx, lease, dispatch); err != nil {
+		return err
+	}
+	// The dispatch is durable, so the planning lease has done its work. Ending
+	// it here lets the physical unit claim the same task immediately instead of
+	// waiting out a planning lease that grants no authority.
+	return store.ReleaseTaskLease(ctx, tx, lease)
 }
 
 // requireUnplannedRunEffects refuses to plan over any durable effect evidence.
