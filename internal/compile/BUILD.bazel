@@ -32,6 +32,7 @@ go_test(
     srcs = [
         "amendment_test.go",
         "bundle_test.go",
+        "closure_test.go",
         "dialect_test.go",
         "fidelity_test.go",
         "sensitivity_test.go",

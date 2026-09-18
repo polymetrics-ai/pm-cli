@@ -97,13 +97,13 @@ func TestDeterministicCompleteInventory(t *testing.T) {
         }
       }
     },
-    "/open": {
+    "/conditional": {
       "get": {
-        "operationId": "getOpen",
+        "operationId": "getConditional",
         "responses": {
           "200": {
-            "description": "unsupported open shape",
-            "content": {"application/json": {"schema": {"type": "object"}}}
+            "description": "unsupported conditional shape",
+            "content": {"application/json": {"schema": {"type": "object", "properties": {"value": {"type": "string"}}, "not": {"required": ["value"]}}}}
           }
         }
       }
@@ -114,8 +114,8 @@ func TestDeterministicCompleteInventory(t *testing.T) {
 			testOperation("getGood", "root", "#/paths/~1good/get", nil, []VariantRef{{
 				Pointer: "#/paths/~1good/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
 			}}),
-			testOperation("getOpen", "root", "#/paths/~1open/get", nil, []VariantRef{{
-				Pointer: "#/paths/~1open/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
+			testOperation("getConditional", "root", "#/paths/~1conditional/get", nil, []VariantRef{{
+				Pointer: "#/paths/~1conditional/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
 			}}),
 		}
 		lock, captures := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": mixedDocument}, nil, operations)
@@ -123,23 +123,23 @@ func TestDeterministicCompleteInventory(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		openRef := []SourceRef{{SourceID: "root", Pointer: "#/paths/~1open/get"}}
+		conditionalRef := []SourceRef{{SourceID: "root", Pointer: "#/paths/~1conditional/get"}}
 		semantics, err := json.Marshal(SemanticsDocument{
 			SchemaVersion: SemanticsSchemaVersion,
 			ConnectorID:   lock.ConnectorID,
 			SourceDigest:  mixedCaptured.Digest,
 			Revision:      lock.SemanticsRevision,
 			Operations: []OperationSemantics{{
-				OperationID: "getOpen",
-				SourceRefs:  openRef,
+				OperationID: "getConditional",
+				SourceRefs:  conditionalRef,
 				Lanes: []LaneSemantics{
 					{
 						Lane: contract.LaneDirectRead, Classification: LaneEligible,
-						SourceRefs: openRef,
+						SourceRefs: conditionalRef,
 					},
 					{
 						Lane: contract.LaneDirectWrite, Classification: LaneNotApplicable,
-						Reason: "read operation has no write shape", SourceRefs: openRef,
+						Reason: "read operation has no write shape", SourceRefs: conditionalRef,
 					},
 				},
 			}},
@@ -166,17 +166,17 @@ func TestDeterministicCompleteInventory(t *testing.T) {
 			t.Fatalf("executable operations = %#v, want only complete getGood", mixedBundle.Operations)
 		}
 		if len(mixedBundle.UnavailableOperations) != 1 {
-			t.Fatalf("unavailable operations = %#v, want getOpen metadata", mixedBundle.UnavailableOperations)
+			t.Fatalf("unavailable operations = %#v, want getConditional metadata", mixedBundle.UnavailableOperations)
 		}
 		unavailable := mixedBundle.UnavailableOperations[0]
-		if unavailable.OperationID != "getOpen" ||
-			!slices.Equal(unavailable.DiagnosticCodes, []string{"open_object_shape"}) ||
+		if unavailable.OperationID != "getConditional" ||
+			!slices.Equal(unavailable.DiagnosticCodes, []string{"unsupported_schema_keyword"}) ||
 			len(unavailable.SourceRefs) != 1 ||
-			unavailable.SourceRefs[0].Pointer != "#/paths/~1open/get" {
-			t.Fatalf("getOpen unavailable metadata = %#v", unavailable)
+			unavailable.SourceRefs[0].Pointer != "#/paths/~1conditional/get" {
+			t.Fatalf("getConditional unavailable metadata = %#v", unavailable)
 		}
 		if len(unavailable.LaneEligibility) != 7 {
-			t.Fatalf("getOpen lane inventory = %#v, want all seven lanes", unavailable.LaneEligibility)
+			t.Fatalf("getConditional lane inventory = %#v, want all seven lanes", unavailable.LaneEligibility)
 		}
 		var readBlocked, writeNotApplicable bool
 		for _, lane := range unavailable.LaneEligibility {
@@ -185,13 +185,13 @@ func TestDeterministicCompleteInventory(t *testing.T) {
 			}
 			switch lane.Lane {
 			case contract.LaneDirectRead:
-				readBlocked = lane.Status == contract.LaneBlocked && strings.Contains(lane.Reason, "open_object_shape")
+				readBlocked = lane.Status == contract.LaneBlocked && strings.Contains(lane.Reason, "unsupported_schema_keyword")
 			case contract.LaneDirectWrite:
 				writeNotApplicable = lane.Status == contract.LaneNotApplicable && lane.Reason == "read operation has no write shape"
 			}
 		}
 		if !readBlocked || !writeNotApplicable {
-			t.Fatalf("getOpen lane reasons are not truthful: %#v", unavailable.LaneEligibility)
+			t.Fatalf("getConditional lane reasons are not truthful: %#v", unavailable.LaneEligibility)
 		}
 		if len(mixedBundle.Commands) != 1 || mixedBundle.Commands[0].OperationID != "getGood" {
 			t.Fatalf("embedded commands = %#v, want only executable getGood", mixedBundle.Commands)
@@ -207,36 +207,36 @@ func TestDeterministicCompleteInventory(t *testing.T) {
 		if err := json.Unmarshal(artifacts.Report, &report); err != nil {
 			t.Fatal(err)
 		}
-		var reportedOpen *NormalizedOperation
+		var reportedConditional *NormalizedOperation
 		for index := range report.Operations {
-			if report.Operations[index].OperationID == "getOpen" {
-				reportedOpen = &report.Operations[index]
+			if report.Operations[index].OperationID == "getConditional" {
+				reportedConditional = &report.Operations[index]
 			}
 		}
-		if reportedOpen == nil ||
-			reportedOpen.Raw.Method != "GET" ||
-			reportedOpen.Raw.Path != "/open" ||
-			len(reportedOpen.Raw.SourceFacts) == 0 ||
-			len(reportedOpen.Raw.RequestVariants) != 1 ||
-			reportedOpen.Raw.RequestVariants[0].MediaType != parameterOnlyMediaType ||
-			len(reportedOpen.Raw.ResponseVariants) != 1 ||
-			reportedOpen.Raw.ResponseVariants[0].Status != "200" ||
-			reportedOpen.Raw.ResponseVariants[0].MediaType != "application/json" ||
-			len(reportedOpen.RequestVariants) != 1 ||
-			len(reportedOpen.RequestVariants[0].SourceFacts) == 0 ||
-			len(reportedOpen.ResponseVariants) != 1 ||
-			len(reportedOpen.ResponseVariants[0].SourceFacts) == 0 ||
-			len(reportedOpen.ResponseVariants[0].SchemaFacts) == 0 {
-			t.Fatalf("authoring report hid getOpen source/status/media facts: %#v", reportedOpen)
+		if reportedConditional == nil ||
+			reportedConditional.Raw.Method != "GET" ||
+			reportedConditional.Raw.Path != "/conditional" ||
+			len(reportedConditional.Raw.SourceFacts) == 0 ||
+			len(reportedConditional.Raw.RequestVariants) != 1 ||
+			reportedConditional.Raw.RequestVariants[0].MediaType != parameterOnlyMediaType ||
+			len(reportedConditional.Raw.ResponseVariants) != 1 ||
+			reportedConditional.Raw.ResponseVariants[0].Status != "200" ||
+			reportedConditional.Raw.ResponseVariants[0].MediaType != "application/json" ||
+			len(reportedConditional.RequestVariants) != 1 ||
+			len(reportedConditional.RequestVariants[0].SourceFacts) == 0 ||
+			len(reportedConditional.ResponseVariants) != 1 ||
+			len(reportedConditional.ResponseVariants[0].SourceFacts) == 0 ||
+			len(reportedConditional.ResponseVariants[0].SchemaFacts) == 0 {
+			t.Fatalf("authoring report hid getConditional source/status/media facts: %#v", reportedConditional)
 		}
 		var reportedDiagnostic bool
 		for _, diagnostic := range report.Diagnostics {
-			if diagnostic.OperationID == "getOpen" && diagnostic.Code == "open_object_shape" && len(diagnostic.SourceFacts) != 0 {
+			if diagnostic.OperationID == "getConditional" && diagnostic.Code == "unsupported_schema_keyword" && len(diagnostic.SourceFacts) != 0 {
 				reportedDiagnostic = true
 			}
 		}
 		if !reportedDiagnostic {
-			t.Fatalf("authoring report diagnostics = %#v, want source-linked open_object_shape", report.Diagnostics)
+			t.Fatalf("authoring report diagnostics = %#v, want source-linked unsupported_schema_keyword", report.Diagnostics)
 		}
 
 		corruptCaptures := Captures{Documents: map[string][]byte{}, Licenses: map[string][]byte{}}

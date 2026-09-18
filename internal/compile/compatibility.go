@@ -29,7 +29,41 @@ type schemaContext struct {
 	propertyBindings  bool
 }
 
+// lowerSchema returns schema facts in captured location order so identical
+// captured inputs always produce identical report bytes. The same captured
+// schema can be reached from several references, so the reference origin is
+// part of the order.
 func lowerSchema(reference *openapi3.SchemaRef, context schemaContext) schemaLowering {
+	lowering := lowerSchemaValue(reference, context)
+	slices.SortStableFunc(lowering.Facts, compareSchemaFacts)
+	return lowering
+}
+
+func compareSchemaFacts(left, right SchemaFact) int {
+	if compared := strings.Compare(left.SourceFact.SourceRef.SourceID, right.SourceFact.SourceRef.SourceID); compared != 0 {
+		return compared
+	}
+	if compared := strings.Compare(left.SourceFact.SourceRef.Pointer, right.SourceFact.SourceRef.Pointer); compared != 0 {
+		return compared
+	}
+	leftReference, rightReference := schemaFactReference(left), schemaFactReference(right)
+	if compared := strings.Compare(leftReference.FromPointer, rightReference.FromPointer); compared != 0 {
+		return compared
+	}
+	if compared := strings.Compare(leftReference.TargetSourceID, rightReference.TargetSourceID); compared != 0 {
+		return compared
+	}
+	return strings.Compare(leftReference.TargetPointer, rightReference.TargetPointer)
+}
+
+func schemaFactReference(fact SchemaFact) ReferenceIdentity {
+	if fact.Reference == nil {
+		return ReferenceIdentity{}
+	}
+	return *fact.Reference
+}
+
+func lowerSchemaValue(reference *openapi3.SchemaRef, context schemaContext) schemaLowering {
 	if context.stack == nil {
 		context.stack = make(map[string]struct{})
 	}
@@ -76,7 +110,10 @@ func lowerSchema(reference *openapi3.SchemaRef, context schemaContext) schemaLow
 	if schema.Always != nil {
 		return appendUnsupported(lowering, context, "boolean_schema", "boolean JSON Schema is unsupported by the typed runtime schema")
 	}
-	if len(schema.AnyOf) != 0 || schema.Not != nil || len(schema.PrefixItems) != 0 || schema.Contains != nil ||
+	if len(schema.OneOf) != 0 && len(schema.AnyOf) != 0 {
+		return appendUnsupported(lowering, context, "unsupported_schema_keyword", "a schema declaring both oneOf and anyOf cannot keep both declared alternative sets")
+	}
+	if schema.Not != nil || len(schema.PrefixItems) != 0 || schema.Contains != nil ||
 		len(schema.PatternProperties) != 0 || len(schema.DependentSchemas) != 0 || schema.PropertyNames != nil ||
 		schema.If != nil || schema.Then != nil || schema.Else != nil || len(schema.DependentRequired) != 0 ||
 		schema.DynamicRef != "" || schema.DynamicAnchor != "" {
@@ -88,6 +125,9 @@ func lowerSchema(reference *openapi3.SchemaRef, context schemaContext) schemaLow
 		return appendUnsupported(lowering, context, "unsupported_schema_type", "schema type is missing or unsupported")
 	}
 	if len(concreteTypes) > 1 {
+		if len(schema.OneOf) != 0 || len(schema.AnyOf) != 0 {
+			return appendUnsupported(lowering, context, "unsupported_union_constraint", "a union with several declared scalar types cannot keep the declared alternatives")
+		}
 		if len(schema.Enum) != 0 || schema.Min != nil || schema.Max != nil || schemaHasUnrepresentedConstraints(schema) {
 			return appendUnsupported(lowering, context, "unsupported_union_constraint", "union-level constraints cannot be represented without changing source meaning")
 		}
@@ -116,14 +156,23 @@ func lowerSchema(reference *openapi3.SchemaRef, context schemaContext) schemaLow
 		return lowering
 	}
 
-	if len(schema.OneOf) != 0 {
+	if len(schema.OneOf) != 0 || len(schema.AnyOf) != 0 {
+		if schema.Properties != nil || len(schema.Required) != 0 || schema.Items != nil || len(schema.AllOf) != 0 {
+			return appendUnsupported(lowering, context, "unsupported_schema_keyword", "a union that also declares an object or array shape cannot be lowered without dropping declared structure")
+		}
 		if len(schema.Enum) != 0 || schema.Min != nil || schema.Max != nil || schemaHasUnrepresentedConstraints(schema) {
 			return appendUnsupported(lowering, context, "unsupported_union_constraint", "union-level constraints cannot be represented without changing source meaning")
 		}
-		variants := make([]contract.Schema, 0, len(schema.OneOf))
-		for index, variantReference := range schema.OneOf {
+		unionKeyword := "oneOf"
+		unionVariants := schema.OneOf
+		if len(schema.AnyOf) != 0 {
+			unionKeyword = "anyOf"
+			unionVariants = schema.AnyOf
+		}
+		variants := make([]contract.Schema, 0, len(unionVariants))
+		for index, variantReference := range unionVariants {
 			variantContext := context
-			variantContext.pointer = joinPointer(joinPointer(context.pointer, "oneOf"), strconv.Itoa(index))
+			variantContext.pointer = joinPointer(joinPointer(context.pointer, unionKeyword), strconv.Itoa(index))
 			variantContext.bindingDefault = false
 			variantContext.propertyBindings = false
 			variant := lowerSchema(variantReference, variantContext)
@@ -189,9 +238,25 @@ func lowerSchema(reference *openapi3.SchemaRef, context schemaContext) schemaLow
 			}
 			result.Properties[name] = *property.Schema
 		}
-		if schema.AdditionalProperties.Schema != nil || schema.AdditionalProperties.Has == nil ||
-			(schema.AdditionalProperties.Has != nil && *schema.AdditionalProperties.Has) {
-			lowering = appendUnsupported(lowering, context, "open_object_shape", "additional object properties are retained as a blocking raw fact because the typed runtime schema is closed")
+		// JSON Schema and OpenAPI 3.0 permit undeclared properties unless the
+		// source declares additionalProperties: false. The declared-open marker
+		// keeps that declaration instead of claiming an empty closed object.
+		switch additional := schema.AdditionalProperties; {
+		case additional.Schema != nil:
+			additionalContext := context
+			additionalContext.pointer = joinPointer(context.pointer, "additionalProperties")
+			additionalContext.bindingDefault = false
+			additionalContext.propertyBindings = false
+			loweredAdditional := lowerSchema(additional.Schema, additionalContext)
+			lowering.Facts = append(lowering.Facts, loweredAdditional.Facts...)
+			lowering.Diagnostics = append(lowering.Diagnostics, loweredAdditional.Diagnostics...)
+			if loweredAdditional.Schema == nil {
+				return lowering
+			}
+			result.OpenProperties = true
+			result.AdditionalProperties = loweredAdditional.Schema
+		case additional.Has == nil || *additional.Has:
+			result.OpenProperties = true
 		}
 	case contract.SchemaTypeArray:
 		if schema.Items == nil {
@@ -256,6 +321,9 @@ func schemaFact(source *ResolvedSource, sourceID, pointer string, schema *openap
 	}
 	for index := range schema.OneOf {
 		fact.OneOfPointers = append(fact.OneOfPointers, "#"+joinPointer(joinPointer(pointer, "oneOf"), strconv.Itoa(index)))
+	}
+	for index := range schema.AnyOf {
+		fact.AnyOfPointers = append(fact.AnyOfPointers, "#"+joinPointer(joinPointer(pointer, "anyOf"), strconv.Itoa(index)))
 	}
 	return fact
 }
@@ -340,7 +408,7 @@ func schemaTypes(schema *openapi3.Schema) (bool, []string, bool) {
 	}
 	if len(types) == 0 {
 		switch {
-		case len(schema.OneOf) != 0:
+		case len(schema.OneOf) != 0 || len(schema.AnyOf) != 0:
 			return nullable, []string{"union"}, true
 		case len(schema.AllOf) != 0 || schema.Properties != nil:
 			types = []string{"object"}

@@ -38,12 +38,21 @@ type Schema struct {
 	Nullable   bool              `json:"nullable,omitempty"`
 	Required   []string          `json:"required,omitempty"`
 	Properties map[string]Schema `json:"properties,omitempty"`
-	Items      *Schema           `json:"items,omitempty"`
-	OneOf      []Schema          `json:"oneOf,omitempty"`
-	AllOf      []Schema          `json:"allOf,omitempty"`
-	Enum       []PresentValue    `json:"enum,omitempty"`
-	Minimum    *PresentValue     `json:"minimum,omitempty"`
-	Maximum    *PresentValue     `json:"maximum,omitempty"`
+	// OpenProperties records a source declaration that properties beyond
+	// Properties are permitted. JSON Schema and OpenAPI leave an object open
+	// unless the source declares additionalProperties: false, so an object
+	// keeps its declared property set without claiming a closed one.
+	OpenProperties bool `json:"open_properties,omitempty"`
+	// AdditionalProperties holds the declared schema of each property outside
+	// Properties when the source constrains those values. It is valid only
+	// with OpenProperties and never declares or renames a property.
+	AdditionalProperties *Schema        `json:"additional_properties,omitempty"`
+	Items                *Schema        `json:"items,omitempty"`
+	OneOf                []Schema       `json:"oneOf,omitempty"`
+	AllOf                []Schema       `json:"allOf,omitempty"`
+	Enum                 []PresentValue `json:"enum,omitempty"`
+	Minimum              *PresentValue  `json:"minimum,omitempty"`
+	Maximum              *PresentValue  `json:"maximum,omitempty"`
 }
 
 func DecodeSchema(document []byte) (Schema, error) {
@@ -91,6 +100,14 @@ func validateSchema(schema Schema, path string, depth int) error {
 		if schema.Items != nil || schema.OneOf != nil {
 			return contractError(ErrUnsupportedSchema, path, "object cannot declare items or oneOf")
 		}
+		if schema.AdditionalProperties != nil && !schema.OpenProperties {
+			return contractError(ErrUnsupportedSchema, path+".additional_properties", "declared additional property schema requires open properties")
+		}
+		if schema.AdditionalProperties != nil {
+			if err := validateSchema(*schema.AdditionalProperties, path+".additional_properties", depth+1); err != nil {
+				return err
+			}
+		}
 		seenRequired := make(map[string]struct{}, len(schema.Required))
 		for _, name := range schema.Required {
 			if !utf8.ValidString(name) {
@@ -116,8 +133,9 @@ func validateSchema(schema Schema, path string, depth int) error {
 		if schema.Items == nil {
 			return contractError(ErrUnsupportedSchema, path+".items", "array items must be declared")
 		}
-		if schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil {
-			return contractError(ErrUnsupportedSchema, path, "array cannot declare object, union, or allOf shape")
+		if schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil ||
+			schema.OpenProperties || schema.AdditionalProperties != nil {
+			return contractError(ErrUnsupportedSchema, path, "array cannot declare object, union, allOf, or undeclared-property shape")
 		}
 		if err := validateSchema(*schema.Items, path+".items", depth+1); err != nil {
 			return err
@@ -126,8 +144,9 @@ func validateSchema(schema Schema, path string, depth int) error {
 		if len(schema.OneOf) < 2 {
 			return contractError(ErrUnsupportedSchema, path+".oneOf", "union must preserve at least two variants")
 		}
-		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.AllOf != nil {
-			return contractError(ErrUnsupportedSchema, path, "union cannot combine oneOf with object, array, or allOf shape")
+		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.AllOf != nil ||
+			schema.OpenProperties || schema.AdditionalProperties != nil {
+			return contractError(ErrUnsupportedSchema, path, "union cannot combine oneOf with object, array, allOf, or undeclared-property shape")
 		}
 		for index, variant := range schema.OneOf {
 			if err := validateSchema(variant, fmt.Sprintf("%s.oneOf[%d]", path, index), depth+1); err != nil {
@@ -135,8 +154,9 @@ func validateSchema(schema Schema, path string, depth int) error {
 			}
 		}
 	default:
-		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil {
-			return contractError(ErrUnsupportedSchema, path, "scalar cannot declare object, array, union, or allOf shape")
+		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil ||
+			schema.OpenProperties || schema.AdditionalProperties != nil {
+			return contractError(ErrUnsupportedSchema, path, "scalar cannot declare object, array, union, allOf, or undeclared-property shape")
 		}
 	}
 	return nil

@@ -318,7 +318,6 @@ func isolatableOperationDiagnostic(diagnostic Diagnostic) bool {
 		"unsupported_union",
 		"unsupported_schema_constraint",
 		"unsupported_all_of",
-		"open_object_shape",
 		"missing_array_items":
 		return true
 	default:

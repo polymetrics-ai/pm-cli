@@ -1,0 +1,21 @@
+{
+  "schema_version": "pm.lane-inventory/v1",
+  "connector_id": "github",
+  "lane": "direct_write",
+  "source_digest": "sha256:fff38010473f610d326243e39d732cfb2b076752885c98284245633029feef3e",
+  "bundle_hash": "sha256:ca3f8b61ed2210d1e221842b5fe6edbc51caee309f2171af0b92da61a94f2f96",
+  "operations": [
+    {
+      "operation_id": "issues/list-for-repo",
+      "status": "not_applicable",
+      "reason": "the accepted operation is a read-only GET and declares no provider mutation; GitHub write operations are not part of this connector slice",
+      "source_refs": [
+        {
+          "source_id": "github-rest-api-description",
+          "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+        }
+      ],
+      "cases": []
+    }
+  ]
+}

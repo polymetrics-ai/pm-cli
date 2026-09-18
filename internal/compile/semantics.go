@@ -79,6 +79,7 @@ type SchemaFact struct {
 	Required      []string           `json:"required"`
 	AllOfPointers []string           `json:"all_of_pointers"`
 	OneOfPointers []string           `json:"one_of_pointers"`
+	AnyOfPointers []string           `json:"any_of_pointers"`
 	Default       *RawValueFact      `json:"default,omitempty"`
 	Reference     *ReferenceIdentity `json:"reference,omitempty"`
 }

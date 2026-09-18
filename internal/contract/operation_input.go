@@ -486,6 +486,10 @@ func cloneRequestSchema(schema Schema) Schema {
 		items := cloneRequestSchema(*schema.Items)
 		cloned.Items = &items
 	}
+	if schema.AdditionalProperties != nil {
+		additional := cloneRequestSchema(*schema.AdditionalProperties)
+		cloned.AdditionalProperties = &additional
+	}
 	if schema.Minimum != nil {
 		minimum := *schema.Minimum
 		cloned.Minimum = &minimum
@@ -702,12 +706,47 @@ func operationInputMatchesSchema(value PresentValue, schema Schema, allowAbsent 
 }
 
 func operationInputObjectMatchesSchema(fields map[string]PresentValue, schema Schema) bool {
-	for name := range fields {
-		if !operationInputObjectDeclaresField(schema, name) {
+	for name, field := range fields {
+		if operationInputObjectDeclaresField(schema, name) {
+			continue
+		}
+		if !operationInputObjectPermitsUnlisted(schema) {
+			return false
+		}
+		if !operationInputUnlistedFieldMatches(field, schema) {
 			return false
 		}
 	}
 	return operationInputObjectSatisfiesConstraints(fields, schema)
+}
+
+// operationInputObjectPermitsUnlisted is true only when every object in the
+// composition declares that properties outside its declared set are permitted.
+// A closed component keeps the whole composition closed.
+func operationInputObjectPermitsUnlisted(schema Schema) bool {
+	if !schema.OpenProperties {
+		return false
+	}
+	for _, component := range schema.AllOf {
+		if !operationInputObjectPermitsUnlisted(component) {
+			return false
+		}
+	}
+	return true
+}
+
+// operationInputUnlistedFieldMatches applies every declared additional property
+// schema in the composition to a property outside the declared set.
+func operationInputUnlistedFieldMatches(field PresentValue, schema Schema) bool {
+	if schema.AdditionalProperties != nil && !operationInputMatchesSchema(field, *schema.AdditionalProperties, false) {
+		return false
+	}
+	for _, component := range schema.AllOf {
+		if !operationInputUnlistedFieldMatches(field, component) {
+			return false
+		}
+	}
+	return true
 }
 
 func operationInputObjectDeclaresField(schema Schema, name string) bool {

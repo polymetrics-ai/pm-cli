@@ -60,11 +60,35 @@ func main() {
 }
 
 func run(ctx context.Context, args []string, stdout, stderr io.Writer) int {
-	if len(args) == 0 || args[0] != "compile" {
-		fmt.Fprint(stderr, usageText)
+	return runWith(ctx, args, stdout, stderr, defaultConnectorDependencies())
+}
+
+// runWith selects one owned pmgen mode. Tests supply the connector generation
+// dependencies; production composes the real compiler and lane emitter.
+func runWith(ctx context.Context, args []string, stdout, stderr io.Writer, dependencies connectorDependencies) int {
+	if len(args) == 0 {
+		printUsage(stderr)
 		return 2
 	}
-	options, err := parseCompileOptions(args[1:], stderr)
+	switch args[0] {
+	case "compile":
+		return runCompile(ctx, args[1:], stdout, stderr)
+	case "connector":
+		return runConnector(ctx, args[1:], stdout, stderr, dependencies)
+	default:
+		printUsage(stderr)
+		return 2
+	}
+}
+
+// printUsage lists every owned mode; each mode keeps its own exact options.
+func printUsage(stderr io.Writer) {
+	fmt.Fprint(stderr, usageText)
+	fmt.Fprint(stderr, connectorUsageText)
+}
+
+func runCompile(ctx context.Context, args []string, stdout, stderr io.Writer) int {
+	options, err := parseCompileOptions(args, stderr)
 	if err != nil {
 		fmt.Fprintf(stderr, "pmgen: %v\n", err)
 		return 2

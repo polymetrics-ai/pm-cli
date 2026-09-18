@@ -31,7 +31,15 @@ type discoveredOperation struct {
 
 type parameterEntry struct {
 	parameter *openapi3.Parameter
-	pointer   string
+	// pointer is the captured pointer of the parameter entry itself. A $ref
+	// parameter keeps its use-site pointer so binding facts stay at the
+	// reference the operation declares.
+	pointer string
+	// schemaSourceID and schemaPointer locate the captured parameter schema
+	// declaration. A $ref parameter declares its schema in the target node, so
+	// the resolved pointer is the only captured location of that schema.
+	schemaSourceID string
+	schemaPointer  string
 }
 
 type bodyProperty struct {
@@ -253,7 +261,7 @@ func normalizeOperation(
 		operation.BlockedDiagnosticIDs = append(operation.BlockedDiagnosticIDs, diagnostic.ID)
 	}
 	policy := buildSensitivityPolicy(discovered.document)
-	parameters, err := mergedParameters(discovered)
+	parameters, err := mergedParameters(source.Resolved, discovered)
 	if err != nil {
 		return NormalizedOperation{}, nil, err
 	}
@@ -321,7 +329,7 @@ func normalizeOperation(
 	return operation, diagnostics, nil
 }
 
-func mergedParameters(discovered discoveredOperation) ([]parameterEntry, error) {
+func mergedParameters(source *ResolvedSource, discovered discoveredOperation) ([]parameterEntry, error) {
 	entries := make([]parameterEntry, 0, len(discovered.pathItem.Parameters)+len(discovered.operation.Parameters))
 	positions := make(map[string]int)
 	appendParameters := func(parameters openapi3.Parameters, basePointer string, override bool) error {
@@ -331,16 +339,26 @@ func mergedParameters(discovered discoveredOperation) ([]parameterEntry, error) 
 				return sourceError(ErrUnsupportedShape, discovered.sourceID, pointer, "parameter reference has no captured value")
 			}
 			parameter := reference.Value
+			entry := parameterEntry{
+				parameter:      parameter,
+				pointer:        pointer,
+				schemaSourceID: discovered.sourceID,
+				schemaPointer:  pointer + "/schema",
+			}
+			if identity, ok := source.ReferenceAt(discovered.sourceID, pointer+"/$ref"); ok {
+				entry.schemaSourceID = identity.TargetSourceID
+				entry.schemaPointer = identity.TargetPointer + "/schema"
+			}
 			key := parameter.In + "\x00" + parameter.Name
 			if prior, exists := positions[key]; exists {
 				if !override {
 					return sourceError(ErrInvalidSource, discovered.sourceID, pointer, "parameter wire identity is duplicated")
 				}
-				entries[prior] = parameterEntry{parameter: parameter, pointer: pointer}
+				entries[prior] = entry
 				continue
 			}
 			positions[key] = len(entries)
-			entries = append(entries, parameterEntry{parameter: parameter, pointer: pointer})
+			entries = append(entries, entry)
 		}
 		return nil
 	}
@@ -394,8 +412,8 @@ func normalizeParameterBinding(
 	normalizedPointer := "/operations/" + escapePointerToken(operationID) + "/common_bindings/" + escapePointerToken(fieldID)
 	lowered := lowerSchema(parameter.Schema, schemaContext{
 		source:            source,
-		sourceID:          sourceID,
-		pointer:           entry.pointer + "/schema",
+		sourceID:          entry.schemaSourceID,
+		pointer:           entry.schemaPointer,
 		operationID:       operationID,
 		fieldID:           fieldID,
 		normalizedPointer: normalizedPointer + "/schema",
@@ -446,7 +464,7 @@ func normalizeParameterBinding(
 		Sensitivity:   contract.Sensitivity(classification),
 		Schema:        *lowered.Schema,
 	}
-	if rawDefault, ok := resolvedSchemaDefault(source, sourceID, entry.pointer+"/schema"); ok {
+	if rawDefault, ok := resolvedSchemaDefault(source, entry.schemaSourceID, entry.schemaPointer); ok {
 		value, err := presentValueFromRaw(rawDefault, binding.Schema)
 		if err != nil {
 			diagnostic := newDiagnostic(

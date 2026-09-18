@@ -1,0 +1,23 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "githubcompat",
+    srcs = [
+        "fixture.go",
+        "journal.go",
+        "server.go",
+        "tls.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/testfixture/githubcompat",
+    visibility = ["//cmd/pm-github-fixture:__pkg__"],
+    deps = ["//internal/contract"],
+)
+
+go_test(
+    name = "githubcompat_test",
+    srcs = ["server_test.go"],
+    deps = [
+        ":githubcompat",
+        "//internal/contract",
+    ],
+)
