@@ -351,13 +351,14 @@ func newAdmitting(
 	fixture := New(t, func(dependencies ServiceDependencies, configuration *httpapi.ServiceConfig) error {
 		resolver = admittingResolver(dependencies)
 		admission, err := app.NewAdmissionService(app.AdmissionServiceConfig{
-			Pool:             dependencies.Pool,
-			DeploymentID:     dependencies.DeploymentID,
-			Authorize:        configuration.Auth.AuthorizeResource,
-			Registry:         registry,
-			ResolveOperation: resolver,
-			Policy:           admittingPolicy(),
-			Random:           rand.Reader,
+			Pool:              dependencies.Pool,
+			DeploymentID:      dependencies.DeploymentID,
+			Authorize:         configuration.Auth.AuthorizeResource,
+			Registry:          registry,
+			ResolveOperation:  resolver,
+			ResolveHTTPPolicy: admittingHTTPPolicy(dependencies),
+			Policy:            admittingPolicy(),
+			Random:            rand.Reader,
 		})
 		if err != nil {
 			return err
@@ -934,13 +935,14 @@ func ServeProcessAPI(
 		t.Fatalf("construct child API controlled capability: %v", err)
 	}
 	admission, err := app.NewAdmissionService(app.AdmissionServiceConfig{
-		Pool:             pool,
-		DeploymentID:     dependencies.DeploymentID,
-		Authorize:        authentication.AuthorizeResource,
-		Registry:         registry,
-		ResolveOperation: resolver,
-		Policy:           admittingPolicy(),
-		Random:           rand.Reader,
+		Pool:              pool,
+		DeploymentID:      dependencies.DeploymentID,
+		Authorize:         authentication.AuthorizeResource,
+		Registry:          registry,
+		ResolveOperation:  resolver,
+		ResolveHTTPPolicy: admittingHTTPPolicy(dependencies.ExecutionDependencies()),
+		Policy:            admittingPolicy(),
+		Random:            rand.Reader,
 	})
 	if err != nil {
 		t.Fatalf("construct child API admission service: %v", err)
@@ -1384,6 +1386,30 @@ func admittingPolicy() store.RunBudgetPolicy {
 		WorkspaceActiveRuns:  4,
 		WorkflowPayloadBytes: 1 << 16,
 		WorkflowFanout:       32,
+	}
+}
+
+// admittingHTTPPolicy mirrors production admission: an accepted run seals the
+// exact bounded HTTP policy of its authorized connection. The controlled fixture
+// derives the selected origin from the operation's own admitted origin, so a
+// fixture operation that declares no bounded HTTP execution stays truthfully
+// policy-less instead of receiving an invented policy.
+func admittingHTTPPolicy(dependencies ServiceDependencies) app.HTTPPolicyResolver {
+	resolve := admittingResolver(dependencies)
+	return func(scope contract.Scope, connectionID string) (contract.HTTPExecutionPolicy, bool) {
+		selection, err := resolve(context.Background(), scope, connectionID, dependencies.OperationID)
+		if err != nil || selection.Operation.Execution == nil || selection.Operation.Execution.HTTP == nil ||
+			len(selection.Operation.Execution.HTTP.Origins) != 1 {
+			return contract.HTTPExecutionPolicy{}, false
+		}
+		return contract.HTTPExecutionPolicy{
+			MaxRequestBytes:  1 << 20,
+			MaxResponseBytes: 1 << 20,
+			MaxDNSAnswers:    4,
+			MaxAttempts:      3,
+			MaxRetryDelay:    time.Minute,
+			SelectedOrigin:   selection.Operation.Execution.HTTP.Origins[0],
+		}, true
 	}
 }
 

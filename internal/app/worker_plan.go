@@ -96,9 +96,12 @@ func (service *WorkerService) planWorkerTaskDispatch(
 		))
 	}
 	if selection.Operation.Execution == nil || selection.Operation.Execution.HTTP == nil {
-		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
-			"accepted operation declares no bounded HTTP execution",
-		))
+		// The accepted operation declares no bounded HTTP execution, so there is
+		// nothing this planner may derive a dispatch from. Reporting no plan
+		// preserves the existing "accepted but not yet dispatchable" path; a
+		// declared HTTP execution that lacks its sealed policy below is still a
+		// hard capability failure.
+		return nil
 	}
 	if handler.Kind != HandlerHTTP {
 		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(

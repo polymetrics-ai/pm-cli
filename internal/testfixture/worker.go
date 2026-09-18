@@ -77,6 +77,30 @@ func SealWorkerPlan(
 	if err != nil {
 		t.Fatalf("materialize controlled operation task: %v", err)
 	}
+	if !snapshot.Done && len(snapshot.Units) == 1 {
+		// The production planner already derived this dispatch from the durable
+		// admission facts, so the fixture returns exactly that plan instead of
+		// sealing a second one.
+		var planned SealedWorkerPlan
+		unit := snapshot.Units[0]
+		err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(
+			ctx context.Context,
+			tx *store.Transaction,
+		) error {
+			dispatch, err := store.LoadDispatch(
+				ctx, tx, store.TaskRef{RunID: reference.RunID, TaskID: unit.TaskID}, unit.DispatchID,
+			)
+			if err != nil {
+				return err
+			}
+			planned = SealedWorkerPlan{TaskID: unit.TaskID, Dispatch: dispatch.Intent}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("load the production planned dispatch: %v", err)
+		}
+		return planned
+	}
 	if snapshot.Done || len(snapshot.Units) != 0 {
 		t.Fatalf("unplanned controlled snapshot = %#v; want pending work without a dispatchable unit", snapshot)
 	}
