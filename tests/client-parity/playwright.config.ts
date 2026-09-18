@@ -32,7 +32,12 @@ export default defineConfig({
     screenshot: "off",
     launchOptions: {
       executablePath,
-      args: [`--ignore-certificate-errors-spki-list=${certificatePin}`],
+      args: [
+        `--ignore-certificate-errors-spki-list=${certificatePin}`,
+        // Fork/exec directly: the confined Linux runner denies zygote capset.
+        // Retain Playwright's existing sandbox policy and separate processes.
+        ...(process.platform === "linux" ? ["--no-zygote"] : []),
+      ],
     },
   },
 });
