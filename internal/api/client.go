@@ -365,7 +365,8 @@ type RecoveryAttempt func(context.Context) (RecoveryAttemptResult, error)
 // SendMutationWithRecovery persists a secret-free key and typed-intent
 // fingerprint before the first mutation send, then performs at most three
 // unchanged sends inside one 30-second deadline. It never changes a key,
-// revision or body and never owns provider/run retry timing.
+// revision or body and never owns provider/run retry timing. A later
+// transport-uncertain send dominates every earlier confirmed refusal.
 func (client *QualifiedClient) SendMutationWithRecovery(
 	ctx context.Context,
 	store RecoveryStore,
@@ -449,9 +450,11 @@ func (client *QualifiedClient) SendMutationWithRecovery(
 		return nil, ErrClientTransport
 	}
 	var lastResponse WireResponse
+	latestSendUncertain := false
 	for sendIndex := range 3 {
 		result, sendErr := attempt(recoveryContext)
-		if sendErr == nil && result.Response != nil {
+		latestSendUncertain = sendErr != nil || result.Response == nil
+		if !latestSendUncertain {
 			lastResponse = result.Response
 			if !retryableMutationResponse(result.Response) {
 				return result.Response, nil
@@ -461,7 +464,7 @@ func (client *QualifiedClient) SendMutationWithRecovery(
 			break
 		}
 		delay := []time.Duration{250 * time.Millisecond, time.Second}[sendIndex]
-		if sendErr == nil && result.Response != nil {
+		if !latestSendUncertain {
 			retryAfter, present, valid := parseRetryAfter(result.RetryAfter, time.Now())
 			if present && !valid {
 				return result.Response, nil
@@ -471,6 +474,9 @@ func (client *QualifiedClient) SendMutationWithRecovery(
 			}
 		}
 		if !time.Now().Add(delay).Before(deadline) {
+			if latestSendUncertain {
+				return nil, ErrMutationOutcomeUnknown
+			}
 			if lastResponse != nil {
 				return lastResponse, nil
 			}
@@ -480,12 +486,18 @@ func (client *QualifiedClient) SendMutationWithRecovery(
 		select {
 		case <-recoveryContext.Done():
 			timer.Stop()
+			if latestSendUncertain {
+				return nil, ErrMutationOutcomeUnknown
+			}
 			if lastResponse != nil {
 				return lastResponse, nil
 			}
 			return nil, ErrMutationOutcomeUnknown
 		case <-timer.C:
 		}
+	}
+	if latestSendUncertain {
+		return nil, ErrMutationOutcomeUnknown
 	}
 	if lastResponse != nil {
 		return lastResponse, nil

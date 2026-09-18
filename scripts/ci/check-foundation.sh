@@ -65,6 +65,8 @@ CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools vet ./...
 .cache/bin/govulncheck -version
 python3 scripts/ci/check-native.py
 sh scripts/check-boundaries.sh
+sh scripts/browser.sh install
+sh scripts/browser.sh build
 python3 tools/bootstrap.py exec bazelisk -- --batch build //...
 # Physical targets declare exclusive execution for their shared schema/roles.
 python3 scripts/ci/with-stack-fixture.py \

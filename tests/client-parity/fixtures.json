@@ -1,0 +1,10 @@
+{
+  "schema_version": "pm.client-parity-fixture/v1",
+  "operation_id": "fixture.echo",
+  "operation_revision": "r1",
+  "input_field": "text",
+  "first_text": "alpha-one",
+  "changed_text": "alpha-two",
+  "request_key": "parity-1",
+  "evidence_mode": "controlled_same_stack"
+}

@@ -17,6 +17,7 @@ type ServiceConfig struct {
 	Auth                  *auth.Service
 	Identity              *app.IdentityService
 	Credentials           *app.CredentialIngress
+	Catalog               *app.CatalogService
 	Admission             *app.AdmissionService
 	Runs                  *app.RunService
 	InstanceID            string

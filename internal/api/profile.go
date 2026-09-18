@@ -3,7 +3,9 @@ package api
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -361,9 +363,37 @@ func cloneBool(value *bool) *bool {
 }
 
 var (
+	ErrInvalidRequestKey   = errors.New("client request key is invalid")
 	ErrRecoveryConflict    = errors.New("recovery key already identifies another intent")
 	ErrRecoveryUnavailable = errors.New("client recovery record is unavailable")
 )
+
+// RequestKeySelection distinguishes an explicit retained-request selection
+// from a newly allocated request identity.
+type RequestKeySelection struct {
+	RequestKey string
+	Allocated  bool
+}
+
+// SelectRequestKey is the common Go client request-key owner. An explicit key
+// selects that retained request. An absent key is allocated cryptographically
+// and never recovered merely because a later command has equal payload.
+func SelectRequestKey(explicit string) (RequestKeySelection, error) {
+	if explicit != "" {
+		if !validIdentity(explicit, 200) {
+			return RequestKeySelection{}, ErrInvalidRequestKey
+		}
+		return RequestKeySelection{RequestKey: explicit}, nil
+	}
+	var random [24]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return RequestKeySelection{}, ErrRecoveryUnavailable
+	}
+	return RequestKeySelection{
+		RequestKey: "pm_" + base64.RawURLEncoding.EncodeToString(random[:]),
+		Allocated:  true,
+	}, nil
+}
 
 type RecoveryRecord struct {
 	InstanceID              string
@@ -377,8 +407,8 @@ type RecoveryRecord struct {
 	TypedRequestFingerprint contract.SemanticDigest
 }
 
-// RecoveryStore durably records only a caller-owned request key and
-// secret-free digests. Raw mutation values and credentials cannot enter it.
+// RecoveryStore durably records only a selected or client-allocated request
+// key and secret-free digests. Raw mutation values and credentials cannot enter it.
 type RecoveryStore interface {
 	Persist(context.Context, RecoveryRecord) error
 }

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -283,6 +284,252 @@ func TestInvocationRecoveryPersistsBeforeBoundedSameKeySends(t *testing.T) {
 	}
 	if sends.Load() != 3 {
 		t.Fatalf("conflicting persisted intent reached API: sends = %d", sends.Load())
+	}
+}
+
+func TestClientAllocatedRequestKeyDurableExplicitRecovery(t *testing.T) {
+	t.Parallel()
+	const rawInput = "provider-input-must-not-enter-recovery-journal"
+	recoveryDirectory := filepath.Join(t.TempDir(), "recovery")
+	store, err := NewFileRecoveryStore(recoveryDirectory)
+	if err != nil {
+		t.Fatalf("recovery store: %v", err)
+	}
+	client := recoveryTestClient()
+	selection, err := SelectRequestKey("")
+	if err != nil {
+		t.Fatalf("allocate request key: %v", err)
+	}
+	if !selection.Allocated || !validIdentity(selection.RequestKey, 200) {
+		t.Fatalf("allocated request key = %#v", selection)
+	}
+	request := newRecoveryTestRequest(t, selection.RequestKey, rawInput)
+	sends := 0
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	_, err = client.SendMutationWithRecovery(
+		ctx,
+		store,
+		WorkspaceID("workspace-key-recovery"),
+		"invocation.submit",
+		"connection-key-recovery/operation-key-recovery",
+		request.Protocol,
+		request,
+		func(context.Context) (RecoveryAttemptResult, error) {
+			sends++
+			entries, readErr := os.ReadDir(recoveryDirectory)
+			if readErr != nil || len(entries) != 1 {
+				t.Errorf("send %d preceded durable record: entries %d error %v", sends, len(entries), readErr)
+			} else {
+				document, fileErr := os.ReadFile(filepath.Join(recoveryDirectory, entries[0].Name()))
+				if fileErr != nil {
+					t.Errorf("read recovery record before send: %v", fileErr)
+				} else if bytes.Contains(document, []byte(rawInput)) {
+					t.Error("recovery record contains raw provider input")
+				}
+			}
+			return RecoveryAttemptResult{}, ErrClientTransport
+		},
+	)
+	cancel()
+	if !errors.Is(err, ErrMutationOutcomeUnknown) || sends != 3 {
+		t.Fatalf("interrupted allocated request = %d sends, error %v; want three bounded sends and unknown outcome", sends, err)
+	}
+
+	retained, err := SelectRequestKey(selection.RequestKey)
+	if err != nil {
+		t.Fatalf("select retained request key: %v", err)
+	}
+	if retained.Allocated || retained.RequestKey != selection.RequestKey {
+		t.Fatalf("retained request selection = %#v", retained)
+	}
+	request = newRecoveryTestRequest(t, retained.RequestKey, rawInput)
+	response, err := client.SendMutationWithRecovery(
+		t.Context(),
+		store,
+		WorkspaceID("workspace-key-recovery"),
+		"invocation.submit",
+		"connection-key-recovery/operation-key-recovery",
+		request.Protocol,
+		request,
+		func(context.Context) (RecoveryAttemptResult, error) {
+			return RecoveryAttemptResult{Response: acceptedRecoveryTestResponse()}, nil
+		},
+	)
+	if err != nil || response.StatusCode() != http.StatusAccepted {
+		t.Fatalf("selected retained request = (%v, %v)", response, err)
+	}
+
+	changed := newRecoveryTestRequest(t, retained.RequestKey, rawInput+"-changed")
+	changedSent := false
+	if _, err := client.SendMutationWithRecovery(
+		t.Context(),
+		store,
+		WorkspaceID("workspace-key-recovery"),
+		"invocation.submit",
+		"connection-key-recovery/operation-key-recovery",
+		changed.Protocol,
+		changed,
+		func(context.Context) (RecoveryAttemptResult, error) {
+			changedSent = true
+			return RecoveryAttemptResult{Response: acceptedRecoveryTestResponse()}, nil
+		},
+	); !errors.Is(err, ErrRecoveryConflict) {
+		t.Fatalf("changed retained request error = %v, want recovery conflict", err)
+	}
+	if changedSent {
+		t.Fatal("changed canonical request reached transport under retained key")
+	}
+
+	fresh, err := SelectRequestKey("")
+	if err != nil {
+		t.Fatalf("allocate later request key: %v", err)
+	}
+	if !fresh.Allocated || fresh.RequestKey == retained.RequestKey {
+		t.Fatalf("later equal request selection = %#v after %#v", fresh, retained)
+	}
+	freshRequest := newRecoveryTestRequest(t, fresh.RequestKey, rawInput)
+	if _, err := client.SendMutationWithRecovery(
+		t.Context(),
+		store,
+		WorkspaceID("workspace-key-recovery"),
+		"invocation.submit",
+		"connection-key-recovery/operation-key-recovery",
+		freshRequest.Protocol,
+		freshRequest,
+		func(context.Context) (RecoveryAttemptResult, error) {
+			return RecoveryAttemptResult{Response: acceptedRecoveryTestResponse()}, nil
+		},
+	); err != nil {
+		t.Fatalf("later equal request with fresh key: %v", err)
+	}
+	entries, err := os.ReadDir(recoveryDirectory)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("distinct retained request records = %d, error %v; want two", len(entries), err)
+	}
+}
+
+func TestLaterUncertainSendDominatesEarlierConfirmedRefusal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		status int
+		code   string
+		action string
+	}{
+		{name: "workspace 429 then uncertain transport", status: http.StatusTooManyRequests, code: "workspace_admission_count_limit", action: "after_backlog_progress"},
+		{name: "dependency 503 then uncertain transport", status: http.StatusServiceUnavailable, code: "control_store_unavailable", action: "same_key_after_dependency_recovery"},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			t.Parallel()
+			selection, err := SelectRequestKey("")
+			if err != nil {
+				t.Fatalf("allocate request key: %v", err)
+			}
+			request := newRecoveryTestRequest(t, selection.RequestKey, test.name)
+			document, err := json.Marshal(Problem{
+				Type:            "https://pm.invalid/problems/" + test.code,
+				Title:           "Confirmed refusal before uncertain send",
+				Status:          test.status,
+				Detail:          "The first send was confirmed refused.",
+				Code:            test.code,
+				IncidentId:      "incident-later-uncertain-send",
+				SafeRetryAction: test.action,
+			})
+			if err != nil {
+				t.Fatalf("encode refusal: %v", err)
+			}
+			header := make(http.Header)
+			header.Set("Content-Type", "application/problem+json")
+			header.Set("Retry-After", "0")
+			refusal := &SubmitInvocationResponse{
+				Body:         document,
+				HTTPResponse: &http.Response{StatusCode: test.status, Header: header},
+			}
+			store, err := NewFileRecoveryStore(filepath.Join(t.TempDir(), "recovery"))
+			if err != nil {
+				t.Fatalf("recovery store: %v", err)
+			}
+			sends := 0
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			response, err := recoveryTestClient().SendMutationWithRecovery(
+				ctx,
+				store,
+				WorkspaceID("workspace-key-recovery"),
+				"invocation.submit",
+				"connection-key-recovery/operation-key-recovery",
+				request.Protocol,
+				request,
+				func(context.Context) (RecoveryAttemptResult, error) {
+					sends++
+					if sends == 1 {
+						return RecoveryAttemptResult{Response: refusal, RetryAfter: "0"}, nil
+					}
+					return RecoveryAttemptResult{}, ErrClientTransport
+				},
+			)
+			if response != nil || !errors.Is(err, ErrMutationOutcomeUnknown) || sends != 3 {
+				t.Fatalf("later uncertain send = response %#v error %v sends %d; want unknown after three sends", response, err, sends)
+			}
+		})
+	}
+}
+
+type recoveryTestRequest struct {
+	Input    string           `json:"input"`
+	Protocol ProtocolMetadata `json:"protocol"`
+}
+
+func newRecoveryTestRequest(t *testing.T, requestKey, input string) recoveryTestRequest {
+	t.Helper()
+	document, err := json.Marshal(struct {
+		ExpectedRevision string `json:"expected_revision"`
+		Input            string `json:"input"`
+		Operation        string `json:"operation"`
+		Target           string `json:"target"`
+		Workspace        string `json:"workspace"`
+	}{
+		ExpectedRevision: "revision-key-recovery",
+		Input:            input,
+		Operation:        "invocation.submit",
+		Target:           "connection-key-recovery/operation-key-recovery",
+		Workspace:        "workspace-key-recovery",
+	})
+	if err != nil {
+		t.Fatalf("encode canonical request intent: %v", err)
+	}
+	digest, err := contract.CanonicalDigest(document)
+	if err != nil {
+		t.Fatalf("digest canonical request intent: %v", err)
+	}
+	return recoveryTestRequest{
+		Input: input,
+		Protocol: ProtocolMetadata{
+			ExpectedRevision: "revision-key-recovery",
+			IntentDigest:     string(digest),
+			RequestKey:       requestKey,
+			RequiredFeatures: []string{},
+			WireVersion:      ProtocolMetadataWireVersion(WireVersion),
+		},
+	}
+}
+
+func recoveryTestClient() *QualifiedClient {
+	return &QualifiedClient{
+		profile:   ServerProfile{InstanceID: "instance-key-recovery"},
+		principal: Principal{Kind: PrincipalKindUser, PrincipalId: "principal-key-recovery"},
+		generated: &ClientWithResponses{},
+	}
+}
+
+func acceptedRecoveryTestResponse() *SubmitInvocationResponse {
+	header := make(http.Header)
+	header.Set("Content-Type", "application/json")
+	return &SubmitInvocationResponse{
+		Body:         []byte(`{"state":"accepted"}`),
+		HTTPResponse: &http.Response{StatusCode: http.StatusAccepted, Header: header},
 	}
 }
 

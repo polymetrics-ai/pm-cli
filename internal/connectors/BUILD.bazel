@@ -1,0 +1,13 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "connectors",
+    srcs = [
+        "bundle.go",
+        "catalog.go",
+        "registry.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/connectors",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/contract"],
+)

@@ -2,8 +2,11 @@ PYTHON ?= python3
 TOOLS = $(PYTHON) tools/bootstrap.py
 GO = $(TOOLS) exec go --
 BAZEL = $(TOOLS) exec bazelisk --
+PM_TOOLS_CACHE ?= $(CURDIR)/.cache/pm-tools
+export PM_TOOLS_CACHE
 
 .PHONY: all build build-api-generator generate check-generated test test-tools test-native test-setup test-docs vet boundaries bazel-build bazel-test gazelle benchmark check
+.PHONY: browser-deps build-browser generate-browser check-generated-browser
 
 all: build
 
@@ -23,11 +26,25 @@ build-api-generator:
 	mkdir -p .cache/bin
 	CGO_ENABLED=0 $(GO) -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate
 
+browser-deps:
+	PYTHON="$(PYTHON)" sh scripts/browser.sh install
+
+build-browser: browser-deps
+	PYTHON="$(PYTHON)" sh scripts/browser.sh build
+
+generate-browser: browser-deps
+	PYTHON="$(PYTHON)" sh scripts/browser.sh generate
+
+check-generated-browser: browser-deps
+	PYTHON="$(PYTHON)" sh scripts/browser.sh check
+
 generate: build-api-generator
 	sh scripts/generate.sh
+	$(MAKE) generate-browser
 
 check-generated: build-api-generator
 	sh scripts/generate.sh --check
+	$(MAKE) check-generated-browser
 
 test: test-tools test-native
 
@@ -54,10 +71,10 @@ vet:
 boundaries:
 	sh scripts/check-boundaries.sh
 
-bazel-build:
+bazel-build: build-browser
 	$(BAZEL) --batch build //...
 
-bazel-test:
+bazel-test: build-browser
 	$(BAZEL) --batch test //... --test_output=errors --cache_test_results=no
 
 gazelle:

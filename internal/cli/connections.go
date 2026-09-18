@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net/http"
+	"strconv"
 
 	pmapi "github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
@@ -185,7 +188,78 @@ func sendRecoveredMutation(
 	if err != nil {
 		return nil, err
 	}
-	return bundle.client.SendMutationWithRecovery(ctx, store, pmapi.WorkspaceID(bundle.config.workspace), operation, target, protocol, request, attempt)
+	response, err := bundle.client.SendMutationWithRecovery(ctx, store, pmapi.WorkspaceID(bundle.config.workspace), operation, target, protocol, request, attempt)
+	return recoveredMutationResponse(protocol.RequestKey, response, err)
+}
+
+func recoveredMutationResponse(requestKey string, response pmapi.WireResponse, err error) (pmapi.WireResponse, error) {
+	if err != nil {
+		return nil, mutationRecoveryError(requestKey, err)
+	}
+	if response.StatusCode() >= http.StatusOK && response.StatusCode() < http.StatusMultipleChoices {
+		return response, nil
+	}
+	envelope, err := pmapi.DecodeEnvelope(response)
+	if err != nil {
+		return nil, err
+	}
+	if envelope.Problem == nil {
+		return nil, pmapi.ErrMalformedEnvelope
+	}
+	problem := &pmapi.ProblemError{Decoded: *envelope.Problem}
+	return nil, &exitError{
+		code:    problem.ExitCode(),
+		message: mutationRecoveryMessage(requestKey, problem.Decoded, problem.Error()),
+		cause:   problem,
+	}
+}
+
+func mutationRecoveryError(requestKey string, err error) error {
+	switch {
+	case errors.Is(err, pmapi.ErrMutationOutcomeUnknown):
+		return &exitError{
+			code:    7,
+			message: fmt.Sprintf("PM mutation outcome is unknown; reconcile only the unchanged retained request with %s", requestKeyFlag(requestKey)),
+			cause:   err,
+		}
+	case errors.Is(err, pmapi.ErrRecoveryConflict):
+		return &exitError{
+			code:    4,
+			message: fmt.Sprintf("request key %s already identifies another canonical intent; select that exact retained request or omit --request-key to allocate a new key for a new intent", strconv.Quote(requestKey)),
+			cause:   err,
+		}
+	default:
+		return err
+	}
+}
+
+func mutationRecoveryMessage(requestKey string, problem pmapi.DecodedProblem, base string) string {
+	action := problem.Value.SafeRetryAction
+	switch action {
+	case "after_backlog_progress":
+		return fmt.Sprintf("%s; after backlog progress retry only the unchanged retained request with %s", base, requestKeyFlag(requestKey))
+	case "same_key_after_dependency_recovery":
+		return fmt.Sprintf("%s; after dependency recovery retry only the unchanged retained request with %s", base, requestKeyFlag(requestKey))
+	case "same_key_reconcile_only":
+		return fmt.Sprintf("%s; reconcile only the unchanged retained request with %s", base, requestKeyFlag(requestKey))
+	case "refresh_authorization":
+		return fmt.Sprintf("%s; after authorization refresh retry with %s only if the principal and scope are unchanged", base, requestKeyFlag(requestKey))
+	case "after_capability_change":
+		if problem.Value.Status == http.StatusServiceUnavailable {
+			return fmt.Sprintf("%s; after capability recovery retry only the unchanged retained request with %s", base, requestKeyFlag(requestKey))
+		}
+		return fmt.Sprintf("%s; refresh the request after the capability change and omit --request-key if its canonical intent changes", base)
+	case "correct_input", "correct_scope", "refresh_specification", "refresh_control_revision", "new_key_for_new_intent", "refresh_run_state":
+		return fmt.Sprintf("%s; this refusal is not replayed automatically; after changing the canonical intent omit --request-key to allocate a new key", base)
+	case "inspect_existing_result":
+		return fmt.Sprintf("%s; do not resubmit; inspect the existing result for request key %s", base, strconv.Quote(requestKey))
+	default:
+		return fmt.Sprintf("%s; safe recovery action %q for request key %s", base, action, strconv.Quote(requestKey))
+	}
+}
+
+func requestKeyFlag(requestKey string) string {
+	return "--request-key=" + strconv.Quote(requestKey)
 }
 
 type generatedRecoveryResponse interface {
@@ -257,7 +331,7 @@ func newMutationControl() *mutationControl {
 }
 
 func addMutationFlags(command *cobra.Command, control *mutationControl) {
-	command.Flags().Var(&control.requestKey, control.requestKey.name, "Caller-owned idempotency key")
+	command.Flags().Var(&control.requestKey, control.requestKey.name, "Existing retained request key for an intentional replay; omit to allocate a new key")
 	command.Flags().Var(&control.revision, control.revision.name, "Exact expected control revision")
 }
 
@@ -267,8 +341,19 @@ type mutationParameters struct {
 }
 
 func (control *mutationControl) protocol(operation, workspace, target string, payload any) (pmapi.ProtocolMetadata, mutationParameters, error) {
-	if control == nil || !control.requestKey.set || !control.revision.set {
-		return pmapi.ProtocolMetadata{}, mutationParameters{}, usageFailure(errors.New("--request-key and --revision are required"))
+	if control == nil || !control.revision.set {
+		return pmapi.ProtocolMetadata{}, mutationParameters{}, usageFailure(errors.New("--revision is required"))
+	}
+	explicitKey := ""
+	if control.requestKey.set {
+		explicitKey = control.requestKey.value
+	}
+	selection, err := pmapi.SelectRequestKey(explicitKey)
+	if err != nil {
+		if errors.Is(err, pmapi.ErrInvalidRequestKey) {
+			return pmapi.ProtocolMetadata{}, mutationParameters{}, usageFailure(errors.New("--request-key is invalid"))
+		}
+		return pmapi.ProtocolMetadata{}, mutationParameters{}, err
 	}
 	canonical, err := json.Marshal(struct {
 		ExpectedRevision string `json:"expected_revision"`
@@ -288,9 +373,9 @@ func (control *mutationControl) protocol(operation, workspace, target string, pa
 	protocol := pmapi.ProtocolMetadata{
 		ExpectedRevision: control.revision.value,
 		IntentDigest:     string(digest),
-		RequestKey:       control.requestKey.value,
+		RequestKey:       selection.RequestKey,
 		RequiredFeatures: []string{},
 		WireVersion:      pmapi.ProtocolMetadataWireVersion(pmapi.WireVersion),
 	}
-	return protocol, mutationParameters{key: pmapi.IdempotencyKey(control.requestKey.value), revision: &revision}, nil
+	return protocol, mutationParameters{key: pmapi.IdempotencyKey(selection.RequestKey), revision: &revision}, nil
 }

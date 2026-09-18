@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
+	"github.com/polymetrics-ai/pm-cli/internal/connectors"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -35,6 +36,7 @@ type Services struct {
 	Authentication *auth.Service
 	Identity       *IdentityService
 	Credentials    *CredentialIngress
+	Catalog        *CatalogService
 	Admission      *AdmissionService
 	Runs           *RunService
 	pool           *store.Pool
@@ -121,11 +123,25 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 	if err != nil {
 		return nil, errors.New("credential application composition failed")
 	}
+	handlers := &HandlerRegistry{}
+	registry, err := connectors.NewRegistry()
+	if err != nil {
+		return nil, errors.New("connector bundle registry composition failed")
+	}
+	catalog, err := ServeCatalog(CatalogServiceConfig{
+		Pool:      pool,
+		Authorize: authentication.AuthorizeResource,
+		Registry:  registry,
+		Handlers:  handlers,
+	})
+	if err != nil {
+		return nil, errors.New("catalog application composition failed")
+	}
 	admission, err := NewAdmissionService(AdmissionServiceConfig{
 		Pool:         pool,
 		DeploymentID: configuration.DeploymentID,
 		Authorize:    authentication.AuthorizeResource,
-		Registry:     &HandlerRegistry{},
+		Registry:     handlers,
 		Policy:       configuration.RunPolicy,
 	})
 	if err != nil {
@@ -145,6 +161,7 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		Authentication: authentication,
 		Identity:       identity,
 		Credentials:    ingress,
+		Catalog:        catalog,
 		Admission:      admission,
 		Runs:           runs,
 		pool:           pool,

@@ -4,11 +4,11 @@ This checkout contains the accepted PM Server documentation baseline, the combin
 
 ## What is available now
 
-The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, authenticated `pm-server` entry point and minimal same-origin browser surface, standalone `pm-worker`, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
+The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, authenticated `pm-server` entry point and minimal same-origin browser surface, standalone `pm-worker`, thin `pm` client, `pmgen` source compiler, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
 
 ### Resolve and run pinned tools
 
-`tools/bootstrap.py` is the public entry point for the locked Go, LLVM/Clang, Bazelisk/Bazel, Syft, and Docker Compose assets in `build/toolchains.lock.json`:
+`tools/bootstrap.py` is the public entry point for the locked Go, LLVM/Clang, Bazelisk/Bazel, Syft, Docker Compose, Node and Chromium assets in `build/toolchains.lock.json`. npm comes from the same verified Node archive:
 
 ```sh
 python3 tools/bootstrap.py print-env
@@ -16,6 +16,10 @@ python3 tools/bootstrap.py exec go -- version
 python3 tools/bootstrap.py exec clang -- --version
 python3 tools/bootstrap.py exec bazelisk -- --batch version
 python3 tools/bootstrap.py exec docker-compose -- version --short
+python3 tools/bootstrap.py exec node -- --version
+python3 tools/bootstrap.py exec npm -- --version
+python3 tools/bootstrap.py exec chromium -- --version
+python3 tools/bootstrap.py print-path chromium
 ```
 
 The literal `--` before tool arguments is required. On a cache miss the bootstrap downloads only locked assets for the selected host platform, verifies each locked SHA-256, and installs them into a persistent local cache. The default is `.cache/pm-tools`; set `PM_TOOLS_CACHE` to another persistent directory when needed. The bootstrap rejects caches under `/tmp` and `/private/tmp`. When the default repository-local tool cache is used, Bazel's output-user root is placed in the platform user cache because Bazel does not permit its repository-contents cache inside the source workspace.
@@ -23,6 +27,10 @@ The literal `--` before tool arguments is required. On a cache miss the bootstra
 Bootstrap environment changes apply only to the process it executes. In particular, the pinned Go directory is prepended only to that child process's `PATH`; the parent shell, global `PATH`, and globally installed tools are not changed. Go and Bazel execution force `GOTOOLCHAIN=local` and `GOWORK=off`, so an ambient workspace or Go's automatic toolchain selection cannot replace the locked inputs. For Bazel test and coverage commands, bootstrap asks the pinned Go tool for its configured `GOCACHE` and `GOMODCACHE` before Bazel changes the test `HOME`, then passes only those two values into the test environment. The sandbox `HOME` remains fresh, valid user-selected cache locations retain their Go semantics, and other Bazel commands do not perform the cache query.
 
 The Compose 5.5.1 executable stays in the project tool cache; it does not replace an installed Docker CLI plugin, install an engine, start Docker Desktop, or change a Docker context. Stack lifecycle actions require explicit operator authority and an owned project. A successful Compose version check is not dependency-stack readiness or CI evidence.
+
+Node 24.21.0 includes npm 11.19.0. Both `exec node` and `exec npm` put that Node directory first on the child process's `PATH`; npm executes its verified archive entrypoint through the same Node binary. An ambient Node executable cannot replace the selected child runtime. `print-path node` and `print-path chromium` resolve and verify one tool without launching it.
+
+The Chromium 153.0.8010.12 assets are the official headless-shell distribution used for browser qualification, pinned separately for Darwin arm64, Linux amd64 and Linux arm64. This retains the existing refusal of ZIP symlinks; bootstrap does not install Linux browser dependencies or change a host service. `exec go` does not fetch browser tools. Explicit `print-env` resolves the complete selected-tool inventory, including Node and Chromium, for environment and SBOM evidence. Tool startup alone does not prove browser/API parity or another platform's runtime.
 
 On macOS, cgo-enabled Go, Clang, and Bazel execution require an Apple macOS SDK discoverable through the fixed system command:
 
@@ -48,7 +56,7 @@ These Make targets are source-present:
 
 | Command | Boundary exercised |
 | --- | --- |
-| `make build` | Builds `.cache/bin/pm-server`, `.cache/bin/pm-worker`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
+| `make build` | Builds `.cache/bin/pm-server`, `.cache/bin/pm-worker`, `.cache/bin/pm`, `.cache/bin/pmgen`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
 | `make test` | Runs the resolved-dependency policy test and the native DuckDB behavioral test |
 | `make vet` | Vets the application module with cgo and the tools module without cgo |
 | `make boundaries` | Checks native-linkage and module ownership boundaries |
@@ -79,7 +87,7 @@ Run the current-platform external-tool and selected Bazel-module inventories wit
 python3 scripts/ci/check-dependencies.py --evidence-dir .cache/foundation-sboms
 ```
 
-That orchestrator resolves the five selected tool installs, expands Bazel to its actual install base, and resolves the two locked Gazelle/rules_go source repositories through Bazel's canonical repository metadata. It checks their exact archive URL/integrity pins, scans only those selected source targets rather than a whole historical cache, creates package and per-file SHA-256 CycloneDX inventories, invokes the dependency-policy CLI, and reruns `TestResolvedDependencyPolicy` against those SBOMs. Each selected Bazel module requires recognized-package coverage; file-only evidence is insufficient. File inventory describes installed bytes, not proof that a package catalog recognized every dependency or that every source component executed.
+That orchestrator resolves the current-platform selected tool installs, expands Bazel to its actual install base, and resolves the two locked Gazelle/rules_go source repositories through Bazel's canonical repository metadata. It checks their exact archive URL/integrity pins, scans only those selected source targets rather than a whole historical cache, creates package and per-file SHA-256 CycloneDX inventories, invokes the dependency-policy CLI, and reruns `TestResolvedDependencyPolicy` against those SBOMs. Each selected Bazel module requires recognized-package coverage; file-only evidence is insufficient. File inventory describes installed bytes, not proof that a package catalog recognized every dependency or that every source component executed.
 
 The optional availability report remains:
 
@@ -154,9 +162,9 @@ Artifact upload, inspection and download routes enforce scoped authorization but
 
 `make build` emits `.cache/bin/pm`. Its fresh Cobra tree owns server profiles, PM sessions, explicit workspace selection, connection/access mutations, and task/run/artifact views. Help and version work without valid settings, credentials or a server. Profiles contain nonsecret HTTPS server identity and session references, never a mutable current workspace or provider credentials.
 
-PM sessions use the OS credential store or explicitly selected process-local memory; there is no plaintext fallback. Mutation recovery persists secret-free scoped key/intent fingerprints before sending and permits at most three same-key sends within 30 seconds, with bounded 250 ms/1 s waits. Conflict, expiry and precondition refusals do not trigger rebasing or a replacement key.
+PM sessions use the OS credential store or explicitly selected process-local memory; there is no plaintext fallback. Mutations without an explicit request key allocate a new 192-bit key for a new logical submission. An explicit key selects same-key recovery; an equal payload does not silently select an earlier intent. The existing recovery store persists secret-free scoped key/intent fingerprints before sending and permits at most three same-key sends within 30 seconds, with bounded 250 ms/1 s waits. A later uncertain send cannot be treated as a definite earlier refusal. Conflict, expiry and precondition refusals do not trigger rebasing or a replacement key.
 
-The client uses the generated public API and the canonical manual artifact boundaries. Current artifact-capability refusals come from the authenticated server; they are not fabricated client stubs. This surface does not yet establish watch/cancel recovery, browser parity, generated provider commands or connector execution.
+The client uses the generated public API and the canonical manual artifact boundaries. Current artifact-capability refusals come from the authenticated server; they are not fabricated client stubs. Catalog-backed commands, explicit watch/cancel behavior, physical API/client/worker replacement and same-stack CLI/browser parity have [focused local checks](testing.md#thin-client-and-source-compiler-checks-m5m6). These are synthetic-provider checks on Darwin arm64, not GitHub provider execution, Linux browser qualification or candidate CI. The production provider registry remains unavailable until its declared capabilities are implemented and registered.
 
 ### Standalone bounded PM worker
 
@@ -246,6 +254,8 @@ These are pure contract checks, not generated API readiness, authentication/RLS 
 `make build` also emits `.cache/bin/pmgen`. `pmgen compile` consumes an explicit source lock, captured source/license bytes and optional source-linked semantics or revision diffs; it writes the generated execution bundle, fidelity report and optional command manifest. Required path arguments are listed in `cmd/pmgen/main.go`. It does not fetch missing references, install runtime handlers or certify a connector.
 
 The compiler retains request/status/media variants, explicit no-content responses, all seven lane dispositions, exact field presence/defaults and source pointers. Defaults are not applied implicitly. Shapes the shared contract cannot represent receive explicit diagnostics rather than lossy projection. The retained Pylon `Account.parent_account_id` counterexample still lacks matching captured bytes: no reproduction or full issue #22 closure is claimed.
+
+The same runtime bundle contains the compiler's exact command projection and a separate non-executable inventory of unavailable operations. A source-linked unsupported shape does not suppress an unrelated admitted operation. Source integrity, fidelity disagreement, malformed declarations and invalid capability requirements still refuse publication. The optional command sidecar is an authoring artifact, not a second runtime input; the report retains unavailable operations' full source/request/status/media facts.
 
 ### Generated public API boundary
 

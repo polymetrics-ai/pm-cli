@@ -248,9 +248,8 @@ func TestThinBinaryDependencyBoundary(t *testing.T) {
 }
 
 func TestWatchInterruptPreservesRun(t *testing.T) {
-	fixture := testfixture.NewAdmitting(t)
-
 	t.Run("supported_process_signal_closes_only_the_subscription", func(t *testing.T) {
+		fixture := testfixture.NewAdmitting(t)
 		admitted := admitBoundaryRun(t, fixture, "issue20-signal")
 		behavior := &runCLIBehavior{runID: admitted.RunRef, eventEntered: make(chan struct{})}
 		peer := newRunCLIProcessPeer(t, fixture, behavior)
@@ -301,6 +300,7 @@ func TestWatchInterruptPreservesRun(t *testing.T) {
 	})
 
 	t.Run("pm-cli-run-watch-E03-C01_explicit_cancel_positive_control", func(t *testing.T) {
+		fixture := testfixture.NewAdmitting(t)
 		admitted := admitBoundaryRun(t, fixture, "issue20-explicit-cancel")
 		view := loadBoundaryRun(t, fixture, admitted.RunRef)
 		behavior := &runCLIBehavior{runID: admitted.RunRef}
@@ -344,6 +344,7 @@ func TestWatchInterruptPreservesRun(t *testing.T) {
 		}
 		for _, testCase := range cases {
 			t.Run(testCase.name, func(t *testing.T) {
+				fixture := testfixture.NewAdmitting(t)
 				admitted := admitBoundaryRun(t, fixture, "issue20-"+testCase.name)
 				behavior := &runCLIBehavior{
 					runID: admitted.RunRef,
@@ -402,6 +403,7 @@ func TestWatchInterruptPreservesRun(t *testing.T) {
 	})
 
 	t.Run("pm-cli-run-watch-E03-C07_view_deadline_keeps_run_accepted", func(t *testing.T) {
+		fixture := testfixture.NewAdmitting(t)
 		admitted := admitBoundaryRun(t, fixture, "issue20-view-deadline")
 		behavior := &runCLIBehavior{runID: admitted.RunRef, holdEventStream: true, eventEntered: make(chan struct{})}
 		peer := newRunCLIProcessPeer(t, fixture, behavior)

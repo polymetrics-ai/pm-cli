@@ -32,9 +32,47 @@
           "type": "string"
         }
       },
+      "CatalogOperationID": {
+        "in": "path",
+        "name": "operation_id",
+        "required": true,
+        "schema": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "CommandFilter": {
+        "in": "query",
+        "name": "filter",
+        "schema": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "ConnectionFilter": {
+        "in": "query",
+        "name": "connection_id",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
       "ConnectionID": {
         "in": "path",
         "name": "connection_id",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "ConnectorCatalogID": {
+        "in": "path",
+        "name": "connector_id",
         "required": true,
         "schema": {
           "maxLength": 512,
@@ -252,24 +290,72 @@
     },
     "schemas": {
       "ActionResult": {
-        "additionalProperties": false,
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/PresentValue"
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PresentValue"
+                  },
+                  {
+                    "not": {
+                      "properties": {
+                        "presence": {
+                          "const": "absent"
+                        }
+                      },
+                      "required": [
+                        "presence"
+                      ],
+                      "type": "object"
+                    }
+                  }
+                ]
+              },
+              "media_type": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "pagination": {
+                "$ref": "#/components/schemas/ResultPagination"
+              }
+            },
+            "required": [
+              "media_type",
+              "data"
+            ],
+            "type": "object"
           },
-          "media_type": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "pagination": {
-            "$ref": "#/components/schemas/ResultPagination"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PresentValue"
+                  },
+                  {
+                    "properties": {
+                      "presence": {
+                        "const": "absent"
+                      }
+                    },
+                    "required": [
+                      "presence"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "media_type",
-          "data"
         ],
-        "type": "object",
         "x-go-type": "contract.ActionResult",
         "x-go-type-import": {
           "name": "contract",
@@ -363,6 +449,336 @@
         },
         "required": [
           "reauthenticate"
+        ],
+        "type": "object"
+      },
+      "CatalogConnector": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "connector_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogOperation"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "semantics_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "source_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connector_id",
+          "source_digest",
+          "semantics_revision",
+          "catalog_revision",
+          "operations"
+        ],
+        "type": "object"
+      },
+      "CatalogConnectorPage": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogConnector"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "maxLength": 4096,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "catalog_revision",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "CatalogFieldBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_reserved": {
+            "type": "boolean"
+          },
+          "explode": {
+            "type": "boolean"
+          },
+          "field_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "json_pointer": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "location": {
+            "enum": [
+              "path",
+              "query",
+              "header",
+              "cookie",
+              "body",
+              "record",
+              "metadata"
+            ],
+            "type": "string"
+          },
+          "nullable": {
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/TypedSchema"
+          },
+          "sensitivity": {
+            "enum": [
+              "public",
+              "secret"
+            ],
+            "type": "string"
+          },
+          "source_default": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "style": {
+            "type": "string"
+          },
+          "wire_name": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "field_id",
+          "wire_name",
+          "location",
+          "json_pointer",
+          "required",
+          "nullable",
+          "style",
+          "explode",
+          "allow_reserved",
+          "sensitivity",
+          "schema"
+        ],
+        "type": "object",
+        "x-go-type": "contract.FieldBinding",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "CatalogLaneAvailability": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "lane": {
+            "enum": [
+              "direct_read",
+              "direct_write",
+              "etl",
+              "reverse_etl",
+              "binary_download",
+              "binary_upload",
+              "sync_transport"
+            ],
+            "type": "string"
+          },
+          "source_reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_status": {
+            "enum": [
+              "eligible",
+              "unsupported",
+              "not_applicable",
+              "blocked",
+              "unproven"
+            ],
+            "type": "string"
+          },
+          "unavailability_code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "lane",
+          "source_status",
+          "source_reason",
+          "available"
+        ],
+        "type": "object"
+      },
+      "CatalogOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "command_name": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "diagnostic_codes": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "lanes": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogLaneAvailability"
+            },
+            "maxItems": 7,
+            "minItems": 7,
+            "type": "array"
+          },
+          "operation_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "operation_revision",
+          "diagnostic_codes",
+          "lanes"
+        ],
+        "type": "object"
+      },
+      "CommandDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "available_lanes": {
+            "items": {
+              "enum": [
+                "direct_read",
+                "direct_write",
+                "etl",
+                "reverse_etl",
+                "binary_download",
+                "binary_upload",
+                "sync_transport"
+              ],
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "connection_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "connector_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CommandFieldDescriptor"
+            },
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "unavailability_code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "aliases",
+          "connector_id",
+          "connection_id",
+          "operation_id",
+          "operation_revision",
+          "catalog_revision",
+          "fields",
+          "available_lanes"
+        ],
+        "type": "object"
+      },
+      "CommandFieldDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/CatalogFieldBinding"
+          },
+          "flag": {
+            "pattern": "^--[A-Za-z0-9][A-Za-z0-9-]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flag",
+          "binding"
         ],
         "type": "object"
       },
@@ -1902,7 +2318,10 @@
           "effective_wire_limit": {
             "format": "int64",
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "emitted_count": {
             "format": "int64",
@@ -2364,6 +2783,56 @@
           "blocked_reason",
           "revision",
           "result_references"
+        ],
+        "type": "object"
+      },
+      "SafeCommandPage": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "connection_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CommandDescriptor"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "maxLength": 4096,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal": {
+            "$ref": "#/components/schemas/Principal"
+          },
+          "server_instance_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_instance_id",
+          "principal",
+          "workspace_id",
+          "connection_id",
+          "catalog_revision",
+          "items",
+          "next_cursor"
         ],
         "type": "object"
       },
@@ -2835,6 +3304,82 @@
           "member_outcomes"
         ],
         "type": "object"
+      },
+      "TypedSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allOf": {
+            "items": {
+              "$ref": "#/components/schemas/TypedSchema"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "enum": {
+            "items": {
+              "$ref": "#/components/schemas/PresentValue"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "items": {
+            "$ref": "#/components/schemas/TypedSchema"
+          },
+          "maximum": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "minimum": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "nullable": {
+            "type": "boolean"
+          },
+          "oneOf": {
+            "items": {
+              "$ref": "#/components/schemas/TypedSchema"
+            },
+            "minItems": 2,
+            "type": "array"
+          },
+          "properties": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TypedSchema"
+            },
+            "type": "object"
+          },
+          "required": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "type": {
+            "enum": [
+              "string",
+              "bool",
+              "integer",
+              "decimal",
+              "date",
+              "timestamp_instant",
+              "timestamp_local",
+              "array",
+              "object",
+              "union",
+              "binary_ref"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object",
+        "x-go-type": "contract.Schema",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
       },
       "Workspace": {
         "additionalProperties": false,
@@ -3551,6 +4096,126 @@
         }
       ]
     },
+    "/v1/workspaces/{workspace_id}/commands": {
+      "get": {
+        "operationId": "listCatalogCommands",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionFilter"
+          },
+          {
+            "$ref": "#/components/parameters/CommandFilter"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeCommandPage"
+                }
+              }
+            },
+            "description": "Principal, workspace, connection, server, and revision-bound command page"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "List connection-authorized safe generated command descriptors",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/commands/{operation_id}": {
+      "get": {
+        "operationId": "getCatalogCommand",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionFilter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDescriptor"
+                }
+              }
+            },
+            "description": "Available safe generated command descriptor"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Resolve one connection-authorized available generated command",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/CatalogOperationID"
+        }
+      ]
+    },
     "/v1/workspaces/{workspace_id}/connections": {
       "get": {
         "operationId": "listConnections",
@@ -3886,6 +4551,115 @@
           "connections"
         ]
       }
+    },
+    "/v1/workspaces/{workspace_id}/connectors": {
+      "get": {
+        "operationId": "listCatalogConnectors",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogConnectorPage"
+                }
+              }
+            },
+            "description": "Authorized connector catalog page with its capability-bound revision"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "List the authorized immutable connector catalog and actual lane availability",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/connectors/{connector_id}": {
+      "get": {
+        "operationId": "getCatalogConnector",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogConnector"
+                }
+              }
+            },
+            "description": "Safe connector descriptor and actual lane availability"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Inspect one authorized immutable connector descriptor",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectorCatalogID"
+        }
+      ]
     },
     "/v1/workspaces/{workspace_id}/delegations": {
       "get": {
@@ -5226,6 +6000,9 @@
     },
     {
       "name": "connections"
+    },
+    {
+      "name": "catalog"
     },
     {
       "name": "runs"

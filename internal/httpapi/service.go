@@ -42,6 +42,7 @@ type Service struct {
 	auth                  *auth.Service
 	identity              *app.IdentityService
 	credentials           *app.CredentialIngress
+	catalog               *app.CatalogService
 	instanceID            string
 	oidcHTTPClient        *http.Client
 	admission             *app.AdmissionService
@@ -103,6 +104,7 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 		auth:                  configuration.Auth,
 		identity:              configuration.Identity,
 		credentials:           configuration.Credentials,
+		catalog:               configuration.Catalog,
 		instanceID:            configuration.InstanceID,
 		oidcHTTPClient:        &client,
 		admission:             configuration.Admission,
@@ -241,6 +243,10 @@ func policyForRequest(method, path string) (requestPolicy, bool) {
 		"GET /v1/workspaces/:workspace_id/connections", "POST /v1/workspaces/:workspace_id/connections",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id", "PATCH /v1/workspaces/:workspace_id/connections/:connection_id",
 		"DELETE /v1/workspaces/:workspace_id/connections/:connection_id",
+		"GET /v1/workspaces/:workspace_id/connectors",
+		"GET /v1/workspaces/:workspace_id/connectors/:connector_id",
+		"GET /v1/workspaces/:workspace_id/commands",
+		"GET /v1/workspaces/:workspace_id/commands/:operation_id",
 		"GET /v1/workspaces/:workspace_id/delegations", "POST /v1/workspaces/:workspace_id/delegations",
 		"POST /v1/workspaces/:workspace_id/delegations/:id/revoke",
 		"POST /v1/workspaces/:workspace_id/invocations",

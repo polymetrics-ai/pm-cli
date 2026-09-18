@@ -30,6 +30,10 @@ type Options struct {
 	HTTPClient    pmapi.HttpRequestDoer
 	SessionStore  SessionStoreFactory
 	RecoveryStore pmapi.RecoveryStore
+	Catalog       *pmapi.CatalogSnapshot
+	CatalogCache  *pmapi.CatalogCache
+	DynamicInvoke DynamicInvoker
+	prepared      *preparedCatalog
 	Version       string
 }
 

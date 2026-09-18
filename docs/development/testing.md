@@ -264,6 +264,12 @@ python3 scripts/ci/with-stack-fixture.py \
 
 The workspace test starts two real child processes through the product CLI entry point, with one shared profile/session identity and a request barrier proving concurrent use of separate workspace selectors. Its controlled TLS peer retains the real synthetic PM credential in the parent-owned fixture transport. It does not install an OS credential or export provider secrets. The dependency-boundary test resolves the actual `cmd/pm` graph, checks a disposable forbidden-import overlay, and verifies that the authenticated server still responds after the client process exits.
 
+The run/watch API and CLI targets also passed locally on Darwin arm64 with Bazel test-result caching disabled and ownership-scoped cleanup. The API cases exercise real PostgreSQL event contention, committed replay across API replicas, retention-gap snapshots and bounded reading. The CLI cases execute the real root/run command in children: SIGINT closes the subscription without a durable cancel request, a second client still sees accepted work, and explicit cancellation uses its separate API. Controlled terminal/partial/unknown projections test distinct rendering and exit codes; they are not worker-recovery proof.
+
+Each independent CLI case owns a separate scoped fixture. Sharing one fixture first exhausted its two-pending-workspace admission bound and returned HTTP 429 before later cases reached their oracle; isolating the cases made the same target pass without changing production limits.
+
+The separate `TestAcceptedRunSurvivesClientExit` check passed all five issue #20 case identities locally on Darwin arm64 with real PostgreSQL and Temporal. It exercises session expiry versus explicit grant revocation, hard API/worker death and independent replacement, actual SSE-client death with a second observer, API restart over the retained run/outbox, and worker death after provider acceptance with one retained run identity and one effect. The wrapper reported ownership-scoped cleanup complete. This is local synthetic-provider lifecycle evidence, not live-provider certification or final-candidate CI.
+
 Run the focused race checks through a fresh owned fixture as well:
 
 ```sh
@@ -274,6 +280,22 @@ python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
 ```
 
 Compiler checks cover captured-reference closure, deterministic inventories, exact default/presence fidelity, sensitivity and amendment refusal. Actual `pmgen` smoke execution additionally checks emitted bundle acceptance by the published JSON Schema, byte-identical repeated outputs, and no output publication after capture mismatch. These are local shared-foundation checks, not full Pylon reproduction, GitHub execution, browser parity, live-provider certification or candidate CI.
+
+The actual mixed-source compiler smoke initially refused the entire input because one operation contained an unsupported open-object shape. After correction, `pmgen` emits the supported typed operation and its embedded command, with the other operation retained only in `unavailable_operations`. The published bundle schema accepts that output; repeated generation is byte-identical and the optional sidecar equals the embedded projection. Capture corruption still refuses all outputs. This synthetic input has no source-linked lane classifications, so its seven lanes remain unproven rather than being promoted to executable.
+
+The shared result contract represents no-content with `data.presence: absent`, without an invented media type or pagination. `effective_wire_limit` remains a required pagination field: `null` means no provider page-size field was sent; a present value must be positive. Causal contract checks, canonical OpenAPI schema checks and the regenerated browser SDK build passed locally. These representation checks do not claim that the pending HTTP executor has been integrated.
+
+### Pinned browser-tool boundary
+
+The [locked browser tools](setup.md#resolve-and-run-pinned-tools) are prerequisites for issue #21, not its parity result. On Darwin arm64, the selected Node/npm version commands and Chromium headless-shell startup, DOM, JavaScript and visual smoke passed. Linux browser execution has not been established by those observations.
+
+`python3 -I -B tools/test_bootstrap.py` exercises the bootstrap boundary. Its npm-child regression places a conflicting executable on ambient `PATH` and observes which child runtime is selected. Removing only the Node child-path guard in an isolated copy makes that oracle fail; the current bootstrap passes. Browser packages, the generated SDK and the actual same-stack Playwright parity cases require their own execution evidence.
+
+`make build-browser` installs the committed npm locks without lifecycle scripts, verifies the canonical browser schema projection, builds the SDK, checks the parity TypeScript and verifies the pinned Chromium executable. `scripts/browser.sh` is the single producer used by both Make and the existing CI driver; CI calls its `install` and `build` modes directly and does not require Make. npm runs without ambient configuration or credentials, using owned empty configuration files, HOME and cache.
+
+After that producer succeeds, run `//tests/client-parity:client-parity_test` through the same owned fixture wrapper shown above. The target launches the actual CLI, pinned Chromium and real PM API/PostgreSQL/Temporal paths. Its browser suite requires all eleven specifications with no skips; the outer Go owner independently checks durable run identity, input fidelity, authority, cancellation and downstream effects. Declared Bazel runfiles are materialized only where Playwright needs a regular test file; package resolution still uses the declared pinned dependency tree.
+
+The complete packaged parity target passed locally on Darwin arm64 with Bazel test-result caching disabled: all eleven Chromium specifications passed with no skips, and the outer Go owner verified the original run and one downstream effect through real Temporal execution. A separate scoped CLI smoke allocated a key without an explicit selector, resumed the same run from a fresh child using that key, and rejected changed intent locally before another mutation reached admission. Ownership-scoped fixture cleanup completed. This does not qualify Linux browser execution, live GitHub behavior or the eventual PR candidate.
 
 ### Bounded Darwin development observations
 

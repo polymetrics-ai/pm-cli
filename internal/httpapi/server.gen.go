@@ -53,6 +53,12 @@ type ServerInterface interface {
 	// GetWorkspace Inspect an explicitly authorized workspace
 	// (GET /v1/workspaces/{workspace_id})
 	GetWorkspace(c *gin.Context, workspaceId WorkspaceID)
+	// ListCatalogCommands List connection-authorized safe generated command descriptors
+	// (GET /v1/workspaces/{workspace_id}/commands)
+	ListCatalogCommands(c *gin.Context, workspaceId WorkspaceID, params ListCatalogCommandsParams)
+	// GetCatalogCommand Resolve one connection-authorized available generated command
+	// (GET /v1/workspaces/{workspace_id}/commands/{operation_id})
+	GetCatalogCommand(c *gin.Context, workspaceId WorkspaceID, operationId CatalogOperationID, params GetCatalogCommandParams)
 	// ListConnections List safe connection metadata and its collection revision
 	// (GET /v1/workspaces/{workspace_id}/connections)
 	ListConnections(c *gin.Context, workspaceId WorkspaceID, params ListConnectionsParams)
@@ -68,6 +74,12 @@ type ServerInterface interface {
 	// UpdateConnection Update safe connection metadata while preserving its credential binding
 	// (PATCH /v1/workspaces/{workspace_id}/connections/{connection_id})
 	UpdateConnection(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params UpdateConnectionParams)
+	// ListCatalogConnectors List the authorized immutable connector catalog and actual lane availability
+	// (GET /v1/workspaces/{workspace_id}/connectors)
+	ListCatalogConnectors(c *gin.Context, workspaceId WorkspaceID, params ListCatalogConnectorsParams)
+	// GetCatalogConnector Inspect one authorized immutable connector descriptor
+	// (GET /v1/workspaces/{workspace_id}/connectors/{connector_id})
+	GetCatalogConnector(c *gin.Context, workspaceId WorkspaceID, connectorId ConnectorCatalogID)
 	// ListDelegations List safe one-hop delegation scope and revision metadata
 	// (GET /v1/workspaces/{workspace_id}/delegations)
 	ListDelegations(c *gin.Context, workspaceId WorkspaceID, params ListDelegationsParams)
@@ -490,6 +502,111 @@ func (siw *ServerInterfaceWrapper) GetWorkspace(c *gin.Context) {
 	siw.Handler.GetWorkspace(c, workspaceId)
 }
 
+// ListCatalogCommands operation middleware
+func (siw *ServerInterfaceWrapper) ListCatalogCommands(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCatalogCommandsParams
+
+	// ------------- Required query parameter "connection_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "connection_id", c.Request.URL.Query(), &params.ConnectionId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connection_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "filter" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "filter", c.Request.URL.Query(), &params.Filter, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter filter: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", c.Request.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter cursor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "page_size" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_size", c.Request.URL.Query(), &params.PageSize, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter page_size: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListCatalogCommands(c, workspaceId, params)
+}
+
+// GetCatalogCommand operation middleware
+func (siw *ServerInterfaceWrapper) GetCatalogCommand(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "operation_id" -------------
+	var operationId CatalogOperationID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "operation_id", c.Param("operation_id"), &operationId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter operation_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetCatalogCommandParams
+
+	// ------------- Required query parameter "connection_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "connection_id", c.Request.URL.Query(), &params.ConnectionId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connection_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetCatalogCommand(c, workspaceId, operationId, params)
+}
+
 // ListConnections operation middleware
 func (siw *ServerInterfaceWrapper) ListConnections(c *gin.Context) {
 
@@ -854,6 +971,84 @@ func (siw *ServerInterfaceWrapper) UpdateConnection(c *gin.Context) {
 	}
 
 	siw.Handler.UpdateConnection(c, workspaceId, connectionId, params)
+}
+
+// ListCatalogConnectors operation middleware
+func (siw *ServerInterfaceWrapper) ListCatalogConnectors(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params ListCatalogConnectorsParams
+
+	// ------------- Optional query parameter "cursor" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "cursor", c.Request.URL.Query(), &params.Cursor, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter cursor: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "page_size" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "page_size", c.Request.URL.Query(), &params.PageSize, runtime.BindQueryParameterOptions{Type: "integer", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter page_size: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.ListCatalogConnectors(c, workspaceId, params)
+}
+
+// GetCatalogConnector operation middleware
+func (siw *ServerInterfaceWrapper) GetCatalogConnector(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "connector_id" -------------
+	var connectorId ConnectorCatalogID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connector_id", c.Param("connector_id"), &connectorId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connector_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetCatalogConnector(c, workspaceId, connectorId)
 }
 
 // ListDelegations operation middleware
@@ -2070,11 +2265,15 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/sessions/me", wrapper.GetCurrentSession)
 	router.GET(options.BaseURL+"/v1/workspaces", wrapper.ListWorkspaces)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id", wrapper.GetWorkspace)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/commands", wrapper.ListCatalogCommands)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/commands/:operation_id", wrapper.GetCatalogCommand)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections", wrapper.ListConnections)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/connections", wrapper.CreateConnection)
 	router.DELETE(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.DeleteConnection)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.GetConnection)
 	router.PATCH(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.UpdateConnection)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connectors", wrapper.ListCatalogConnectors)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connectors/:connector_id", wrapper.GetCatalogConnector)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/delegations", wrapper.ListDelegations)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/delegations", wrapper.CreateDelegation)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/delegations/:id/revoke", wrapper.RevokeDelegation)
@@ -3256,6 +3455,213 @@ func (response GetWorkspace503ApplicationProblemPlusJSONResponse) VisitGetWorksp
 	return err
 }
 
+type ListCatalogCommandsRequestObject struct {
+	WorkspaceId WorkspaceID `json:"workspace_id"`
+	Params      ListCatalogCommandsParams
+}
+
+type ListCatalogCommandsResponseObject interface {
+	VisitListCatalogCommandsResponse(w http.ResponseWriter) error
+}
+
+type ListCatalogCommands200JSONResponse SafeCommandPage
+
+func (response ListCatalogCommands200JSONResponse) VisitListCatalogCommandsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogCommands400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogCommands400ApplicationProblemPlusJSONResponse) VisitListCatalogCommandsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogCommands401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogCommands401ApplicationProblemPlusJSONResponse) VisitListCatalogCommandsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogCommands403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogCommands403ApplicationProblemPlusJSONResponse) VisitListCatalogCommandsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogCommands404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogCommands404ApplicationProblemPlusJSONResponse) VisitListCatalogCommandsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogCommands503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogCommands503ApplicationProblemPlusJSONResponse) VisitListCatalogCommandsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogCommandRequestObject struct {
+	WorkspaceId WorkspaceID        `json:"workspace_id"`
+	OperationId CatalogOperationID `json:"operation_id"`
+	Params      GetCatalogCommandParams
+}
+
+type GetCatalogCommandResponseObject interface {
+	VisitGetCatalogCommandResponse(w http.ResponseWriter) error
+}
+
+type GetCatalogCommand200JSONResponse CommandDescriptor
+
+func (response GetCatalogCommand200JSONResponse) VisitGetCatalogCommandResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogCommand400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogCommand400ApplicationProblemPlusJSONResponse) VisitGetCatalogCommandResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogCommand401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogCommand401ApplicationProblemPlusJSONResponse) VisitGetCatalogCommandResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogCommand403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogCommand403ApplicationProblemPlusJSONResponse) VisitGetCatalogCommandResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogCommand404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogCommand404ApplicationProblemPlusJSONResponse) VisitGetCatalogCommandResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogCommand503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogCommand503ApplicationProblemPlusJSONResponse) VisitGetCatalogCommandResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type ListConnectionsRequestObject struct {
 	WorkspaceId WorkspaceID `json:"workspace_id"`
 	Params      ListConnectionsParams
@@ -3923,6 +4329,212 @@ type UpdateConnection503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response UpdateConnection503ApplicationProblemPlusJSONResponse) VisitUpdateConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogConnectorsRequestObject struct {
+	WorkspaceId WorkspaceID `json:"workspace_id"`
+	Params      ListCatalogConnectorsParams
+}
+
+type ListCatalogConnectorsResponseObject interface {
+	VisitListCatalogConnectorsResponse(w http.ResponseWriter) error
+}
+
+type ListCatalogConnectors200JSONResponse CatalogConnectorPage
+
+func (response ListCatalogConnectors200JSONResponse) VisitListCatalogConnectorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogConnectors400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogConnectors400ApplicationProblemPlusJSONResponse) VisitListCatalogConnectorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogConnectors401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogConnectors401ApplicationProblemPlusJSONResponse) VisitListCatalogConnectorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogConnectors403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogConnectors403ApplicationProblemPlusJSONResponse) VisitListCatalogConnectorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogConnectors404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogConnectors404ApplicationProblemPlusJSONResponse) VisitListCatalogConnectorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type ListCatalogConnectors503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response ListCatalogConnectors503ApplicationProblemPlusJSONResponse) VisitListCatalogConnectorsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogConnectorRequestObject struct {
+	WorkspaceId WorkspaceID        `json:"workspace_id"`
+	ConnectorId ConnectorCatalogID `json:"connector_id"`
+}
+
+type GetCatalogConnectorResponseObject interface {
+	VisitGetCatalogConnectorResponse(w http.ResponseWriter) error
+}
+
+type GetCatalogConnector200JSONResponse CatalogConnector
+
+func (response GetCatalogConnector200JSONResponse) VisitGetCatalogConnectorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogConnector400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogConnector400ApplicationProblemPlusJSONResponse) VisitGetCatalogConnectorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogConnector401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogConnector401ApplicationProblemPlusJSONResponse) VisitGetCatalogConnectorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogConnector403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogConnector403ApplicationProblemPlusJSONResponse) VisitGetCatalogConnectorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogConnector404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogConnector404ApplicationProblemPlusJSONResponse) VisitGetCatalogConnectorResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetCatalogConnector503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response GetCatalogConnector503ApplicationProblemPlusJSONResponse) VisitGetCatalogConnectorResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -6402,6 +7014,12 @@ type StrictServerInterface interface {
 	// GetWorkspace Inspect an explicitly authorized workspace
 	// (GET /v1/workspaces/{workspace_id})
 	GetWorkspace(ctx context.Context, request GetWorkspaceRequestObject) (GetWorkspaceResponseObject, error)
+	// ListCatalogCommands List connection-authorized safe generated command descriptors
+	// (GET /v1/workspaces/{workspace_id}/commands)
+	ListCatalogCommands(ctx context.Context, request ListCatalogCommandsRequestObject) (ListCatalogCommandsResponseObject, error)
+	// GetCatalogCommand Resolve one connection-authorized available generated command
+	// (GET /v1/workspaces/{workspace_id}/commands/{operation_id})
+	GetCatalogCommand(ctx context.Context, request GetCatalogCommandRequestObject) (GetCatalogCommandResponseObject, error)
 	// ListConnections List safe connection metadata and its collection revision
 	// (GET /v1/workspaces/{workspace_id}/connections)
 	ListConnections(ctx context.Context, request ListConnectionsRequestObject) (ListConnectionsResponseObject, error)
@@ -6417,6 +7035,12 @@ type StrictServerInterface interface {
 	// UpdateConnection Update safe connection metadata while preserving its credential binding
 	// (PATCH /v1/workspaces/{workspace_id}/connections/{connection_id})
 	UpdateConnection(ctx context.Context, request UpdateConnectionRequestObject) (UpdateConnectionResponseObject, error)
+	// ListCatalogConnectors List the authorized immutable connector catalog and actual lane availability
+	// (GET /v1/workspaces/{workspace_id}/connectors)
+	ListCatalogConnectors(ctx context.Context, request ListCatalogConnectorsRequestObject) (ListCatalogConnectorsResponseObject, error)
+	// GetCatalogConnector Inspect one authorized immutable connector descriptor
+	// (GET /v1/workspaces/{workspace_id}/connectors/{connector_id})
+	GetCatalogConnector(ctx context.Context, request GetCatalogConnectorRequestObject) (GetCatalogConnectorResponseObject, error)
 	// ListDelegations List safe one-hop delegation scope and revision metadata
 	// (GET /v1/workspaces/{workspace_id}/delegations)
 	ListDelegations(ctx context.Context, request ListDelegationsRequestObject) (ListDelegationsResponseObject, error)
@@ -6880,6 +7504,61 @@ func (sh *strictHandler) GetWorkspace(ctx *gin.Context, workspaceId WorkspaceID)
 	}
 }
 
+// ListCatalogCommands operation middleware
+func (sh *strictHandler) ListCatalogCommands(ctx *gin.Context, workspaceId WorkspaceID, params ListCatalogCommandsParams) {
+	var request ListCatalogCommandsRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCatalogCommands(ctx.Request.Context(), request.(ListCatalogCommandsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCatalogCommands")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(ListCatalogCommandsResponseObject); ok {
+		if err := validResponse.VisitListCatalogCommandsResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCatalogCommand operation middleware
+func (sh *strictHandler) GetCatalogCommand(ctx *gin.Context, workspaceId WorkspaceID, operationId CatalogOperationID, params GetCatalogCommandParams) {
+	var request GetCatalogCommandRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.OperationId = operationId
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCatalogCommand(ctx.Request.Context(), request.(GetCatalogCommandRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCatalogCommand")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetCatalogCommandResponseObject); ok {
+		if err := validResponse.VisitGetCatalogCommandResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListConnections operation middleware
 func (sh *strictHandler) ListConnections(ctx *gin.Context, workspaceId WorkspaceID, params ListConnectionsParams) {
 	var request ListConnectionsRequestObject
@@ -7031,6 +7710,60 @@ func (sh *strictHandler) UpdateConnection(ctx *gin.Context, workspaceId Workspac
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(UpdateConnectionResponseObject); ok {
 		if err := validResponse.VisitUpdateConnectionResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// ListCatalogConnectors operation middleware
+func (sh *strictHandler) ListCatalogConnectors(ctx *gin.Context, workspaceId WorkspaceID, params ListCatalogConnectorsParams) {
+	var request ListCatalogConnectorsRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.ListCatalogConnectors(ctx.Request.Context(), request.(ListCatalogConnectorsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "ListCatalogConnectors")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(ListCatalogConnectorsResponseObject); ok {
+		if err := validResponse.VisitListCatalogConnectorsResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetCatalogConnector operation middleware
+func (sh *strictHandler) GetCatalogConnector(ctx *gin.Context, workspaceId WorkspaceID, connectorId ConnectorCatalogID) {
+	var request GetCatalogConnectorRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.ConnectorId = connectorId
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetCatalogConnector(ctx.Request.Context(), request.(GetCatalogConnectorRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetCatalogConnector")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetCatalogConnectorResponseObject); ok {
+		if err := validResponse.VisitGetCatalogConnectorResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {
@@ -7579,16 +8312,30 @@ type BrowserLoginStart = api.BrowserLoginStart
 type CSRFToken = api.CSRFToken
 type CancelRunJSONRequestBody = api.CancelRunJSONRequestBody
 type CancelRunParams = api.CancelRunParams
+type CatalogConnector = api.CatalogConnector
+type CatalogConnectorPage = api.CatalogConnectorPage
+type CatalogFieldBinding = api.CatalogFieldBinding
+type CatalogLaneAvailability = api.CatalogLaneAvailability
+type CatalogLaneAvailabilityLane = api.CatalogLaneAvailabilityLane
+type CatalogLaneAvailabilitySourceStatus = api.CatalogLaneAvailabilitySourceStatus
+type CatalogOperation = api.CatalogOperation
+type CatalogOperationID = api.CatalogOperationID
+type CommandDescriptor = api.CommandDescriptor
+type CommandDescriptorAvailableLanes = api.CommandDescriptorAvailableLanes
+type CommandFieldDescriptor = api.CommandFieldDescriptor
+type CommandFilter = api.CommandFilter
 type CompleteBrowserLoginJSONRequestBody = api.CompleteBrowserLoginJSONRequestBody
 type Connection = api.Connection
 type ConnectionCreateRequest = api.ConnectionCreateRequest
 type ConnectionDeleteRequest = api.ConnectionDeleteRequest
+type ConnectionFilter = api.ConnectionFilter
 type ConnectionID = api.ConnectionID
 type ConnectionMutationResponse = api.ConnectionMutationResponse
 type ConnectionMutationResponseResultDisposition = api.ConnectionMutationResponseResultDisposition
 type ConnectionPage = api.ConnectionPage
 type ConnectionState = api.ConnectionState
 type ConnectionUpdateRequest = api.ConnectionUpdateRequest
+type ConnectorCatalogID = api.ConnectorCatalogID
 type CreateConnectionJSONRequestBody = api.CreateConnectionJSONRequestBody
 type CreateConnectionParams = api.CreateConnectionParams
 type CreateDelegationJSONRequestBody = api.CreateDelegationJSONRequestBody
@@ -7620,6 +8367,7 @@ type ExactCounter = api.ExactCounter
 type ExactNumber = api.ExactNumber
 type ExchangeDeviceLoginJSONRequestBody = api.ExchangeDeviceLoginJSONRequestBody
 type FieldSelection = api.FieldSelection
+type GetCatalogCommandParams = api.GetCatalogCommandParams
 type GetCurrentSessionParams = api.GetCurrentSessionParams
 type GrantMembershipJSONRequestBody = api.GrantMembershipJSONRequestBody
 type GrantMembershipParams = api.GrantMembershipParams
@@ -7628,6 +8376,8 @@ type IfMatch = api.IfMatch
 type InvocationRequest = api.InvocationRequest
 type InvocationRequestLane = api.InvocationRequestLane
 type LastEventID = api.LastEventID
+type ListCatalogCommandsParams = api.ListCatalogCommandsParams
+type ListCatalogConnectorsParams = api.ListCatalogConnectorsParams
 type ListConnectionsParams = api.ListConnectionsParams
 type ListDelegationsParams = api.ListDelegationsParams
 type ListMembershipsParams = api.ListMembershipsParams
@@ -7701,6 +8451,7 @@ type RunResumeResponse = api.RunResumeResponse
 type RunState = api.RunState
 type RunStateFilter = api.RunStateFilter
 type RunView = api.RunView
+type SafeCommandPage = api.SafeCommandPage
 type SafeConnectionInput = api.SafeConnectionInput
 type SafeConnectionPatch = api.SafeConnectionPatch
 type SafeOutcomeReference = api.SafeOutcomeReference
@@ -7722,6 +8473,7 @@ type TaskID = api.TaskID
 type TaskPage = api.TaskPage
 type TaskView = api.TaskView
 type TaskViewLane = api.TaskViewLane
+type TypedSchema = api.TypedSchema
 type UpdateConnectionJSONRequestBody = api.UpdateConnectionJSONRequestBody
 type UpdateConnectionParams = api.UpdateConnectionParams
 type Workspace = api.Workspace

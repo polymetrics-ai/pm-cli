@@ -8,6 +8,7 @@ go_library(
         "artifacts.go",
         "cancel.go",
         "capabilities.go",
+        "catalog.go",
         "connections.go",
         "credentials.go",
         "delegations.go",
@@ -24,6 +25,7 @@ go_library(
     deps = [
         "//internal/auth",
         "//internal/config",
+        "//internal/connectors",
         "//internal/contract",
         "//internal/credentials",
         "//internal/store",
@@ -38,6 +40,7 @@ go_test(
     srcs = [
         "account_permits_test.go",
         "capabilities_test.go",
+        "catalog_test.go",
         "lifecycle_test.go",
     ],
     env_inherit = [
@@ -54,14 +57,18 @@ go_test(
     ],
     deps = [
         ":app",
+        "//internal/activities",
         "//internal/api",
         "//internal/config",
+        "//internal/connectors",
         "//internal/contract",
         "//internal/httpapi",
         "//internal/store",
         "//internal/temporal",
         "//internal/testfixture",
+        "//internal/workflows",
         "@com_github_jackc_pgx_v5//:pgx",
         "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//worker",
     ],
 )

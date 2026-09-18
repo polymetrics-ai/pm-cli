@@ -7,6 +7,8 @@ go_library(
         "artifacts.go",
         "config.go",
         "connections.go",
+        "dynamic.go",
+        "help.go",
         "render.go",
         "root.go",
         "runs.go",
@@ -31,6 +33,9 @@ go_test(
     srcs = [
         "boundary_test.go",
         "config_test.go",
+        "connections_test.go",
+        "dynamic_test.go",
+        "tree_test.go",
         "workspaces_test.go",
     ],
     embed = [":cli"],
@@ -53,7 +58,9 @@ go_test(
     ],
     deps = [
         "//internal/api",
+        "//internal/contract",
         "//internal/testfixture",
         "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_spf13_cobra//:cobra",
     ],
 )

@@ -42,6 +42,15 @@ func Execute(ctx context.Context, options Options) int {
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 2
 	}
+	if options.Catalog == nil && dynamicCommandCandidate(options.Args) {
+		prepared, err := prepareDynamicCatalog(ctx, options)
+		if err != nil {
+			code, message := classifyCommandError(err)
+			fmt.Fprintf(stderr, "error: %s\n", message)
+			return code
+		}
+		options = prepared
+	}
 
 	command := NewRoot(options)
 	if err := command.ExecuteContext(ctx); err != nil {
@@ -102,10 +111,23 @@ func NewRoot(options Options) *cobra.Command {
 	root.AddCommand(newSessionsCommand(runtime))
 	root.AddCommand(newWorkspacesCommand(runtime))
 	root.AddCommand(newConnectionsCommand(runtime))
+	root.AddCommand(newConnectorsCommand(runtime))
+	root.AddCommand(newCommandsCommand(runtime))
 	root.AddCommand(newTasksCommand(runtime))
 	root.AddCommand(NewRunsCommands(runtime))
 	root.AddCommand(newArtifactsCommand(runtime))
 	root.AddCommand(NewAccessCommands(runtime))
+	root.AddCommand(newManualCommand(root))
+	root.AddCommand(newCompletionCommand(root))
+	if options.Catalog != nil {
+		invoke := options.DynamicInvoke
+		if invoke == nil {
+			invoke = runtime.invokeDynamic
+		}
+		if err := BuildCommandTree(root, *options.Catalog, invoke); err != nil {
+			root.PersistentPreRunE = func(*cobra.Command, []string) error { return err }
+		}
+	}
 	return root
 }
 

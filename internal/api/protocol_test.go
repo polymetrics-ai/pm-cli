@@ -478,7 +478,7 @@ func TestWireVersionAndEnvelope(t *testing.T) {
 			MediaType: "application/json",
 			Data:      contract.NewArrayValue([]contract.PresentValue{record}),
 			Pagination: &contract.ResultPagination{
-				EffectiveWireLimit: 100,
+				EffectiveWireLimit: new(uint64(100)),
 				Continuation:       contract.NewStringValue("next-source-page"),
 				UnreadTail:         []contract.PresentValue{},
 				FetchedCount:       1,
@@ -995,6 +995,41 @@ func TestGeneratedContractBoundary(t *testing.T) {
 				}
 				if err := schema.Validate(value); err == nil {
 					t.Fatal("invalid PresentValue was accepted")
+				}
+			})
+		}
+	})
+
+	t.Run("ActionResult_content_and_no_content_branches_are_exact", func(t *testing.T) {
+		schema := compileJSONSchema(
+			t,
+			filepath.Join(root, "api", "pm.openapi.json"),
+			"#/components/schemas/ActionResult",
+		)
+		pagination := `"pagination":{"effective_wire_limit":null,"continuation":{"presence":"absent"},"unread_tail":[],"fetched_count":0,"returned_count":0,"emitted_count":0,"source_exhausted":true}`
+		fixtures := []struct {
+			name     string
+			document string
+			valid    bool
+		}{
+			{name: "source_declared_no_content", document: `{"data":{"presence":"absent"}}`, valid: true},
+			{name: "typed_null_content", document: `{"media_type":"application/json","data":{"presence":"null"}}`, valid: true},
+			{name: "unsent_wire_limit_is_required_null", document: `{"media_type":"application/json","data":{"presence":"value","type":"array","elements":[]},` + pagination + `}`, valid: true},
+			{name: "no_content_with_media", document: `{"media_type":"application/json","data":{"presence":"absent"}}`},
+			{name: "no_content_with_pagination", document: `{"data":{"presence":"absent"},` + pagination + `}`},
+			{name: "content_without_media", document: `{"data":{"presence":"null"}}`},
+			{name: "pagination_missing_wire_limit", document: `{"media_type":"application/json","data":{"presence":"value","type":"array","elements":[]},"pagination":{"continuation":{"presence":"absent"},"unread_tail":[],"fetched_count":0,"returned_count":0,"emitted_count":0,"source_exhausted":true}}`},
+			{name: "pagination_zero_wire_limit", document: `{"media_type":"application/json","data":{"presence":"value","type":"array","elements":[]},"pagination":{"effective_wire_limit":0,"continuation":{"presence":"absent"},"unread_tail":[],"fetched_count":0,"returned_count":0,"emitted_count":0,"source_exhausted":true}}`},
+		}
+		for _, fixture := range fixtures {
+			t.Run(fixture.name, func(t *testing.T) {
+				document, err := jsonschema.UnmarshalJSON(strings.NewReader(fixture.document))
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = schema.Validate(document)
+				if (err == nil) != fixture.valid {
+					t.Fatalf("ActionResult schema validation error = %v; valid = %t", err, fixture.valid)
 				}
 			})
 		}

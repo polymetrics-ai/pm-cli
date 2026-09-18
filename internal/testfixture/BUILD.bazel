@@ -10,7 +10,10 @@ go_library(
         "workflow.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/testfixture",
-    visibility = ["//internal:__subpackages__"],
+    visibility = [
+        "//internal:__subpackages__",
+        "//tests/client-parity:__pkg__",
+    ],
     deps = [
         "//internal/api",
         "//internal/app",

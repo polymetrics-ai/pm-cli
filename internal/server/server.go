@@ -147,6 +147,7 @@ func openWithOIDCFactory(
 		Auth:           services.Authentication,
 		Identity:       services.Identity,
 		Credentials:    services.Credentials,
+		Catalog:        services.Catalog,
 		Admission:      services.Admission,
 		Runs:           services.Runs,
 		InstanceID:     configuration.DeploymentID(),

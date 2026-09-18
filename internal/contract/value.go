@@ -656,7 +656,8 @@ func kindMatchesSchema(kind ValueKind, schemaType SchemaType) bool {
 }
 
 type ResultPagination struct {
-	EffectiveWireLimit uint64         `json:"effective_wire_limit"`
+	// EffectiveWireLimit is nil when no provider page-size field was sent.
+	EffectiveWireLimit *uint64        `json:"effective_wire_limit"`
 	TotalRecordCap     *uint64        `json:"total_record_cap,omitempty"`
 	Continuation       PresentValue   `json:"continuation"`
 	UnreadTail         []PresentValue `json:"unread_tail"`
@@ -669,8 +670,8 @@ type ResultPagination struct {
 }
 
 func (p ResultPagination) Validate() error {
-	if p.EffectiveWireLimit == 0 {
-		return contractError(ErrInvalidValue, "pagination.effective_wire_limit", "must report a positive actual wire limit")
+	if p.EffectiveWireLimit != nil && *p.EffectiveWireLimit == 0 {
+		return contractError(ErrInvalidValue, "pagination.effective_wire_limit", "must be positive when present")
 	}
 	if p.TotalRecordCap != nil && *p.TotalRecordCap == 0 {
 		return contractError(ErrInvalidValue, "pagination.total_record_cap", "must be positive when present")
@@ -710,6 +711,9 @@ func (p ResultPagination) Validate() error {
 func (p ResultPagination) clone() ResultPagination {
 	copy := p
 	copy.UnreadTail = slices.Clone(p.UnreadTail)
+	if p.EffectiveWireLimit != nil {
+		copy.EffectiveWireLimit = new(*p.EffectiveWireLimit)
+	}
 	if p.TotalRecordCap != nil {
 		copy.TotalRecordCap = new(*p.TotalRecordCap)
 	}
@@ -720,7 +724,7 @@ func (p ResultPagination) clone() ResultPagination {
 }
 
 type ActionResult struct {
-	MediaType  string            `json:"media_type"`
+	MediaType  string            `json:"media_type,omitempty"`
 	Data       PresentValue      `json:"data"`
 	Pagination *ResultPagination `json:"pagination,omitempty"`
 }
@@ -751,10 +755,19 @@ type ResultControls struct {
 }
 
 func (r ActionResult) Validate() error {
-	if err := validateMediaType(r.MediaType); err != nil {
+	if err := r.Data.Validate(); err != nil {
 		return err
 	}
-	if err := r.Data.Validate(); err != nil {
+	if r.Data.Presence() == PresenceAbsent {
+		if r.MediaType != "" {
+			return contractError(ErrIncompatibleMedia, "action_result.media_type", "must be omitted when action data is absent")
+		}
+		if r.Pagination != nil {
+			return contractError(ErrInvalidValue, "action_result.pagination", "must be omitted when action data is absent")
+		}
+		return nil
+	}
+	if err := validateMediaType(r.MediaType); err != nil {
 		return err
 	}
 	if r.Data.Presence() == PresenceValue && r.Data.Kind() == ValueKindBinaryRef {

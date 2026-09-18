@@ -7,6 +7,7 @@ go_library(
         "admin.go",
         "admin_service.go",
         "artifacts.go",
+        "catalog.go",
         "events.go",
         "identity.go",
         "middleware.go",
