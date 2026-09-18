@@ -102,14 +102,31 @@ func TestRegisteredCatalogBoundary(t *testing.T) {
 	if err := json.Unmarshal(pageDocument, &page); err != nil {
 		t.Fatalf("decode safe command page: %v", err)
 	}
-	var foundAvailable bool
+	var foundAvailable, foundRequestVariants bool
 	for _, command := range page.Items {
-		if command.OperationId == operationID {
-			foundAvailable = command.OperationRevision == operationRevision && slices.Contains(command.AvailableLanes, api.CommandDescriptorAvailableLanes(contract.LaneDirectRead))
+		if command.OperationId != operationID {
+			continue
 		}
+		foundAvailable = command.OperationRevision == operationRevision &&
+			slices.Contains(command.AvailableLanes, api.CommandDescriptorAvailableLanes(contract.LaneDirectRead))
+		foundRequestVariants = command.RequestBody.RequestMediaFieldID == "request-content-type" &&
+			len(command.RequestBody.Variants) == 2 &&
+			command.RequestBody.Variants[0].VariantID == "json" &&
+			command.RequestBody.Variants[0].MediaType == "application/json" &&
+			slices.Equal(command.RequestBody.Variants[0].FieldIDs, []string{"json-name"}) &&
+			command.RequestBody.Variants[0].Schema.Type == contract.SchemaTypeObject &&
+			slices.Equal(command.RequestBody.Variants[0].Schema.Required, []string{"name"}) &&
+			command.RequestBody.Variants[0].Schema.Properties["name"].Type == contract.SchemaTypeString &&
+			command.RequestBody.Variants[1].VariantID == "merge" &&
+			command.RequestBody.Variants[1].MediaType == "application/merge-patch+json" &&
+			slices.Equal(command.RequestBody.Variants[1].FieldIDs, []string{"merge-name"}) &&
+			command.RequestBody.Variants[1].Schema.Type == contract.SchemaTypeObject &&
+			slices.Equal(command.RequestBody.Variants[1].Schema.Required, []string{"name"}) &&
+			command.RequestBody.Variants[1].Schema.Properties["name"].Type == contract.SchemaTypeString &&
+			!command.RequestBody.Variants[0].Required && !command.RequestBody.Variants[1].Required
 	}
-	if !foundAvailable || page.CatalogRevision == "" || page.ConnectionId != fixture.Connection.ConnectionID {
-		t.Fatalf("authorized catalog did not retain op-1/revision/binding: %#v", page)
+	if !foundAvailable || !foundRequestVariants || page.CatalogRevision == "" || page.ConnectionId != fixture.Connection.ConnectionID {
+		t.Fatalf("authorized catalog did not retain op-1/revision/request variants/binding: %#v", page)
 	}
 
 	connectorDocument, status := catalogGET(t, fixture.Client, fixture.BaseURL+"/v1/workspaces/"+url.PathEscape(fixture.Scope.WorkspaceID)+"/connectors/"+url.PathEscape(fixture.Connection.ConnectorID))
@@ -174,7 +191,7 @@ func catalogGET(t *testing.T, client *http.Client, endpoint string) ([]byte, int
 
 func catalogBundle(t *testing.T, revision string) connectors.Bundle {
 	t.Helper()
-	read := catalogOperation("op-1", contract.LaneDirectRead)
+	read := catalogOperationWithRequestVariants("op-1", contract.LaneDirectRead)
 	write := catalogOperation("op-2", contract.LaneDirectWrite)
 	bundle := connectors.Bundle{
 		SchemaVersion:     connectors.BundleSchemaVersion,
@@ -183,7 +200,15 @@ func catalogBundle(t *testing.T, revision string) connectors.Bundle {
 		SemanticsRevision: revision,
 		Operations:        []contract.Operation{read, write},
 		Commands: []contract.Command{
-			{Name: "inspect-widget", OperationID: read.OperationID, Fields: []contract.CommandField{{Flag: "--query-workspace", FieldID: "query.workspace", Location: contract.FieldLocationQuery, Required: true, Sensitive: false}}},
+			{
+				Name: "inspect-widget", OperationID: read.OperationID,
+				Fields: []contract.CommandField{
+					{Flag: "--query-workspace", FieldID: "query.workspace", Location: contract.FieldLocationQuery, Required: true, Sensitive: false},
+					{Flag: "--request-content-type", FieldID: "request-content-type", Location: contract.FieldLocationHeader, Required: false, Sensitive: false},
+					{Flag: "--json-name", FieldID: "json-name", Location: contract.FieldLocationBody, Required: true, Sensitive: false},
+					{Flag: "--merge-name", FieldID: "merge-name", Location: contract.FieldLocationBody, Required: true, Sensitive: false},
+				},
+			},
 			{Name: "write-widget", OperationID: write.OperationID, Fields: []contract.CommandField{{Flag: "--query-workspace", FieldID: "query.workspace", Location: contract.FieldLocationQuery, Required: true, Sensitive: false}}},
 		},
 		UnavailableOperations: []contract.UnavailableOperation{},
@@ -214,6 +239,53 @@ func catalogOperation(operationID string, eligible contract.Lane) contract.Opera
 		}},
 		CapabilityRequirements: []contract.CapabilityRequirement{{Capability: "http.execute", Foundation: foundation}},
 		LaneEligibility:        catalogLanes(eligible),
+	}
+}
+
+func catalogOperationWithRequestVariants(operationID string, eligible contract.Lane) contract.Operation {
+	operation := catalogOperation(operationID, eligible)
+	operation.Transport.Method = http.MethodPost
+	selector := contract.FieldBinding{
+		FieldID: "request-content-type", WireName: contract.RequestMediaTypeWireName, Location: contract.FieldLocationHeader,
+		JSONPointer: "", Required: false, Nullable: false, Style: "simple", Explode: false,
+		AllowReserved: false, Sensitivity: contract.SensitivityPublic,
+		Schema: contract.Schema{
+			Type: contract.SchemaTypeString,
+			Enum: []contract.PresentValue{
+				contract.NewStringValue("application/json"),
+				contract.NewStringValue("application/merge-patch+json"),
+			},
+		},
+	}
+	root := contract.Schema{
+		Type:       contract.SchemaTypeObject,
+		Required:   []string{"name"},
+		Properties: map[string]contract.Schema{"name": {Type: contract.SchemaTypeString}},
+	}
+	jsonName := catalogBodyBinding("json-name", "name", root.Properties["name"])
+	mergeName := catalogBodyBinding("merge-name", "name", root.Properties["name"])
+	operation.Inputs = append(operation.Inputs, selector)
+	operation.RequestMediaFieldID = selector.FieldID
+	operation.RequestVariants = []contract.RequestVariant{
+		{
+			VariantID: "json", MediaType: "application/json", Required: false, Schema: root,
+			Inputs:     []contract.FieldBinding{jsonName},
+			SourceRefs: []contract.SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody/content/application~1json"}},
+		},
+		{
+			VariantID: "merge", MediaType: "application/merge-patch+json", Required: false, Schema: root,
+			Inputs:     []contract.FieldBinding{mergeName},
+			SourceRefs: []contract.SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody/content/application~1merge-patch+json"}},
+		},
+	}
+	return operation
+}
+
+func catalogBodyBinding(fieldID, wireName string, schema contract.Schema) contract.FieldBinding {
+	return contract.FieldBinding{
+		FieldID: fieldID, WireName: wireName, Location: contract.FieldLocationBody, JSONPointer: "/" + wireName,
+		Required: true, Nullable: false, Style: "json", Explode: false, AllowReserved: false,
+		Sensitivity: contract.SensitivityPublic, Schema: schema,
 	}
 }
 

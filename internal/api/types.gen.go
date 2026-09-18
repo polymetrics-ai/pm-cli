@@ -671,6 +671,7 @@ type CommandDescriptor struct {
 	Name               string                            `json:"name"`
 	OperationId        string                            `json:"operation_id"`
 	OperationRevision  string                            `json:"operation_revision"`
+	RequestBody        OperationRequestProjection        `json:"request_body"`
 	UnavailabilityCode *string                           `json:"unavailability_code,omitempty"`
 }
 
@@ -990,6 +991,9 @@ type MutationResultResponseReplay bool
 // ObjectRef defines model for ObjectRef.
 type ObjectRef = contract.ObjectRef
 
+// OperationRequestProjection defines model for OperationRequestProjection.
+type OperationRequestProjection = contract.OperationRequestProjection
+
 // OrchestrationCondition Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.
 type OrchestrationCondition string
 
@@ -1042,6 +1046,9 @@ type ProtocolMetadataWireVersion string
 
 // RecordFilter defines model for RecordFilter.
 type RecordFilter = contract.RecordFilter
+
+// RequestVariantProjection defines model for RequestVariantProjection.
+type RequestVariantProjection = contract.RequestVariantProjection
 
 // ResultControls defines model for ResultControls.
 type ResultControls = contract.ResultControls

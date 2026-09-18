@@ -1852,10 +1852,55 @@ components:
           pattern: "^--[A-Za-z0-9][A-Za-z0-9-]*$"
         binding:
           $ref: "#/components/schemas/CatalogFieldBinding"
+    RequestVariantProjection:
+      type: object
+      additionalProperties: false
+      required: [variant_id, media_type, required, schema, field_ids]
+      properties:
+        variant_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        media_type:
+          type: string
+          minLength: 1
+          maxLength: 512
+        required:
+          type: boolean
+        schema:
+          $ref: "#/components/schemas/TypedSchema"
+        field_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+      x-go-type: contract.RequestVariantProjection
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    OperationRequestProjection:
+      type: object
+      additionalProperties: false
+      required: [variants]
+      properties:
+        request_media_field_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestVariantProjection"
+      x-go-type: contract.OperationRequestProjection
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
     CommandDescriptor:
       type: object
       additionalProperties: false
-      required: [name, aliases, connector_id, connection_id, operation_id, operation_revision, catalog_revision, fields, available_lanes]
+      required: [name, aliases, connector_id, connection_id, operation_id, operation_revision, catalog_revision, fields, request_body, available_lanes]
       properties:
         name:
           type: string
@@ -1890,6 +1935,8 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/CommandFieldDescriptor"
+        request_body:
+          $ref: "#/components/schemas/OperationRequestProjection"
         available_lanes:
           type: array
           uniqueItems: true

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math/big"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -99,6 +99,7 @@ func BuildCommandTree(root *cobra.Command, snapshot pmapi.CatalogSnapshot, invok
 
 func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDescriptor, invoke DynamicInvoker) (*cobra.Command, error) {
 	values := make([]dynamicFlagValue, len(descriptor.Fields))
+	bindings := make([]contract.FieldBinding, len(descriptor.Fields))
 	var laneValue, requestKey dynamicFlagValue
 	laneValue.name = "lane"
 	requestKey.name = "request-key"
@@ -116,9 +117,6 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 			input := make(map[string]contract.PresentValue, len(descriptor.Fields))
 			for index, field := range descriptor.Fields {
 				if !values[index].set {
-					if field.Binding.Required {
-						return usageFailure(fmt.Errorf("--%s is required", values[index].name))
-					}
 					continue
 				}
 				value, err := parseDynamicValue(values[index].raw, field.Binding.Schema)
@@ -126,6 +124,10 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 					return usageFailure(fmt.Errorf("--%s: %w", values[index].name, err))
 				}
 				input[field.Binding.FieldID] = value
+			}
+			typedInput := contract.NewObjectValue(input)
+			if err := descriptor.RequestBody.ValidateInput(bindings, typedInput); err != nil {
+				return usageFailure(err)
 			}
 			lane := contract.Lane(descriptor.AvailableLanes[0])
 			if len(descriptor.AvailableLanes) > 1 {
@@ -148,7 +150,7 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 				Binding:    binding,
 				Descriptor: descriptor,
 				Lane:       lane,
-				Input:      contract.NewObjectValue(input),
+				Input:      typedInput,
 				Output:     command.OutOrStdout(),
 			}
 			if requestKey.set {
@@ -160,6 +162,7 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 	for index, field := range descriptor.Fields {
 		name := strings.TrimPrefix(field.Flag, "--")
 		values[index].name = name
+		bindings[index] = field.Binding
 		command.Flags().Var(&values[index], name, dynamicFieldUsage(field.Binding))
 	}
 	if len(descriptor.AvailableLanes) > 1 {
@@ -197,12 +200,14 @@ func validateDescriptorForTree(binding pmapi.CatalogBinding, descriptor pmapi.Co
 	}
 	seenFlags := make(map[string]struct{}, len(descriptor.Fields))
 	seenFields := make(map[string]struct{}, len(descriptor.Fields))
+	bindings := make([]contract.FieldBinding, len(descriptor.Fields))
 	type wireUse struct {
 		location contract.FieldLocation
 		flag     string
 	}
 	seenWire := make(map[string]wireUse, len(descriptor.Fields))
-	for _, field := range descriptor.Fields {
+	for index, field := range descriptor.Fields {
+		bindings[index] = field.Binding
 		if !longFlag(field.Flag) || field.Binding.Validate() != nil || field.Binding.Sensitivity != contract.SensitivityPublic ||
 			(field.Binding.Location == contract.FieldLocationBody && field.Binding.JSONPointer == "") {
 			return pmapi.ErrCatalogEnvelope
@@ -223,6 +228,9 @@ func validateDescriptorForTree(binding pmapi.CatalogBinding, descriptor pmapi.Co
 		seenFlags[field.Flag] = struct{}{}
 		seenFields[field.Binding.FieldID] = struct{}{}
 		seenWire[wireKey] = wireUse{location: field.Binding.Location, flag: field.Flag}
+	}
+	if err := descriptor.RequestBody.Validate(bindings); err != nil {
+		return pmapi.ErrCatalogEnvelope
 	}
 	seenLanes := make(map[pmapi.CommandDescriptorAvailableLanes]struct{}, len(descriptor.AvailableLanes))
 	for _, lane := range descriptor.AvailableLanes {
@@ -266,168 +274,43 @@ func dynamicFieldUsage(binding contract.FieldBinding) string {
 }
 
 func parseDynamicValue(raw string, schema contract.Schema) (contract.PresentValue, error) {
-	if raw == "@null" {
-		if !schema.Nullable {
-			return contract.PresentValue{}, errors.New("null is not permitted by the descriptor")
-		}
-		return contract.NullValue(), nil
-	}
 	var value contract.PresentValue
 	var err error
-	switch schema.Type {
-	case contract.SchemaTypeString:
-		value = contract.NewStringValue(raw)
-	case contract.SchemaTypeBool:
-		if raw != "true" && raw != "false" {
-			return contract.PresentValue{}, errors.New("boolean must be exactly true or false")
+	if raw == "@null" {
+		value = contract.NullValue()
+	} else {
+		switch schema.Type {
+		case contract.SchemaTypeString:
+			value = contract.NewStringValue(raw)
+		case contract.SchemaTypeBool:
+			if raw != "true" && raw != "false" {
+				return contract.PresentValue{}, errors.New("boolean must be exactly true or false")
+			}
+			value = contract.NewBooleanValue(raw == "true")
+		case contract.SchemaTypeInteger:
+			value, err = contract.NewIntegerValue(raw)
+		case contract.SchemaTypeDecimal:
+			precision, scale := decimalShape(raw)
+			value, err = contract.NewDecimalValue(raw, precision, scale)
+		case contract.SchemaTypeDate:
+			value, err = contract.NewDateValue(raw)
+		case contract.SchemaTypeTimestampInstant:
+			value, err = contract.NewInstantValue(raw)
+		case contract.SchemaTypeTimestampLocal:
+			value, err = contract.NewLocalTimestampValue(raw)
+		case contract.SchemaTypeArray, contract.SchemaTypeObject, contract.SchemaTypeUnion, contract.SchemaTypeBinaryRef:
+			value, err = contract.DecodePresentValue([]byte(raw), "application/json")
+		default:
+			return contract.PresentValue{}, errors.New("descriptor type is unsupported")
 		}
-		value = contract.NewBooleanValue(raw == "true")
-	case contract.SchemaTypeInteger:
-		value, err = contract.NewIntegerValue(raw)
-	case contract.SchemaTypeDecimal:
-		precision, scale := decimalShape(raw)
-		value, err = contract.NewDecimalValue(raw, precision, scale)
-	case contract.SchemaTypeDate:
-		value, err = contract.NewDateValue(raw)
-	case contract.SchemaTypeTimestampInstant:
-		value, err = contract.NewInstantValue(raw)
-	case contract.SchemaTypeTimestampLocal:
-		value, err = contract.NewLocalTimestampValue(raw)
-	case contract.SchemaTypeArray, contract.SchemaTypeObject, contract.SchemaTypeUnion, contract.SchemaTypeBinaryRef:
-		value, err = contract.DecodePresentValue([]byte(raw), "application/json")
-	default:
-		return contract.PresentValue{}, errors.New("descriptor type is unsupported")
 	}
 	if err != nil {
 		return contract.PresentValue{}, err
 	}
-	if !dynamicValueMatchesSchema(value, schema) {
-		return contract.PresentValue{}, errors.New("value does not satisfy the projected typed schema")
+	if err := contract.ValidateValueAgainstSchema(value, schema); err != nil {
+		return contract.PresentValue{}, err
 	}
 	return value, nil
-}
-
-func dynamicValueMatchesSchema(value contract.PresentValue, schema contract.Schema) bool {
-	if value.Presence() == contract.PresenceNull {
-		return schema.Nullable && schemaConstraintsMatch(value, schema)
-	}
-	if value.Presence() != contract.PresenceValue {
-		return false
-	}
-	if schema.Type == contract.SchemaTypeUnion {
-		_, member, present := value.UnionMember()
-		if !present {
-			return false
-		}
-		matches := 0
-		for _, variant := range schema.OneOf {
-			if dynamicValueMatchesSchema(member, variant) {
-				matches++
-			}
-		}
-		return matches == 1 && schemaConstraintsMatch(value, schema)
-	}
-	if !dynamicKindMatches(value.Kind(), schema.Type) {
-		return false
-	}
-	switch schema.Type {
-	case contract.SchemaTypeArray:
-		elements, present := value.Elements()
-		if !present || schema.Items == nil {
-			return false
-		}
-		for _, element := range elements {
-			if !dynamicValueMatchesSchema(element, *schema.Items) {
-				return false
-			}
-		}
-	case contract.SchemaTypeObject:
-		fields, present := value.Fields()
-		if !present || !dynamicObjectMatchesSchema(fields, schema) {
-			return false
-		}
-	}
-	return schemaConstraintsMatch(value, schema)
-}
-
-func dynamicObjectMatchesSchema(fields map[string]contract.PresentValue, schema contract.Schema) bool {
-	declared := make(map[string]struct{}, len(schema.Properties))
-	for name := range schema.Properties {
-		declared[name] = struct{}{}
-	}
-	for _, component := range schema.AllOf {
-		for name := range component.Properties {
-			declared[name] = struct{}{}
-		}
-	}
-	for name := range fields {
-		if _, present := declared[name]; !present {
-			return false
-		}
-	}
-	for _, required := range schema.Required {
-		value, present := fields[required]
-		if !present || value.Presence() == contract.PresenceAbsent {
-			return false
-		}
-	}
-	for name, property := range schema.Properties {
-		if value, present := fields[name]; present && !dynamicValueMatchesSchema(value, property) {
-			return false
-		}
-	}
-	for _, component := range schema.AllOf {
-		if !dynamicObjectMatchesSchema(fields, component) {
-			return false
-		}
-	}
-	return true
-}
-
-func schemaConstraintsMatch(value contract.PresentValue, schema contract.Schema) bool {
-	if schema.Enum != nil {
-		matched := false
-		for _, candidate := range schema.Enum {
-			if value.Equal(candidate) {
-				matched = true
-				break
-			}
-		}
-		if !matched {
-			return false
-		}
-	}
-	if schema.Minimum != nil {
-		comparison, valid := compareNumeric(value, *schema.Minimum)
-		if !valid || comparison < 0 {
-			return false
-		}
-	}
-	if schema.Maximum != nil {
-		comparison, valid := compareNumeric(value, *schema.Maximum)
-		if !valid || comparison > 0 {
-			return false
-		}
-	}
-	return true
-}
-
-func compareNumeric(left, right contract.PresentValue) (int, bool) {
-	leftNumber, leftPresent := left.ExactNumber()
-	rightNumber, rightPresent := right.ExactNumber()
-	if !leftPresent || !rightPresent {
-		return 0, false
-	}
-	leftRat, leftOK := new(big.Rat).SetString(leftNumber.Text)
-	rightRat, rightOK := new(big.Rat).SetString(rightNumber.Text)
-	if !leftOK || !rightOK {
-		return 0, false
-	}
-	return leftRat.Cmp(rightRat), true
-}
-
-func dynamicKindMatches(kind contract.ValueKind, schemaType contract.SchemaType) bool {
-	return string(kind) == string(schemaType)
 }
 
 func decimalShape(value string) (int, int) {
@@ -594,16 +477,20 @@ func prepareDynamicCatalog(ctx context.Context, options Options) (Options, error
 	return options, nil
 }
 
-func dynamicCommandCandidate(arguments []string) bool {
-	static := map[string]struct{}{
-		"access": {}, "artifacts": {}, "commands": {}, "connections": {}, "connectors": {},
-		"runs": {}, "server": {}, "sessions": {}, "tasks": {}, "version": {}, "workspaces": {},
+func dynamicCommandCandidate(root *cobra.Command, arguments []string) bool {
+	if root == nil {
+		return false
 	}
-	helpTarget := false
+	for _, token := range arguments {
+		present, enabled, valid := explicitHelpFlag(token)
+		if present && (!valid || enabled) {
+			return false
+		}
+	}
 	for index := 0; index < len(arguments); index++ {
 		token := arguments[index]
-		if token == "--" {
-			return false
+		if present, _, _ := explicitHelpFlag(token); present {
+			continue
 		}
 		_, inline, kind, recognized := rootControlToken(token)
 		if recognized {
@@ -612,17 +499,36 @@ func dynamicCommandCandidate(arguments []string) bool {
 			}
 			continue
 		}
-		if strings.HasPrefix(token, "-") {
+		if strings.HasPrefix(token, "-") || token == "help" {
 			return false
 		}
-		if token == "help" && !helpTarget {
-			helpTarget = true
-			continue
+		for _, command := range root.Commands() {
+			if token == command.Name() {
+				return false
+			}
+			for _, alias := range command.Aliases {
+				if token == alias {
+					return false
+				}
+			}
 		}
-		_, known := static[token]
-		return !known
+		return true
 	}
 	return false
+}
+
+func explicitHelpFlag(token string) (present, enabled, valid bool) {
+	if token == "-h" || token == "--help" {
+		return true, true, true
+	}
+	for _, prefix := range []string{"-h=", "--help="} {
+		if !strings.HasPrefix(token, prefix) {
+			continue
+		}
+		enabled, err := strconv.ParseBool(strings.TrimPrefix(token, prefix))
+		return true, enabled, err == nil
+	}
+	return false, false, true
 }
 
 func applyBootstrapFlags(arguments []string, flags *rootFlags) error {

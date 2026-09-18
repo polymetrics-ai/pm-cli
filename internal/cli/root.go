@@ -42,17 +42,24 @@ func Execute(ctx context.Context, options Options) int {
 		fmt.Fprintf(stderr, "error: %s\n", err)
 		return 2
 	}
-	if options.Catalog == nil && dynamicCommandCandidate(options.Args) {
+
+	command, runtime := newRoot(options)
+	if options.Catalog == nil && dynamicCommandCandidate(command, options.Args) {
 		prepared, err := prepareDynamicCatalog(ctx, options)
 		if err != nil {
 			code, message := classifyCommandError(err)
 			fmt.Fprintf(stderr, "error: %s\n", message)
 			return code
 		}
-		options = prepared
+		runtime.options = prepared
+		invoke := prepared.DynamicInvoke
+		if invoke == nil {
+			invoke = runtime.invokeDynamic
+		}
+		if err := BuildCommandTree(command, *prepared.Catalog, invoke); err != nil {
+			command.PersistentPreRunE = func(*cobra.Command, []string) error { return err }
+		}
 	}
-
-	command := NewRoot(options)
 	if err := command.ExecuteContext(ctx); err != nil {
 		code, message := classifyCommandError(err)
 		fmt.Fprintf(stderr, "error: %s\n", message)
@@ -77,6 +84,11 @@ func exactArgs(count int) cobra.PositionalArgs {
 }
 
 func NewRoot(options Options) *cobra.Command {
+	root, _ := newRoot(options)
+	return root
+}
+
+func newRoot(options Options) (*cobra.Command, *commandRuntime) {
 	if options.Stdin == nil {
 		options.Stdin = os.Stdin
 	}
@@ -128,7 +140,7 @@ func NewRoot(options Options) *cobra.Command {
 			root.PersistentPreRunE = func(*cobra.Command, []string) error { return err }
 		}
 	}
-	return root
+	return root, runtime
 }
 
 func newVersionCommand(runtime *commandRuntime) *cobra.Command {

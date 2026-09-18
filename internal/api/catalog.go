@@ -245,7 +245,9 @@ func validateCommandDescriptor(command CommandDescriptor, binding CatalogBinding
 	}
 	seenFlags := make(map[string]struct{}, len(command.Fields))
 	seenFields := make(map[string]struct{}, len(command.Fields))
-	for _, field := range command.Fields {
+	bindings := make([]contract.FieldBinding, len(command.Fields))
+	for index, field := range command.Fields {
+		bindings[index] = field.Binding
 		if !validLongFlag(field.Flag) || field.Binding.Validate() != nil || field.Binding.Sensitivity != contract.SensitivityPublic ||
 			(field.Binding.Location == contract.FieldLocationBody && field.Binding.JSONPointer == "") {
 			return ErrCatalogEnvelope
@@ -258,6 +260,9 @@ func validateCommandDescriptor(command CommandDescriptor, binding CatalogBinding
 		}
 		seenFlags[field.Flag] = struct{}{}
 		seenFields[field.Binding.FieldID] = struct{}{}
+	}
+	if err := command.RequestBody.Validate(bindings); err != nil {
+		return ErrCatalogEnvelope
 	}
 	seenLanes := make(map[CommandDescriptorAvailableLanes]struct{}, len(command.AvailableLanes))
 	for _, lane := range command.AvailableLanes {

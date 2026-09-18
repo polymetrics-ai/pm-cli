@@ -746,6 +746,9 @@
             "pattern": "^sha256:[0-9a-f]{64}$",
             "type": "string"
           },
+          "request_body": {
+            "$ref": "#/components/schemas/OperationRequestProjection"
+          },
           "unavailability_code": {
             "maxLength": 128,
             "minLength": 1,
@@ -761,6 +764,7 @@
           "operation_revision",
           "catalog_revision",
           "fields",
+          "request_body",
           "available_lanes"
         ],
         "type": "object"
@@ -1892,6 +1896,31 @@
           "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
         }
       },
+      "OperationRequestProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "request_media_field_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/RequestVariantProjection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "variants"
+        ],
+        "type": "object",
+        "x-go-type": "contract.OperationRequestProjection",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
       "OrchestrationCondition": {
         "description": "Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.",
         "enum": [
@@ -2287,6 +2316,49 @@
         ],
         "type": "object",
         "x-go-type": "contract.RecordFilter",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "RequestVariantProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "field_ids": {
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "media_type": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/TypedSchema"
+          },
+          "variant_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "variant_id",
+          "media_type",
+          "required",
+          "schema",
+          "field_ids"
+        ],
+        "type": "object",
+        "x-go-type": "contract.RequestVariantProjection",
         "x-go-type-import": {
           "name": "contract",
           "path": "github.com/polymetrics-ai/pm-cli/internal/contract"

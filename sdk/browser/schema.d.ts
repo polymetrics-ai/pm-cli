@@ -797,6 +797,7 @@ export interface components {
             name: string;
             operation_id: string;
             operation_revision: string;
+            request_body: components["schemas"]["OperationRequestProjection"];
             unavailability_code?: string;
         };
         CommandFieldDescriptor: {
@@ -1049,6 +1050,10 @@ export interface components {
             sha256: string;
             workspace_id: string;
         };
+        OperationRequestProjection: {
+            request_media_field_id?: string;
+            variants: components["schemas"]["RequestVariantProjection"][];
+        };
         /**
          * @description Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.
          * @enum {string}
@@ -1147,6 +1152,13 @@ export interface components {
             operator: "equal" | "is_absent" | "is_null";
             path: string[];
             value?: components["schemas"]["PresentValue"];
+        };
+        RequestVariantProjection: {
+            field_ids: string[];
+            media_type: string;
+            required: boolean;
+            schema: components["schemas"]["TypedSchema"];
+            variant_id: string;
         };
         ResultControls: {
             filter?: components["schemas"]["RecordFilter"];

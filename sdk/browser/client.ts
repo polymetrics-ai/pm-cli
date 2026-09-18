@@ -158,9 +158,7 @@ export async function createBrowserClient(options: BrowserClientOptions): Promis
           if (!result.data || result.response.status !== 202 || result.data.state !== "accepted" ||
               result.data.request_key !== requestKey || !/^sha256:[0-9a-f]{64}$/.test(result.data.intent_digest) ||
               !identity(result.data.run_ref, 512) || typeof result.data.replay !== "boolean" ||
-              !isOutcomeReference(result.data.outcome_reference) || !safePublicFields(result.data) ||
-              Object.keys(result.data).some(name =>
-                !["state", "run_ref", "request_key", "intent_digest", "outcome_reference", "replay"].includes(name))) {
+              !isOutcomeReference(result.data.outcome_reference) || !safePublicFields(result.data)) {
             throw new PMBrowserError("malformed_admission_response", 0, "", "same_key_reconcile_only", requestKey);
           }
           return result.data;

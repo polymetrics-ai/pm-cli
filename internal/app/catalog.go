@@ -93,6 +93,7 @@ type CatalogCommand struct {
 	OperationRevision  string
 	CatalogRevision    string
 	Fields             []CatalogCommandField
+	RequestBody        contract.OperationRequestProjection
 	AvailableLanes     []contract.Lane
 	UnavailabilityCode string
 }
@@ -452,6 +453,10 @@ func (service *CatalogService) projectCommand(
 			bindings[binding.FieldID] = binding
 		}
 	}
+	requestBody, err := contract.ProjectOperationRequest(operation.Contract)
+	if err != nil {
+		return CatalogCommand{}, capabilityUnavailableFailure(err)
+	}
 	command := CatalogCommand{
 		Name:              operation.Command.Name,
 		Aliases:           []string{},
@@ -461,6 +466,7 @@ func (service *CatalogService) projectCommand(
 		OperationRevision: operationRevision,
 		CatalogRevision:   revision,
 		Fields:            make([]CatalogCommandField, 0, len(operation.Command.Fields)),
+		RequestBody:       requestBody,
 		AvailableLanes:    []contract.Lane{},
 	}
 	for _, field := range operation.Command.Fields {

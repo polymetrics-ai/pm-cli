@@ -165,6 +165,7 @@ func catalogCommandResponse(command app.CatalogCommand) api.CommandDescriptor {
 		Name:              command.Name,
 		OperationId:       command.OperationID,
 		OperationRevision: command.OperationRevision,
+		RequestBody:       command.RequestBody.Clone(),
 	}
 	if command.UnavailabilityCode != "" {
 		code := command.UnavailabilityCode

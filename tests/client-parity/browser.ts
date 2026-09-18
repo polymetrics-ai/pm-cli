@@ -89,6 +89,26 @@ async function observation(page: Page): Promise<Observation> {
   });
 }
 
+async function extendNextAdmissionResponse(page: Page, extension: Record<string, unknown>) {
+  await page.evaluate(fields => {
+    const originalFetch: typeof window.fetch = window.fetch.bind(window);
+    window.fetch = async (input, init) => {
+      const response = await originalFetch(input, init);
+      const requestURL = new URL(input instanceof Request ? input.url : String(input), location.href);
+      if (response.status !== 202 || !requestURL.pathname.endsWith("/invocations")) return response;
+      window.fetch = originalFetch;
+      const body = await response.json() as Record<string, unknown>;
+      const headers = new Headers(response.headers);
+      headers.delete("Content-Length");
+      return new Response(JSON.stringify({ ...body, ...fields }), {
+        status: response.status,
+        statusText: response.statusText,
+        headers,
+      });
+    };
+  }, extension);
+}
+
 test("pm-browser-client-parity-E01-C01 different workspace remains isolated", async ({ page }) => {
   await connect(page, "alpha", { workspace_id: fixture.foreign_workspace_id });
   const before = await observation(page);
@@ -116,17 +136,33 @@ test("pm-browser-client-parity-E01-C02 public SDK has no admin secret route", as
   expect(await observation(page)).toEqual(before);
 });
 
-test("pm-browser-client-parity-E01-C03 CLI then browser retain one committed RunID", async ({ page }, testInfo) => {
+test("pm-browser-client-parity-E01-C03 safe additive admission retains one committed RunID", async ({ page }, testInfo) => {
   await connect(page);
+  await extendNextAdmissionResponse(page, { future_context: { safe_label: "retained" } });
   await page.getByLabel("Text", { exact: true }).fill(fixture.first_text);
   await page.getByRole("button", { name: "Submit typed invocation" }).click();
   await expect(page.locator("#status")).toHaveText("Durably accepted");
-  const admission = JSON.parse(await page.locator("#result").innerText()) as Admission;
+  const admission = JSON.parse(await page.locator("#result").innerText()) as Admission & {
+    future_context: { safe_label: string };
+  };
   expect(admission.run_ref).toBe(fixture.expected_run_ref);
   expect(admission.intent_digest).toBe(fixture.expected_intent_digest);
   expect(admission.request_key).toBe(fixture.request_key);
   expect(admission.state).toBe("accepted");
   expect(admission.replay).toBe(true);
+  expect(admission.future_context).toEqual({ safe_label: "retained" });
+  await extendNextAdmissionResponse(page, {
+    future_context: { provider_secret: "synthetic-must-be-refused" },
+  });
+  const unsafe = await page.evaluate(
+    ({ text, key }) => window.parity.submit(text, key),
+    { text: fixture.first_text, key: fixture.request_key },
+  );
+  expect(unsafe).toMatchObject({
+    status: 0,
+    code: "malformed_admission_response",
+    request_key: fixture.request_key,
+  });
   const observed = await page.evaluate(async ({ workspace, run }) => {
     const response = await window.parity.api().GET("/v1/workspaces/{workspace_id}/runs/{run_id}", {
       params: { path: { workspace_id: workspace, run_id: run } },
