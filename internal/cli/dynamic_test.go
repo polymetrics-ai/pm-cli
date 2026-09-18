@@ -193,6 +193,8 @@ func TestExecutableDiscoveryCachesOnlyRevisionBoundOfflineDocumentation(t *testi
 	activePrincipal.Store(&initialPrincipal)
 
 	var infoCalls, catalogCalls, invocationCalls atomic.Int32
+	var paginatedDiscovery atomic.Bool
+	paginatedDiscovery.Store(true)
 	invocations := make(chan pmapi.InvocationRequest, 5)
 	server := httptest.NewTLSServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
@@ -212,16 +214,31 @@ func TestExecutableDiscoveryCachesOnlyRevisionBoundOfflineDocumentation(t *testi
 				request.URL.Query().Get("connection_id") != connectionID {
 				t.Errorf("catalog request = %s %s authorization %q", request.Method, request.URL.String(), request.Header.Get("Authorization"))
 			}
+			items := snapshot.Commands
+			nextCursor := nullable.NewNullNullable[string]()
+			if request.URL.Query().Get("filter") == "not-present" {
+				items = []pmapi.CommandDescriptor{}
+			} else if paginatedDiscovery.Load() && request.URL.Query().Get("cursor") == "" {
+				items = []pmapi.CommandDescriptor{}
+				nextCursor = nullable.NewNullableWithValue("remaining-commands")
+			}
 			writer.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(writer).Encode(pmapi.SafeCommandPage{
 				CatalogRevision:  snapshot.Binding.CatalogRevision,
 				ConnectionId:     connectionID,
-				Items:            snapshot.Commands,
-				NextCursor:       nullable.NewNullNullable[string](),
+				Items:            items,
+				NextCursor:       nextCursor,
 				Principal:        *activePrincipal.Load(),
 				ServerInstanceId: instanceID,
 				WorkspaceId:      workspaceID,
 			})
+		case "/v1/workspaces/" + workspaceID + "/commands/op-1":
+			if request.Method != http.MethodGet || request.Header.Get("Authorization") != "Bearer "+sessionCredential ||
+				request.URL.Query().Get("connection_id") != connectionID {
+				t.Errorf("command inspection request = %s %s", request.Method, request.URL.String())
+			}
+			writer.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(writer).Encode(snapshot.Commands[0])
 		case "/v1/workspaces/" + workspaceID + "/invocations":
 			invocationCalls.Add(1)
 			if request.Method != http.MethodPost || request.Header.Get("Authorization") != "Bearer "+sessionCredential {
@@ -274,12 +291,76 @@ func TestExecutableDiscoveryCachesOnlyRevisionBoundOfflineDocumentation(t *testi
 	}); err != nil {
 		t.Fatalf("store session: %v", err)
 	}
+	projectionPath, err := catalogProjectionPath(
+		profilesPath,
+		profile,
+		snapshot.Binding.WorkspaceID,
+		snapshot.Binding.ConnectionID,
+	)
+	if err != nil {
+		t.Fatalf("catalog projection path: %v", err)
+	}
 	factory := func(mode pmapi.SessionStoreMode) (pmapi.SessionStore, error) {
 		if mode != pmapi.SessionStoreMemory {
 			t.Fatalf("session mode = %q, want memory", mode)
 		}
 		return sessions, nil
 	}
+	discoverySelectors := []string{
+		"--server-profile", profileName,
+		"--workspace", workspaceID,
+		"--connection", connectionID,
+		"--session-store", "memory",
+	}
+	for _, discovery := range []struct {
+		name string
+		args []string
+	}{
+		{name: "paged list", args: []string{"commands", "list"}},
+		{name: "filtered list", args: []string{"commands", "list", "--filter", "not-present"}},
+		{name: "inspection", args: []string{"commands", "inspect", "op-1"}},
+	} {
+		t.Run("read-only discovery/"+discovery.name, func(t *testing.T) {
+			defer func() {
+				if err := os.Remove(projectionPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+					t.Errorf("remove owned synthetic projection: %v", err)
+				}
+			}()
+			var stdout, stderr bytes.Buffer
+			code := Execute(t.Context(), Options{
+				Args:   append(append([]string{}, discoverySelectors...), discovery.args...),
+				Stdout: &stdout, Stderr: &stderr, ProfilesPath: profilesPath,
+				HTTPClient: server.Client(), SessionStore: factory,
+			})
+			if code != 0 || invocationCalls.Load() != 0 {
+				t.Fatalf("read-only discovery = code %d invocations %d stdout %q stderr %q",
+					code, invocationCalls.Load(), stdout.String(), stderr.String())
+			}
+			if discovery.name == "filtered list" && strings.Contains(stdout.String(), "inspect-widget") {
+				t.Fatalf("filtered discovery output includes an excluded command: %s", stdout.String())
+			}
+			network := &unavailableDoer{}
+			stdout.Reset()
+			stderr.Reset()
+			code = Execute(t.Context(), Options{
+				Args:   append(append([]string{}, discoverySelectors...), "manual"),
+				Stdout: &stdout, Stderr: &stderr, ProfilesPath: profilesPath,
+				HTTPClient: network,
+				SessionStore: func(pmapi.SessionStoreMode) (pmapi.SessionStore, error) {
+					t.Fatal("offline documentation attempted session access")
+					return nil, errors.New("offline session access")
+				},
+			})
+			if code != 0 || network.calls != 0 || invocationCalls.Load() != 0 ||
+				!strings.Contains(stdout.String(), "COMMAND pm inspect-widget") {
+				t.Fatalf("read-only discovery did not prime the complete offline manual: code %d network %d invocations %d stdout %q stderr %q",
+					code, network.calls, invocationCalls.Load(), stdout.String(), stderr.String())
+			}
+		})
+	}
+	paginatedDiscovery.Store(false)
+	infoCalls.Store(0)
+	catalogCalls.Store(0)
 	for index, providerValue := range []string{"--help", "-h", "--", "--workspace"} {
 		var stdout, stderr bytes.Buffer
 		code := Execute(t.Context(), Options{
@@ -363,15 +444,6 @@ func TestExecutableDiscoveryCachesOnlyRevisionBoundOfflineDocumentation(t *testi
 			catalogCalls.Load(),
 			invocationCalls.Load(),
 		)
-	}
-	projectionPath, err := catalogProjectionPath(
-		profilesPath,
-		profile,
-		snapshot.Binding.WorkspaceID,
-		snapshot.Binding.ConnectionID,
-	)
-	if err != nil {
-		t.Fatalf("catalog projection path: %v", err)
 	}
 	projectionDocument, err := os.ReadFile(projectionPath)
 	if err != nil {

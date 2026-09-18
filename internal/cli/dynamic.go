@@ -426,6 +426,9 @@ func newCommandsCommand(runtime *commandRuntime) *cobra.Command {
 			if err != nil {
 				return requestError(ctx, err)
 			}
+			if response.JSON200 != nil {
+				runtime.cacheDiscoveredCatalog(ctx, bundle, command.ErrOrStderr())
+			}
 			return renderWireResponse(command.OutOrStdout(), bundle.config.output, response)
 		},
 	}
@@ -449,10 +452,29 @@ func newCommandsCommand(runtime *commandRuntime) *cobra.Command {
 			if err != nil {
 				return requestError(ctx, err)
 			}
+			if response.JSON200 != nil {
+				runtime.cacheDiscoveredCatalog(ctx, bundle, command.ErrOrStderr())
+			}
 			return renderWireResponse(command.OutOrStdout(), bundle.config.output, response)
 		},
 	})
 	return command
+}
+
+func (runtime *commandRuntime) cacheDiscoveredCatalog(ctx context.Context, bundle clientBundle, writer io.Writer) {
+	// The requested discovery response may be one page, a filtered result, or
+	// one operation. Only a complete, unfiltered, qualified snapshot may replace
+	// offline documentation; preserve the original requested output separately.
+	snapshot, err := pmapi.LoadCatalog(
+		ctx, bundle.client, runtime.options.CatalogCache,
+		pmapi.WorkspaceID(bundle.config.workspace), bundle.config.connection, "",
+	)
+	if err == nil {
+		err = storeCatalogProjection(runtime.options, bundle.config.profile, snapshot)
+	}
+	if err != nil {
+		_, _ = fmt.Fprintln(writer, "notice: read-only discovery succeeded, but a complete offline catalog projection is unavailable")
+	}
 }
 
 func prepareDynamicCatalog(ctx context.Context, options Options) (Options, error) {
