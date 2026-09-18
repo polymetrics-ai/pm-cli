@@ -3,6 +3,7 @@ package contract
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -613,6 +614,79 @@ func TestPresencePrecisionAndMedia(t *testing.T) {
 			t.Fatal("result controls invented a sent limit or source exhaustion")
 		}
 	})
+}
+
+func TestResultControlsCapAndContinuationPresence(t *testing.T) {
+	t.Run("nil controls retain complete-default encoding", func(t *testing.T) {
+		controls := ResultControls{}
+		if controls.HasContinuation() || !controls.ContinuationValue().Equal(AbsentValue()) {
+			t.Fatalf("omitted continuation state = %#v", controls.ContinuationValue())
+		}
+		encoded, err := json.Marshal(controls)
+		if err != nil {
+			t.Fatalf("marshal default controls: %v", err)
+		}
+		if string(encoded) != `{}` {
+			t.Fatalf("default controls encoding = %s; want {}", encoded)
+		}
+	})
+
+	t.Run("explicit absence remains distinct from omission", func(t *testing.T) {
+		controls := ResultControls{Continuation: new(AbsentValue())}
+		if err := controls.Validate(); err != nil {
+			t.Fatalf("validate explicit absent continuation: %v", err)
+		}
+		if controls.HasContinuation() || !controls.ContinuationValue().Equal(AbsentValue()) {
+			t.Fatalf("explicit absent continuation state = %#v", controls.ContinuationValue())
+		}
+		encoded, err := json.Marshal(controls)
+		if err != nil {
+			t.Fatalf("marshal explicit absent continuation: %v", err)
+		}
+		if string(encoded) != `{"continuation":{"presence":"absent"}}` {
+			t.Fatalf("explicit absent continuation encoding = %s", encoded)
+		}
+	})
+
+	t.Run("positive cap and bounded opaque resume are exact", func(t *testing.T) {
+		cap := ^uint64(0)
+		token := strings.Repeat("é", maxResultContinuationBytes/2)
+		continuation := NewStringValue(token)
+		controls := ResultControls{TotalRecordCap: &cap, Continuation: &continuation}
+		if err := controls.Validate(); err != nil {
+			t.Fatalf("validate cap and boundary continuation: %v", err)
+		}
+		if !controls.HasContinuation() || !controls.ContinuationValue().Equal(continuation) {
+			t.Fatal("continuation helper lost the exact bounded opaque value")
+		}
+		text, ok := controls.ContinuationValue().TextValue()
+		if !ok || text != token || len(text) != maxResultContinuationBytes {
+			t.Fatalf("continuation text length = %d, %t; want exact %d-byte token", len(text), ok, maxResultContinuationBytes)
+		}
+	})
+
+	for _, test := range []struct {
+		name     string
+		controls ResultControls
+	}{
+		{name: "zero total cap", controls: ResultControls{TotalRecordCap: new(uint64(0))}},
+		{name: "typed null continuation", controls: ResultControls{Continuation: new(NullValue())}},
+		{name: "empty continuation", controls: ResultControls{Continuation: new(NewStringValue(""))}},
+		{name: "non-string continuation", controls: ResultControls{Continuation: new(NewBooleanValue(false))}},
+		{name: "invalid typed state", controls: ResultControls{Continuation: new(PresentValue{})}},
+		{
+			name: "continuation exceeds byte bound",
+			controls: ResultControls{
+				Continuation: new(NewStringValue(strings.Repeat("é", maxResultContinuationBytes/2) + "x")),
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.controls.Validate(); err == nil {
+				t.Fatal("invalid cap or continuation was accepted")
+			}
+		})
+	}
 }
 
 func TestPresentValueContainerIsolation(t *testing.T) {

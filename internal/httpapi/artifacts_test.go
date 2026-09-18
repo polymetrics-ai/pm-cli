@@ -778,8 +778,8 @@ func insertUnboundArtifactMetadata(
 		_, err := tx.Exec(ctx, `
 			INSERT INTO pm.artifacts (
 				org_id, workspace_id, artifact_id, object_attempt_key, sha256,
-				byte_length, media_type, backend_generation, object_ref, registered_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+				byte_length, media_type, backend_generation, object_ref, registered_at, purpose
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp(), 'public')
 		`, ref.OrgID, ref.WorkspaceID, ref.ArtifactID, ref.ObjectAttemptKey, ref.SHA256,
 			ref.ByteLength, ref.MediaType, ref.BackendGeneration, json.RawMessage(encoded))
 		return err

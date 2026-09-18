@@ -300,6 +300,156 @@ func TestSharedAccountPermits(t *testing.T) {
 		}
 	})
 
+	t.Run("unused release is terminal and races dispatch by exact CAS", func(t *testing.T) {
+		fixture := registerPermitTestFixture(
+			t,
+			credentials,
+			replicaA,
+			permitFixtureOptions{Capacity: 2},
+		)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		reserve := func(label string) AccountPermit {
+			t.Helper()
+			permit, err := reservePermitForTest(
+				ctx,
+				replicaA,
+				fixture.alpha,
+				AccountPermitRequest{
+					PermitID:     "permit-release-" + label + "-" + fixture.suffix,
+					ConnectionID: fixture.alphaConnections[0],
+					OwnerID:      "release-worker-" + label,
+					Units:        1,
+					TTL:          time.Hour,
+				},
+			)
+			if err != nil {
+				t.Fatalf("reserve %s release fixture: %v", label, err)
+			}
+			return permit
+		}
+
+		unused := reserve("unused")
+		forgedOwner := unused
+		forgedOwner.OwnerID = "different-release-owner"
+		if _, err := releaseUnusedPermitForTest(ctx, replicaA, forgedOwner); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("forged owner release = %v; want ErrAccountPermitStale", err)
+		}
+		forgedScope := unused
+		forgedScope.Scope = fixture.beta
+		if _, err := releaseUnusedPermitForTest(ctx, replicaB, forgedScope); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("cross-workspace release = %v; want ErrAccountPermitStale", err)
+		}
+		if got := readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID); got != 1 {
+			t.Fatalf("refused permit releases changed reserved units to %d; want 1", got)
+		}
+		released, err := releaseUnusedPermitForTest(ctx, replicaA, unused)
+		if err != nil {
+			t.Fatalf("release verified unused permit: %v", err)
+		}
+		replayed, err := releaseUnusedPermitForTest(ctx, replicaB, unused)
+		if err != nil {
+			t.Fatalf("replay unused permit release: %v", err)
+		}
+		if released.State != AccountPermitReleased ||
+			released.ResolvedAt == nil ||
+			!released.ExpiresAt.After(*released.ResolvedAt) ||
+			!samePermitCAS(released, unused) ||
+			replayed.State != AccountPermitReleased ||
+			replayed.ResolvedAt == nil ||
+			!replayed.ResolvedAt.Equal(*released.ResolvedAt) ||
+			readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 0 {
+			t.Fatalf("unused release did not preserve authority and release capacity exactly once: %#v %#v", released, replayed)
+		}
+		if _, err := authorizePermitForTest(ctx, replicaA, unused); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("released permit authorization = %v; want ErrAccountPermitStale", err)
+		}
+
+		toDispatch := reserve("dispatched")
+		dispatched, err := authorizePermitForTest(ctx, replicaA, toDispatch)
+		if err != nil {
+			t.Fatalf("authorize dispatch control permit: %v", err)
+		}
+		if _, err := releaseUnusedPermitForTest(ctx, replicaB, toDispatch); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("release after dispatch = %v; want ErrAccountPermitStale", err)
+		}
+		if retained, err := loadPermitForTest(ctx, replicaA, fixture.alpha, toDispatch.PermitID); err != nil ||
+			retained.State != AccountPermitDispatched ||
+			readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 1 {
+			t.Fatalf("release conflict changed dispatched authority: permit=%#v error=%v", retained, err)
+		}
+		if _, err := resolvePermitForTest(ctx, replicaA, dispatched); err != nil {
+			t.Fatalf("resolve dispatch control permit: %v", err)
+		}
+
+		racing := reserve("race")
+		type transitionResult struct {
+			operation string
+			err       error
+		}
+		start := make(chan struct{})
+		results := make(chan transitionResult, 2)
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			<-start
+			_, err := authorizePermitForTest(ctx, replicaA, racing)
+			results <- transitionResult{operation: "dispatch", err: err}
+		}()
+		go func() {
+			defer workers.Done()
+			<-start
+			_, err := releaseUnusedPermitForTest(ctx, replicaB, racing)
+			results <- transitionResult{operation: "release", err: err}
+		}()
+		close(start)
+		workers.Wait()
+		close(results)
+		successes := 0
+		stale := 0
+		winner := ""
+		for result := range results {
+			if result.err == nil {
+				successes++
+				winner = result.operation
+				continue
+			}
+			if errors.Is(result.err, ErrAccountPermitStale) {
+				stale++
+				continue
+			}
+			t.Fatalf("%s side of permit transition race: %v", result.operation, result.err)
+		}
+		if successes != 1 || stale != 1 {
+			t.Fatalf("permit transition race successes/stale = %d/%d; want 1/1", successes, stale)
+		}
+		retained, err := loadPermitForTest(ctx, replicaA, fixture.alpha, racing.PermitID)
+		if err != nil {
+			t.Fatalf("load raced permit: %v", err)
+		}
+		switch winner {
+		case "release":
+			if retained.State != AccountPermitReleased ||
+				readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 0 {
+				t.Fatalf("release race winner = %#v; want released with free capacity", retained)
+			}
+		case "dispatch":
+			if retained.State != AccountPermitDispatched ||
+				readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 1 {
+				t.Fatalf("dispatch race winner = %#v; want dispatched with retained capacity", retained)
+			}
+			if _, err := resolvePermitForTest(ctx, replicaA, retained); err != nil {
+				t.Fatalf("resolve raced dispatch winner: %v", err)
+			}
+		default:
+			t.Fatalf("unexpected permit transition winner %q", winner)
+		}
+		if got := readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID); got != 0 {
+			t.Fatalf("completed permit transition race retained %d units; want 0", got)
+		}
+	})
+
 	t.Run("duplicate intent consumes once and cannot change alias", func(t *testing.T) {
 		fixture := registerPermitTestFixture(t, credentials, replicaA, permitFixtureOptions{Capacity: 1})
 		request := AccountPermitRequest{
@@ -713,6 +863,16 @@ func reclaimPermitForTest(ctx context.Context, pool *Pool, permit AccountPermit,
 	err := WithinScope(ctx, pool, permit.Scope, testActor(permit.Scope), func(ctx context.Context, tx *Transaction) error {
 		var err error
 		updated, err = ReclaimAccountPermit(ctx, tx, permit, ownerID, ttl)
+		return err
+	})
+	return updated, err
+}
+
+func releaseUnusedPermitForTest(ctx context.Context, pool *Pool, permit AccountPermit) (AccountPermit, error) {
+	var updated AccountPermit
+	err := WithinScope(ctx, pool, permit.Scope, testActor(permit.Scope), func(ctx context.Context, tx *Transaction) error {
+		var err error
+		updated, err = ReleaseUnusedAccountPermit(ctx, tx, permit)
 		return err
 	})
 	return updated, err

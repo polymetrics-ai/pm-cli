@@ -34,7 +34,14 @@
     },
     "jsonPointer": {
       "type": "string",
+      "maxLength": 4096,
       "pattern": "^(/([^~]|~[01])*)*$"
+    },
+    "nonRootJSONPointer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/(?:[^~]|~[01])*$"
     },
     "sourceRef": {
       "type": "object",
@@ -56,6 +63,7 @@
           "minItems": 1,
           "items": {"$ref": "#/$defs/sourceRef"}
         },
+        "http": {"$ref": "#/$defs/httpSemantics"},
         "record_extraction": {"$ref": "#/$defs/recordExtraction"},
         "pagination": {"$ref": "#/$defs/pagination"},
         "retry": {"$ref": "#/$defs/retry"},
@@ -65,13 +73,55 @@
         }
       }
     },
+    "httpSemantics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origins", "witness"],
+      "properties": {
+        "origins": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^https?://"}
+        },
+        "authorization": {"$ref": "#/$defs/operationAuthorization"},
+        "headers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/operationHTTPHeader"}
+        },
+        "witness": {"$ref": "#/$defs/witness"}
+      }
+    },
+    "operationHTTPHeader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"},
+        "value": {"type": "string", "maxLength": 8192}
+      }
+    },
+    "operationAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "audience", "placement", "wire_name", "prefix", "field_id"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "audience": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^https?://"},
+        "placement": {"enum": ["header", "query", "cookie"]},
+        "wire_name": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"},
+        "prefix": {"type": "string", "maxLength": 1024},
+        "field_id": {"$ref": "#/$defs/identity"}
+      }
+    },
     "recordExtraction": {
       "type": "object",
       "additionalProperties": false,
       "required": ["records_pointer", "witness"],
       "properties": {
         "records_pointer": {"$ref": "#/$defs/jsonPointer"},
-        "next_pointer": {"$ref": "#/$defs/jsonPointer"},
         "witness": {"$ref": "#/$defs/witness"}
       }
     },
@@ -84,7 +134,7 @@
           "properties": {
             "kind": {"const": "cursor"},
             "cursor_request_field": {"$ref": "#/$defs/identity"},
-            "cursor_response_pointer": {"$ref": "#/$defs/jsonPointer"},
+            "cursor_response_pointer": {"$ref": "#/$defs/nonRootJSONPointer"},
             "witness": {"$ref": "#/$defs/witness"}
           }
         },
@@ -96,7 +146,7 @@
             "kind": {"const": "offset"},
             "offset_request_field": {"$ref": "#/$defs/identity"},
             "limit_request_field": {"$ref": "#/$defs/identity"},
-            "total_response_pointer": {"$ref": "#/$defs/jsonPointer"},
+            "total_response_pointer": {"$ref": "#/$defs/nonRootJSONPointer"},
             "witness": {"$ref": "#/$defs/witness"}
           }
         },
@@ -107,7 +157,19 @@
           "properties": {
             "kind": {"const": "page"},
             "page_request_field": {"$ref": "#/$defs/identity"},
-            "last_page_response_pointer": {"$ref": "#/$defs/jsonPointer"},
+            "last_page_response_pointer": {"$ref": "#/$defs/nonRootJSONPointer"},
+            "witness": {"$ref": "#/$defs/witness"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "link_request_field", "link_response_header", "witness"],
+          "properties": {
+            "kind": {"const": "link"},
+            "link_request_field": {"$ref": "#/$defs/identity"},
+            "link_response_header": {"type": "string", "pattern": "^[Ll][Ii][Nn][Kk]$"},
+            "limit_request_field": {"$ref": "#/$defs/identity"},
             "witness": {"$ref": "#/$defs/witness"}
           }
         }
@@ -119,7 +181,13 @@
       "required": ["classification", "witness"],
       "properties": {
         "classification": {"enum": ["safe", "unsafe", "conditional"]},
-        "condition": {"type": "string", "minLength": 1, "maxLength": 4096},
+        "condition": {"$ref": "#/$defs/identity"},
+        "http_statuses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "integer", "minimum": 400, "maximum": 599}
+        },
         "witness": {"$ref": "#/$defs/witness"}
       },
       "allOf": [

@@ -1167,9 +1167,16 @@ export interface components {
             schema: components["schemas"]["TypedSchema"];
             variant_id: string;
         };
+        /** @description Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input. */
         ResultControls: {
+            continuation?: components["schemas"]["PresentValue"];
             filter?: components["schemas"]["RecordFilter"];
             selection?: components["schemas"]["FieldSelection"];
+            /**
+             * Format: int64
+             * @description Optional positive cap on records emitted by this invocation after filtering; this is distinct from the provider page size.
+             */
+            total_record_cap?: number;
         };
         ResultPagination: {
             continuation: components["schemas"]["PresentValue"];

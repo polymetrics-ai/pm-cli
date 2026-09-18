@@ -84,15 +84,19 @@ func (publisher *Publisher) CancelUnused(ctx context.Context, actor contract.Act
 	})
 }
 
-// PreparedPublication contains real readback evidence but is not yet public.
-// It may join a caller-owned result/outcome/manifest transaction through Commit.
+// PreparedPublication contains real readback evidence but is not yet registered
+// for its sealed purpose. It may join a caller-owned result/outcome/manifest
+// transaction through Commit.
 type PreparedPublication struct {
 	reservationID string
+	purpose       store.ArtifactPurpose
 	object        VerifiedObject
 }
 
 func (publication PreparedPublication) Reference() (contract.ObjectRef, error) {
-	if publication.reservationID == "" {
+	if publication.reservationID == "" ||
+		publication.purpose != store.ArtifactPurposePublic &&
+			publication.purpose != store.ArtifactPurposeContinuation {
 		return contract.ObjectRef{}, ErrInvalidObject
 	}
 	return publication.object.Reference()
@@ -111,7 +115,14 @@ func (publication PreparedPublication) Commit(ctx context.Context, tx *store.Tra
 	if err != nil {
 		return store.ArtifactPublicationReceipt{}, err
 	}
-	return store.CommitObjectPublication(ctx, tx, publication.reservationID, verified)
+	receipt, err := store.CommitObjectPublication(ctx, tx, publication.reservationID, verified)
+	if err != nil {
+		return store.ArtifactPublicationReceipt{}, err
+	}
+	if receipt.Purpose != publication.purpose {
+		return store.ArtifactPublicationReceipt{}, store.ErrImmutableConflict
+	}
+	return receipt, nil
 }
 
 // Upload first commits the exact physical-attempt binding, then uploads once and
@@ -165,7 +176,11 @@ func (publisher *Publisher) Upload(ctx context.Context, actor contract.Actor, sc
 	if err != nil {
 		return PreparedPublication{}, err
 	}
-	return PreparedPublication{reservationID: reservationID, object: verified}, nil
+	return PreparedPublication{
+		reservationID: reservationID,
+		purpose:       reservation.Request.Purpose,
+		object:        verified,
+	}, nil
 }
 
 // Recover uses the immutable PostgreSQL occurrence receipt after a lost commit

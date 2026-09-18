@@ -16,8 +16,8 @@ func TestScopedObjectCapacity(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	limits := ObjectCapacityLimits{OrganizationBytes: 32, WorkspaceBytes: 24, OrganizationAttempts: 8, WorkspaceAttempts: 4}
-	alpha := ObjectReservationRequest{ReservationID: "object-alpha", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-alpha", MaximumBytes: 16}
-	beta := ObjectReservationRequest{ReservationID: "object-beta", ConnectionID: fixture.betaConnection, ArtifactID: "artifact-beta", MaximumBytes: 16}
+	alpha := ObjectReservationRequest{ReservationID: "object-alpha", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-alpha", MaximumBytes: 16, Purpose: ArtifactPurposePublic}
+	beta := ObjectReservationRequest{ReservationID: "object-beta", ConnectionID: fixture.betaConnection, ArtifactID: "artifact-beta", MaximumBytes: 16, Purpose: ArtifactPurposePublic}
 	reserve := func(scope contract.Scope, request ObjectReservationRequest) (ObjectReservation, error) {
 		var reservation ObjectReservation
 		err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
@@ -26,6 +26,13 @@ func TestScopedObjectCapacity(t *testing.T) {
 			return err
 		})
 		return reservation, err
+	}
+	missingPurpose := alpha
+	missingPurpose.ReservationID = "object-missing-purpose"
+	missingPurpose.ArtifactID = "artifact-missing-purpose"
+	missingPurpose.Purpose = ""
+	if _, err := reserve(fixture.alpha, missingPurpose); err == nil {
+		t.Fatal("reservation without an explicit purpose was accepted")
 	}
 	first, err := reserve(fixture.alpha, alpha)
 	if err != nil {
@@ -38,7 +45,10 @@ func TestScopedObjectCapacity(t *testing.T) {
 	if err != nil || !replayed.ReservedAt.Equal(first.ReservedAt) {
 		t.Fatalf("exact reservation replay = %#v, %v; want original allocation", replayed, err)
 	}
-	more := ObjectReservationRequest{ReservationID: "object-more", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-more", MaximumBytes: 1}
+	if first.Request.Purpose != ArtifactPurposePublic {
+		t.Fatalf("retained reservation purpose = %q; want public", first.Request.Purpose)
+	}
+	more := ObjectReservationRequest{ReservationID: "object-more", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-more", MaximumBytes: 1, Purpose: ArtifactPurposePublic}
 	if _, err := reserve(fixture.alpha, more); !errors.Is(err, ErrObjectCapacityExceeded) {
 		t.Fatalf("cross-workspace organization ceiling = %v", err)
 	}
@@ -46,6 +56,11 @@ func TestScopedObjectCapacity(t *testing.T) {
 	changed.MaximumBytes--
 	if _, err := reserve(fixture.alpha, changed); !errors.Is(err, ErrImmutableConflict) {
 		t.Fatalf("changed reservation replay = %v", err)
+	}
+	changed = alpha
+	changed.Purpose = ArtifactPurposeContinuation
+	if _, err := reserve(fixture.alpha, changed); !errors.Is(err, ErrImmutableConflict) {
+		t.Fatalf("cross-purpose reservation replay = %v", err)
 	}
 	for range 2 {
 		if err := WithinScope(ctx, pool, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
@@ -78,7 +93,7 @@ func TestObjectPublicationTransactionBoundaries(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	limits := ObjectCapacityLimits{OrganizationBytes: 64, WorkspaceBytes: 64, OrganizationAttempts: 2, WorkspaceAttempts: 2}
-	request := ObjectReservationRequest{ReservationID: "object-publication", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-publication", MaximumBytes: 32}
+	request := ObjectReservationRequest{ReservationID: "object-publication", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-publication", MaximumBytes: 32, Purpose: ArtifactPurposePublic}
 	ref := testObjectRef(fixture.alpha, request.ArtifactID, "immutable-publication-attempt", "a")
 	ref.ByteLength = 8
 	binding := ObjectAttemptBinding{Scope: fixture.alpha, ArtifactID: ref.ArtifactID, ObjectAttemptKey: ref.ObjectAttemptKey, SHA256: ref.SHA256, ByteLength: ref.ByteLength, MediaType: ref.MediaType}
@@ -147,7 +162,7 @@ func TestObjectPublicationTransactionBoundaries(t *testing.T) {
 		if err != nil {
 			return err
 		}
-		if retained.Object != ref || retained != receipt {
+		if retained.Object != ref || retained.Purpose != ArtifactPurposePublic || retained != receipt {
 			t.Fatalf("publication receipt changed: %#v", retained)
 		}
 		replayed, err := CommitObjectPublication(ctx, tx, request.ReservationID, verified)
@@ -159,13 +174,13 @@ func TestObjectPublicationTransactionBoundaries(t *testing.T) {
 		}
 		// The actual eight-byte binding returns unused ceiling slack, but its
 		// physical-attempt slot remains charged even after publication.
-		_, err = ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "remaining-byte-capacity", ConnectionID: request.ConnectionID, ArtifactID: "artifact-other", MaximumBytes: 55}, limits)
+		_, err = ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "remaining-byte-capacity", ConnectionID: request.ConnectionID, ArtifactID: "artifact-other", MaximumBytes: 55, Purpose: ArtifactPurposePublic}, limits)
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := within(func(ctx context.Context, tx *Transaction) error {
-		_, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "over-attempt-limit", ConnectionID: request.ConnectionID, ArtifactID: "artifact-third", MaximumBytes: 1}, limits)
+		_, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "over-attempt-limit", ConnectionID: request.ConnectionID, ArtifactID: "artifact-third", MaximumBytes: 1, Purpose: ArtifactPurposePublic}, limits)
 		return err
 	}); !errors.Is(err, ErrObjectCapacityExceeded) {
 		t.Fatalf("retained attempt quota = %v", err)
@@ -178,7 +193,7 @@ func TestObjectReservationCancellationCannotRacePastBinding(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	limits := ObjectCapacityLimits{OrganizationBytes: 16, WorkspaceBytes: 16, OrganizationAttempts: 1, WorkspaceAttempts: 1}
-	request := ObjectReservationRequest{ReservationID: "object-race", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-race", MaximumBytes: 16}
+	request := ObjectReservationRequest{ReservationID: "object-race", ConnectionID: fixture.alphaConnections[0], ArtifactID: "artifact-race", MaximumBytes: 16, Purpose: ArtifactPurposePublic}
 	ref := testObjectRef(fixture.alpha, request.ArtifactID, "immutable-race-attempt", "b")
 	ref.ByteLength = 0
 	binding := ObjectAttemptBinding{Scope: fixture.alpha, ArtifactID: ref.ArtifactID, ObjectAttemptKey: ref.ObjectAttemptKey, SHA256: ref.SHA256, ByteLength: 0, MediaType: ref.MediaType}
@@ -212,14 +227,14 @@ func TestObjectReservationCancellationCannotRacePastBinding(t *testing.T) {
 	if bindErr == nil && errors.Is(cancelErr, ErrObjectReservationClosed) {
 		// A zero-byte object must still retain its physical-attempt slot.
 		if err := WithinScope(ctx, pool, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
-			_, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "no-released-slot", ConnectionID: request.ConnectionID, ArtifactID: "artifact-next", MaximumBytes: 1}, limits)
+			_, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "no-released-slot", ConnectionID: request.ConnectionID, ArtifactID: "artifact-next", MaximumBytes: 1, Purpose: ArtifactPurposePublic}, limits)
 			return err
 		}); !errors.Is(err, ErrObjectCapacityExceeded) {
 			t.Fatalf("bound empty object lost its attempt charge: %v", err)
 		}
 	} else if cancelErr == nil && errors.Is(bindErr, ErrObjectReservationClosed) {
 		if err := WithinScope(ctx, pool, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
-			_, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "released-slot", ConnectionID: request.ConnectionID, ArtifactID: "artifact-next", MaximumBytes: 16}, limits)
+			_, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{ReservationID: "released-slot", ConnectionID: request.ConnectionID, ArtifactID: "artifact-next", MaximumBytes: 16, Purpose: ArtifactPurposePublic}, limits)
 			return err
 		}); err != nil {
 			t.Fatalf("cancelled unbound slot was not reusable: %v", err)
@@ -245,7 +260,7 @@ func TestObjectCapacityConcurrentWorkspaces(t *testing.T) {
 			results <- WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
 				_, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{
 					ReservationID: "competing-reservation", ConnectionID: connections[index],
-					ArtifactID: "competing-artifact", MaximumBytes: 16,
+					ArtifactID: "competing-artifact", Purpose: ArtifactPurposePublic, MaximumBytes: 16,
 				}, limits)
 				return err
 			})

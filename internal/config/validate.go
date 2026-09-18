@@ -101,6 +101,10 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if err := validateWorker(data.worker, data.temporal, data.limits); err != nil {
 		return Configuration{}, err
 	}
+	providerHTTP, err := resolveProviderHTTP(data.providerHTTP)
+	if err != nil {
+		return Configuration{}, err
+	}
 	if err := validateLifecycle(data, prelaunch); err != nil {
 		return Configuration{}, err
 	}
@@ -125,6 +129,7 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 		limits:             data.limits,
 		server:             server,
 		worker:             data.worker,
+		providerHTTP:       providerHTTP,
 	}, nil
 }
 

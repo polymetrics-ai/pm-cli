@@ -2,6 +2,8 @@ openapi: 3.0.3
 info:
   title: Synthetic explicit default boundary
   version: 1.0.0
+servers:
+  - url: https://defaults.example.test/v1
 components:
   schemas:
     LimitWithDefault:

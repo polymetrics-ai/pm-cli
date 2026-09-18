@@ -309,7 +309,7 @@ var operationObjectControls = map[string]map[string]JSONFieldControl{
 	"submitInvocation": {
 		"":                           {AllowedFields: []string{"approval_ref", "connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"}, RequiredFields: []string{"connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"}, Nullable: false},
 		"/protocol":                  {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
-		"/result_controls":           {AllowedFields: []string{"filter", "selection"}, RequiredFields: []string{}, Nullable: false},
+		"/result_controls":           {AllowedFields: []string{"continuation", "filter", "selection", "total_record_cap"}, RequiredFields: []string{}, Nullable: false},
 		"/result_controls/filter":    {AllowedFields: []string{"operator", "path", "value"}, RequiredFields: []string{"operator", "path"}, Nullable: false},
 		"/result_controls/selection": {AllowedFields: []string{"paths"}, RequiredFields: []string{"paths"}, Nullable: false},
 	},

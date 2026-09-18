@@ -64,7 +64,9 @@ func (t *EffectTransition) UnmarshalJSON(data []byte) error {
 
 func (t EffectTransition) Validate() error {
 	legal := allowedEffectTransition(t.From, t.To) ||
-		(t.From == OutcomeUnknown && t.To == OutcomeUnknown && t.Reason == "timeout")
+		(t.From == OutcomeUnknown && t.To == OutcomeUnknown &&
+			(t.Reason == "timeout" || t.Reason == "replay_dispatched")) ||
+		(t.From == OutcomeUnknown && t.To == OutcomeUnsent && t.Reason == "definitive_unsent")
 	if !legal {
 		return contractError(ErrInvalidContract, "effect_transition", "contains an illegal state transition")
 	}
@@ -161,9 +163,6 @@ func (r EffectRecord) Validate() error {
 		seenReceipts[attempt.ReceiptRef] = struct{}{}
 		previousAttempt = attempt.RecordedAt
 	}
-	if r.State == OutcomeUnsent && len(r.Attempts) != 0 {
-		return contractError(ErrInvalidContract, "effect_record.attempts", "unsent effect cannot have a send-attempt receipt")
-	}
 	if r.Revision == 0 {
 		return contractError(ErrInvalidContract, "effect_record.revision", "must be a positive state revision")
 	}
@@ -191,6 +190,12 @@ func (r EffectRecord) Validate() error {
 	if state != r.State {
 		return contractError(ErrInvalidContract, "effect_record.history", "history does not end at the current state")
 	}
+	if r.State == OutcomeUnsent && len(r.Attempts) != 0 {
+		if len(r.History) == 0 || r.History[len(r.History)-1].Reason != "definitive_unsent" ||
+			r.History[len(r.History)-1].ObservedAt.Before(r.Attempts[len(r.Attempts)-1].RecordedAt) {
+			return contractError(ErrInvalidContract, "effect_record.attempts", "attempted effect requires an explicit definitive-unsent observation")
+		}
+	}
 	return nil
 }
 
@@ -210,6 +215,41 @@ func (r EffectRecord) RecordAttempt(attempt Attempt) (EffectRecord, error) {
 		From: OutcomeUnsent, To: OutcomeUnknown, Reason: "dispatched", ObservedAt: attempt.RecordedAt,
 	})
 	updated.State = OutcomeUnknown
+	updated.Revision++
+	if err := updated.Validate(); err != nil {
+		return r, err
+	}
+	return updated, nil
+}
+
+// RecordReplayAttempt appends one separately admitted physical attempt while
+// preserving an unknown logical effect. Storage must first prove that the
+// retry is the exact persisted source-safe child of previous; generic callers
+// cannot use RecordAttempt or Transition to reopen unknown work.
+func (r EffectRecord) RecordReplayAttempt(attempt Attempt, previous Attempt) (EffectRecord, error) {
+	if err := r.Validate(); err != nil {
+		return r, err
+	}
+	if r.State != OutcomeUnknown || len(r.Attempts) == 0 || r.Attempts[len(r.Attempts)-1] != previous {
+		return r, contractError(ErrInvalidContract, "effect_record.attempts", "replay must identify the exact latest unknown attempt")
+	}
+	if err := attempt.Validate(); err != nil {
+		return r, err
+	}
+	if attempt.AttemptID == previous.AttemptID ||
+		attempt.DispatchID == previous.DispatchID ||
+		attempt.ReceiptRef == previous.ReceiptRef {
+		return r, contractError(ErrDuplicateField, "effect_record.attempts", "replay attempt identities and receipt must be new")
+	}
+	if attempt.RecordedAt.Before(previous.RecordedAt) ||
+		(len(r.History) != 0 && attempt.RecordedAt.Before(r.History[len(r.History)-1].ObservedAt)) {
+		return r, contractError(ErrInvalidContract, "effect_record.attempts", "replay attempt cannot move durable observation time backwards")
+	}
+	updated := r
+	updated.Attempts = append(slices.Clone(r.Attempts), attempt)
+	updated.History = append(slices.Clone(r.History), EffectTransition{
+		From: OutcomeUnknown, To: OutcomeUnknown, Reason: "replay_dispatched", ObservedAt: attempt.RecordedAt,
+	})
 	updated.Revision++
 	if err := updated.Validate(); err != nil {
 		return r, err
@@ -237,6 +277,37 @@ func (r EffectRecord) ObserveTimeout(observedAt time.Time) (EffectRecord, error)
 	updated.History = append(append([]EffectTransition(nil), r.History...), EffectTransition{
 		From: OutcomeUnknown, To: OutcomeUnknown, Reason: "timeout", ObservedAt: observedAt,
 	})
+	updated.Revision++
+	if err := updated.Validate(); err != nil {
+		return r, err
+	}
+	return updated, nil
+}
+
+// ObserveUnsent records definitive transport evidence for the exact latest
+// attempt. It retains every attempt receipt; a timeout or a request to retry is
+// not this observation and cannot use the generic Transition method to reset
+// an unknown effect.
+func (r EffectRecord) ObserveUnsent(attempt Attempt, observedAt time.Time) (EffectRecord, error) {
+	if err := r.Validate(); err != nil {
+		return r, err
+	}
+	if r.State != OutcomeUnknown || len(r.Attempts) == 0 || r.Attempts[len(r.Attempts)-1] != attempt {
+		return r, contractError(ErrInvalidContract, "effect_record.attempts", "definitive-unsent evidence must identify the latest unknown attempt")
+	}
+	if err := validateUTCInstant(observedAt, "effect_transition.observed_at"); err != nil {
+		return r, err
+	}
+	if observedAt.Before(attempt.RecordedAt) ||
+		(len(r.History) != 0 && observedAt.Before(r.History[len(r.History)-1].ObservedAt)) {
+		return r, contractError(ErrInvalidContract, "effect_record.history", "cannot move observation time backwards")
+	}
+	updated := r
+	updated.Attempts = slices.Clone(r.Attempts)
+	updated.History = append(slices.Clone(r.History), EffectTransition{
+		From: OutcomeUnknown, To: OutcomeUnsent, Reason: "definitive_unsent", ObservedAt: observedAt,
+	})
+	updated.State = OutcomeUnsent
 	updated.Revision++
 	if err := updated.Validate(); err != nil {
 		return r, err

@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"errors"
+	"time"
 
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
@@ -85,6 +86,9 @@ func (coordinator *Coordinator) CoordinateRun(
 		return contract.WorkflowProjectionResult{}, err
 	}
 	expectedRun := input.RunRef()
+	// Retained histories may reload after the deadline before observing Done.
+	// Preserve those recorded commands while new executions project at expiry.
+	deadlineProjection := workflow.GetVersion(ctx, contract.WorkflowRunDeadlineProjectionChangeID, workflow.DefaultVersion, contract.WorkflowRunDeadlineProjectionVersion) != workflow.DefaultVersion
 	for {
 		loadTimeouts := coordinator.bootstrapTimeouts
 		if state.ready {
@@ -111,6 +115,12 @@ func (coordinator *Coordinator) CoordinateRun(
 			}
 			return executeProjection(ctx, contract.WorkflowProjectionRequest{Run: expectedRun}, state.timeouts)
 		}
+		if deadlineProjection && !workflow.Now(ctx).Before(state.originalDeadline) {
+			if err := drainBeforeExit(ctx, state); err != nil {
+				return contract.WorkflowProjectionResult{}, err
+			}
+			return executeProjection(ctx, contract.WorkflowProjectionRequest{Run: expectedRun}, state.timeouts)
+		}
 		if shouldContinue(ctx) {
 			if err := continueAtBoundary(ctx, input, state); err != nil {
 				return contract.WorkflowProjectionResult{}, err
@@ -125,13 +135,19 @@ func (coordinator *Coordinator) CoordinateRun(
 		if err := drainControlSignals(ctx, state); err != nil {
 			return contract.WorkflowProjectionResult{}, err
 		}
+		if deadlineProjection && !workflow.Now(ctx).Before(state.originalDeadline) {
+			if err := drainBeforeExit(ctx, state); err != nil {
+				return contract.WorkflowProjectionResult{}, err
+			}
+			return executeProjection(ctx, contract.WorkflowProjectionRequest{Run: expectedRun}, state.timeouts)
+		}
 		if shouldContinue(ctx) {
 			if err := continueAtBoundary(ctx, input, state); err != nil {
 				return contract.WorkflowProjectionResult{}, err
 			}
 		}
 		if len(snapshot.Units) == 0 || state.cancelRequested {
-			if err := waitForDurableWork(ctx, state); err != nil {
+			if err := waitForDurableWork(ctx, state, snapshot.RetryNotBefore); err != nil {
 				return contract.WorkflowProjectionResult{}, err
 			}
 		}
@@ -298,14 +314,22 @@ func continueAtBoundary(
 	return ContinueSafely(ctx, input)
 }
 
-func waitForDurableWork(ctx workflow.Context, state *coordinatorState) error {
-	remaining := state.originalDeadline.Sub(workflow.Now(ctx))
-	if remaining <= 0 {
-		return nil
+func waitForDurableWork(
+	ctx workflow.Context,
+	state *coordinatorState,
+	retryNotBefore *time.Time,
+) error {
+	now := workflow.Now(ctx)
+	wakeAt := now.Add(state.timeouts.Heartbeat)
+	if state.originalDeadline.Before(wakeAt) {
+		wakeAt = state.originalDeadline
 	}
-	wait := state.timeouts.Heartbeat
-	if remaining < wait {
-		wait = remaining
+	if retryNotBefore != nil && retryNotBefore.Before(wakeAt) {
+		wakeAt = *retryNotBefore
+	}
+	wait := wakeAt.Sub(now)
+	if wait <= 0 {
+		return nil
 	}
 	timerCtx, cancelTimer := workflow.WithCancel(ctx)
 	timer := workflow.NewTimer(timerCtx, wait)

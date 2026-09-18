@@ -5,6 +5,7 @@ go_library(
     srcs = [
         "artifacts.go",
         "config.go",
+        "provider_http.go",
         "server.go",
         "validate.go",
         "worker.go",
@@ -18,8 +19,12 @@ go_test(
     name = "config_test",
     srcs = [
         "artifacts_test.go",
+        "provider_http_test.go",
         "server_test.go",
         "worker_test.go",
     ],
-    deps = [":config"],
+    deps = [
+        ":config",
+        "//internal/contract",
+    ],
 )

@@ -54,3 +54,4 @@ func TestWorkerRuntimeCloseClosesSecretsAfterArtifactCleanupFailure(t *testing.T
 		t.Fatal("worker secrets remained open after artifact cleanup failure")
 	}
 }
+

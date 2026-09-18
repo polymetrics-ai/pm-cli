@@ -410,6 +410,7 @@ func TestObjectPublicationMigrationRetainedData(t *testing.T) {
 		ReservationID: "migration-object-" + fixture.suffix,
 		ConnectionID:  fixture.alphaConnections[0],
 		ArtifactID:    "migration-artifact-" + fixture.suffix,
+		Purpose:       ArtifactPurposePublic,
 		MaximumBytes:  8,
 	}
 	limits := ObjectCapacityLimits{OrganizationBytes: 16, WorkspaceBytes: 16, OrganizationAttempts: 2, WorkspaceAttempts: 2}
@@ -458,6 +459,525 @@ func TestObjectPublicationMigrationRetainedData(t *testing.T) {
 		}
 		reopened.Close()
 	}
+}
+
+func TestHTTPBudgetMigrationRetainedData(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 3)
+	httpScope, plainScope := newTestScope(t), newTestScope(t)
+	t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials, httpScope, plainScope) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	httpRequest := testAdmissionRequest(t, httpScope, "http-budget-migration", "http-budget-migration")
+	policy := httpRequest.BudgetSnapshot.Policy
+	policy.HTTP = &contract.HTTPExecutionPolicy{
+		MaxRequestBytes: 1024, MaxResponseBytes: 4096, MaxDNSAnswers: 8,
+		MaxAttempts: 3, MaxRetryDelay: time.Second, SelectedOrigin: "https://api.example.test/v1",
+	}
+	setAdmissionPolicyForTest(t, &httpRequest, policy)
+	admitForTest(t, pool, httpScope, httpRequest)
+	plainRequest := testAdmissionRequest(t, plainScope, "plain-budget-migration", "plain-budget-migration")
+	admitForTest(t, pool, plainScope, plainRequest)
+	pool.Close()
+	for version := ControlSchemaVersion; version > 15; version-- {
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+			t.Fatalf("return retained HTTP budget fixture to v15: %v", err)
+		}
+	}
+	err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 15)
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+		t.Fatalf("retained HTTP budget downgrade = %v; want transactional refusal", err)
+	}
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatal(err)
+	}
+	reopened := openPermitTestPool(t, credentials, 3)
+	if err := WithinScope(ctx, reopened, httpScope, testActor(httpScope), func(ctx context.Context, tx *Transaction) error {
+		retained, err := LoadRunBudgetSnapshot(ctx, tx, httpRequest.Spec.RunID)
+		if err != nil {
+			return err
+		}
+		if retained.Binding() != httpRequest.Spec.Budget || retained.Policy.HTTP == nil || *retained.Policy.HTTP != *policy.HTTP {
+			return errors.New("refused downgrade changed the accepted HTTP authority")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reopened.Close()
+
+	// Legacy absent-policy snapshots survive a real down/up round trip once no
+	// retained HTTP authority would be destroyed by the older closed shape.
+	cleanupTestScope(t, credentials, httpScope)
+	for version := ControlSchemaVersion; version > 15; version-- {
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+			t.Fatalf("return legacy HTTP budget fixture to v15: %v", err)
+		}
+	}
+	if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 15); err != nil {
+		t.Fatalf("downgrade with only legacy budgets: %v", err)
+	}
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatalf("restore HTTP budget schema: %v", err)
+	}
+	reopened = openPermitTestPool(t, credentials, 3)
+	defer reopened.Close()
+	if err := WithinScope(ctx, reopened, plainScope, testActor(plainScope), func(ctx context.Context, tx *Transaction) error {
+		retained, err := LoadRunBudgetSnapshot(ctx, tx, plainRequest.Spec.RunID)
+		if err != nil {
+			return err
+		}
+		if retained.Binding() != plainRequest.Spec.Budget || retained.Policy.HTTP != nil {
+			return errors.New("migration changed the legacy absent-policy budget")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestArtifactPurposeMigrationRetainedData(t *testing.T) {
+	credentials := loadTestStoreCredentials(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatalf("establish artifact purpose schema: %v", err)
+	}
+	preverify := func(t *testing.T, ref contract.ObjectRef) PreverifiedObjectRef {
+		t.Helper()
+		verified, err := NewPreverifiedObjectRef(ref, ObjectVerification{
+			ObservedSHA256:            ref.SHA256,
+			ObservedByteLength:        ref.ByteLength,
+			ObservedBackendGeneration: ref.BackendGeneration,
+		})
+		if err != nil {
+			t.Fatalf("construct preverified artifact %q: %v", ref.ArtifactID, err)
+		}
+		return verified
+	}
+
+	t.Run("public_row_survives_v15_upgrade_as_public", func(t *testing.T) {
+		scope := newTestScope(t)
+		t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials, scope) })
+		pool := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+		connectionID := registerArtifactTestConnections(t, ctx, pool, scope, "purpose-upgrade")[0]
+		ref := testObjectRef(scope, "artifact-purpose-upgrade", "attempt-purpose-upgrade", "purpose-upgrade")
+		verified := preverify(t, ref)
+		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			return RegisterArtifact(ctx, tx, connectionID, verified)
+		}); err != nil {
+			t.Fatalf("register public artifact before purpose round trip: %v", err)
+		}
+		pool.Close()
+		for version := ControlSchemaVersion; version > 16; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return public artifact fixture to v16: %v", err)
+			}
+		}
+
+		err := updateArtifactPurposeForMigrationTest(ctx, credentials.migratorDSN, scope, ref.ArtifactID, "continuation")
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("public artifact purpose mutation = %v; want immutable trigger refusal", err)
+		}
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 16); err != nil {
+			t.Fatalf("return public artifact fixture to v15: %v", err)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("upgrade retained public artifact to v16: %v", err)
+		}
+
+		reopened := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+		defer reopened.Close()
+		if err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			stored, err := LoadArtifact(ctx, tx, ref.ArtifactID)
+			if err != nil {
+				return err
+			}
+			if stored != ref {
+				t.Fatalf("upgraded public artifact = %#v; want %#v", stored, ref)
+			}
+			storedConnectionID, err := LoadArtifactConnectionID(ctx, tx, ref.ArtifactID)
+			if err != nil {
+				return err
+			}
+			if storedConnectionID != connectionID {
+				t.Fatalf("upgraded public artifact connection = %q; want %q", storedConnectionID, connectionID)
+			}
+			if _, err := LoadContinuationArtifact(ctx, tx, ref.ArtifactID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("upgraded public artifact continuation read = %v; want ErrNotFound", err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("load public artifact after v15/v16 round trip: %v", err)
+		}
+	})
+
+	t.Run("downgrade_refuses_retained_continuation", func(t *testing.T) {
+		scope := newTestScope(t)
+		t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials, scope) })
+		pool := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+		connectionID := registerArtifactTestConnections(t, ctx, pool, scope, "purpose-downgrade")[0]
+		ref := testObjectRef(scope, "artifact-purpose-downgrade", "attempt-purpose-downgrade", "purpose-downgrade")
+		verified := preverify(t, ref)
+		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			return RegisterContinuationArtifact(ctx, tx, connectionID, verified)
+		}); err != nil {
+			t.Fatalf("register retained continuation artifact: %v", err)
+		}
+		pool.Close()
+		for version := ControlSchemaVersion; version > 16; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return continuation artifact fixture to v16: %v", err)
+			}
+		}
+
+		err := updateArtifactPurposeForMigrationTest(ctx, credentials.migratorDSN, scope, ref.ArtifactID, "public")
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("continuation artifact purpose mutation = %v; want immutable trigger refusal", err)
+		}
+		err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 16)
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("retained continuation downgrade = %v; want transactional refusal", err)
+		}
+
+		conn, err := pgx.Connect(ctx, credentials.migratorDSN)
+		if err != nil {
+			t.Fatal("connect after continuation downgrade refusal")
+		}
+		var revision string
+		if err := conn.QueryRow(ctx, `SELECT revision FROM pm.control_schema WHERE singleton`).Scan(&revision); err != nil {
+			_ = conn.Close(context.Background())
+			t.Fatal("read control schema after continuation downgrade refusal")
+		}
+		if err := conn.Close(ctx); err != nil {
+			t.Fatal("close migrator after continuation downgrade refusal")
+		}
+		if revision != "pm.control/v16" {
+			t.Fatalf("control revision after continuation downgrade refusal = %q; want v16", revision)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("restore current schema after refused purpose downgrade: %v", err)
+		}
+
+		reopened := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
+		defer reopened.Close()
+		if err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			stored, err := LoadContinuationArtifact(ctx, tx, ref.ArtifactID)
+			if err != nil {
+				return err
+			}
+			if stored != ref {
+				t.Fatalf("retained continuation artifact = %#v; want %#v", stored, ref)
+			}
+			if _, err := LoadArtifact(ctx, tx, ref.ArtifactID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("retained continuation public read = %v; want ErrNotFound", err)
+			}
+			if _, err := LoadArtifactConnectionID(ctx, tx, ref.ArtifactID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("retained continuation authority read = %v; want ErrNotFound", err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("load continuation after refused downgrade: %v", err)
+		}
+	})
+}
+
+func TestDurableContinuationMigrationRetainedData(t *testing.T) {
+	credentials := loadTestStoreCredentials(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	limits := ObjectCapacityLimits{
+		OrganizationBytes: 16, WorkspaceBytes: 16,
+		OrganizationAttempts: 4, WorkspaceAttempts: 4,
+	}
+
+	t.Run("legacy_reservation_round_trip_backfills_public", func(t *testing.T) {
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("establish durable continuation schema: %v", err)
+		}
+		pool := openPermitTestPool(t, credentials, 3)
+		fixture := registerPermitTestFixture(t, credentials, pool, permitFixtureOptions{Capacity: 2})
+		t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials) })
+		request := ObjectReservationRequest{
+			ReservationID: "legacy-purpose-" + fixture.suffix,
+			ConnectionID:  fixture.alphaConnections[0],
+			ArtifactID:    "legacy-purpose-artifact-" + fixture.suffix,
+			Purpose:       ArtifactPurposePublic,
+			MaximumBytes:  8,
+		}
+		if err := WithinScope(ctx, pool, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+			_, err := ReserveObjectCapacity(ctx, tx, request, limits)
+			return err
+		}); err != nil {
+			t.Fatalf("reserve public migration fixture: %v", err)
+		}
+		pool.Close()
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
+			t.Fatalf("return public reservation to v17 retry shape: %v", err)
+		}
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 17); err != nil {
+			t.Fatalf("return public reservation to legacy v16 shape: %v", err)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("upgrade legacy reservation through v18: %v", err)
+		}
+		reopened := openPermitTestPool(t, credentials, 3)
+		defer reopened.Close()
+		if err := WithinScope(ctx, reopened, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+			retained, err := LoadObjectReservation(ctx, tx, request.ReservationID)
+			if err != nil {
+				return err
+			}
+			if retained.Request != request || retained.Request.Purpose != ArtifactPurposePublic {
+				t.Fatalf("upgraded legacy reservation = %#v; want explicit public request", retained.Request)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("downgrade_refuses_private_reservation", func(t *testing.T) {
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("establish durable continuation schema: %v", err)
+		}
+		pool := openPermitTestPool(t, credentials, 3)
+		fixture := registerPermitTestFixture(t, credentials, pool, permitFixtureOptions{Capacity: 2})
+		t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials) })
+		request := ObjectReservationRequest{
+			ReservationID: "private-purpose-" + fixture.suffix,
+			ConnectionID:  fixture.alphaConnections[0],
+			ArtifactID:    "private-purpose-artifact-" + fixture.suffix,
+			Purpose:       ArtifactPurposeContinuation,
+			MaximumBytes:  8,
+		}
+		if err := WithinScope(ctx, pool, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+			_, err := ReserveObjectCapacity(ctx, tx, request, limits)
+			return err
+		}); err != nil {
+			t.Fatalf("reserve private migration fixture: %v", err)
+		}
+		pool.Close()
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
+			t.Fatalf("return private reservation to v17 retry shape: %v", err)
+		}
+		err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 17)
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("retained private reservation downgrade = %v; want transactional refusal", err)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("restore v18 after refused private reservation downgrade: %v", err)
+		}
+		reopened := openPermitTestPool(t, credentials, 3)
+		defer reopened.Close()
+		if err := WithinScope(ctx, reopened, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+			retained, err := LoadObjectReservation(ctx, tx, request.ReservationID)
+			if err != nil {
+				return err
+			}
+			if retained.Request != request {
+				t.Fatalf("refused downgrade changed private reservation = %#v", retained.Request)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("downgrade_refuses_released_unused_permit", func(t *testing.T) {
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("establish durable continuation schema: %v", err)
+		}
+		pool := openPermitTestPool(t, credentials, 3)
+		fixture := registerPermitTestFixture(t, credentials, pool, permitFixtureOptions{Capacity: 1})
+		t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials) })
+		permit, err := reservePermitForTest(
+			ctx,
+			pool,
+			fixture.alpha,
+			AccountPermitRequest{
+				PermitID:     "migration-release-" + fixture.suffix,
+				ConnectionID: fixture.alphaConnections[0],
+				OwnerID:      "migration-release-owner",
+				Units:        1,
+				TTL:          time.Minute,
+			},
+		)
+		if err != nil {
+			t.Fatalf("reserve migration release fixture: %v", err)
+		}
+		released, err := releaseUnusedPermitForTest(ctx, pool, permit)
+		if err != nil || released.State != AccountPermitReleased {
+			t.Fatalf("release migration permit = %#v, %v", released, err)
+		}
+		pool.Close()
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
+			t.Fatalf("return released permit to v17 retry shape: %v", err)
+		}
+
+		err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 17)
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("retained released permit downgrade = %v; want transactional refusal", err)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("restore v18 after refused released permit downgrade: %v", err)
+		}
+		reopened := openPermitTestPool(t, credentials, 3)
+		defer reopened.Close()
+		retained, err := loadPermitForTest(ctx, reopened, fixture.alpha, permit.PermitID)
+		if err != nil ||
+			retained.State != AccountPermitReleased ||
+			retained.ResolvedAt == nil ||
+			readReservedUnits(t, reopened, fixture.alpha, fixture.account.AccountID) != 0 {
+			t.Fatalf("refused downgrade changed released permit = %#v, %v", retained, err)
+		}
+	})
+
+	t.Run("downgrade_refuses_cap_and_continuation_snapshot", func(t *testing.T) {
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("establish durable continuation schema: %v", err)
+		}
+		pool := openPermitTestPool(t, credentials, 3)
+		scope := newTestScope(t)
+		t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials, scope) })
+		request := testAdmissionRequest(t, scope, "continuation-controls", "continuation-controls")
+		cap := uint64(3)
+		continuation := contract.NewStringValue("opaque-migration-continuation")
+		request.InputSnapshot.ResultControls = contract.ResultControls{
+			TotalRecordCap: &cap,
+			Continuation:   &continuation,
+		}
+		registerRunViewFixture(t, pool, scope, request)
+		absentRequest := testAdmissionRequest(
+			t,
+			scope,
+			"absent-continuation-controls",
+			"absent-continuation-controls",
+		)
+		absent := contract.AbsentValue()
+		absentRequest.InputSnapshot.ResultControls = contract.ResultControls{
+			Continuation: &absent,
+		}
+		registerRunViewFixture(t, pool, scope, absentRequest)
+		pool.Close()
+
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
+			t.Fatalf("return continuation controls to v17 retry shape: %v", err)
+		}
+		err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 17)
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("retained continuation controls downgrade = %v; want transactional refusal", err)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("restore v18 after refused continuation controls downgrade: %v", err)
+		}
+		reopened := openPermitTestPool(t, credentials, 3)
+		defer reopened.Close()
+		if err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			retained, err := LoadRunInputSnapshot(ctx, tx, request.Spec.RunID)
+			if err != nil {
+				return err
+			}
+			retainedContinuation := retained.ResultControls.ContinuationValue()
+			opaque, text := retainedContinuation.TextValue()
+			if retained.ResultControls.TotalRecordCap == nil ||
+				*retained.ResultControls.TotalRecordCap != cap ||
+				!retained.ResultControls.HasContinuation() ||
+				!text ||
+				opaque != "opaque-migration-continuation" {
+				t.Fatalf("refused downgrade changed retained continuation controls = %#v", retained.ResultControls)
+			}
+			retainedAbsent, err := LoadRunInputSnapshot(
+				ctx,
+				tx,
+				absentRequest.Spec.RunID,
+			)
+			if err != nil {
+				return err
+			}
+			if retainedAbsent.ResultControls.Continuation == nil ||
+				retainedAbsent.ResultControls.HasContinuation() ||
+				!retainedAbsent.ResultControls.ContinuationValue().Equal(contract.AbsentValue()) {
+				t.Fatalf("refused downgrade changed explicit absent continuation = %#v", retainedAbsent.ResultControls)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestWorkerRetryMigrationRetainedData(t *testing.T) {
+	t.Run("legacy_root_round_trip_backfills_attempt_one", func(t *testing.T) {
+		fixture := newWorkerRetryStoreFixture(t, 2)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		fixture.pool.Close()
+		if err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, 18); err != nil {
+			t.Fatalf("return retry schema to legacy v17 shape: %v", err)
+		}
+		if err := Migrate(ctx, fixture.credentials.migratorDSN); err != nil {
+			t.Fatalf("upgrade legacy dispatch root to v18: %v", err)
+		}
+		reopened := openPermitTestPool(t, fixture.credentials, 3)
+		defer reopened.Close()
+		if err := WithinScope(ctx, reopened, fixture.scope, testActor(fixture.scope), func(ctx context.Context, tx *Transaction) error {
+			root, err := LoadWorkerDispatch(ctx, tx, fixture.lease.Task)
+			if err != nil {
+				return err
+			}
+			if root.Intent.DispatchID != fixture.root.DispatchID ||
+				root.AttemptNumber != 1 ||
+				root.Retry != nil {
+				t.Fatalf("upgraded legacy dispatch root = %#v", root)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("downgrade_refuses_retained_retry_lineage", func(t *testing.T) {
+		fixture := newWorkerRetryStoreFixture(t, 2)
+		commit := fixture.retrySettlement(
+			t,
+			"migration-retained",
+			contract.OutcomeRejected,
+			WorkerRetrySourceDeclaredSafe,
+			0,
+		)
+		leaf := fixture.commitRetry(t, commit)
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		fixture.pool.Close()
+		err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, 18)
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("retained retry downgrade = %v; want transactional refusal", err)
+		}
+		reopened := openPermitTestPool(t, fixture.credentials, 3)
+		defer reopened.Close()
+		if err := WithinScope(ctx, reopened, fixture.scope, testActor(fixture.scope), func(ctx context.Context, tx *Transaction) error {
+			stored, err := LoadWorkerDispatch(ctx, tx, fixture.lease.Task)
+			if err != nil {
+				return err
+			}
+			if stored.Intent.DispatchID != leaf.Intent.DispatchID ||
+				stored.AttemptNumber != 2 ||
+				stored.Retry == nil ||
+				stored.Retry.ParentDispatchID != fixture.root.DispatchID {
+				t.Fatalf("refused downgrade changed retry lineage = %#v", stored)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
 }
 
 func TestMigrationRecovery(t *testing.T) {
@@ -652,4 +1172,38 @@ func migrateOneStoreVersionDown(ctx context.Context, connectionString string, ex
 		return fmt.Errorf("apply store downgrade from version %d: %w", expectedCurrent, err)
 	}
 	return nil
+}
+
+func updateArtifactPurposeForMigrationTest(
+	ctx context.Context,
+	connectionString string,
+	scope contract.Scope,
+	artifactID string,
+	purpose string,
+) error {
+	connection, err := pgx.Connect(ctx, connectionString)
+	if err != nil {
+		return fmt.Errorf("connect artifact purpose migration fixture: %w", err)
+	}
+	defer func() { _ = connection.Close(context.Background()) }()
+	return pgx.BeginFunc(ctx, connection, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			SELECT set_config('pm.org_id', $1, true),
+			       set_config('pm.workspace_id', $2, true)
+		`, scope.OrgID, scope.WorkspaceID); err != nil {
+			return fmt.Errorf("bind artifact purpose migration scope: %w", err)
+		}
+		tag, err := tx.Exec(ctx, `
+			UPDATE pm.artifacts
+			SET purpose = $1
+			WHERE org_id = $2 AND workspace_id = $3 AND artifact_id = $4
+		`, purpose, scope.OrgID, scope.WorkspaceID, artifactID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("artifact purpose migration fixture updated %d rows", tag.RowsAffected())
+		}
+		return nil
+	})
 }

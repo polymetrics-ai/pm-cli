@@ -131,6 +131,7 @@ func openWithOIDCFactory(
 		OIDCClientSecret:  clientSecret,
 		OIDCHTTPClient:    oidcClient,
 		RunPolicy:         runPolicy,
+		ResolveHTTPPolicy: configuration.ProviderHTTP().Policy,
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,

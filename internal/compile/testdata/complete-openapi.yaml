@@ -2,6 +2,8 @@ openapi: 3.0.3
 info:
   title: Synthetic complete inventory
   version: 1.0.0
+servers:
+  - url: https://complete.example.test/v1
 paths:
   /widgets:
     get:

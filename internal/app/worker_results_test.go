@@ -107,7 +107,8 @@ func TestWorkerResultPublication(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
 		if _, err := publisher.Reserve(ctx, fixture.Actor, fixture.Scope, store.ObjectReservationRequest{
-			ReservationID: "occupied-slot", ArtifactID: "occupied-artifact", ConnectionID: fixture.Connection.ConnectionID, MaximumBytes: 1,
+			ReservationID: "occupied-slot", ArtifactID: "occupied-artifact", ConnectionID: fixture.Connection.ConnectionID,
+			Purpose: store.ArtifactPurposePublic, MaximumBytes: 1,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -166,11 +167,73 @@ func TestWorkerResultPublication(t *testing.T) {
 		defer cancel()
 		if _, err := publisher.Reserve(ctx, fixture.Actor, fixture.Scope, store.ObjectReservationRequest{
 			ReservationID: "after-oversized-result", ArtifactID: "after-oversized-result",
-			ConnectionID: fixture.Connection.ConnectionID, MaximumBytes: 1,
+			ConnectionID: fixture.Connection.ConnectionID, Purpose: store.ArtifactPurposePublic, MaximumBytes: 1,
 		}); err != nil {
 			t.Fatalf("unbound failed result leaked its only capacity slot: %v", err)
 		}
 	})
+}
+
+func TestContinuationArtifactIsNotAPublicResult(t *testing.T) {
+	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
+	consumer := testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway)
+	fixture := testfixture.NewExecuting(t, func(context.Context, app.ExecutionRequest) (app.ExecutionObservation, error) {
+		return app.ExecutionObservation{}, errors.New("artifact reads cannot execute a provider")
+	}, unexpectedPermitReconciliation, func(_ testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
+		configuration.Artifacts = consumer.Backend
+		return nil
+	})
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	publisher, err := objects.NewPublisher(fixture.Pool, producer.Backend, producer.Limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const artifactID = "server-only-continuation"
+	const reservationID = "server-only-continuation-reservation"
+	if _, err := publisher.Reserve(ctx, fixture.Actor, fixture.Scope, store.ObjectReservationRequest{
+		ReservationID: reservationID, ConnectionID: fixture.Connection.ConnectionID,
+		ArtifactID: artifactID, Purpose: store.ArtifactPurposeContinuation, MaximumBytes: 4096,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := objects.NewAttempt(fixture.Scope, artifactID, "application/json",
+		[]byte(`{"cursor":"server-only-navigation-canary"}`), 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer attempt.Close()
+	publication, err := publisher.Upload(ctx, fixture.Actor, fixture.Scope, reservationID, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ref, err := publication.Reference()
+	if err != nil {
+		t.Fatal(err)
+	}
+	verified, err := store.NewPreverifiedObjectRef(ref, store.ObjectVerification{
+		ObservedSHA256: ref.SHA256, ObservedByteLength: ref.ByteLength,
+		ObservedBackendGeneration: ref.BackendGeneration,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// This exercises private registration and public reads, not a continuation
+	// publication receipt. The upload's reservation remains bound.
+	if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+		return store.RegisterContinuationArtifact(ctx, tx, fixture.Connection.ConnectionID, verified)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := producer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := consumer.Backend.Verify(ctx, ref); err != nil {
+		t.Fatalf("private bytes must exist through the independent reader: %v", err)
+	}
+	path := "/v1/workspaces/" + fixture.Scope.WorkspaceID + "/artifacts/" + artifactID
+	workerResultGET(t, fixture, path, http.StatusNotFound)
+	workerResultGET(t, fixture, path+"/content", http.StatusNotFound)
 }
 
 func workerResultService(t *testing.T, fixture *testfixture.Fixture, temporal *permitTemporalHarness, publisher *objects.Publisher, maximumBytes int64) *app.WorkerService {

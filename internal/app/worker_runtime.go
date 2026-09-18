@@ -17,7 +17,11 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
-const workerStorePoolSize int32 = 16
+const (
+	workerStorePoolSize               int32 = 16
+	workerCredentialWrappingKeyMember       = "wrapping-key"
+	workerCredentialWrappingKeyBytes        = 32
+)
 
 type WorkerRuntimeConfig struct {
 	Configuration        config.Configuration
@@ -42,6 +46,7 @@ type WorkerRuntime struct {
 	pool                 *store.Pool
 	secrets              *credentials.OperatorSecrets
 	artifacts            *ArtifactResources
+	continuations        *ContinuationService
 	closeOnce            sync.Once
 	closeErr             error
 }
@@ -99,10 +104,20 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 		return fail(errors.Join(errors.New("worker artifact resources are unavailable"), err))
 	}
 	var artifactPublisher *objects.Publisher
+	var continuationService *ContinuationService
 	if artifacts != nil {
 		artifactPublisher, err = objects.NewPublisher(pool, artifacts.Backend, artifacts.Limits)
 		if err != nil {
 			return fail(errors.Join(errors.New("worker artifact publisher is unavailable"), err))
+		}
+		continuationService, err = NewContinuationService(
+			pool,
+			artifactPublisher,
+			artifacts.Backend,
+			int64(artifactConfiguration.Execution.MaxObjectBytes),
+		)
+		if err != nil {
+			return fail(errors.Join(errors.New("worker continuation service is unavailable"), err))
 		}
 	}
 
@@ -118,16 +133,32 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 	if authorization == nil {
 		authorization = auth.NewResourceAuthorizer()
 	}
+	wrappingKeyRef := configuration.Configuration.Encryption().WrappingKeyRef
+	loadCredentialWrappingKey := func(ctx context.Context, reference string) ([]byte, error) {
+		if ctx == nil || ctx.Err() != nil || reference != wrappingKeyRef {
+			return nil, errors.New("worker credential wrapping key is unavailable")
+		}
+		key, readErr := secrets.Read(reference, workerCredentialWrappingKeyMember)
+		if readErr != nil {
+			return nil, errors.New("worker credential wrapping key is unavailable")
+		}
+		if len(key) != workerCredentialWrappingKeyBytes {
+			clear(key)
+			return nil, errors.New("worker credential wrapping key must contain exactly 32 raw bytes")
+		}
+		return key, nil
+	}
 	serviceConfiguration := WorkerServiceConfig{
-		Pool:                 pool,
-		DeploymentID:         configuration.Configuration.DeploymentID(),
-		Registry:             registry,
-		ResolveOperation:     resolver,
-		Authorization:        authorization,
-		ActivityTimeouts:     workerConfiguration.ActivityTimeouts,
-		ScheduledRunAdmitter: configuration.ScheduledRunAdmitter,
-		ArtifactPublisher:    artifactPublisher,
-		MaximumResultBytes:   int64(artifactConfiguration.Execution.MaxObjectBytes),
+		Pool:                      pool,
+		DeploymentID:              configuration.Configuration.DeploymentID(),
+		Registry:                  registry,
+		ResolveOperation:          resolver,
+		Authorization:             authorization,
+		ActivityTimeouts:          workerConfiguration.ActivityTimeouts,
+		ScheduledRunAdmitter:      configuration.ScheduledRunAdmitter,
+		LoadCredentialWrappingKey: loadCredentialWrappingKey,
+		ArtifactPublisher:         artifactPublisher,
+		MaximumResultBytes:        int64(artifactConfiguration.Execution.MaxObjectBytes),
 	}
 
 	return &WorkerRuntime{
@@ -136,6 +167,7 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 		pool:                 pool,
 		secrets:              secrets,
 		artifacts:            artifacts,
+		continuations:        continuationService,
 	}, nil
 }
 
@@ -161,6 +193,24 @@ func (runtime *WorkerRuntime) NewService(
 	}
 	runtime.service = service
 	return service, nil
+}
+
+// ContinuationService returns the concrete server-owned codec for handler
+// registration before NewService starts polling. No codec exists when artifact
+// execution is intentionally unconfigured.
+func (runtime *WorkerRuntime) ContinuationService() (*ContinuationService, error) {
+	if runtime == nil {
+		return nil, errors.New("worker runtime is unavailable")
+	}
+	runtime.serviceMu.Lock()
+	defer runtime.serviceMu.Unlock()
+	if runtime.closed {
+		return nil, errors.New("worker runtime is closed")
+	}
+	if runtime.continuations == nil {
+		return nil, errors.New("worker continuation service is unconfigured")
+	}
+	return runtime.continuations, nil
 }
 
 func unavailableWorkerOperation(

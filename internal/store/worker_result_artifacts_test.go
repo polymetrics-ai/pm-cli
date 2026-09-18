@@ -56,6 +56,13 @@ func TestWorkerResultArtifactReceiptsControlRunProjection(t *testing.T) {
 	wrongConnection := newWorkerResultArtifact(t, scope, otherConnectionID, "wrong-connection")
 	foreignArtifact := newWorkerResultArtifact(t, foreignScope, foreign.InputSnapshot.ConnectionID, "foreign")
 	artifactM := newWorkerResultArtifact(t, scope, secondary.InputSnapshot.ConnectionID, "m")
+	privateResult := newWorkerArtifact(
+		t,
+		scope,
+		primary.InputSnapshot.ConnectionID,
+		"private-result",
+		ArtifactPurposeContinuation,
+	)
 	for _, fixture := range []struct {
 		scope    contract.Scope
 		artifact workerResultArtifactFixture
@@ -66,12 +73,14 @@ func TestWorkerResultArtifactReceiptsControlRunProjection(t *testing.T) {
 		{scope, wrongConnection},
 		{foreignScope, foreignArtifact},
 		{scope, artifactM},
+		{scope, privateResult},
 	} {
 		stageWorkerResultArtifact(t, ctx, pool, fixture.scope, fixture.artifact, limits)
 	}
 	publishWorkerResultArtifact(t, ctx, pool, scope, artifactA)
 	publishWorkerResultArtifact(t, ctx, pool, scope, wrongConnection)
 	publishWorkerResultArtifact(t, ctx, pool, foreignScope, foreignArtifact)
+	publishWorkerResultArtifact(t, ctx, pool, scope, privateResult)
 	registerUnpublishedWorkerResultArtifact(t, ctx, pool, scope, unpublished)
 
 	// Publication alone is not run-result membership. Only a validated durable
@@ -87,6 +96,7 @@ func TestWorkerResultArtifactReceiptsControlRunProjection(t *testing.T) {
 		{name: "registered_but_unpublished", artifactID: unpublished.reference.ArtifactID, kind: workerResultSettlementReceiptKind},
 		{name: "wrong_run_connection", artifactID: wrongConnection.reference.ArtifactID, kind: workerResultSettlementReceiptKind},
 		{name: "foreign_scope", artifactID: foreignArtifact.reference.ArtifactID, kind: workerResultSettlementReceiptKind},
+		{name: "private_purpose", artifactID: privateResult.reference.ArtifactID, kind: workerResultSettlementReceiptKind},
 		{name: "wrong_receipt_kind", artifactID: artifactA.reference.ArtifactID, kind: "settlement"},
 	}
 	for _, test := range invalid {
@@ -102,6 +112,25 @@ func TestWorkerResultArtifactReceiptsControlRunProjection(t *testing.T) {
 			assertWorkerResultSettlementUnchanged(t, ctx, pool, scope, primaryZ)
 		})
 	}
+
+	privateProjection := testReceipt(
+		"worker-result-private-projection-receipt",
+		workerResultSettlementReceiptKind,
+		primary.Spec.RunID,
+	)
+	privateProjection.Payload.References = append(
+		privateProjection.Payload.References,
+		contract.SafeReference{
+			Name: WorkerResultArtifactReferenceName,
+			Ref:  privateResult.reference.ArtifactID,
+		},
+	)
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return insertReceipt(ctx, tx, privateProjection, time.Now().UTC())
+	}); err != nil {
+		t.Fatalf("insert private projection defense fixture: %v", err)
+	}
+	assertWorkerResultProjection(t, ctx, pool, scope, primary.Spec.RunID, []string{})
 
 	rollback := errors.New("controlled worker result rollback")
 	primaryZCommit := primaryZ.commit(artifactZ.reference.ArtifactID, workerResultSettlementReceiptKind, "primary-z")
@@ -194,6 +223,234 @@ func TestWorkerResultArtifactReceiptsControlRunProjection(t *testing.T) {
 	}
 }
 
+func TestWorkerContinuationOriginRequiresCanonicalReceiptLineage(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 8)
+	scope := newTestScope(t)
+	t.Cleanup(func() { cleanupTestScope(t, credentials, scope) })
+	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer cancel()
+
+	producer := testAdmissionRequest(t, scope, "continuation-producer", "continuation-producer")
+	registerRunViewFixture(t, pool, scope, producer)
+	other := testAdmissionRequest(t, scope, "continuation-other", "continuation-other")
+	other.InputSnapshot.ConnectionID = producer.InputSnapshot.ConnectionID
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := AdmitRun(ctx, tx, other)
+		return err
+	}); err != nil {
+		t.Fatalf("admit second continuation producer candidate: %v", err)
+	}
+
+	wrongConnectionID := "continuation-wrong-connection"
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return RegisterConnection(ctx, tx, Connection{
+			Scope:             scope,
+			ConnectionID:      wrongConnectionID,
+			ConnectorID:       "run-view-connector",
+			ProviderAccountID: "provider-" + producer.Spec.RunID,
+			Revision:          1,
+		})
+	}); err != nil {
+		t.Fatalf("register wrong continuation connection: %v", err)
+	}
+
+	producerSettlement := prepareWorkerResultSettlement(
+		t,
+		ctx,
+		pool,
+		scope,
+		producer,
+		"continuation-producer",
+	)
+	otherSettlement := prepareWorkerResultSettlement(
+		t,
+		ctx,
+		pool,
+		scope,
+		other,
+		"continuation-other",
+	)
+	result := newWorkerResultArtifact(t, scope, producer.InputSnapshot.ConnectionID, "continuation-result")
+	continuation := newWorkerArtifact(
+		t,
+		scope,
+		producer.InputSnapshot.ConnectionID,
+		"continuation-private",
+		ArtifactPurposeContinuation,
+	)
+	unpublished := newWorkerArtifact(
+		t,
+		scope,
+		producer.InputSnapshot.ConnectionID,
+		"continuation-unpublished",
+		ArtifactPurposeContinuation,
+	)
+	wrongConnection := newWorkerArtifact(
+		t,
+		scope,
+		wrongConnectionID,
+		"continuation-wrong-connection",
+		ArtifactPurposeContinuation,
+	)
+	limits := ObjectCapacityLimits{
+		OrganizationBytes: 4096, WorkspaceBytes: 4096,
+		OrganizationAttempts: 16, WorkspaceAttempts: 16,
+	}
+	for _, artifact := range []workerResultArtifactFixture{
+		result,
+		continuation,
+		unpublished,
+		wrongConnection,
+	} {
+		stageWorkerResultArtifact(t, ctx, pool, scope, artifact, limits)
+	}
+	publishWorkerResultArtifact(t, ctx, pool, scope, result)
+	publishWorkerResultArtifact(t, ctx, pool, scope, continuation)
+	publishWorkerResultArtifact(t, ctx, pool, scope, wrongConnection)
+	registerUnpublishedWorkerResultArtifact(t, ctx, pool, scope, unpublished)
+
+	assertOriginError := func(want error) {
+		t.Helper()
+		err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			_, err := LoadWorkerContinuationOrigin(ctx, tx, continuation.reference.ArtifactID)
+			return err
+		})
+		if !errors.Is(err, want) {
+			t.Fatalf("continuation origin error = %v; want %v", err, want)
+		}
+	}
+	assertOriginError(ErrNotFound)
+
+	incomplete := testReceipt(
+		"continuation-incomplete-receipt",
+		workerResultSettlementReceiptKind,
+		producer.Spec.RunID,
+	)
+	incomplete.Payload.References = append(
+		incomplete.Payload.References,
+		contract.SafeReference{
+			Name: WorkerContinuationArtifactReferenceName,
+			Ref:  continuation.reference.ArtifactID,
+		},
+	)
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return insertReceipt(ctx, tx, incomplete, time.Now().UTC())
+	}); err != nil {
+		t.Fatalf("insert incomplete lineage control receipt: %v", err)
+	}
+	assertOriginError(ErrNotFound)
+
+	missingResult := producerSettlement.commit(
+		result.reference.ArtifactID,
+		workerResultSettlementReceiptKind,
+		"continuation-missing-result",
+	)
+	missingResult.Receipt.Payload.References = []contract.SafeReference{{
+		Name: WorkerContinuationArtifactReferenceName,
+		Ref:  continuation.reference.ArtifactID,
+	}}
+	err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitSettlement(ctx, tx, missingResult)
+		return err
+	})
+	if !errors.Is(err, ErrImmutableConflict) {
+		t.Fatalf("continuation without same-receipt public result = %v", err)
+	}
+	assertWorkerResultSettlementUnchanged(t, ctx, pool, scope, producerSettlement)
+
+	for _, test := range []struct {
+		name           string
+		continuationID string
+	}{
+		{name: "public_purpose", continuationID: result.reference.ArtifactID},
+		{name: "unpublished_private_reservation", continuationID: unpublished.reference.ArtifactID},
+		{name: "wrong_connection", continuationID: wrongConnection.reference.ArtifactID},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			commit := producerSettlement.commitWithContinuation(
+				result.reference.ArtifactID,
+				test.continuationID,
+				"invalid-continuation-"+test.name,
+			)
+			err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+				_, err := CommitSettlement(ctx, tx, commit)
+				return err
+			})
+			if !errors.Is(err, ErrImmutableConflict) {
+				t.Fatalf("invalid continuation settlement = %v; want ErrImmutableConflict", err)
+			}
+			assertWorkerResultSettlementUnchanged(t, ctx, pool, scope, producerSettlement)
+		})
+	}
+
+	valid := producerSettlement.commitWithContinuation(
+		result.reference.ArtifactID,
+		continuation.reference.ArtifactID,
+		"continuation-valid",
+	)
+	commitWorkerResultSettlement(t, ctx, pool, scope, valid)
+	assertWorkerResultProjection(
+		t,
+		ctx,
+		pool,
+		scope,
+		producer.Spec.RunID,
+		[]string{result.reference.ArtifactID},
+	)
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		origin, err := LoadWorkerContinuationOrigin(ctx, tx, continuation.reference.ArtifactID)
+		if err != nil {
+			return err
+		}
+		if origin.RunID != producer.Spec.RunID || origin.Object != continuation.reference {
+			t.Fatalf("continuation origin = %#v; want run %q and exact object", origin, producer.Spec.RunID)
+		}
+		if _, err := LoadArtifact(ctx, tx, continuation.reference.ArtifactID); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("private continuation entered public artifact projection: %v", err)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("load canonical continuation origin: %v", err)
+	}
+
+	secondProducer := otherSettlement.commitWithContinuation(
+		result.reference.ArtifactID,
+		continuation.reference.ArtifactID,
+		"continuation-second-producer",
+	)
+	err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := CommitSettlement(ctx, tx, secondProducer)
+		return err
+	})
+	if !errors.Is(err, ErrImmutableConflict) {
+		t.Fatalf("second continuation producer settlement = %v; want ErrImmutableConflict", err)
+	}
+	assertWorkerResultSettlementUnchanged(t, ctx, pool, scope, otherSettlement)
+
+	ambiguous := testReceipt(
+		"continuation-ambiguous-receipt",
+		workerResultSettlementReceiptKind,
+		other.Spec.RunID,
+	)
+	ambiguous.Payload.References = append(
+		ambiguous.Payload.References,
+		contract.SafeReference{
+			Name: WorkerResultArtifactReferenceName,
+			Ref:  result.reference.ArtifactID,
+		},
+		contract.SafeReference{
+			Name: WorkerContinuationArtifactReferenceName,
+			Ref:  continuation.reference.ArtifactID,
+		},
+	)
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return insertReceipt(ctx, tx, ambiguous, time.Now().UTC())
+	}); err != nil {
+		t.Fatalf("insert ambiguity control receipt: %v", err)
+	}
+	assertOriginError(ErrImmutableConflict)
+}
+
 type workerResultArtifactFixture struct {
 	request   ObjectReservationRequest
 	reference contract.ObjectRef
@@ -208,10 +465,22 @@ func newWorkerResultArtifact(
 	label string,
 ) workerResultArtifactFixture {
 	t.Helper()
+	return newWorkerArtifact(t, scope, connectionID, label, ArtifactPurposePublic)
+}
+
+func newWorkerArtifact(
+	t *testing.T,
+	scope contract.Scope,
+	connectionID string,
+	label string,
+	purpose ArtifactPurpose,
+) workerResultArtifactFixture {
+	t.Helper()
 	request := ObjectReservationRequest{
 		ReservationID: "worker-result-reservation-" + label,
 		ConnectionID:  connectionID,
 		ArtifactID:    "worker-result-artifact-" + label,
+		Purpose:       purpose,
 		MaximumBytes:  256,
 	}
 	reference := testObjectRef(scope, request.ArtifactID, "worker-result-attempt-"+label, "worker-result-"+label)
@@ -280,7 +549,13 @@ func registerUnpublishedWorkerResultArtifact(
 ) {
 	t.Helper()
 	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		return RegisterArtifact(ctx, tx, artifact.request.ConnectionID, artifact.verified)
+		return registerArtifact(
+			ctx,
+			tx,
+			artifact.request.ConnectionID,
+			artifact.verified,
+			artifact.request.Purpose,
+		)
 	}); err != nil {
 		t.Fatalf("register unpublished worker result artifact metadata: %v", err)
 	}
@@ -367,6 +642,26 @@ func (fixture workerResultSettlementFixture) commit(
 		Event:   testEvent("worker-result-event-"+label, "worker_member_settlement", fixture.original.RunID),
 		Outbox:  testOutbox("worker-result-outbox-"+label, "worker_settlement_recorded", fixture.original.RunID),
 	}
+}
+
+func (fixture workerResultSettlementFixture) commitWithContinuation(
+	resultArtifactID string,
+	continuationArtifactID string,
+	label string,
+) SettlementCommit {
+	commit := fixture.commit(
+		resultArtifactID,
+		workerResultSettlementReceiptKind,
+		label,
+	)
+	commit.Receipt.Payload.References = append(
+		commit.Receipt.Payload.References,
+		contract.SafeReference{
+			Name: WorkerContinuationArtifactReferenceName,
+			Ref:  continuationArtifactID,
+		},
+	)
+	return commit
 }
 
 func commitWorkerResultSettlement(

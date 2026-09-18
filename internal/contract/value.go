@@ -749,9 +749,13 @@ type RecordFilter struct {
 	Value    *PresentValue  `json:"value,omitempty"`
 }
 
+const maxResultContinuationBytes = 4096
+
 type ResultControls struct {
-	Selection *FieldSelection `json:"selection,omitempty"`
-	Filter    *RecordFilter   `json:"filter,omitempty"`
+	Selection      *FieldSelection `json:"selection,omitempty"`
+	Filter         *RecordFilter   `json:"filter,omitempty"`
+	TotalRecordCap *uint64         `json:"total_record_cap,omitempty"`
+	Continuation   *PresentValue   `json:"continuation,omitempty"`
 }
 
 func (r ActionResult) Validate() error {
@@ -791,6 +795,21 @@ func cloneResultPagination(value *ResultPagination) *ResultPagination {
 	return new(value.clone())
 }
 
+// HasContinuation reports whether the caller supplied a present continuation
+// value. Validate must still be called before the continuation is consumed.
+func (c ResultControls) HasContinuation() bool {
+	return c.ContinuationValue().Presence() == PresenceValue
+}
+
+// ContinuationValue returns explicit typed continuation state and maps an
+// omitted continuation control to the shared absent value.
+func (c ResultControls) ContinuationValue() PresentValue {
+	if c.Continuation == nil {
+		return AbsentValue()
+	}
+	return *c.Continuation
+}
+
 func (c ResultControls) Validate() error {
 	if c.Selection != nil {
 		if len(c.Selection.Paths) == 0 {
@@ -825,6 +844,25 @@ func (c ResultControls) Validate() error {
 			}
 		default:
 			return contractError(ErrInvalidControls, "filter.operator", "operator is unsupported")
+		}
+	}
+	if c.TotalRecordCap != nil && *c.TotalRecordCap == 0 {
+		return contractError(ErrInvalidControls, "total_record_cap", "must be positive when supplied")
+	}
+	if c.Continuation != nil {
+		continuation := c.ContinuationValue()
+		if err := continuation.Validate(); err != nil {
+			return contractError(ErrInvalidControls, "continuation", "must be absent or a bounded nonempty opaque string")
+		}
+		switch continuation.Presence() {
+		case PresenceAbsent:
+		case PresenceValue:
+			text, ok := continuation.TextValue()
+			if !ok || text == "" || len(text) > maxResultContinuationBytes {
+				return contractError(ErrInvalidControls, "continuation", "must be absent or a bounded nonempty opaque string")
+			}
+		default:
+			return contractError(ErrInvalidControls, "continuation", "must be absent or a bounded nonempty opaque string")
 		}
 	}
 	return nil

@@ -45,9 +45,15 @@ func TestUniqueAttemptPublication(t *testing.T) {
 	const artifactID = "real-publication"
 	const payload = "first\x00second\xffthird\n"
 	const maximumBytes = 64 << 10
-	prepare := func(reservationID string) objects.PreparedPublication {
+	prepare := func(artifactID, reservationID string, purpose store.ArtifactPurpose) objects.PreparedPublication {
 		t.Helper()
-		request := store.ObjectReservationRequest{ReservationID: reservationID, ConnectionID: fixture.Connection.ConnectionID, ArtifactID: artifactID, MaximumBytes: maximumBytes}
+		request := store.ObjectReservationRequest{
+			ReservationID: reservationID,
+			ConnectionID:  fixture.Connection.ConnectionID,
+			ArtifactID:    artifactID,
+			Purpose:       purpose,
+			MaximumBytes:  maximumBytes,
+		}
 		if _, err := publisher.Reserve(ctx, fixture.Actor, fixture.Scope, request); err != nil {
 			t.Fatal(err)
 		}
@@ -84,7 +90,7 @@ func TestUniqueAttemptPublication(t *testing.T) {
 		return response.StatusCode, response.Header, body
 	}
 
-	orphan := prepare("uploaded-before-rollback")
+	orphan := prepare(artifactID, "uploaded-before-rollback", store.ArtifactPurposePublic)
 	orphanRef, err := orphan.Reference()
 	if err != nil {
 		t.Fatal(err)
@@ -112,7 +118,7 @@ func TestUniqueAttemptPublication(t *testing.T) {
 		t.Fatalf("bound orphan lost its retained capacity charge: %v", err)
 	}
 
-	published := prepare("fresh-attempt-after-rollback")
+	published := prepare(artifactID, "fresh-attempt-after-rollback", store.ArtifactPurposePublic)
 	ref, err := published.Reference()
 	if err != nil {
 		t.Fatal(err)
@@ -132,6 +138,53 @@ func TestUniqueAttemptPublication(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("commit verified publication: %v", err)
 	}
+	if receipt.Purpose != store.ArtifactPurposePublic {
+		t.Fatalf("public prepared publication receipt purpose = %q", receipt.Purpose)
+	}
+	const continuationArtifactID = "real-continuation-publication"
+	private := prepare(
+		continuationArtifactID,
+		"private-continuation-publication",
+		store.ArtifactPurposeContinuation,
+	)
+	privateRef, err := private.Reference()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var privateReceipt store.ArtifactPublicationReceipt
+	if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+		var err error
+		privateReceipt, err = private.Commit(ctx, tx)
+		if err != nil {
+			return err
+		}
+		if privateReceipt.Purpose != store.ArtifactPurposeContinuation {
+			t.Fatalf("private prepared publication receipt purpose = %q", privateReceipt.Purpose)
+		}
+		if _, err := store.LoadArtifact(ctx, tx, continuationArtifactID); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("private prepared publication became public: %v", err)
+		}
+		stored, err := store.LoadContinuationArtifact(ctx, tx, continuationArtifactID)
+		if err != nil {
+			return err
+		}
+		if stored != privateRef {
+			t.Fatalf("private prepared publication = %#v; want %#v", stored, privateRef)
+		}
+		return nil
+	}); err != nil {
+		t.Fatalf("commit sealed private publication: %v", err)
+	}
+	publicEndpoint := endpoint
+	endpoint = fixture.BaseURL + "/v1/workspaces/" +
+		url.PathEscape(fixture.Scope.WorkspaceID) + "/artifacts/" +
+		continuationArtifactID
+	for _, suffix := range []string{"", "/content"} {
+		if status, _, _ := request(fixture.Client, suffix, ""); status != http.StatusNotFound {
+			t.Fatalf("private continuation publication became externally readable: %d", status)
+		}
+	}
+	endpoint = publicEndpoint
 	if err := producer.Close(); err != nil {
 		t.Fatalf("close producer and remove its private scratch root: %v", err)
 	}
@@ -144,6 +197,17 @@ func TestUniqueAttemptPublication(t *testing.T) {
 	recovered, err := reader.Recover(ctx, fixture.Actor, fixture.Scope, "fresh-attempt-after-rollback")
 	if err != nil || recovered.Object != ref || !recovered.PublishedAt.Equal(receipt.PublishedAt) {
 		t.Fatalf("independent gateway could not recover the original committed occurrence: %v", err)
+	}
+	privateRecovered, err := reader.Recover(
+		ctx,
+		fixture.Actor,
+		fixture.Scope,
+		"private-continuation-publication",
+	)
+	if err != nil || privateRecovered.Object != privateRef ||
+		privateRecovered.Purpose != store.ArtifactPurposeContinuation ||
+		!privateRecovered.PublishedAt.Equal(privateReceipt.PublishedAt) {
+		t.Fatalf("independent gateway could not recover the private committed occurrence: %v", err)
 	}
 	for _, test := range []struct {
 		selection, want string

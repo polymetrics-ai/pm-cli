@@ -1269,6 +1269,7 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			`DELETE FROM pm.identity_collection_revisions WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.memberships WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.connections WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.worker_retries WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.dispatch_attempts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.run_specs WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workspace_namespaces WHERE org_id = $1 AND workspace_id = $2`,

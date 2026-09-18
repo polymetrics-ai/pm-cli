@@ -140,6 +140,15 @@ func ApplyAmendments(
 		if err := validateAmendmentSourceRefs(source, amendment.SourceRefs); err != nil {
 			return err
 		}
+		operation := &normalization.Operations[index]
+		if amendment.HTTP != nil {
+			if err := validateAmendmentSourceRefs(source, amendment.HTTP.Witness.SourceRefs); err != nil {
+				return err
+			}
+			if err := validateHTTPAmendment(operation.HTTP, amendment.HTTP); err != nil {
+				return err
+			}
+		}
 		if amendment.RecordExtraction != nil {
 			if err := validateAmendmentSourceRefs(source, amendment.RecordExtraction.Witness.SourceRefs); err != nil {
 				return err
@@ -148,6 +157,11 @@ func ApplyAmendments(
 		if amendment.Pagination != nil {
 			if err := validateAmendmentSourceRefs(source, amendment.Pagination.Witness.SourceRefs); err != nil {
 				return err
+			}
+			if amendment.Pagination.Kind == string(contract.OperationPaginationLink) {
+				if err := validateLinkPaginationSource(operation, source, amendment.Pagination); err != nil {
+					return err
+				}
 			}
 		}
 		if amendment.Retry != nil {
@@ -160,11 +174,10 @@ func ApplyAmendments(
 				return err
 			}
 		}
-		operation := &normalization.Operations[index]
-		copy := amendment
-		copy.SourceRefs = slices.Clone(amendment.SourceRefs)
-		copy.Lanes = slices.Clone(amendment.Lanes)
+		operation = &normalization.Operations[index]
+		copy := amendment.clone()
 		operation.Semantics = &copy
+		resolveBoundResponseHeaders(normalization, operation, amendment.Pagination)
 		operation.LaneInventory = applyLaneSemantics(operation.LaneInventory, amendment.Lanes)
 		applyBlockingDiagnostics(operation, normalization.Diagnostics)
 	}
@@ -191,6 +204,125 @@ func validateAmendmentSourceRefs(source *ResolvedSource, references []contract.S
 		seen[key] = struct{}{}
 	}
 	return nil
+}
+
+func validateHTTPAmendment(sourceHTTP, amendmentHTTP *HTTPSemantics) error {
+	if sourceHTTP == nil {
+		return sourceError(ErrUnsafeAmendment, "", "/http", "HTTP amendment cannot create authority absent from independently normalized source facts")
+	}
+	for _, origin := range amendmentHTTP.Origins {
+		if !slices.Contains(sourceHTTP.Origins, origin) {
+			return sourceError(ErrUnsafeAmendment, "", "/http/origins", "HTTP amendment cannot add or rewrite a source-admitted origin")
+		}
+	}
+	switch {
+	case sourceHTTP.Authorization == nil && amendmentHTTP.Authorization != nil:
+		return sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment cannot create a credential channel absent from source")
+	case sourceHTTP.Authorization != nil && sourceHTTP.Authorization.Required && amendmentHTTP.Authorization == nil:
+		return sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment cannot remove source-required authorization")
+	case amendmentHTTP.Authorization != nil && (sourceHTTP.Authorization == nil ||
+		*amendmentHTTP.Authorization != *sourceHTTP.Authorization):
+		return sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment authorization must exactly match independently normalized source facts")
+	}
+	if len(amendmentHTTP.Headers) != len(sourceHTTP.Headers) {
+		return sourceError(ErrUnsafeAmendment, "", "/http/headers", "HTTP amendment cannot add or remove source-required fixed headers")
+	}
+	sourceHeaders := make(map[string]string, len(sourceHTTP.Headers))
+	for _, header := range sourceHTTP.Headers {
+		sourceHeaders[strings.ToLower(header.Name)] = header.Value
+	}
+	for _, header := range amendmentHTTP.Headers {
+		value, admitted := sourceHeaders[strings.ToLower(header.Name)]
+		if !admitted || value != header.Value {
+			return sourceError(ErrUnsafeAmendment, "", "/http/headers", "HTTP amendment cannot add or rewrite a source-required fixed header")
+		}
+	}
+	sourceReferences := make(map[string]struct{}, len(sourceHTTP.Witness.SourceRefs))
+	for _, reference := range sourceHTTP.Witness.SourceRefs {
+		sourceReferences[reference.SourceID+"\x00"+reference.Pointer] = struct{}{}
+	}
+	for _, reference := range amendmentHTTP.Witness.SourceRefs {
+		if _, admitted := sourceReferences[reference.SourceID+"\x00"+reference.Pointer]; !admitted {
+			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "HTTP amendment witness is outside independently normalized HTTP source facts")
+		}
+	}
+	return nil
+}
+
+func validateLinkPaginationSource(
+	operation *NormalizedOperation,
+	source *ResolvedSource,
+	pagination *Pagination,
+) error {
+	for _, reference := range pagination.Witness.SourceRefs {
+		if !sourceRefDeclaresOperationResponseHeader(operation, reference, pagination.LinkResponseHeader) {
+			continue
+		}
+		if _, present := source.RawValue(reference.SourceID, strings.TrimPrefix(reference.Pointer, "#")); present {
+			return nil
+		}
+	}
+	return sourceError(ErrUnsafeAmendment, "", "/pagination/link_response_header", "link pagination requires an exact source-declared operation response header")
+}
+
+func sourceRefDeclaresOperationResponseHeader(
+	operation *NormalizedOperation,
+	reference contract.SourceRef,
+	headerName string,
+) bool {
+	pointer := strings.TrimPrefix(reference.Pointer, "#")
+	parts := strings.Split(strings.TrimPrefix(pointer, "/"), "/")
+	for index := range parts {
+		parts[index] = strings.ReplaceAll(strings.ReplaceAll(parts[index], "~1", "/"), "~0", "~")
+	}
+	if len(parts) < 3 || parts[len(parts)-2] != "headers" ||
+		!strings.EqualFold(parts[len(parts)-1], headerName) {
+		return false
+	}
+	for _, operationReference := range operation.SourceRefs {
+		if operationReference.SourceID != reference.SourceID {
+			continue
+		}
+		operationPointer := strings.TrimSuffix(strings.TrimPrefix(operationReference.Pointer, "#"), "/")
+		if strings.HasPrefix(pointer, operationPointer+"/responses/") {
+			return true
+		}
+	}
+	return false
+}
+
+func resolveBoundResponseHeaders(normalization *Normalization, operation *NormalizedOperation, pagination *Pagination) {
+	if pagination == nil || pagination.Kind != string(contract.OperationPaginationLink) {
+		return
+	}
+	resolved := make(map[string]struct{})
+	normalization.Diagnostics = slices.DeleteFunc(normalization.Diagnostics, func(diagnostic Diagnostic) bool {
+		if diagnostic.OperationID != operation.OperationID || diagnostic.Code != "unbound_response_header" {
+			return false
+		}
+		for _, fact := range diagnostic.SourceFacts {
+			if !sourceRefDeclaresOperationResponseHeader(operation, fact.SourceRef, pagination.LinkResponseHeader) {
+				continue
+			}
+			if slices.Contains(pagination.Witness.SourceRefs, fact.SourceRef) {
+				resolved[diagnostic.ID] = struct{}{}
+				return true
+			}
+		}
+		return false
+	})
+	if len(resolved) == 0 {
+		return
+	}
+	isResolved := func(id string) bool {
+		_, found := resolved[id]
+		return found
+	}
+	operation.BlockedDiagnosticIDs = slices.DeleteFunc(operation.BlockedDiagnosticIDs, isResolved)
+	for index := range operation.ResponseVariants {
+		variant := &operation.ResponseVariants[index]
+		variant.BlockedDiagnosticIDs = slices.DeleteFunc(variant.BlockedDiagnosticIDs, isResolved)
+	}
 }
 
 func applyBlockingDiagnostics(operation *NormalizedOperation, diagnostics []Diagnostic) {

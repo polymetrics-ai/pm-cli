@@ -67,6 +67,156 @@
         "pointer": {"type": "string", "maxLength": 4096, "pattern": "^(?:#(?:/(?:[^~]|~[01])*)?|/(?:[^~]|~[01])*)$"}
       }
     },
+    "operationExecution": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "http": {"$ref": "#/$defs/operationHTTP"},
+        "pagination": {"$ref": "#/$defs/operationPagination"},
+        "retry": {"$ref": "#/$defs/operationRetry"}
+      },
+      "anyOf": [
+        {"required": ["http"]},
+        {"required": ["pagination"]},
+        {"required": ["retry"]}
+      ]
+    },
+    "operationHTTP": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["origins", "witness"],
+      "properties": {
+        "origins": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^https?://"}
+        },
+        "authorization": {"$ref": "#/$defs/operationAuthorization"},
+        "headers": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/operationHTTPHeader"}
+        },
+        "witness": {"$ref": "#/$defs/executionWitness"}
+      }
+    },
+    "operationHTTPHeader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "value"],
+      "properties": {
+        "name": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"},
+        "value": {"type": "string", "maxLength": 8192}
+      }
+    },
+    "operationAuthorization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["required", "audience", "placement", "wire_name", "prefix", "field_id"],
+      "properties": {
+        "required": {"type": "boolean"},
+        "audience": {"type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^https?://"},
+        "placement": {"enum": ["header", "query", "cookie"]},
+        "wire_name": {"type": "string", "minLength": 1, "maxLength": 1024, "pattern": "^[!#$%&'*+.^_`|~0-9A-Za-z-]+$"},
+        "prefix": {"type": "string", "maxLength": 1024},
+        "field_id": {"$ref": "#/$defs/contractIdentity"}
+      }
+    },
+    "executionWitness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["proof_id", "source_refs"],
+      "properties": {
+        "proof_id": {"$ref": "#/$defs/identity"},
+        "source_refs": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/sourceRef"}
+        }
+      }
+    },
+    "operationPagination": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "cursor_request_field", "cursor_response_pointer", "witness"],
+          "properties": {
+            "kind": {"const": "cursor"},
+            "cursor_request_field": {"$ref": "#/$defs/contractIdentity"},
+            "cursor_response_pointer": {"$ref": "#/$defs/nonRootJSONPointer"},
+            "witness": {"$ref": "#/$defs/executionWitness"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "offset_request_field", "limit_request_field", "witness"],
+          "properties": {
+            "kind": {"const": "offset"},
+            "offset_request_field": {"$ref": "#/$defs/contractIdentity"},
+            "limit_request_field": {"$ref": "#/$defs/contractIdentity"},
+            "total_response_pointer": {"$ref": "#/$defs/nonRootJSONPointer"},
+            "witness": {"$ref": "#/$defs/executionWitness"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "page_request_field", "witness"],
+          "properties": {
+            "kind": {"const": "page"},
+            "page_request_field": {"$ref": "#/$defs/contractIdentity"},
+            "last_page_response_pointer": {"$ref": "#/$defs/nonRootJSONPointer"},
+            "witness": {"$ref": "#/$defs/executionWitness"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "link_request_field", "link_response_header", "witness"],
+          "properties": {
+            "kind": {"const": "link"},
+            "link_request_field": {"$ref": "#/$defs/contractIdentity"},
+            "link_response_header": {"type": "string", "pattern": "^[Ll][Ii][Nn][Kk]$"},
+            "limit_request_field": {"$ref": "#/$defs/contractIdentity"},
+            "witness": {"$ref": "#/$defs/executionWitness"}
+          }
+        }
+      ]
+    },
+    "operationRetry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["classification", "witness"],
+      "properties": {
+        "classification": {"enum": ["unsafe", "safe", "conditional"]},
+        "condition": {"$ref": "#/$defs/identity"},
+        "http_statuses": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {"type": "integer", "minimum": 400, "maximum": 599}
+        },
+        "witness": {"$ref": "#/$defs/executionWitness"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"classification": {"const": "conditional"}}},
+          "then": {"required": ["condition"]},
+          "else": {"not": {"required": ["condition"]}}
+        }
+      ]
+    },
+    "nonRootJSONPointer": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 4096,
+      "pattern": "^/(?:[^~]|~[01])*$"
+    },
     "command": {
       "type": "object",
       "additionalProperties": false,
@@ -166,6 +316,7 @@
           "items": {"$ref": "#/$defs/requestVariant"}
         },
         "request_media_field_id": {"$ref": "#/$defs/contractIdentity"},
+        "execution": {"$ref": "#/$defs/operationExecution"},
         "responses": {
           "type": "array",
           "minItems": 1,
@@ -226,6 +377,16 @@
                     "status": {"pattern": "^([1-5][0-9][0-9]|default)$"}
                   }
                 }
+              }
+            }
+          }
+        },
+        {
+          "if": {"required": ["execution"]},
+          "then": {
+            "properties": {
+              "transport": {
+                "properties": {"kind": {"const": "http"}}
               }
             }
           }

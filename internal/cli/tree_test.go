@@ -31,6 +31,10 @@ func testCommandTreeRejectsControlAndWireCollisions(t *testing.T) {
 			fields: []pmapi.CommandFieldDescriptor{commandField("--workspace", "query.workspace", "workspace", contract.FieldLocationQuery)},
 		},
 		{
+			name:   "provider attempts to own result controls",
+			fields: []pmapi.CommandFieldDescriptor{commandField("--result-controls", "query.result-controls", "result-controls", contract.FieldLocationQuery)},
+		},
+		{
 			name: "same wire name and flag across locations",
 			fields: []pmapi.CommandFieldDescriptor{
 				commandField("--tenant", "query.tenant", "tenant", contract.FieldLocationQuery),

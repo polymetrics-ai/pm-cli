@@ -25,6 +25,7 @@ type ServicesConfig struct {
 	OIDCHTTPClient    *http.Client
 	CredentialIngress CredentialIngressConfig
 	RunPolicy         store.RunBudgetPolicy
+	ResolveHTTPPolicy HTTPPolicyResolver
 }
 
 func (ServicesConfig) String() string                 { return "application services configuration [REDACTED]" }
@@ -138,11 +139,12 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		return nil, errors.New("catalog application composition failed")
 	}
 	admission, err := NewAdmissionService(AdmissionServiceConfig{
-		Pool:         pool,
-		DeploymentID: configuration.DeploymentID,
-		Authorize:    authentication.AuthorizeResource,
-		Registry:     handlers,
-		Policy:       configuration.RunPolicy,
+		Pool:              pool,
+		DeploymentID:      configuration.DeploymentID,
+		Authorize:         authentication.AuthorizeResource,
+		Registry:          handlers,
+		Policy:            configuration.RunPolicy,
+		ResolveHTTPPolicy: configuration.ResolveHTTPPolicy,
 	})
 	if err != nil {
 		return nil, errors.New("durable admission composition failed")

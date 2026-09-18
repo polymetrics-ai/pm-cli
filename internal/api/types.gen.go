@@ -902,11 +902,13 @@ type InvocationRequest struct {
 	ConnectionRef string                    `json:"connection_ref"`
 
 	// Input A present typed object keyed by exact logical FieldID values from the selected operation input bindings, not provider wire names. Omitted optional fields remain absent; source defaults are not inserted. Each supplied value retains its declared type and presence, including explicit null, false, zero, empty values, and exact numeric representation.
-	Input          PresentValue          `json:"input"`
-	Lane           InvocationRequestLane `json:"lane"`
-	OperationRef   string                `json:"operation_ref"`
-	Protocol       ProtocolMetadata      `json:"protocol"`
-	ResultControls ResultControls        `json:"result_controls"`
+	Input        PresentValue          `json:"input"`
+	Lane         InvocationRequestLane `json:"lane"`
+	OperationRef string                `json:"operation_ref"`
+	Protocol     ProtocolMetadata      `json:"protocol"`
+
+	// ResultControls Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.
+	ResultControls ResultControls `json:"result_controls"`
 }
 
 // InvocationRequestLane defines model for InvocationRequest.Lane.
@@ -1058,7 +1060,7 @@ type RecordFilter = contract.RecordFilter
 // RequestVariantProjection defines model for RequestVariantProjection.
 type RequestVariantProjection = contract.RequestVariantProjection
 
-// ResultControls defines model for ResultControls.
+// ResultControls Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.
 type ResultControls = contract.ResultControls
 
 // ResultPagination defines model for ResultPagination.

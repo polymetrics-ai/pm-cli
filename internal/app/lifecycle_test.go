@@ -2407,7 +2407,7 @@ func requireFreshInitialAdmission(t *testing.T, response initialRunResponse, req
 	if response.status != http.StatusAccepted || response.admission.RunRef == "" ||
 		response.admission.RequestKey != requestKey || response.admission.Replay ||
 		response.admission.State != api.AdmissionResponseStateAccepted || response.admission.IntentDigest == "" {
-		t.Fatalf("fresh admission = HTTP %d %#v", response.status, response.admission)
+		t.Fatalf("fresh admission = HTTP %d problem=%q %#v", response.status, response.problemCode, response.admission)
 	}
 	return response.admission
 }

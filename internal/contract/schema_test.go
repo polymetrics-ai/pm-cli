@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -368,6 +369,322 @@ func TestStrictContractShape(t *testing.T) {
 	}
 }
 
+func TestOperationExecutionFacts(t *testing.T) {
+	operation := decodeOperationForTest(t, validOperationDocumentForTest())
+	if operation.Execution != nil {
+		t.Fatalf("undeclared execution facts = %#v; want unknown", operation.Execution)
+	}
+	records := *operation.Responses[0].Schema
+	operation.Responses[0].Schema = &Schema{
+		Type: SchemaTypeObject,
+		Properties: map[string]Schema{
+			"records": records,
+			"next":    {Type: SchemaTypeString},
+		},
+	}
+	recordPointer := "/records"
+	operation.Responses[0].RecordPointer = &recordPointer
+	cursor := operation.Inputs[1]
+	cursor.FieldID = "cursor"
+	cursor.WireName = "cursor"
+	cursor.JSONPointer = "/query/cursor"
+	cursor.Schema = Schema{Type: SchemaTypeString}
+	cursor.SourceDefault = nil
+	operation.Inputs = append(operation.Inputs, cursor)
+	credential := operation.Inputs[2]
+	witness := ExecutionWitness{
+		ProofID: "proof-pagination-source",
+		SourceRefs: []SourceRef{{
+			SourceID: "github-rest-api",
+			Pointer:  "#/paths/~1repos~1{owner}~1{repo}~1issues/get/x-pagination",
+		}},
+	}
+	operation.Execution = &OperationExecution{
+		HTTP: &OperationHTTP{
+			Origins: []string{"https://api.github.example/v3"},
+			Authorization: &OperationAuthorization{
+				Required:  true,
+				Audience:  "https://api.github.example",
+				Placement: FieldLocationHeader,
+				WireName:  "Authorization",
+				Prefix:    "Bearer ",
+				FieldID:   credential.FieldID,
+			},
+			Headers: []OperationHTTPHeader{{Name: "X-API-Version", Value: "2022-11-28"}},
+			Witness: witness,
+		},
+		Pagination: &OperationPagination{
+			Kind:                  OperationPaginationCursor,
+			CursorRequestField:    "cursor",
+			CursorResponsePointer: "/next",
+			Witness:               witness,
+		},
+		Retry: &OperationRetry{
+			Classification: OperationRetryUnsafe,
+			HTTPStatuses:   []uint16{429, 502},
+			Witness:        witness,
+		},
+	}
+	document, err := json.Marshal(operation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeOperation(document, supportedFoundationsForTest())
+	if err != nil {
+		t.Fatalf("DecodeOperation(execution facts): %v", err)
+	}
+	if decoded.Execution == nil || decoded.Execution.HTTP == nil ||
+		decoded.Execution.Pagination == nil || decoded.Execution.Retry == nil ||
+		!slices.Equal(decoded.Execution.HTTP.Origins, []string{"https://api.github.example/v3"}) ||
+		decoded.Execution.HTTP.Authorization == nil ||
+		decoded.Execution.HTTP.Authorization.FieldID != credential.FieldID ||
+		decoded.Execution.HTTP.Headers[0] != (OperationHTTPHeader{Name: "X-API-Version", Value: "2022-11-28"}) ||
+		decoded.Execution.Pagination.CursorRequestField != "cursor" ||
+		decoded.Execution.Pagination.CursorResponsePointer != "/next" ||
+		decoded.Execution.Retry.Classification != OperationRetryUnsafe ||
+		!slices.Equal(decoded.Execution.Retry.HTTPStatuses, []uint16{429, 502}) {
+		t.Fatalf("execution facts changed: %#v", decoded.Execution)
+	}
+
+	t.Run("retry classifications preserve unknown unsafe safe and conditional", func(t *testing.T) {
+		for _, test := range []struct {
+			name           string
+			classification OperationRetryClassification
+			condition      string
+		}{
+			{name: "unsafe", classification: OperationRetryUnsafe},
+			{name: "safe", classification: OperationRetrySafe},
+			{name: "conditional", classification: OperationRetryConditional, condition: "idempotency-key-present"},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				candidate := operation
+				execution := *operation.Execution
+				retry := *operation.Execution.Retry
+				retry.Classification = test.classification
+				retry.Condition = test.condition
+				execution.Retry = &retry
+				candidate.Execution = &execution
+				candidateDocument, marshalErr := json.Marshal(candidate)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				if _, decodeErr := DecodeOperation(candidateDocument, supportedFoundationsForTest()); decodeErr != nil {
+					t.Fatalf("DecodeOperation(%s): %v", test.name, decodeErr)
+				}
+			})
+		}
+	})
+
+	t.Run("cursor may bind one selected request body variant", func(t *testing.T) {
+		candidate := operation
+		candidate.Inputs = make([]FieldBinding, 0, len(operation.Inputs)-1)
+		for _, input := range operation.Inputs {
+			if input.FieldID != cursor.FieldID {
+				candidate.Inputs = append(candidate.Inputs, input)
+			}
+		}
+		bodyCursor := cursor
+		bodyCursor.Location = FieldLocationBody
+		bodyCursor.JSONPointer = "/cursor"
+		bodyCursor.Style = "json"
+		bodyCursor.Explode = false
+		candidate.RequestVariants = []RequestVariant{{
+			VariantID: "json",
+			MediaType: "application/json",
+			Required:  false,
+			Schema: Schema{
+				Type:       SchemaTypeObject,
+				Properties: map[string]Schema{"cursor": {Type: SchemaTypeString}},
+			},
+			Inputs:     []FieldBinding{bodyCursor},
+			SourceRefs: []SourceRef{{SourceID: "github-rest-api", Pointer: "#/requestBody"}},
+		}}
+		execution := *operation.Execution
+		pagination := *operation.Execution.Pagination
+		pagination.CursorRequestField = bodyCursor.FieldID
+		execution.Pagination = &pagination
+		candidate.Execution = &execution
+		candidateDocument, marshalErr := json.Marshal(candidate)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		decodedCandidate, decodeErr := DecodeOperation(candidateDocument, supportedFoundationsForTest())
+		if decodeErr != nil {
+			t.Fatalf("DecodeOperation(body cursor): %v", decodeErr)
+		}
+		if decodedCandidate.Execution.Pagination.CursorRequestField != bodyCursor.FieldID ||
+			len(decodedCandidate.RequestVariants) != 1 ||
+			decodedCandidate.RequestVariants[0].Inputs[0].Location != FieldLocationBody {
+			t.Fatalf("body cursor facts changed: %#v", decodedCandidate)
+		}
+	})
+
+	t.Run("execution facts are strict and operation-bound", func(t *testing.T) {
+		invalid := []struct {
+			name   string
+			mutate func(*Operation)
+		}{
+			{
+				name: "empty execution wrapper",
+				mutate: func(candidate *Operation) {
+					candidate.Execution = &OperationExecution{}
+				},
+			},
+			{
+				name: "cursor carries contradictory limit field",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.Pagination.LimitRequestField = "per-page"
+				},
+			},
+			{
+				name: "cursor response pointer is not in a response schema",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.Pagination.CursorResponsePointer = "/missing"
+				},
+			},
+			{
+				name: "conditional retry lacks its admitted condition",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.Retry.Classification = OperationRetryConditional
+				},
+			},
+			{
+				name: "pagination witness is not source-linked",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.Pagination.Witness.SourceRefs = nil
+				},
+			},
+			{
+				name: "relative HTTP origin",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.HTTP.Origins = []string{"/v3"}
+				},
+			},
+			{
+				name: "authorization audience is outside admitted origin",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.HTTP.Authorization.Audience = "https://attacker.invalid"
+				},
+			},
+			{
+				name: "fixed header embeds a credential channel",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.HTTP.Headers[0].Name = "X-Password"
+				},
+			},
+			{
+				name: "authorization field is not secret",
+				mutate: func(candidate *Operation) {
+					for index := range candidate.Inputs {
+						if candidate.Inputs[index].FieldID == credential.FieldID {
+							candidate.Inputs[index].Sensitivity = SensitivityPublic
+						}
+					}
+				},
+			},
+			{
+				name: "retry statuses are not sorted",
+				mutate: func(candidate *Operation) {
+					candidate.Execution.Retry.HTTPStatuses = []uint16{502, 429}
+				},
+			},
+		}
+		for _, test := range invalid {
+			t.Run(test.name, func(t *testing.T) {
+				candidate := operation
+				candidate.Inputs = slices.Clone(operation.Inputs)
+				execution := *operation.Execution
+				pagination := *operation.Execution.Pagination
+				pagination.Witness.SourceRefs = append([]SourceRef(nil), operation.Execution.Pagination.Witness.SourceRefs...)
+				retry := *operation.Execution.Retry
+				httpFact := *operation.Execution.HTTP
+				httpFact.Origins = slices.Clone(operation.Execution.HTTP.Origins)
+				httpFact.Headers = slices.Clone(operation.Execution.HTTP.Headers)
+				httpFact.Witness.SourceRefs = slices.Clone(operation.Execution.HTTP.Witness.SourceRefs)
+				authorization := *operation.Execution.HTTP.Authorization
+				httpFact.Authorization = &authorization
+				execution.HTTP = &httpFact
+				retry.Witness.SourceRefs = append([]SourceRef(nil), operation.Execution.Retry.Witness.SourceRefs...)
+				execution.Pagination = &pagination
+				execution.Retry = &retry
+				retry.HTTPStatuses = slices.Clone(operation.Execution.Retry.HTTPStatuses)
+				candidate.Execution = &execution
+				test.mutate(&candidate)
+				candidateDocument, marshalErr := json.Marshal(candidate)
+				if marshalErr != nil {
+					t.Fatal(marshalErr)
+				}
+				if _, decodeErr := DecodeOperation(candidateDocument, supportedFoundationsForTest()); decodeErr == nil {
+					t.Fatal("DecodeOperation accepted invalid execution facts")
+				}
+			})
+		}
+
+		withUnknownField := replaceOperationDocumentForTest(
+			t,
+			document,
+			`"classification":"unsafe"`,
+			`"classification":"unsafe","unexpected":true`,
+		)
+		if _, decodeErr := DecodeOperation(withUnknownField, supportedFoundationsForTest()); decodeErr == nil {
+			t.Fatal("DecodeOperation accepted an unknown retry fact")
+		}
+
+		emptyContradiction := replaceOperationDocumentForTest(
+			t,
+			document,
+			`"cursor_response_pointer":"/next"`,
+			`"cursor_response_pointer":"/next","offset_request_field":""`,
+		)
+		if _, decodeErr := DecodeOperation(emptyContradiction, supportedFoundationsForTest()); decodeErr == nil {
+			t.Fatal("DecodeOperation accepted an empty contradictory pagination field")
+		}
+		emptyCondition := replaceOperationDocumentForTest(
+			t,
+			document,
+			`"classification":"unsafe"`,
+			`"classification":"unsafe","condition":""`,
+		)
+		if _, decodeErr := DecodeOperation(emptyCondition, supportedFoundationsForTest()); decodeErr == nil {
+			t.Fatal("DecodeOperation accepted an explicit empty condition on an unconditional retry fact")
+		}
+		emptyStatuses := replaceOperationDocumentForTest(
+			t,
+			document,
+			`"http_statuses":[429,502]`,
+			`"http_statuses":[]`,
+		)
+		if _, decodeErr := DecodeOperation(emptyStatuses, supportedFoundationsForTest()); decodeErr == nil {
+			t.Fatal("DecodeOperation accepted explicit empty retry HTTP statuses")
+		}
+		var invalidHTTP OperationHTTP
+		if decodeErr := json.Unmarshal([]byte(
+			`{"origins":["https://api.example.test"],"headers":[],"witness":{"proof_id":"source","source_refs":[{"source_id":"root","pointer":"#/servers/0"}]}}`,
+		), &invalidHTTP); decodeErr == nil {
+			t.Fatal("OperationHTTP accepted explicit empty fixed headers")
+		}
+		if decodeErr := json.Unmarshal([]byte(
+			`{"origins":["https://api.example.test"],"authorization":null,"witness":{"proof_id":"source","source_refs":[{"source_id":"root","pointer":"#/servers/0"}]}}`,
+		), &invalidHTTP); decodeErr == nil {
+			t.Fatal("OperationHTTP accepted null authorization")
+		}
+
+		nullExecution := replaceOperationDocumentForTest(
+			t,
+			validOperationDocumentForTest(),
+			`"responses":`,
+			`"execution":null,"responses":`,
+		)
+		if _, decodeErr := DecodeOperation(nullExecution, supportedFoundationsForTest()); decodeErr == nil {
+			t.Fatal("DecodeOperation accepted explicit null as unknown execution facts")
+		}
+		var nestedNull OperationExecution
+		if decodeErr := json.Unmarshal([]byte(`{"pagination":null}`), &nestedNull); decodeErr == nil {
+			t.Fatal("OperationExecution accepted explicit null as an absent pagination fact")
+		}
+	})
+}
+
 func TestOperationWireLocations(t *testing.T) {
 	operation := decodeOperationForTest(t, validOperationDocumentForTest())
 	source := operation.Inputs[0]
@@ -618,7 +935,7 @@ func TestPublishedSourceSchemas(t *testing.T) {
 	compiler.UseLoader(jsonschema.SchemeURLLoader{})
 	paths := make(map[string]string)
 	compiled := make(map[string]*jsonschema.Schema)
-	for _, name := range []string{"foundation", "field-binding", "bundle"} {
+	for _, name := range []string{"foundation", "field-binding", "semantics", "bundle"} {
 		path, err := filepath.Abs(filepath.Join("..", "..", "schemas", name+".schema.json"))
 		if err != nil {
 			t.Fatal(err)
@@ -674,12 +991,76 @@ func TestPublishedSourceSchemas(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("foundation", compiled["foundation"], foundation)
+	semanticsWitness := map[string]any{
+		"proof_id": "source-reviewed-execution",
+		"source_refs": []map[string]any{{
+			"source_id": "github-rest-api",
+			"pointer":   "#/paths/~1repos~1{owner}~1{repo}~1issues/get",
+		}},
+	}
+	check("semantics", compiled["semantics"], map[string]any{
+		"schema_version": "pm.semantics/v1",
+		"connector_id":   "github",
+		"source_digest":  "sha256:" + strings.Repeat("1", 64),
+		"revision":       "sha256:" + strings.Repeat("2", 64),
+		"operations": []map[string]any{{
+			"operation_id": "issues/list-for-repo",
+			"source_refs":  semanticsWitness["source_refs"],
+			"http": map[string]any{
+				"origins": []string{"https://api.github.example/v3"},
+				"authorization": map[string]any{
+					"required":  false,
+					"audience":  "https://api.github.example",
+					"placement": "header",
+					"wire_name": "Authorization",
+					"prefix":    "Bearer ",
+					"field_id":  "auth.github-token",
+				},
+				"headers": []map[string]any{{"name": "X-API-Version", "value": "2022-11-28"}},
+				"witness": semanticsWitness,
+			},
+			"record_extraction": map[string]any{
+				"records_pointer": "/records",
+				"witness":         semanticsWitness,
+			},
+			"pagination": map[string]any{
+				"kind":                    "cursor",
+				"cursor_request_field":    "cursor",
+				"cursor_response_pointer": "/next",
+				"witness":                 semanticsWitness,
+			},
+			"retry": map[string]any{
+				"classification": "unsafe",
+				"http_statuses":  []uint16{429, 502},
+				"witness":        semanticsWitness,
+			},
+			"lanes": []any{},
+		}},
+	})
 	operation := decodeOperationForTest(t, validOperationDocumentForTest())
 	for _, binding := range operation.Inputs {
 		check("field-binding", compiled["field-binding"], binding)
 	}
 	safeOperation := operation
 	safeOperation.Inputs = append([]FieldBinding(nil), operation.Inputs[:2]...)
+	safeOperation.Execution = &OperationExecution{
+		HTTP: &OperationHTTP{
+			Origins: []string{"https://api.github.example/v3"},
+			Headers: []OperationHTTPHeader{{Name: "X-API-Version", Value: "2022-11-28"}},
+			Witness: ExecutionWitness{
+				ProofID:    "published-schema-http-proof",
+				SourceRefs: []SourceRef{{SourceID: "github-rest-api", Pointer: "#/servers/0"}},
+			},
+		},
+		Retry: &OperationRetry{
+			Classification: OperationRetryUnsafe,
+			HTTPStatuses:   []uint16{429, 502},
+			Witness: ExecutionWitness{
+				ProofID:    "published-schema-retry-proof",
+				SourceRefs: []SourceRef{{SourceID: "github-rest-api", Pointer: "#/x-pm-retry"}},
+			},
+		},
+	}
 	if err := safeOperation.Validate(supportedFoundationsForTest()); err != nil {
 		t.Fatalf("safe operation fixture: %v", err)
 	}

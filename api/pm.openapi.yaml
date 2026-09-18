@@ -3588,6 +3588,15 @@ components:
           $ref: "#/components/schemas/FieldSelection"
         filter:
           $ref: "#/components/schemas/RecordFilter"
+        total_record_cap:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optional positive cap on records emitted by this invocation after filtering; this is distinct from the provider page size.
+        continuation:
+          description: Optional typed resume state. It must be absent or a present nonempty opaque string of at most 4096 UTF-8 bytes; null and every other typed value are invalid.
+          $ref: "#/components/schemas/PresentValue"
+      description: Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.
       x-go-type: contract.ResultControls
       x-go-type-import:
         path: github.com/polymetrics-ai/pm-cli/internal/contract

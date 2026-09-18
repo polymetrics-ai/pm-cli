@@ -21,7 +21,8 @@ var (
 )
 
 // ExecutionRequest is the in-process input to one admitted worker callback. It
-// is not a workflow payload and does not carry provider credentials.
+// is not a workflow payload and does not carry provider credentials. Its
+// unexported physical-call authority can only re-authorize this exact callback.
 type ExecutionRequest struct {
 	Scope              contract.Scope
 	ConnectionID       string
@@ -31,19 +32,26 @@ type ExecutionRequest struct {
 	Task               contract.Task
 	Dispatch           contract.Dispatch
 	Attempt            contract.Attempt
+	AttemptNumber      uint32
+	Operation          contract.Operation
+	HTTPPolicy         contract.HTTPExecutionPolicy
 	Input              contract.PresentValue
 	Controls           contract.ResultControls
 	Deadline           time.Time
+
+	physicalCall *workerPhysicalCallBoundary
+	continuation *boundContinuationCodec
 }
 
 // ExecutionObservation is the immediate typed observation returned by an
 // execution or reconciliation callback. Result is not a durable publication
 // witness. Provider-member outcomes remain independently authoritative, while
-// result delivery stays unavailable unless an admitted integration durably
-// publishes an actual result reference.
+// the configured worker publishes verified result bytes and their reference
+// atomically with settlement.
 type ExecutionObservation struct {
 	Result   *contract.ActionResult
 	Outcomes []contract.MemberOutcome
+	HTTP     *HTTPAttemptObservation
 }
 
 // ExecutionCallback is implemented by a real shared execution engine.
@@ -64,11 +72,12 @@ const (
 // HandlerRegistration binds exact executable capabilities and foundation
 // revisions to the lanes that one callback can actually execute.
 type HandlerRegistration struct {
-	Lanes        []contract.Lane
-	Foundations  []contract.FoundationContract
-	Capabilities []contract.CapabilityRequirement
-	Execute      ExecutionCallback
-	Reconcile    ExecutionCallback
+	Lanes         []contract.Lane
+	Foundations   []contract.FoundationContract
+	Capabilities  []contract.CapabilityRequirement
+	Execute       ExecutionCallback
+	Reconcile     ExecutionCallback
+	continuations *ContinuationService
 }
 
 // HandlerManifest is a deterministic projection of callbacks that are really
@@ -132,6 +141,7 @@ type ResolvedHandler struct {
 	ReconciliationAvailable bool
 	execute                 ExecutionCallback
 	reconcile               ExecutionCallback
+	continuations           *ContinuationService
 }
 
 // Execute invokes the selected registered execution callback.
@@ -165,6 +175,7 @@ type registeredHandler struct {
 	capabilities    []contract.CapabilityRequirement
 	capabilityIndex map[capabilityIdentity]struct{}
 	execute         ExecutionCallback
+	continuations   *ContinuationService
 	reconcile       ExecutionCallback
 }
 
@@ -282,6 +293,7 @@ func (registry *HandlerRegistry) Resolve(operation contract.Operation, lane cont
 		Lane:                    lane,
 		ReconciliationAvailable: selected.reconcile != nil,
 		execute:                 selected.execute,
+		continuations:           selected.continuations,
 		reconcile:               selected.reconcile,
 	}, nil
 }
@@ -361,6 +373,7 @@ func normalizeHandlerRegistration(kind HandlerKind, registration HandlerRegistra
 		foundations:     foundations,
 		capabilities:    capabilities,
 		capabilityIndex: capabilityIndex,
+		continuations:   registration.continuations,
 		execute:         registration.Execute,
 		reconcile:       registration.Reconcile,
 	}, nil

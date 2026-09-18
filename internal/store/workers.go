@@ -693,48 +693,16 @@ func ListWorkerTasks(ctx context.Context, tx *Transaction, runID string) ([]cont
 	return tasks, nil
 }
 
-// LoadWorkerDispatch requires the actual sealed execution-plan ledger entry.
-// It never derives an effect, member, payload, or request witness from a task.
+// LoadWorkerDispatch resolves the sole current leaf of the immutable retry
+// lineage. It never selects by dispatch identity, timestamp or insertion order.
 func LoadWorkerDispatch(ctx context.Context, tx *Transaction, task TaskRef) (DispatchRecord, error) {
-	if _, err := tx.requireScope(); err != nil {
-		return DispatchRecord{}, err
-	}
-	if err := task.validate(); err != nil {
-		return DispatchRecord{}, err
-	}
-	rows, err := tx.query(ctx, `
-		SELECT dispatch_id
-		FROM pm.dispatches
-		WHERE run_id = $1 AND task_id = $2
-		ORDER BY dispatch_id
-		LIMIT 2
-	`, task.RunID, task.TaskID)
-	if err != nil {
-		return DispatchRecord{}, fmt.Errorf("locate worker dispatch: %w", err)
-	}
-	defer rows.Close()
-	ids := make([]contract.DispatchID, 0, 2)
-	for rows.Next() {
-		var encoded string
-		if err := rows.Scan(&encoded); err != nil {
-			return DispatchRecord{}, fmt.Errorf("scan worker dispatch identity: %w", err)
-		}
-		id, err := contract.NewDispatchID(encoded)
-		if err != nil {
-			return DispatchRecord{}, fmt.Errorf("validate worker dispatch identity: %w", err)
-		}
-		ids = append(ids, id)
-	}
-	if err := rows.Err(); err != nil {
-		return DispatchRecord{}, fmt.Errorf("iterate worker dispatch identities: %w", err)
-	}
-	if len(ids) == 0 {
-		return DispatchRecord{}, ErrNotFound
-	}
-	if len(ids) != 1 {
-		return DispatchRecord{}, ErrImmutableConflict
-	}
-	return LoadDispatch(ctx, tx, task, ids[0])
+	return loadWorkerDispatchLineage(ctx, tx, task, false)
+}
+
+// LoadInitialWorkerDispatch resolves the sole root for an unqualified retained
+// activity reference. It never silently advances that reference to a retry.
+func LoadInitialWorkerDispatch(ctx context.Context, tx *Transaction, task TaskRef) (DispatchRecord, error) {
+	return loadWorkerDispatchLineage(ctx, tx, task, true)
 }
 
 func ListWorkerRunEffects(ctx context.Context, tx *Transaction, runID string) ([]contract.EffectRecord, error) {

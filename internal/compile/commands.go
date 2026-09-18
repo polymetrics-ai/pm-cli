@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"slices"
+	"strconv"
 	"strings"
 	"unicode"
 
@@ -42,6 +43,9 @@ func projectCommand(operation NormalizedOperation, usedNames map[string]struct{}
 		return nil, commandDiagnostic(operation, "", facts, "credential-issuing operation cannot be projected as a public command")
 	}
 	for _, binding := range operation.CommonBindings {
+		if isSourceAuthorizationBinding(operation, binding) {
+			continue
+		}
 		if binding.Sensitivity != SensitivityPublic {
 			return nil, commandDiagnostic(operation, binding.FieldID, facts, "operation contains a secret or unclassified request field")
 		}
@@ -76,14 +80,7 @@ func projectCommand(operation NormalizedOperation, usedNames map[string]struct{}
 	flags := make(map[string]struct{})
 	appendField := func(binding BindingFact) {
 		field := *binding.Normalized
-		flag := commandFlag(field)
-		if _, collision := flags[flag]; collision {
-			flag = "--" + commandSegment(string(field.Location)) + "-" + commandSegment(field.FieldID)
-		}
-		if _, collision := flags[flag]; collision {
-			digest := sha256.Sum256([]byte(field.FieldID))
-			flag += "-" + hex.EncodeToString(digest[:4])
-		}
+		flag := uniqueCommandFlag(field, flags)
 		flags[flag] = struct{}{}
 		command.Fields = append(command.Fields, contract.CommandField{
 			Flag: flag, FieldID: field.FieldID, Location: field.Location, Required: field.Required, Sensitive: false,
@@ -104,6 +101,9 @@ func projectCommand(operation NormalizedOperation, usedNames map[string]struct{}
 		})
 	}
 	for _, binding := range operation.CommonBindings {
+		if isSourceAuthorizationBinding(operation, binding) {
+			continue
+		}
 		appendField(binding)
 	}
 	for _, variant := range operation.RequestVariants {
@@ -119,6 +119,13 @@ func projectCommand(operation NormalizedOperation, usedNames map[string]struct{}
 		return nil, diagnostic
 	}
 	return &command, nil
+}
+
+func isSourceAuthorizationBinding(operation NormalizedOperation, binding BindingFact) bool {
+	return operation.HTTP != nil &&
+		operation.HTTP.Authorization != nil &&
+		binding.FieldID == operation.HTTP.Authorization.FieldID &&
+		binding.Sensitivity == SensitivitySecret
 }
 
 func commandDiagnostic(operation NormalizedOperation, fieldID string, facts []SourceFact, message string) *Diagnostic {
@@ -152,6 +159,39 @@ func commandFlag(binding contract.FieldBinding) string {
 		candidate = binding.FieldID
 	}
 	return "--" + commandSegment(candidate)
+}
+
+// uniqueCommandFlag preserves the provider-derived flag when possible, then
+// applies the existing location/field identity alias and deterministic hash.
+func uniqueCommandFlag(binding contract.FieldBinding, used map[string]struct{}) string {
+	if flag := commandFlag(binding); commandFlagAvailable(flag, used) {
+		return flag
+	}
+	base := "--" + commandSegment(string(binding.Location)) + "-" + commandSegment(binding.FieldID)
+	if commandFlagAvailable(base, used) {
+		return base
+	}
+	digest := sha256.Sum256([]byte(binding.FieldID))
+	for length := 4; length <= len(digest); length++ {
+		flag := base + "-" + hex.EncodeToString(digest[:length])
+		if commandFlagAvailable(flag, used) {
+			return flag
+		}
+	}
+	for discriminator := 2; ; discriminator++ {
+		flag := base + "-" + hex.EncodeToString(digest[:]) + "-" + strconv.Itoa(discriminator)
+		if commandFlagAvailable(flag, used) {
+			return flag
+		}
+	}
+}
+
+func commandFlagAvailable(flag string, used map[string]struct{}) bool {
+	if contract.IsReservedPMControlFlag(flag) {
+		return false
+	}
+	_, collision := used[flag]
+	return !collision
 }
 
 func commandSegment(value string) string {

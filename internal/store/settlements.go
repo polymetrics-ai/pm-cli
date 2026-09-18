@@ -19,6 +19,7 @@ type SettlementCommit struct {
 	Audit      AuditEntry
 	Event      EventInput
 	Outbox     OutboxCommand
+	Retry      *WorkerRetryPlan
 }
 
 func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCommit) (contract.ServerEvent, error) {
@@ -32,8 +33,14 @@ func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCom
 	if err := commit.Task.Validate(); err != nil {
 		return contract.ServerEvent{}, fmt.Errorf("validate settled task: %w", err)
 	}
-	if commit.Task.OrgID != scope.OrgID || commit.Task.WorkspaceID != scope.WorkspaceID || commit.Task.RunID != commit.Lease.Task.RunID || commit.Task.TaskID != commit.Lease.Task.TaskID {
+	if commit.Task.OrgID != scope.OrgID ||
+		commit.Task.WorkspaceID != scope.WorkspaceID ||
+		commit.Task.RunID != commit.Lease.Task.RunID ||
+		commit.Task.TaskID != commit.Lease.Task.TaskID {
 		return contract.ServerEvent{}, ErrScopeMismatch
+	}
+	if commit.Retry != nil && workerRetryTaskStateTerminal(commit.Task.State) {
+		return contract.ServerEvent{}, errors.New("worker retry cannot be prepared from a terminal task")
 	}
 	if err := validateCommitSideRecords(commit.Task.RunID, commit.Receipt, commit.Audit, commit.Event, commit.Outbox); err != nil {
 		return contract.ServerEvent{}, err
@@ -65,7 +72,11 @@ func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCom
 		 AND effect.effect_digest = dispatch.effect_digest
 		WHERE dispatch.run_id = $1 AND dispatch.task_id = $2 AND dispatch.dispatch_id = $3
 		FOR UPDATE OF dispatch, effect
-	`, commit.Task.RunID, commit.Task.TaskID, string(commit.DispatchID)).Scan(&dispatchJSON, &effectDigest, &effectJSON)
+	`, commit.Task.RunID, commit.Task.TaskID, string(commit.DispatchID)).Scan(
+		&dispatchJSON,
+		&effectDigest,
+		&effectJSON,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return contract.ServerEvent{}, ErrNotFound
 	}
@@ -79,9 +90,37 @@ func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCom
 	if err := contract.ValidateSettlement(dispatch, commit.Outcomes); err != nil {
 		return contract.ServerEvent{}, fmt.Errorf("validate exact member settlement: %w", err)
 	}
+	parent, err := LoadDispatch(ctx, tx, commit.Lease.Task, commit.DispatchID)
+	if err != nil {
+		return contract.ServerEvent{}, err
+	}
+	if parent.Intent.DispatchID != dispatch.DispatchID ||
+		!sameRetryDispatchIntent(parent.Intent, dispatch) {
+		return contract.ServerEvent{}, ErrImmutableConflict
+	}
 	committedAt, err := readDatabaseTime(ctx, tx)
 	if err != nil {
 		return contract.ServerEvent{}, err
+	}
+	var retry *WorkerRetry
+	if commit.Retry != nil {
+		if commit.Receipt.Kind != "worker_settlement" {
+			return contract.ServerEvent{}, errors.New("worker retry requires its canonical settlement receipt")
+		}
+		validated, err := validateWorkerRetryPlan(
+			ctx,
+			tx,
+			storedTask,
+			parent,
+			commit.Outcomes,
+			commit.Receipt.ReceiptID,
+			*commit.Retry,
+			committedAt,
+		)
+		if err != nil {
+			return contract.ServerEvent{}, err
+		}
+		retry = &validated
 	}
 	for _, outcome := range commit.Outcomes {
 		encoded, err := json.Marshal(outcome)
@@ -101,16 +140,31 @@ func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCom
 			string(commit.DispatchID),
 			string(outcome.MemberID),
 			string(outcome.State), json.RawMessage(encoded), outcome.ObservedAt); err != nil {
-			return contract.ServerEvent{}, fmt.Errorf("insert exact member outcome: %w", err)
+			return contract.ServerEvent{}, safeMetadataWriteError("insert exact member outcome", err)
 		}
 	}
 	var effect contract.EffectRecord
 	if err := json.Unmarshal(effectJSON, &effect); err != nil {
 		return contract.ServerEvent{}, fmt.Errorf("decode settlement effect: %w", err)
 	}
-	updatedEffect, changed, err := settleEffectRecord(effect, commit.Outcomes)
-	if err != nil {
-		return contract.ServerEvent{}, err
+	if effect.RunID != commit.Task.RunID ||
+		effect.TaskID != commit.Task.TaskID ||
+		effect.EffectKey != dispatch.EffectKey {
+		return contract.ServerEvent{}, ErrImmutableConflict
+	}
+	updatedEffect := effect
+	changed := false
+	if retry != nil && retry.Basis == WorkerRetrySourceDeclaredSafe {
+		if effect.State != contract.OutcomeUnknown ||
+			len(effect.Attempts) == 0 ||
+			effect.Attempts[len(effect.Attempts)-1] != retry.ParentAttempt {
+			return contract.ServerEvent{}, errors.New("source-safe retry cannot reopen or replace durable effect truth")
+		}
+	} else {
+		updatedEffect, changed, err = settleEffectRecord(effect, commit.Outcomes)
+		if err != nil {
+			return contract.ServerEvent{}, err
+		}
 	}
 	if changed {
 		encoded, err := json.Marshal(updatedEffect)
@@ -164,6 +218,44 @@ func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCom
 	}
 	if err := insertReceipt(ctx, tx, commit.Receipt, committedAt); err != nil {
 		return contract.ServerEvent{}, err
+	}
+	if retry != nil {
+		if err := insertWorkerRetryDispatch(
+			ctx,
+			tx,
+			scope,
+			commit.Lease.Task,
+			effectDigest,
+			parent.AttemptNumber+1,
+			*commit.Retry,
+			*retry,
+			committedAt,
+		); err != nil {
+			return contract.ServerEvent{}, err
+		}
+		tag, err := tx.exec(ctx, `
+			UPDATE pm.task_leases
+			SET lease_expires_at = $7
+			WHERE org_id = $1 AND workspace_id = $2
+			  AND run_id = $3 AND task_id = $4
+			  AND owner_id = $5 AND fence = $6
+			  AND claimed_at < $7
+			  AND lease_expires_at > $7
+		`,
+			scope.OrgID,
+			scope.WorkspaceID,
+			commit.Lease.Task.RunID,
+			commit.Lease.Task.TaskID,
+			commit.Lease.OwnerID,
+			commit.Lease.Fence,
+			committedAt,
+		)
+		if err != nil {
+			return contract.ServerEvent{}, fmt.Errorf("expire parent retry lease: %w", err)
+		}
+		if tag.RowsAffected() != 1 {
+			return contract.ServerEvent{}, ErrStaleFence
+		}
 	}
 	if err := insertAuditEntry(ctx, tx, commit.Audit, committedAt); err != nil {
 		return contract.ServerEvent{}, err
@@ -269,7 +361,7 @@ func settleEffectRecord(effect contract.EffectRecord, outcomes []contract.Member
 		return effect, false, errors.New("member settlement is empty")
 	}
 	state := aggregateOutcomeState(outcomes)
-	if state == effect.State || state == contract.OutcomeUnsent {
+	if state == effect.State {
 		return effect, false, nil
 	}
 	observedAt := outcomes[0].ObservedAt.UTC()
@@ -277,6 +369,29 @@ func settleEffectRecord(effect contract.EffectRecord, outcomes []contract.Member
 		if outcome.ObservedAt.After(observedAt) {
 			observedAt = outcome.ObservedAt.UTC()
 		}
+	}
+	if state == contract.OutcomeUnsent {
+		if len(effect.Attempts) == 0 {
+			return effect, false, errors.New("definitive-unsent settlement lacks its durable attempt")
+		}
+		attempt := effect.Attempts[len(effect.Attempts)-1]
+		for _, outcome := range outcomes {
+			identified := false
+			for _, reference := range outcome.AssertionRefs {
+				if reference == attempt.ReceiptRef {
+					identified = true
+					break
+				}
+			}
+			if outcome.DispatchID != attempt.DispatchID || !identified {
+				return effect, false, errors.New("definitive-unsent settlement does not identify the exact latest attempt")
+			}
+		}
+		updated, err := effect.ObserveUnsent(attempt, observedAt)
+		if err != nil {
+			return effect, false, fmt.Errorf("observe definitive-unsent effect: %w", err)
+		}
+		return updated, true, nil
 	}
 	updated, err := effect.Transition(state, "member_settlement", observedAt)
 	if err != nil {

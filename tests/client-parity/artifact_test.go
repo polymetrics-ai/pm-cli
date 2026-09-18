@@ -44,7 +44,7 @@ func TestArtifactCLISharedBytes(t *testing.T) {
 	}
 	const artifactID = "actual-cli-artifact"
 	const payload = "exact\x00binary\xffbytes\n"
-	request := store.ObjectReservationRequest{ReservationID: "cli-publication", ConnectionID: fixture.Connection.ConnectionID, ArtifactID: artifactID, MaximumBytes: 1024}
+	request := store.ObjectReservationRequest{ReservationID: "cli-publication", ConnectionID: fixture.Connection.ConnectionID, ArtifactID: artifactID, MaximumBytes: 1024, Purpose: store.ArtifactPurposePublic}
 	if _, err := publisher.Reserve(ctx, fixture.Actor, fixture.Scope, request); err != nil {
 		t.Fatal(err)
 	}

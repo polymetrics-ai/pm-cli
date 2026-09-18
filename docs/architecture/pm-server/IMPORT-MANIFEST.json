@@ -62,15 +62,15 @@
       "target": "docs/architecture/pm-server/architecture/FOUNDATION-MAPPINGS.json",
       "source": "data/pm-cli/architecture/FOUNDATION-MAPPINGS.json",
       "source_sha256": "5a9780e77a8f471a0bcd5ad2164a669c47b107229cba1e913587166d9336f94a",
-      "sha256": "7801c060723b0be6046aecc8d274a07b3d804df84f9d325d04255edc100ab951",
-      "transformation": "Added F01/AUTH traceability requirements and projected accepted GitHub/PostgreSQL bindings; 43 requirements total. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Rebound M3 physical files without changing requirements, case IDs or dependency direction."
+      "sha256": "345f16cafe14b2dc529bf64ef001d027dd8a598ef006ce8ba49061ce27227661",
+      "transformation": "Added F01/AUTH traceability requirements and projected accepted GitHub/PostgreSQL bindings; 43 requirements total. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Rebound M3 physical files without changing requirements, case IDs or dependency direction. Reconciled current physical path projections, including the secret-reader cutover, while preserving all 43 requirement identities, impact-union foundation references, cases and evidence limits. Projected the R09 and R14a inventory additions through only the existing requirement rows that already reference their retained foundation/group paths; no requirement identity or reference changed."
     },
     {
       "target": "docs/architecture/pm-server/architecture/FOUNDATIONS.json",
       "source": "data/pm-cli/architecture/FOUNDATIONS.json",
       "source_sha256": "75cbcdbcdfe87877d37c5135fec5e1bb9134b681199d24e9f8006d417c6ff6ea",
-      "sha256": "ad14fe1a748c44d7ce4f0115c53197d41bfbeabf11e717c971059eeab17e7dcc",
-      "transformation": "Versioned affected reusable foundations for accepted result, admission, source and PostgreSQL semantics without adding a duplicate mechanism. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Rebound M3 artifacts to their actual shared owners, preserving foundation versions and gates."
+      "sha256": "35adbf52c35432dddfa501ab8f5a4f67ab1db6239867f86c4125fed331685b31",
+      "transformation": "Versioned affected reusable foundations for accepted result, admission, source and PostgreSQL semantics without adding a duplicate mechanism. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Rebound M3 artifacts to their actual shared owners, preserving foundation versions and gates. Reconciled current physical path projections, including the secret-reader cutover, while preserving all 20 foundation identities, versions, dependencies, consumers and readiness states. Projected only the R09 and R14a inventory additions through their existing FND-19 and FND-10 file domains; no foundation identity, version or dependency changed."
     },
     {
       "target": "docs/architecture/pm-server/architecture/STATE-OWNERSHIP.json",
@@ -90,15 +90,15 @@
       "target": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
       "source": "data/pm-cli/implementation/FILE-OWNERSHIP.json",
       "source_sha256": "5c5b461dda1f81f10a63a7234e07792f54a9996d11df8a5d7cd88ca5f83f7411",
-      "sha256": "86e34f36ff39fcb892e8409e249733060276703c916ba47c775a85e8530c88d0",
-      "transformation": "Added N13-PG and serialized PostgreSQL #28-create/#34-update/#41-composition ownership while retaining disjoint owners. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled M3 physical paths, shared helpers, browser assets and registered-HTTP proof ownership without changing acceptance or later ownership."
+      "sha256": "3fbb5732705011995a7ebddab4d00959e30dfca94b1329133d27433a2c3f490e",
+      "transformation": "Added N13-PG and serialized PostgreSQL #28-create/#34-update/#41-composition ownership while retaining disjoint owners. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled M3 physical paths, shared helpers, browser assets and registered-HTTP proof ownership without changing acceptance or later ownership. Reconciled 47 current Go path/group mappings into their retained aggregate first-owner responsibilities, including the F11/T_V13 secret-reader clean cutover; per-file package/import facts remain separately explicit in PACKET-CONTRACTS. Completed the Atlas 284-file WalkDir inventory by adding ten exact current Go-source owners to both ownership projections without changing group identity or order."
     },
     {
       "target": "docs/architecture/pm-server/implementation/MILESTONES.json",
       "source": "data/pm-cli/implementation/MILESTONES.json",
       "source_sha256": "99286dffffbd2d7930dfcda31833ba6b4e36d0392a44499a8d5fe1c9807eba45",
-      "sha256": "829d9ef7aa6b197c8eec9e059e29cb2fdb4425f1e510d6f8c4ce0468a1a61ba4",
-      "transformation": "Projected accepted boundaries into M1/M3/M4/M6/M7/M8/M11 and moved saved ETL route ownership to M8/F33. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Projected 77 M3 physical files while retaining execution order and later milestones."
+      "sha256": "0435c7abadf768b98cfa3acaa818f013a89708909c1bb34abdc29b42191340a0",
+      "transformation": "Projected accepted boundaries into M1/M3/M4/M6/M7/M8/M11 and moved saved ETL route ownership to M8/F33. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Projected 77 M3 physical files while retaining execution order and later milestones. Projected the same 47 current paths and owned interfaces into their existing milestones without changing milestone identity, ordering, gates or evidence status. Projected the ten current Go paths and selected declarations into their existing first milestones without changing milestone identity, order or gate."
     },
     {
       "target": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
@@ -209,8 +209,8 @@
       "target": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
       "source": "baseline ISSUE-RECORDS.json",
       "source_sha256": "9ecc107c39976504d43b892a6c8f1e351c6a5adea1128bfc1cb0ca1c27eb20a9",
-      "sha256": "71460a7b0bae500eedb3b453c175b07e010be37d6d29aab45b48d428dc911af5",
-      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41; reconciled only #2/#3 integration policy and BOOT-4 workflow under September 15 OMP ownership, retaining every case and technical gate. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled #11–#13 physical ownership and bounded registered-route proof bindings without changing acceptance or later integration rights."
+      "sha256": "266016eb75b061ac64b925f27aa00a18f09d5d76d934d09a19aa1f4ff3ca330b",
+      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41; reconciled only #2/#3 integration policy and BOOT-4 workflow under September 15 OMP ownership, retaining every case and technical gate. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled #11–#13 physical ownership and bounded registered-route proof bindings without changing acceptance or later integration rights. Reconciled 47 current Go path/group mappings with observed per-file package, internal-import and interface facts: 45 declarations added and two obsolete server secret-reader declarations cleanly replaced; retained all 44 packet identities, cases, dependencies and later integration rights. Completed the same Go inventory by adding nine missing declarations and replacing the account-permit acceptance placeholder with its existing R14a owner and actual package/import boundary; acceptance is unchanged."
     },
     {
       "target": "docs/architecture/pm-server/reference/SOURCE-LEDGER.json",
@@ -292,8 +292,8 @@
     {
       "target": "docs/architecture/pm-server/SEMANTIC-AMENDMENTS.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "28d016281ec7ba65ddc69735c44f8dbbf0756d917f81fcfb7f834a9748d47a49",
-      "transformation": "Recorded the accepted F01/F02/F03/AUTH/PostgreSQL semantic amendments and serialized issue ownership."
+      "sha256": "bef9a5095c14aa85f1409c1c540f75b20c5baed0da2d3e8680f8cb6902403727",
+      "transformation": "Recorded the accepted F01/F02/F03/AUTH/PostgreSQL semantic amendments and serialized issue ownership. Disclosed the 47-path current-source reconciliation, two-path secret-reader clean cutover, aggregate-owner versus per-file package/import distinction, and unchanged authoring-only/evidence limits. Disclosed the complete 284-file Go inventory domain, ten-path source-only correction, R14a mixed-test boundary and unchanged exclusion/evidence limits."
     },
     {
       "target": "docs/architecture/pm-server/SOURCE-ACCESS.md",

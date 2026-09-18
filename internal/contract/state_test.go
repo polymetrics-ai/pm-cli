@@ -13,6 +13,123 @@ import (
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
 
+func TestDefinitiveUnsentRetainsAttemptAuthority(t *testing.T) {
+	base := time.Date(2026, time.September, 18, 4, 0, 0, 0, time.UTC)
+	spec, _ := runSpecForIdentityTest(t, base)
+	original := effectForIdentityTest(t, spec)
+	first := Attempt{
+		AttemptID: "attempt-unsent-1", DispatchID: "dispatch-unsent-1",
+		ReceiptRef: "receipt-unsent-1", RecordedAt: base.Add(time.Second),
+	}
+	dispatched, err := original.RecordAttempt(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unsent, err := dispatched.ObserveUnsent(first, base.Add(2*time.Second))
+	if err != nil {
+		t.Fatalf("observe definitive no-send: %v", err)
+	}
+	document, err := json.Marshal(unsent)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored EffectRecord
+	if err := json.Unmarshal(document, &restored); err != nil {
+		t.Fatalf("restore receipt-bearing unsent state: %v", err)
+	}
+	if restored.State != OutcomeUnsent || !reflect.DeepEqual(restored.Attempts, []Attempt{first}) ||
+		dispatched.State != OutcomeUnknown || len(dispatched.History) != 1 {
+		t.Fatal("definitive no-send erased its receipt or mutated the prior unknown record")
+	}
+	second := Attempt{
+		AttemptID: "attempt-unsent-2", DispatchID: "dispatch-unsent-2",
+		ReceiptRef: "receipt-unsent-2", RecordedAt: base.Add(3 * time.Second),
+	}
+	retried, err := restored.RecordAttempt(second)
+	if err != nil {
+		t.Fatalf("record separately admitted attempt: %v", err)
+	}
+	if retried.State != OutcomeUnknown || !reflect.DeepEqual(retried.Attempts, []Attempt{first, second}) {
+		t.Fatal("new attempt did not retain earlier no-send evidence and become unknown")
+	}
+	if got, err := retried.ObserveUnsent(first, base.Add(4*time.Second)); err == nil || !reflect.DeepEqual(got, retried) {
+		t.Fatal("stale attempt evidence reset the newer possible effect")
+	}
+	if got, err := retried.ObserveUnsent(second, base.Add(2*time.Second)); err == nil || !reflect.DeepEqual(got, retried) {
+		t.Fatal("observation before the send-attempt receipt changed its effect")
+	}
+	if got, err := retried.Transition(OutcomeUnsent, "definitive_unsent", base.Add(4*time.Second)); err == nil || !reflect.DeepEqual(got, retried) {
+		t.Fatal("generic transition bypassed exact-attempt no-send evidence")
+	}
+	timedOut, err := retried.ObserveTimeout(base.Add(4 * time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if timedOut.State != OutcomeUnknown || !reflect.DeepEqual(timedOut.Attempts, retried.Attempts) {
+		t.Fatal("timeout was mistaken for no-send evidence")
+	}
+}
+
+func TestSourceSafeReplayRetainsUnknownAttemptLineage(t *testing.T) {
+	base := time.Date(2026, time.September, 18, 5, 0, 0, 0, time.UTC)
+	spec, _ := runSpecForIdentityTest(t, base)
+	original := effectForIdentityTest(t, spec)
+	first := Attempt{
+		AttemptID: "attempt-replay-1", DispatchID: "dispatch-replay-1",
+		ReceiptRef: "receipt-replay-1", RecordedAt: base.Add(time.Second),
+	}
+	dispatched, err := original.RecordAttempt(first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second := Attempt{
+		AttemptID: "attempt-replay-2", DispatchID: "dispatch-replay-2",
+		ReceiptRef: "receipt-replay-2", RecordedAt: base.Add(2 * time.Second),
+	}
+	replayed, err := dispatched.RecordReplayAttempt(second, first)
+	if err != nil {
+		t.Fatalf("record source-safe replay: %v", err)
+	}
+	if replayed.State != OutcomeUnknown ||
+		!reflect.DeepEqual(replayed.Attempts, []Attempt{first, second}) ||
+		len(replayed.History) != 2 ||
+		replayed.History[1].From != OutcomeUnknown ||
+		replayed.History[1].To != OutcomeUnknown ||
+		replayed.History[1].Reason != "replay_dispatched" {
+		t.Fatalf("replay lineage = %#v; want two retained attempts and unknown replay transition", replayed)
+	}
+	document, err := json.Marshal(replayed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored EffectRecord
+	if err := json.Unmarshal(document, &restored); err != nil {
+		t.Fatalf("restore source-safe replay lineage: %v", err)
+	}
+	if !reflect.DeepEqual(restored, replayed) {
+		t.Fatal("source-safe replay changed across its durable JSON contract")
+	}
+	if got, err := dispatched.RecordAttempt(second); err == nil || !reflect.DeepEqual(got, dispatched) {
+		t.Fatal("generic attempt recording bypassed the persisted source-safe replay path")
+	}
+	if got, err := replayed.RecordReplayAttempt(Attempt{
+		AttemptID: "attempt-replay-3", DispatchID: "dispatch-replay-3",
+		ReceiptRef: "receipt-replay-3", RecordedAt: base.Add(3 * time.Second),
+	}, first); err == nil || !reflect.DeepEqual(got, replayed) {
+		t.Fatal("stale prior-attempt witness appended a replay")
+	}
+	terminal, err := replayed.Transition(OutcomeRejected, "member_settlement", base.Add(3*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := terminal.RecordReplayAttempt(Attempt{
+		AttemptID: "attempt-replay-3", DispatchID: "dispatch-replay-3",
+		ReceiptRef: "receipt-replay-3", RecordedAt: base.Add(4 * time.Second),
+	}, second); err == nil || !reflect.DeepEqual(got, terminal) {
+		t.Fatal("terminal effect was reopened by replay attempt recording")
+	}
+}
+
 func TestAllowedTransitions(t *testing.T) {
 	base := time.Date(2026, time.September, 16, 4, 0, 0, 0, time.UTC)
 	spec, durableGrant := runSpecForIdentityTest(t, base)

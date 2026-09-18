@@ -37,7 +37,7 @@ func TestArtifactCrashWindows(t *testing.T) {
 
 	prepare := func(t *testing.T, artifactID, reservationID, payload string) (objects.PreparedPublication, contract.ObjectRef, store.PreverifiedObjectRef) {
 		t.Helper()
-		request := store.ObjectReservationRequest{ReservationID: reservationID, ConnectionID: fixture.Connection.ConnectionID, ArtifactID: artifactID, MaximumBytes: 64 << 10}
+		request := store.ObjectReservationRequest{ReservationID: reservationID, ConnectionID: fixture.Connection.ConnectionID, ArtifactID: artifactID, MaximumBytes: 64 << 10, Purpose: store.ArtifactPurposePublic}
 		if _, err := publisher.Reserve(ctx, fixture.Actor, fixture.Scope, request); err != nil {
 			t.Fatal(err)
 		}

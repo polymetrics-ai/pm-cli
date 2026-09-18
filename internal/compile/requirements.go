@@ -95,8 +95,13 @@ func CheckRequirements(
 		if err := checkSourceFacts(source, operation.Raw.SourceFacts, pointer+"/raw/source_facts"); err != nil {
 			return err
 		}
-		if err := checkSourceFacts(source, operation.AuthenticationFacts, pointer+"/authentication_facts"); err != nil {
+		if err := checkSourceFacts(source, operation.HTTPFacts, pointer+"/http_facts"); err != nil {
 			return err
+		}
+		if operation.HTTP != nil {
+			if !slices.Equal(operation.HTTP.Witness.SourceRefs, sourceRefs(operation.HTTPFacts)) {
+				return sourceError(ErrSourceFidelity, "", pointer+"/http", "normalized HTTP witness disagrees with its exact source facts")
+			}
 		}
 		fieldIDs := make(map[string]struct{})
 		for _, binding := range operation.CommonBindings {
@@ -168,7 +173,7 @@ func CheckRequirements(
 		if operation.Semantics != nil && operation.Semantics.Pagination != nil {
 			selectedNames = append(selectedNames, "http.paginate")
 		}
-		if operation.AuthenticationRequired {
+		if effectiveHTTP := effectiveOperationHTTP(*operation); effectiveHTTP != nil && effectiveHTTP.Authorization != nil {
 			selectedNames = append(selectedNames, "credentials.resolve")
 		}
 		slices.Sort(selectedNames)
@@ -202,7 +207,13 @@ func CheckRequirements(
 	return nil
 }
 func operationUsesTypedValues(operation NormalizedOperation) bool {
+	effectiveHTTP := effectiveOperationHTTP(operation)
 	for _, binding := range operation.CommonBindings {
+		if operation.HTTP != nil && operation.HTTP.Authorization != nil &&
+			effectiveHTTP != nil && effectiveHTTP.Authorization == nil &&
+			binding.FieldID == operation.HTTP.Authorization.FieldID {
+			continue
+		}
 		if binding.Normalized != nil {
 			return true
 		}
@@ -221,15 +232,27 @@ func operationUsesTypedValues(operation NormalizedOperation) bool {
 }
 func paginationRequestFields(pagination Pagination) []string {
 	switch pagination.Kind {
-	case "cursor":
+	case string(contract.OperationPaginationCursor):
 		return []string{pagination.CursorRequestField}
-	case "offset":
+	case string(contract.OperationPaginationOffset):
 		return []string{pagination.OffsetRequestField, pagination.LimitRequestField}
-	case "page":
+	case string(contract.OperationPaginationPage):
 		return []string{pagination.PageRequestField}
+	case string(contract.OperationPaginationLink):
+		if pagination.LimitRequestField == "" {
+			return []string{pagination.LinkRequestField}
+		}
+		return []string{pagination.LinkRequestField, pagination.LimitRequestField}
 	default:
 		return nil
 	}
+}
+
+func effectiveOperationHTTP(operation NormalizedOperation) *HTTPSemantics {
+	if operation.Semantics != nil && operation.Semantics.HTTP != nil {
+		return operation.Semantics.HTTP
+	}
+	return operation.HTTP
 }
 
 func indexedHTTPDeclarations() (map[string]contract.CapabilityRequirement, error) {

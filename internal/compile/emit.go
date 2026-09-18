@@ -299,12 +299,15 @@ func isolatableOperationDiagnostic(diagnostic Diagnostic) bool {
 	}
 	switch diagnostic.Code {
 	case "unsupported_http_transport",
+		"unsupported_http_authority",
 		"unsupported_authentication",
+		"unsupported_fixed_headers",
 		"unsupported_parameter_shape",
 		"unknown_sensitivity",
 		"missing_request_schema",
 		"unsupported_request_serialization",
 		"unsupported_response_metadata",
+		"unbound_response_header",
 		"missing_response_schema",
 		"missing_schema",
 		"recursive_schema_reference",
@@ -459,7 +462,13 @@ func emitOperation(normalized NormalizedOperation, supported []contract.Foundati
 		Responses: []contract.Response{}, CapabilityRequirements: slices.Clone(normalized.CapabilityRequirements),
 		LaneEligibility: []contract.LaneEligibility{},
 	}
+	effectiveHTTP := effectiveOperationHTTP(normalized)
 	for _, fact := range normalized.CommonBindings {
+		if normalized.HTTP != nil && normalized.HTTP.Authorization != nil &&
+			effectiveHTTP != nil && effectiveHTTP.Authorization == nil &&
+			fact.FieldID == normalized.HTTP.Authorization.FieldID {
+			continue
+		}
 		if fact.Normalized == nil || fact.BlockedDiagnosticID != "" {
 			return contract.Operation{}, fmt.Errorf("operation %q has an unadmitted common binding %q", normalized.OperationID, fact.FieldID)
 		}
@@ -527,6 +536,7 @@ func emitOperation(normalized NormalizedOperation, supported []contract.Foundati
 	if normalized.Semantics != nil && normalized.Semantics.RecordExtraction != nil && !recordPointerMatched {
 		return contract.Operation{}, fmt.Errorf("operation %q record extraction pointer does not address any emitted response schema", normalized.OperationID)
 	}
+	operation.Execution = emitOperationExecution(normalized)
 	for _, disposition := range normalized.LaneInventory {
 		status, ok := contractLaneStatus(disposition.Status)
 		if !ok {
@@ -561,6 +571,56 @@ func emitOperation(normalized NormalizedOperation, supported []contract.Foundati
 		return contract.Operation{}, err
 	}
 	return operation, nil
+}
+
+func emitOperationExecution(normalized NormalizedOperation) *contract.OperationExecution {
+	httpSemantics := effectiveOperationHTTP(normalized)
+	var pagination *Pagination
+	var retry *RetrySemantics
+	if normalized.Semantics != nil {
+		pagination = normalized.Semantics.Pagination
+		retry = normalized.Semantics.Retry
+	}
+	if httpSemantics == nil && pagination == nil && retry == nil {
+		return nil
+	}
+	execution := &contract.OperationExecution{}
+	if httpSemantics != nil {
+		httpFact := semanticsToContractHTTP(*httpSemantics)
+		execution.HTTP = &httpFact
+	}
+	if pagination != nil {
+		source := pagination
+		execution.Pagination = &contract.OperationPagination{
+			Kind:                    contract.OperationPaginationKind(source.Kind),
+			CursorRequestField:      source.CursorRequestField,
+			CursorResponsePointer:   source.CursorResponsePointer,
+			OffsetRequestField:      source.OffsetRequestField,
+			LimitRequestField:       source.LimitRequestField,
+			TotalResponsePointer:    source.TotalResponsePointer,
+			PageRequestField:        source.PageRequestField,
+			LastPageResponsePointer: source.LastPageResponsePointer,
+			LinkRequestField:        source.LinkRequestField,
+			LinkResponseHeader:      source.LinkResponseHeader,
+			Witness: contract.ExecutionWitness{
+				ProofID:    source.Witness.ProofID,
+				SourceRefs: slices.Clone(source.Witness.SourceRefs),
+			},
+		}
+	}
+	if retry != nil {
+		source := retry
+		execution.Retry = &contract.OperationRetry{
+			Classification: contract.OperationRetryClassification(source.Classification),
+			Condition:      source.Condition,
+			HTTPStatuses:   slices.Clone(source.HTTPStatuses),
+			Witness: contract.ExecutionWitness{
+				ProofID:    source.Witness.ProofID,
+				SourceRefs: slices.Clone(source.Witness.SourceRefs),
+			},
+		}
+	}
+	return execution
 }
 
 func requestMediaSelector(operationID string, variants []contract.RequestVariant, common []contract.FieldBinding) (contract.FieldBinding, error) {

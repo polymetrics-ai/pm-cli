@@ -26,12 +26,13 @@ const (
 )
 
 type DynamicInvocation struct {
-	Binding    pmapi.CatalogBinding
-	Descriptor pmapi.CommandDescriptor
-	Lane       contract.Lane
-	Input      contract.PresentValue
-	RequestKey string
-	Output     io.Writer
+	Binding        pmapi.CatalogBinding
+	Descriptor     pmapi.CommandDescriptor
+	Lane           contract.Lane
+	Input          contract.PresentValue
+	ResultControls contract.ResultControls
+	RequestKey     string
+	Output         io.Writer
 }
 
 type DynamicInvoker func(context.Context, DynamicInvocation) error
@@ -111,9 +112,10 @@ func BuildCommandTree(root *cobra.Command, snapshot pmapi.CatalogSnapshot, invok
 func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDescriptor, invoke DynamicInvoker) (*cobra.Command, error) {
 	values := make([]dynamicFlagValue, len(descriptor.Fields))
 	bindings := make([]contract.FieldBinding, len(descriptor.Fields))
-	var laneValue, requestKey dynamicFlagValue
+	var laneValue, requestKey, resultControlsValue dynamicFlagValue
 	laneValue.name = "lane"
 	requestKey.name = "request-key"
+	resultControlsValue.name = "result-controls"
 	command := &cobra.Command{
 		Use:     descriptor.Name,
 		Aliases: append([]string(nil), descriptor.Aliases...),
@@ -137,7 +139,20 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 				input[field.Binding.FieldID] = value
 			}
 			typedInput := contract.NewObjectValue(input)
-			if err := descriptor.RequestBody.ValidateInput(bindings, typedInput); err != nil {
+			resultControls := contract.ResultControls{}
+			if resultControlsValue.set {
+				if err := contract.DecodeStrictRequiredObject([]byte(resultControlsValue.raw), &resultControls); err != nil {
+					return usageFailure(fmt.Errorf("--result-controls: %w", err))
+				}
+			}
+			if err := resultControls.Validate(); err != nil {
+				return usageFailure(fmt.Errorf("--result-controls: %w", err))
+			}
+			if resultControls.HasContinuation() {
+				if err := descriptor.RequestBody.ValidateSuppliedInput(bindings, typedInput); err != nil {
+					return usageFailure(err)
+				}
+			} else if err := descriptor.RequestBody.ValidateInput(bindings, typedInput); err != nil {
 				return usageFailure(err)
 			}
 			lane := contract.Lane(descriptor.AvailableLanes[0])
@@ -158,11 +173,12 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 				}
 			}
 			invocation := DynamicInvocation{
-				Binding:    binding,
-				Descriptor: descriptor,
-				Lane:       lane,
-				Input:      typedInput,
-				Output:     command.OutOrStdout(),
+				Binding:        binding,
+				Descriptor:     descriptor,
+				Lane:           lane,
+				Input:          typedInput,
+				ResultControls: resultControls,
+				Output:         command.OutOrStdout(),
 			}
 			if requestKey.set {
 				invocation.RequestKey = requestKey.raw
@@ -176,6 +192,7 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 		bindings[index] = field.Binding
 		command.Flags().Var(&values[index], name, dynamicFieldUsage(field.Binding))
 	}
+	command.Flags().Var(&resultControlsValue, resultControlsValue.name, "Strict typed result selection/filter JSON with optional total record cap and continuation resume")
 	if len(descriptor.AvailableLanes) > 1 {
 		command.Flags().Var(&laneValue, laneValue.name, "Exact available execution lane")
 	}
@@ -223,7 +240,7 @@ func validateDescriptorForTree(binding pmapi.CatalogBinding, descriptor pmapi.Co
 			(field.Binding.Location == contract.FieldLocationBody && field.Binding.JSONPointer == "") {
 			return pmapi.ErrCatalogEnvelope
 		}
-		if _, reserved := reservedProjectionFlags[field.Flag]; reserved {
+		if contract.IsReservedPMControlFlag(field.Flag) {
 			return fmt.Errorf("%w: provider flag %s collides with a PM control", errUsage, field.Flag)
 		}
 		if _, duplicate := seenFlags[field.Flag]; duplicate {
@@ -260,20 +277,6 @@ func validateDescriptorForTree(binding pmapi.CatalogBinding, descriptor pmapi.Co
 		return pmapi.ErrCatalogEnvelope
 	}
 	return nil
-}
-
-var reservedProjectionFlags = map[string]struct{}{
-	"--connection":      {},
-	"--help":            {},
-	"--json":            {},
-	"--lane":            {},
-	"--output":          {},
-	"--request-key":     {},
-	"--request-timeout": {},
-	"--server-profile":  {},
-	"--session-store":   {},
-	"--wait":            {},
-	"--workspace":       {},
 }
 
 func dynamicFieldUsage(binding contract.FieldBinding) string {
@@ -980,7 +983,7 @@ func (runtime *commandRuntime) invokeDynamic(ctx context.Context, invocation Dyn
 		Input:          invocation.Input,
 		Lane:           invocation.Lane,
 		OperationRef:   invocation.Descriptor.OperationId,
-		ResultControls: contract.ResultControls{},
+		ResultControls: invocation.ResultControls,
 	}
 	target := invocation.Binding.ConnectionID + "/" + invocation.Descriptor.OperationId
 	canonical, err := json.Marshal(struct {
@@ -1024,7 +1027,7 @@ func (runtime *commandRuntime) invokeDynamic(ctx context.Context, invocation Dyn
 		Lane:           pmapi.InvocationRequestLane(invocation.Lane),
 		OperationRef:   invocation.Descriptor.OperationId,
 		Protocol:       protocol,
-		ResultControls: contract.ResultControls{},
+		ResultControls: invocation.ResultControls,
 	}
 	recovery, err := runtime.recoveryStore()
 	if err != nil {

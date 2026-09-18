@@ -18,6 +18,24 @@ func AcquirePermit(
 	request store.AccountPermitRequest,
 	expectedProviderAccountID string,
 ) (store.AccountPermit, error) {
+	permit, err := reserveWorkerPermit(ctx, tx, request, expectedProviderAccountID)
+	if err != nil {
+		return store.AccountPermit{}, err
+	}
+	return store.AuthorizeAccountPermit(ctx, tx, permit)
+}
+
+// reserveWorkerPermit performs the same identity, capacity, expiry, and fence
+// checks as AcquirePermit but deliberately leaves the permit Reserved. It is
+// used only when a continuation may complete from verified local tail data;
+// the physical-call boundary authorizes the permit if a provider send is
+// actually required.
+func reserveWorkerPermit(
+	ctx context.Context,
+	tx *store.Transaction,
+	request store.AccountPermitRequest,
+	expectedProviderAccountID string,
+) (store.AccountPermit, error) {
 	if ctx == nil || tx == nil || !validApplicationID(expectedProviderAccountID) {
 		return store.AccountPermit{}, invalidRequestFailure()
 	}
@@ -40,13 +58,13 @@ func AcquirePermit(
 
 	switch permit.State {
 	case store.AccountPermitReserved:
-		return store.AuthorizeAccountPermit(ctx, tx, permit)
+		return permit, nil
 	case store.AccountPermitDispatched, store.AccountPermitUnknown:
 		return store.AccountPermit{}, workerFailure(
 			ErrWorkerConflict,
 			errors.New("new dispatch has a previously used account permit"),
 		)
-	case store.AccountPermitResolved:
+	case store.AccountPermitResolved, store.AccountPermitReleased:
 		return store.AccountPermit{}, workerFailure(
 			ErrWorkerConflict,
 			errors.New("resolved account permit lacks durable settlement"),

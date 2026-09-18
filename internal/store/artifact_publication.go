@@ -43,6 +43,7 @@ type ObjectReservationRequest struct {
 	ReservationID string
 	ConnectionID  string
 	ArtifactID    string
+	Purpose       ArtifactPurpose
 	MaximumBytes  uint64
 }
 
@@ -81,6 +82,7 @@ type ObjectReservation struct {
 type ArtifactPublicationReceipt struct {
 	ReservationID string
 	ConnectionID  string
+	Purpose       ArtifactPurpose
 	Object        contract.ObjectRef
 	PublishedAt   time.Time
 }
@@ -97,7 +99,8 @@ func ReserveObjectCapacity(ctx context.Context, tx *Transaction, request ObjectR
 		return ObjectReservation{}, err
 	}
 	if !validStoreID(request.ReservationID) || !validStoreID(request.ConnectionID) ||
-		!validStoreID(request.ArtifactID) || request.MaximumBytes == 0 || request.MaximumBytes > math.MaxInt64 {
+		!validStoreID(request.ArtifactID) || !request.Purpose.valid() ||
+		request.MaximumBytes == 0 || request.MaximumBytes > math.MaxInt64 {
 		return ObjectReservation{}, errors.New("object capacity request is invalid")
 	}
 	if _, err := LoadConnection(ctx, tx, request.ConnectionID); err != nil {
@@ -129,9 +132,11 @@ func ReserveObjectCapacity(ctx context.Context, tx *Transaction, request ObjectR
 	}
 	if _, err := tx.exec(ctx, `
 		INSERT INTO pm.object_reservations (
-			org_id, workspace_id, reservation_id, connection_id, artifact_id, maximum_bytes, charged_bytes
-		) VALUES ($1, $2, $3, $4, $5, $6, $6)
-	`, scope.OrgID, scope.WorkspaceID, request.ReservationID, request.ConnectionID, request.ArtifactID, request.MaximumBytes); err != nil {
+			org_id, workspace_id, reservation_id, connection_id, artifact_id,
+			purpose, maximum_bytes, charged_bytes
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $7)
+	`, scope.OrgID, scope.WorkspaceID, request.ReservationID, request.ConnectionID,
+		request.ArtifactID, string(request.Purpose), request.MaximumBytes); err != nil {
 		return ObjectReservation{}, fmt.Errorf("reserve immutable object capacity: %w", err)
 	}
 	return loadObjectReservation(ctx, tx, request.ReservationID, false)
@@ -246,7 +251,7 @@ func CommitObjectPublication(ctx context.Context, tx *Transaction, reservationID
 		if err != nil {
 			return ArtifactPublicationReceipt{}, err
 		}
-		if receipt.Object != ref {
+		if receipt.Object != ref || receipt.Purpose != reservation.Request.Purpose {
 			return ArtifactPublicationReceipt{}, ErrImmutableConflict
 		}
 		return receipt, nil
@@ -254,7 +259,7 @@ func CommitObjectPublication(ctx context.Context, tx *Transaction, reservationID
 	if reservation.State != ObjectReservationBound {
 		return ArtifactPublicationReceipt{}, ErrObjectReservationClosed
 	}
-	if err := RegisterArtifact(ctx, tx, reservation.Request.ConnectionID, object); err != nil {
+	if err := registerArtifact(ctx, tx, reservation.Request.ConnectionID, object, reservation.Request.Purpose); err != nil {
 		return ArtifactPublicationReceipt{}, err
 	}
 	if _, err := tx.exec(ctx, `
@@ -282,6 +287,7 @@ func LoadArtifactPublication(ctx context.Context, tx *Transaction, reservationID
 		return ArtifactPublicationReceipt{}, err
 	}
 	if !artifact.connectionID.Valid || artifact.connectionID.String != reservation.Request.ConnectionID ||
+		artifact.purpose != reservation.Request.Purpose ||
 		!objectBindingMatchesReference(reservation.Binding, artifact.ref) {
 		return ArtifactPublicationReceipt{}, ErrImmutableConflict
 	}
@@ -290,7 +296,8 @@ func LoadArtifactPublication(ctx context.Context, tx *Transaction, reservationID
 	}
 	return ArtifactPublicationReceipt{
 		ReservationID: reservationID, ConnectionID: reservation.Request.ConnectionID,
-		Object: artifact.ref, PublishedAt: reservation.PublishedAt,
+		Purpose: reservation.Request.Purpose, Object: artifact.ref,
+		PublishedAt: reservation.PublishedAt,
 	}, nil
 }
 
@@ -339,7 +346,7 @@ func loadObjectReservation(ctx context.Context, tx *Transaction, reservationID s
 	if !validStoreID(reservationID) {
 		return ObjectReservation{}, ErrNotFound
 	}
-	query := `SELECT connection_id, artifact_id, maximum_bytes, state, charged_bytes,
+	query := `SELECT connection_id, artifact_id, purpose, maximum_bytes, state, charged_bytes,
 		object_attempt_key, sha256, byte_length, media_type, reserved_at, published_at
 		FROM pm.object_reservations WHERE reservation_id = $1`
 	if lock {
@@ -351,14 +358,19 @@ func loadObjectReservation(ctx context.Context, tx *Transaction, reservationID s
 	var key, digest, mediaType sql.NullString
 	var length sql.NullInt64
 	var publishedAt sql.NullTime
+	var purpose string
 	if err := tx.queryRow(ctx, query, reservationID).Scan(
-		&reservation.Request.ConnectionID, &reservation.Request.ArtifactID,
+		&reservation.Request.ConnectionID, &reservation.Request.ArtifactID, &purpose,
 		&reservation.Request.MaximumBytes, &reservation.State, &reservation.ChargedBytes,
 		&key, &digest, &length, &mediaType, &reservation.ReservedAt, &publishedAt,
 	); errors.Is(err, pgx.ErrNoRows) {
 		return ObjectReservation{}, ErrNotFound
 	} else if err != nil {
 		return ObjectReservation{}, fmt.Errorf("load object reservation: %w", err)
+	}
+	reservation.Request.Purpose = ArtifactPurpose(purpose)
+	if !reservation.Request.Purpose.valid() {
+		return ObjectReservation{}, ErrImmutableConflict
 	}
 	reservation.ReservedAt = reservation.ReservedAt.UTC()
 	switch reservation.State {

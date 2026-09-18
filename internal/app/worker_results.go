@@ -30,7 +30,7 @@ func (service *WorkerService) reserveWorkerResult(ctx context.Context, tx *store
 	}
 	reservation, err := service.artifactPublisher.ReserveInTransaction(ctx, tx, store.ObjectReservationRequest{
 		ReservationID: id, ArtifactID: id, ConnectionID: plan.state.input.ConnectionID,
-		MaximumBytes: uint64(service.maximumResultBytes),
+		Purpose: store.ArtifactPurposePublic, MaximumBytes: uint64(service.maximumResultBytes),
 	})
 	if err != nil {
 		return store.ObjectReservation{}, err
@@ -76,8 +76,8 @@ func commitWorkerResult(ctx context.Context, tx *store.Transaction, plan workerU
 			return "", err
 		}
 		if receipt.ReservationID != reservationID || receipt.ConnectionID != plan.state.input.ConnectionID ||
+			receipt.Purpose != store.ArtifactPurposePublic ||
 			receipt.Object.ArtifactID != plan.resultReservation.Request.ArtifactID {
-			return "", store.ErrImmutableConflict
 		}
 		return receipt.Object.ArtifactID, nil
 	}

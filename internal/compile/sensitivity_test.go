@@ -28,20 +28,29 @@ func TestSecretOperationsNeverProjectToCLI(t *testing.T) {
 		case "unknownClassification":
 			unknownBlocked = len(operation.BlockedDiagnosticIDs) != 0 && operation.CommonBindings[0].Normalized == nil
 		case "listBusinessRecords":
-			oauthRequired = operation.AuthenticationRequired && len(operation.AuthenticationFacts) != 0
+			if operation.HTTP != nil && operation.HTTP.Authorization != nil &&
+				operation.HTTP.Authorization.Required && len(operation.HTTPFacts) != 0 {
+				for _, binding := range operation.CommonBindings {
+					if binding.FieldID == operation.HTTP.Authorization.FieldID &&
+						binding.Sensitivity == SensitivitySecret && binding.Normalized != nil {
+						oauthRequired = true
+					}
+				}
+			}
 		}
 	}
 	if !unknownBlocked {
 		t.Fatal("unknown sensitivity did not block its operation binding")
 	}
 	if !oauthRequired {
-		t.Fatal("used OAuth bearer security did not produce an exact authentication requirement")
+		t.Fatal("used OAuth bearer security did not produce an exact source-backed authorization binding")
 	}
 
 	t.Run("nested schema edges cannot become public bindings", func(t *testing.T) {
 		document := []byte(`{
   "openapi": "3.0.3",
   "info": {"title": "Synthetic nested sensitivity boundary", "version": "1.0.0"},
+  "servers": [{"url": "https://nested.example.test/v1"}],
   "paths": {
     "/business": {
       "get": {

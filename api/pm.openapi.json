@@ -2473,12 +2473,22 @@
       },
       "ResultControls": {
         "additionalProperties": false,
+        "description": "Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.",
         "properties": {
+          "continuation": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
           "filter": {
             "$ref": "#/components/schemas/RecordFilter"
           },
           "selection": {
             "$ref": "#/components/schemas/FieldSelection"
+          },
+          "total_record_cap": {
+            "description": "Optional positive cap on records emitted by this invocation after filtering; this is distinct from the provider page size.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
           }
         },
         "type": "object",

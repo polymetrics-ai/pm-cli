@@ -252,32 +252,41 @@ func normalizeOperation(
 		diagnostics = append(diagnostics, diagnostic)
 		operation.BlockedDiagnosticIDs = append(operation.BlockedDiagnosticIDs, diagnostic.ID)
 	}
-	authenticationRequired, authenticationFacts, authenticationErr := operationAuthentication(discovered, source.Resolved)
-	if authenticationErr != nil {
-		diagnostic := newDiagnostic(
-			"unsupported_authentication",
-			SeverityError,
-			operation.OperationID,
-			"",
-			operation.Raw.SourceFacts,
-			"/operations/"+escapePointerToken(operation.OperationID)+"/authentication",
-			nil,
-			allLaneSlice(),
-			authenticationErr.Error(),
-		)
-		diagnostics = append(diagnostics, diagnostic)
-		operation.BlockedDiagnosticIDs = append(operation.BlockedDiagnosticIDs, diagnostic.ID)
-	} else {
-		operation.AuthenticationRequired = authenticationRequired
-		operation.AuthenticationFacts = authenticationFacts
-	}
-
 	policy := buildSensitivityPolicy(discovered.document)
 	parameters, err := mergedParameters(discovered)
 	if err != nil {
 		return NormalizedOperation{}, nil, err
 	}
+	derivedHTTP, httpErr := deriveOperationHTTP(discovered, source.Resolved, parameters, policy)
+	operation.HTTPFacts = derivedHTTP.Facts
+	if httpErr != nil {
+		diagnosticFacts := derivedHTTP.Facts
+		if len(diagnosticFacts) == 0 {
+			diagnosticFacts = operation.Raw.SourceFacts
+		}
+		diagnostic := newDiagnostic(
+			httpDerivationDiagnosticCode(httpErr),
+			SeverityError,
+			operation.OperationID,
+			"",
+			diagnosticFacts,
+			"/operations/"+escapePointerToken(operation.OperationID)+"/http",
+			nil,
+			allLaneSlice(),
+			httpErr.Error(),
+		)
+		diagnostics = append(diagnostics, diagnostic)
+		operation.BlockedDiagnosticIDs = append(operation.BlockedDiagnosticIDs, diagnostic.ID)
+	} else {
+		operation.HTTP = derivedHTTP.Semantics
+		if derivedHTTP.Credential != nil {
+			operation.CommonBindings = append(operation.CommonBindings, *derivedHTTP.Credential)
+		}
+	}
 	for _, parameter := range parameters {
+		if _, fixed := derivedHTTP.FixedParameters[parameter.pointer]; fixed {
+			continue
+		}
 		binding, bindingDiagnostics := normalizeParameterBinding(source.Resolved, operation.OperationID, discovered.sourceID, parameter, policy)
 		diagnostics = append(diagnostics, bindingDiagnostics...)
 		operation.CommonBindings = append(operation.CommonBindings, binding)
@@ -887,7 +896,7 @@ func normalizeResponseVariants(
 			NoContent:   item.mediaType == noContentMediaType,
 			SourceFacts: sourceFacts(source, []contract.SourceRef{{SourceID: discovered.sourceID, Pointer: lockedVariant.Pointer}}),
 		}
-		if len(item.response.Headers) != 0 || len(item.response.Links) != 0 {
+		if len(item.response.Links) != 0 {
 			diagnostic := newDiagnostic(
 				"unsupported_response_metadata",
 				SeverityError,
@@ -897,7 +906,37 @@ func normalizeResponseVariants(
 				"/operations/"+escapePointerToken(operationID)+"/response_variants/"+escapePointerToken(item.status+"-"+item.mediaType),
 				nil,
 				allLaneSlice(),
-				"response headers or links remain in raw facts but are not represented by the runtime response contract",
+				"OpenAPI response links are not represented by the runtime response contract",
+			)
+			diagnostics = append(diagnostics, diagnostic)
+			variant.BlockedDiagnosticIDs = append(variant.BlockedDiagnosticIDs, diagnostic.ID)
+		}
+		headerNames := make([]string, 0, len(item.response.Headers))
+		headerCounts := make(map[string]int, len(item.response.Headers))
+		for name := range item.response.Headers {
+			headerNames = append(headerNames, name)
+			headerCounts[strings.ToLower(name)]++
+		}
+		slices.Sort(headerNames)
+		for _, name := range headerNames {
+			pointer := discovered.pointer + "/responses/" + escapePointerToken(item.status) + "/headers/" + escapePointerToken(name)
+			facts := sourceFacts(source, []contract.SourceRef{{SourceID: discovered.sourceID, Pointer: "#" + pointer}})
+			code := "unsupported_response_metadata"
+			detail := "response header is not represented by an admitted runtime capability"
+			if len(facts) != 0 && headerCounts[strings.ToLower(name)] == 1 &&
+				strings.EqualFold(name, "Link") && linkHeaderSchemaRepresentable(
+				source, discovered.sourceID, pointer, operationID, item.response.Headers[name],
+			) {
+				code = "unbound_response_header"
+				detail = "source Link header requires an exact witnessed pagination binding"
+			}
+			if len(facts) == 0 {
+				facts = variant.SourceFacts
+			}
+			diagnostic := newDiagnostic(
+				code, SeverityError, operationID, "", facts,
+				"/operations/"+escapePointerToken(operationID)+"/response_variants/"+escapePointerToken(item.status+"-"+item.mediaType)+"/headers/"+escapePointerToken(name),
+				nil, allLaneSlice(), detail,
 			)
 			diagnostics = append(diagnostics, diagnostic)
 			variant.BlockedDiagnosticIDs = append(variant.BlockedDiagnosticIDs, diagnostic.ID)
@@ -934,6 +973,36 @@ func normalizeResponseVariants(
 		variants = append(variants, variant)
 	}
 	return variants, diagnostics, nil
+}
+
+// Link pagination represents an optional scalar header, not arbitrary response
+// metadata or additional schema constraints. Unrepresented facts stay blocked.
+func linkHeaderSchemaRepresentable(
+	source *ResolvedSource,
+	sourceID, pointer, operationID string,
+	reference *openapi3.HeaderRef,
+) bool {
+	if reference == nil || reference.Value == nil {
+		return false
+	}
+	header := reference.Value
+	if header.Required || header.AllowEmptyValue || header.AllowReserved ||
+		len(header.Content) != 0 || (header.Style != "" && header.Style != "simple") ||
+		(header.Explode != nil && *header.Explode) {
+		return false
+	}
+	lowered := lowerSchema(header.Schema, schemaContext{
+		source: source, sourceID: sourceID, pointer: pointer + "/schema",
+		operationID: operationID, normalizedPointer: "/operations/" + escapePointerToken(operationID) + "/response_headers",
+	})
+	if lowered.Schema == nil || len(lowered.Diagnostics) != 0 {
+		return false
+	}
+	schema := lowered.Schema
+	return schema.Type == contract.SchemaTypeString && !schema.Nullable &&
+		schema.Required == nil && schema.Properties == nil && schema.Items == nil &&
+		schema.OneOf == nil && schema.AllOf == nil && schema.Enum == nil &&
+		schema.Minimum == nil && schema.Maximum == nil
 }
 
 func compareRequestVariantInventory(locked []VariantRef, actual map[string]*openapi3.MediaType) error {

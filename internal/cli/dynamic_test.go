@@ -85,6 +85,165 @@ func TestSelectorTreeAndOfflineHelp(t *testing.T) {
 	t.Run("offline help has no execution configuration", testInjectedCatalogHelpIsOffline)
 }
 
+func TestResultControlsStrictBeforeInvocation(t *testing.T) {
+	t.Parallel()
+	snapshot := commandSnapshot([]pmapi.CommandFieldDescriptor{})
+	valid := `{"selection":{"paths":[["display_name"]]}}`
+	for _, test := range []struct {
+		name string
+		args []string
+	}{
+		{name: "empty", args: []string{"--result-controls", ""}},
+		{name: "repeated", args: []string{"--result-controls", valid, "--result-controls", valid}},
+		{name: "null selection", args: []string{"--result-controls", `{"selection":null}`}},
+		{name: "duplicate", args: []string{"--result-controls", `{"selection":{"paths":[["name"]]},"selection":{"paths":[["id"]]}}`}},
+		{name: "wrong case", args: []string{"--result-controls", `{"Selection":{"paths":[["name"]]}}`}},
+		{name: "unknown", args: []string{"--result-controls", `{"future":{"paths":[["name"]]}}`}},
+		{name: "invalid shape", args: []string{"--result-controls", `{"selection":{"paths":[]}}`}},
+		{name: "zero total cap", args: []string{"--result-controls", `{"total_record_cap":0}`}},
+		{name: "raw null continuation", args: []string{"--result-controls", `{"continuation":null}`}},
+		{name: "typed null continuation", args: []string{"--result-controls", `{"continuation":{"presence":"null"}}`}},
+		{name: "empty continuation", args: []string{"--result-controls", `{"continuation":{"presence":"value","type":"string","text":""}}`}},
+		{name: "non-string continuation", args: []string{"--result-controls", `{"continuation":{"presence":"value","type":"bool","boolean":false}}`}},
+		{
+			name: "oversized continuation",
+			args: []string{"--result-controls", `{"continuation":{"presence":"value","type":"string","text":"` + strings.Repeat("x", 4097) + `"}}`},
+		},
+	} {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			var calls int
+			var stderr bytes.Buffer
+			code := Execute(t.Context(), Options{
+				Args: append([]string{"inspect-widget"}, test.args...), Stderr: &stderr, Catalog: &snapshot,
+				DynamicInvoke: func(context.Context, DynamicInvocation) error {
+					calls++
+					return nil
+				},
+			})
+			if code != 2 || calls != 0 {
+				t.Fatalf("malformed controls = code %d calls %d stderr %q; want usage refusal before invocation", code, calls, stderr.String())
+			}
+		})
+	}
+}
+
+func TestContinuationUsesPartialPreflightWithoutWeakeningRequiredInputs(t *testing.T) {
+	t.Parallel()
+	required := commandField("--query-workspace", "query.workspace", "workspace", contract.FieldLocationQuery)
+	snapshot := commandSnapshot([]pmapi.CommandFieldDescriptor{required})
+	const resume = `{"continuation":{"presence":"value","type":"string","text":"resume-token"}}`
+
+	for _, test := range []struct {
+		name      string
+		args      []string
+		wantCode  int
+		wantCalls int
+	}{
+		{name: "ordinary omission keeps full requiredness", wantCode: 2},
+		{
+			name:     "cap alone keeps full requiredness",
+			args:     []string{"--result-controls", `{"total_record_cap":2}`},
+			wantCode: 2,
+		},
+		{
+			name:     "typed absent continuation keeps full requiredness",
+			args:     []string{"--result-controls", `{"continuation":{"presence":"absent"}}`},
+			wantCode: 2,
+		},
+		{
+			name:      "valid continuation defers omitted required input",
+			args:      []string{"--result-controls", resume},
+			wantCalls: 1,
+		},
+		{
+			name:     "continuation rejects present invalid null",
+			args:     []string{"--query-workspace", "@null", "--result-controls", resume},
+			wantCode: 2,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var calls int
+			var stderr bytes.Buffer
+			code := Execute(t.Context(), Options{
+				Args:    append([]string{"inspect-widget"}, test.args...),
+				Stderr:  &stderr,
+				Catalog: &snapshot,
+				DynamicInvoke: func(_ context.Context, invocation DynamicInvocation) error {
+					calls++
+					if !invocation.ResultControls.HasContinuation() {
+						t.Fatal("partial invocation lost its explicit continuation")
+					}
+					return nil
+				},
+			})
+			if code != test.wantCode || calls != test.wantCalls {
+				t.Fatalf("continuation preflight = code %d calls %d stderr %q; want code %d calls %d", code, calls, stderr.String(), test.wantCode, test.wantCalls)
+			}
+		})
+	}
+	if !snapshot.Commands[0].Fields[0].Binding.Required {
+		t.Fatal("continuation preflight mutated requiredness in the catalog descriptor")
+	}
+}
+
+func TestResultControlsAndProviderAliasRemainDistinct(t *testing.T) {
+	t.Parallel()
+	snapshot := commandSnapshot([]pmapi.CommandFieldDescriptor{
+		commandField("--query-query-result-controls", "query.result-controls", "result-controls", contract.FieldLocationQuery),
+	})
+	const controls = `{"selection":{"paths":[["display_name"]]},"filter":{"path":["archived_at"],"operator":"is_null"}}`
+	var captured DynamicInvocation
+	var calls int
+	var stderr bytes.Buffer
+	code := Execute(t.Context(), Options{
+		Args: []string{
+			"inspect-widget",
+			"--query-query-result-controls", "provider-control-value",
+			"--result-controls", controls,
+		},
+		Stderr: &stderr, Catalog: &snapshot,
+		DynamicInvoke: func(_ context.Context, invocation DynamicInvocation) error {
+			calls++
+			captured = invocation
+			return nil
+		},
+	})
+	if code != 0 || calls != 1 {
+		t.Fatalf("aliased provider control = code %d calls %d stderr %q", code, calls, stderr.String())
+	}
+	fields, present := captured.Input.Fields()
+	if !present {
+		t.Fatalf("provider control input = %#v", captured.Input)
+	}
+	for fieldID, want := range map[string]string{
+		"query.result-controls": "provider-control-value",
+	} {
+		value, text := fields[fieldID].TextValue()
+		if !text || value != want {
+			t.Fatalf("provider field %q = %q, %t; want exact %q", fieldID, value, text, want)
+		}
+	}
+	source := contract.ActionResult{MediaType: "application/json", Data: contract.NewArrayValue([]contract.PresentValue{
+		contract.NewObjectValue(map[string]contract.PresentValue{
+			"display_name": contract.NewStringValue("retained"),
+			"archived_at":  contract.NullValue(),
+		}),
+		contract.NewObjectValue(map[string]contract.PresentValue{
+			"display_name": contract.NewStringValue("absent is not null"),
+		}),
+	})}
+	controlled, err := contract.ApplyResultControls(source, captured.ResultControls)
+	want := contract.NewArrayValue([]contract.PresentValue{
+		contract.NewObjectValue(map[string]contract.PresentValue{
+			"display_name": contract.NewStringValue("retained"),
+		}),
+	})
+	if err != nil || !controlled.Data.Equal(want) {
+		t.Fatalf("controlled result = %#v, %v; want only the selected field from the null-matching record", controlled, err)
+	}
+}
+
 func testInjectedCatalogHelpIsOffline(t *testing.T) {
 	snapshot := commandSnapshot([]pmapi.CommandFieldDescriptor{commandField("--query-workspace", "query.workspace", "workspace", contract.FieldLocationQuery)})
 	var calls int
@@ -391,6 +550,85 @@ func TestExecutableDiscoveryCachesOnlyRevisionBoundOfflineDocumentation(t *testi
 			t.Fatalf("provider value %q became input %#v", providerValue, invocation.Input)
 		}
 	}
+	t.Run("cap/resume controls preserve raw same-key intent", func(t *testing.T) {
+		executeControls := func(requestKey string, controls *string) (int, string, string) {
+			args := []string{
+				"--server-profile", profileName,
+				"--workspace", workspaceID,
+				"--connection", connectionID,
+				"--session-store", "memory",
+				"inspect-widget",
+				"--query-workspace", "controls-provider-value",
+			}
+			if controls != nil {
+				args = append(args, "--result-controls", *controls)
+			}
+			args = append(args, "--request-key", requestKey)
+			var stdout, stderr bytes.Buffer
+			code := Execute(t.Context(), Options{
+				Args: args, Stdout: &stdout, Stderr: &stderr, ProfilesPath: profilesPath,
+				HTTPClient: server.Client(), SessionStore: factory,
+			})
+			return code, stdout.String(), stderr.String()
+		}
+		const (
+			presenceKey = "request-result-controls-presence"
+			resumeKey   = "request-result-controls-resume"
+		)
+		absentContinuation := `{"continuation":{"presence":"absent"}}`
+		resumeControls := `{"total_record_cap":2,"continuation":{"presence":"value","type":"string","text":"resume-a"}}`
+		changedResumeControls := `{"total_record_cap":3,"continuation":{"presence":"value","type":"string","text":"resume-b"}}`
+
+		code, stdout, stderr := executeControls(presenceKey, nil)
+		if code != 0 {
+			t.Fatalf("omitted controls exit = %d stdout %q stderr %q", code, stdout, stderr)
+		}
+		var omittedInvocation pmapi.InvocationRequest
+		select {
+		case omittedInvocation = <-invocations:
+		default:
+			t.Fatalf("omitted controls returned without an invocation: stdout %q stderr %q", stdout, stderr)
+		}
+		callsBeforeConflict := invocationCalls.Load()
+		code, stdout, stderr = executeControls(presenceKey, &absentContinuation)
+		if code != 4 || invocationCalls.Load() != callsBeforeConflict {
+			t.Fatalf(
+				"same-key omitted/explicit-absent controls = code %d calls %d/%d stdout %q stderr %q",
+				code,
+				invocationCalls.Load(),
+				callsBeforeConflict,
+				stdout,
+				stderr,
+			)
+		}
+
+		code, stdout, stderr = executeControls(resumeKey, &resumeControls)
+		if code != 0 {
+			t.Fatalf("cap/resume controls exit = %d stdout %q stderr %q", code, stdout, stderr)
+		}
+		var resumedInvocation pmapi.InvocationRequest
+		select {
+		case resumedInvocation = <-invocations:
+		default:
+			t.Fatalf("cap/resume controls returned without an invocation: stdout %q stderr %q", stdout, stderr)
+		}
+		callsBeforeConflict = invocationCalls.Load()
+		code, stdout, stderr = executeControls(resumeKey, &changedResumeControls)
+		if code != 4 || invocationCalls.Load() != callsBeforeConflict {
+			t.Fatalf(
+				"changed same-key cap/resume controls = code %d calls %d/%d stdout %q stderr %q",
+				code,
+				invocationCalls.Load(),
+				callsBeforeConflict,
+				stdout,
+				stderr,
+			)
+		}
+
+		if !omittedInvocation.Input.Equal(resumedInvocation.Input) {
+			t.Fatalf("control-only replay changed provider input: omitted %#v resumed %#v", omittedInvocation.Input, resumedInvocation.Input)
+		}
+	})
 	switchedPrincipal := pmapi.Principal{
 		Kind:        pmapi.PrincipalKindUser,
 		PrincipalId: "grace-production-catalog",
@@ -437,9 +675,9 @@ func TestExecutableDiscoveryCachesOnlyRevisionBoundOfflineDocumentation(t *testi
 	if !switchedPresent || !switchedText || switchedValue != "account-switch" {
 		t.Fatalf("account switch became input %#v", switchedInvocation.Input)
 	}
-	if infoCalls.Load() != 5 || catalogCalls.Load() != 5 || invocationCalls.Load() != 5 {
+	if infoCalls.Load() != 9 || catalogCalls.Load() != 9 || invocationCalls.Load() != 7 {
 		t.Fatalf(
-			"fresh executable discovery calls = info %d catalog %d invocation %d, want 5/5/5",
+			"fresh executable discovery calls = info %d catalog %d invocation %d, want 9/9/7",
 			infoCalls.Load(),
 			catalogCalls.Load(),
 			invocationCalls.Load(),
@@ -695,14 +933,16 @@ func TestProjectedRequestVariantSemantics(t *testing.T) {
 			},
 		},
 	}
+	const resume = `{"continuation":{"presence":"value","type":"string","text":"resume-token"}}`
 
 	for _, test := range []struct {
-		name         string
-		args         []string
-		wantCode     int
-		wantCalls    int
-		wantField    string
-		wantFieldSet bool
+		name             string
+		args             []string
+		wantCode         int
+		wantCalls        int
+		wantField        string
+		wantFieldSet     bool
+		wantContinuation bool
 	}{
 		{
 			name:      "selected JSON variant",
@@ -721,8 +961,33 @@ func TestProjectedRequestVariantSemantics(t *testing.T) {
 			wantCode: 2,
 		},
 		{
+			name:             "continuation defers selected variant required field",
+			args:             []string{"--request-content-type", "application/json", "--result-controls", resume},
+			wantField:        jsonName.Binding.FieldID,
+			wantCalls:        1,
+			wantContinuation: true,
+		},
+		{
+			name:             "continuation defers omitted media selector",
+			args:             []string{"--json-name", "Ada", "--result-controls", resume},
+			wantField:        jsonName.Binding.FieldID,
+			wantFieldSet:     true,
+			wantCalls:        1,
+			wantContinuation: true,
+		},
+		{
+			name:     "continuation rejects fields from multiple variants",
+			args:     []string{"--json-name", "Ada", "--merge-name", "Grace", "--result-controls", resume},
+			wantCode: 2,
+		},
+		{
 			name:     "nonselected variant field",
 			args:     []string{"--request-content-type", "application/json", "--merge-name", "Grace"},
+			wantCode: 2,
+		},
+		{
+			name:     "continuation does not accept a nonselected variant field",
+			args:     []string{"--request-content-type", "application/json", "--merge-name", "Grace", "--result-controls", resume},
 			wantCode: 2,
 		},
 	} {
@@ -753,6 +1018,9 @@ func TestProjectedRequestVariantSemantics(t *testing.T) {
 			_, fieldSet := fields[test.wantField]
 			if fieldSet != test.wantFieldSet {
 				t.Fatalf("captured fields = %#v; field %q presence = %t", fields, test.wantField, fieldSet)
+			}
+			if captured.ResultControls.HasContinuation() != test.wantContinuation {
+				t.Fatalf("captured continuation presence = %t; want %t", captured.ResultControls.HasContinuation(), test.wantContinuation)
 			}
 		})
 	}

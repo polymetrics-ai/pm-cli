@@ -279,6 +279,141 @@ func TestArtifactAuthorityBindingIsImmutable(t *testing.T) {
 	}
 }
 
+func TestArtifactPurposeIsolationAndImmutability(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 3)
+	scope := newTestScope(t)
+	foreignScope := newTestScope(t)
+	t.Cleanup(func() {
+		cleanupTestScope(t, credentials, scope)
+		cleanupTestScope(t, credentials, foreignScope)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	connectionIDs := registerArtifactTestConnections(t, ctx, pool, scope, "purpose", "other")
+	registerArtifactTestConnections(t, ctx, pool, foreignScope, "foreign")
+
+	preverify := func(ref contract.ObjectRef) PreverifiedObjectRef {
+		t.Helper()
+		verified, err := NewPreverifiedObjectRef(ref, ObjectVerification{
+			ObservedSHA256:            ref.SHA256,
+			ObservedByteLength:        ref.ByteLength,
+			ObservedBackendGeneration: ref.BackendGeneration,
+		})
+		if err != nil {
+			t.Fatalf("construct preverified artifact %q: %v", ref.ArtifactID, err)
+		}
+		return verified
+	}
+	publicRef := testObjectRef(scope, "artifact-purpose-public", "attempt-purpose-public", "purpose-public")
+	continuationRef := testObjectRef(scope, "artifact-purpose-continuation", "attempt-purpose-continuation", "purpose-continuation")
+	publicObject := preverify(publicRef)
+	continuationObject := preverify(continuationRef)
+
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		if err := RegisterArtifact(ctx, tx, connectionIDs[0], publicObject); err != nil {
+			return err
+		}
+		if err := RegisterArtifact(ctx, tx, connectionIDs[0], publicObject); err != nil {
+			return err
+		}
+		if err := RegisterContinuationArtifact(ctx, tx, connectionIDs[0], continuationObject); err != nil {
+			return err
+		}
+		return RegisterContinuationArtifact(ctx, tx, connectionIDs[0], continuationObject)
+	}); err != nil {
+		t.Fatalf("register and replay purpose-bound artifacts: %v", err)
+	}
+
+	assertPurposeAccess := func() {
+		t.Helper()
+		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			public, err := LoadArtifact(ctx, tx, publicRef.ArtifactID)
+			if err != nil {
+				return err
+			}
+			if public != publicRef {
+				t.Fatalf("public artifact = %#v; want %#v", public, publicRef)
+			}
+			connectionID, err := LoadArtifactConnectionID(ctx, tx, publicRef.ArtifactID)
+			if err != nil {
+				return err
+			}
+			if connectionID != connectionIDs[0] {
+				t.Fatalf("public artifact connection = %q; want %q", connectionID, connectionIDs[0])
+			}
+			if _, err := LoadContinuationArtifact(ctx, tx, publicRef.ArtifactID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("continuation read of public artifact = %v; want ErrNotFound", err)
+			}
+
+			continuation, err := LoadContinuationArtifact(ctx, tx, continuationRef.ArtifactID)
+			if err != nil {
+				return err
+			}
+			if continuation != continuationRef {
+				t.Fatalf("continuation artifact = %#v; want %#v", continuation, continuationRef)
+			}
+			if _, err := LoadArtifact(ctx, tx, continuationRef.ArtifactID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("public read of continuation artifact = %v; want ErrNotFound", err)
+			}
+			if _, err := LoadArtifactConnectionID(ctx, tx, continuationRef.ArtifactID); !errors.Is(err, ErrNotFound) {
+				t.Fatalf("public authority read of continuation artifact = %v; want ErrNotFound", err)
+			}
+			return nil
+		}); err != nil {
+			t.Fatalf("load purpose-bound artifacts: %v", err)
+		}
+	}
+	assertPurposeAccess()
+
+	for _, testCase := range []struct {
+		name     string
+		register func(context.Context, *Transaction) error
+	}{
+		{
+			name: "public_to_continuation",
+			register: func(ctx context.Context, tx *Transaction) error {
+				return RegisterContinuationArtifact(ctx, tx, connectionIDs[0], publicObject)
+			},
+		},
+		{
+			name: "continuation_to_public",
+			register: func(ctx context.Context, tx *Transaction) error {
+				return RegisterArtifact(ctx, tx, connectionIDs[0], continuationObject)
+			},
+		},
+		{
+			name: "continuation_connection_change",
+			register: func(ctx context.Context, tx *Transaction) error {
+				return RegisterContinuationArtifact(ctx, tx, connectionIDs[1], continuationObject)
+			},
+		},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			err := WithinScope(ctx, pool, scope, testActor(scope), testCase.register)
+			if !errors.Is(err, ErrImmutableConflict) {
+				t.Fatalf("conflicting artifact registration = %v; want ErrImmutableConflict", err)
+			}
+		})
+	}
+	assertPurposeAccess()
+
+	foreignRef := testObjectRef(foreignScope, "artifact-purpose-foreign", "attempt-purpose-foreign", "purpose-foreign")
+	foreignObject := preverify(foreignRef)
+	err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return RegisterContinuationArtifact(ctx, tx, connectionIDs[0], foreignObject)
+	})
+	if !errors.Is(err, ErrScopeMismatch) {
+		t.Fatalf("foreign continuation registration = %v; want ErrScopeMismatch", err)
+	}
+	err = WithinScope(ctx, pool, foreignScope, testActor(foreignScope), func(ctx context.Context, tx *Transaction) error {
+		_, err := LoadContinuationArtifact(ctx, tx, continuationRef.ArtifactID)
+		return err
+	})
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("foreign continuation read = %v; want ErrNotFound", err)
+	}
+}
+
 func registerArtifactTestConnections(
 	t *testing.T,
 	ctx context.Context,

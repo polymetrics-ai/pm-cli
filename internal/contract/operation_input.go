@@ -54,6 +54,7 @@ func ResolveOperationRequest(operation Operation, input PresentValue) (ResolvedR
 		variantByField,
 		variants,
 		operation.RequestMediaFieldID,
+		false,
 	)
 	if err != nil {
 		return ResolvedRequest{}, err
@@ -132,7 +133,20 @@ func (projection OperationRequestProjection) ValidateInput(fields []FieldBinding
 	if err != nil {
 		return err
 	}
-	_, _, err = resolveOperationRequestInput(input, common, variantByField, variants, projection.RequestMediaFieldID)
+	_, _, err = resolveOperationRequestInput(input, common, variantByField, variants, projection.RequestMediaFieldID, false)
+	return err
+}
+
+// ValidateSuppliedInput validates every explicitly supplied logical field and
+// observable request-variant conflict while deferring only required fields
+// that are absent. Server restoration must follow with ordinary full
+// ValidateInput; this method does not relax or rewrite projected bindings.
+func (projection OperationRequestProjection) ValidateSuppliedInput(fields []FieldBinding, input PresentValue) error {
+	common, variantByField, variants, err := validateOperationRequestProjection(fields, projection)
+	if err != nil {
+		return err
+	}
+	_, _, err = resolveOperationRequestInput(input, common, variantByField, variants, projection.RequestMediaFieldID, true)
 	return err
 }
 
@@ -164,6 +178,7 @@ func resolveOperationRequestInput(
 	variantByField map[string]int,
 	variants []requestVariantShape,
 	requestMediaFieldID string,
+	deferOmittedRequired bool,
 ) (int, PresentValue, error) {
 	if err := input.Validate(); err != nil {
 		return -1, PresentValue{}, contractError(ErrInvalidValue, "input", "contains an invalid typed value")
@@ -182,7 +197,7 @@ func resolveOperationRequestInput(
 	}
 	for fieldID, binding := range common {
 		value, present := input.fields[fieldID]
-		if binding.Required && (!present || value.presence == PresenceAbsent) {
+		if !deferOmittedRequired && binding.Required && (!present || value.presence == PresenceAbsent) {
 			return -1, PresentValue{}, contractError(ErrInvalidValue, "input.fields", "required common logical field is absent")
 		}
 		if present && !operationInputMatchesSchema(value, binding.Schema, true) {
@@ -205,7 +220,7 @@ func resolveOperationRequestInput(
 	case 1:
 		if suppliedByVariant[0] {
 			selected = 0
-		} else if variants[0].required {
+		} else if variants[0].required && !deferOmittedRequired {
 			return -1, PresentValue{}, contractError(ErrInvalidValue, "input.fields", "required request body is absent")
 		} else {
 			return -1, AbsentValue(), nil
@@ -228,23 +243,37 @@ func resolveOperationRequestInput(
 			}
 			explicitMediaSelection = true
 		} else {
-			for _, supplied := range suppliedByVariant {
+			for index, supplied := range suppliedByVariant {
 				if supplied {
-					return -1, PresentValue{}, contractError(ErrInvalidValue, "input.fields", "request body media is ambiguous")
+					if !deferOmittedRequired || selected >= 0 {
+						return -1, PresentValue{}, contractError(ErrInvalidValue, "input.fields", "request body media is ambiguous")
+					}
+					selected = index
 				}
 			}
-			for index := range variants {
-				if variants[index].required {
-					return -1, PresentValue{}, contractError(ErrInvalidValue, "input.fields", "required request body media is absent")
+			if selected < 0 {
+				if !deferOmittedRequired {
+					for index := range variants {
+						if variants[index].required {
+							return -1, PresentValue{}, contractError(ErrInvalidValue, "input.fields", "required request body media is absent")
+						}
+					}
 				}
+				return -1, AbsentValue(), nil
 			}
-			return -1, AbsentValue(), nil
 		}
 		for index, supplied := range suppliedByVariant {
 			if supplied && index != selected {
 				return -1, PresentValue{}, contractError(ErrInvalidValue, "input.fields", "request contains fields from a non-selected media variant")
 			}
 		}
+	}
+
+	if deferOmittedRequired {
+		if err := validateSuppliedRequestBody(variants[selected], input.fields); err != nil {
+			return -1, PresentValue{}, err
+		}
+		return selected, AbsentValue(), nil
 	}
 
 	body, err := assembleRequestBody(variants[selected], input.fields, explicitMediaSelection)
@@ -468,18 +497,27 @@ func cloneRequestSchema(schema Schema) Schema {
 	return cloned
 }
 
-func assembleRequestBody(variant requestVariantShape, fields map[string]PresentValue, explicitMediaSelection bool) (PresentValue, error) {
+func validateSuppliedRequestBody(variant requestVariantShape, fields map[string]PresentValue) error {
+	_, err := validatedSuppliedRequestBindings(variant, fields, false)
+	return err
+}
+
+func validatedSuppliedRequestBindings(
+	variant requestVariantShape,
+	fields map[string]PresentValue,
+	requireRequired bool,
+) ([]FieldBinding, error) {
 	present := make([]FieldBinding, 0, len(variant.inputs))
 	for _, binding := range variant.inputs {
 		value, supplied := fields[binding.FieldID]
-		if binding.Required && (!supplied || value.presence == PresenceAbsent) {
-			return PresentValue{}, contractError(ErrInvalidValue, "input.fields", "required variant-local logical field is absent")
+		if requireRequired && binding.Required && (!supplied || value.presence == PresenceAbsent) {
+			return nil, contractError(ErrInvalidValue, "input.fields", "required variant-local logical field is absent")
 		}
 		if !supplied || value.presence == PresenceAbsent {
 			continue
 		}
 		if !operationInputMatchesSchema(value, binding.Schema, false) {
-			return PresentValue{}, contractError(ErrInvalidValue, "input.fields", "variant-local logical field does not match its declared schema")
+			return nil, contractError(ErrInvalidValue, "input.fields", "variant-local logical field does not match its declared schema")
 		}
 		present = append(present, binding)
 	}
@@ -488,9 +526,17 @@ func assembleRequestBody(variant requestVariantShape, fields map[string]PresentV
 		for offset := range present[left+1:] {
 			right := left + 1 + offset
 			if requestPointersOverlap(present[left].JSONPointer, present[right].JSONPointer) {
-				return PresentValue{}, contractError(ErrInvalidValue, "input.fields", "request body contains conflicting whole or nested assignments")
+				return nil, contractError(ErrInvalidValue, "input.fields", "request body contains conflicting whole or nested assignments")
 			}
 		}
+	}
+	return present, nil
+}
+
+func assembleRequestBody(variant requestVariantShape, fields map[string]PresentValue, explicitMediaSelection bool) (PresentValue, error) {
+	present, err := validatedSuppliedRequestBindings(variant, fields, true)
+	if err != nil {
+		return PresentValue{}, err
 	}
 
 	var body PresentValue
