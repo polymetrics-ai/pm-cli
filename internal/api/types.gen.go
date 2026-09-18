@@ -599,6 +599,14 @@ type AdmissionResponse struct {
 // AdmissionResponseState defines model for AdmissionResponse.State.
 type AdmissionResponseState string
 
+// ArtifactMetadata defines model for ArtifactMetadata.
+type ArtifactMetadata struct {
+	ArtifactId string `json:"artifact_id"`
+	ByteLength int64  `json:"byte_length"`
+	MediaType  string `json:"media_type"`
+	Sha256     string `json:"sha256"`
+}
+
 // BrowserLogin defines model for BrowserLogin.
 type BrowserLogin struct {
 	Code  string `json:"code"`
@@ -1383,6 +1391,9 @@ type WorkspacePage struct {
 // ArtifactID defines model for ArtifactID.
 type ArtifactID = string
 
+// ArtifactRange defines model for ArtifactRange.
+type ArtifactRange = string
+
 // CSRFToken defines model for CSRFToken.
 type CSRFToken = string
 
@@ -1451,6 +1462,9 @@ type Problem410 = Problem
 
 // Problem412 defines model for Problem412.
 type Problem412 = Problem
+
+// Problem416 defines model for Problem416.
+type Problem416 = Problem
 
 // Problem428 defines model for Problem428.
 type Problem428 = Problem

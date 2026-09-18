@@ -3,6 +3,7 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "config",
     srcs = [
+        "artifacts.go",
         "config.go",
         "server.go",
         "validate.go",
@@ -16,6 +17,7 @@ go_library(
 go_test(
     name = "config_test",
     srcs = [
+        "artifacts_test.go",
         "server_test.go",
         "worker_test.go",
     ],

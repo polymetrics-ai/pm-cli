@@ -47,6 +47,7 @@ type Service struct {
 	oidcHTTPClient        *http.Client
 	admission             *app.AdmissionService
 	runs                  *app.RunService
+	artifacts             *app.ArtifactService
 	resolveEventCursorKey func(context.Context) ([]byte, error)
 	eventBufferSize       uint64
 	eventWriteTimeout     time.Duration
@@ -98,6 +99,10 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 	if !validHTTPIdentifier(configuration.InstanceID, 512) {
 		return nil, errors.New("HTTP service instance identity is invalid")
 	}
+	artifacts, err := app.NewArtifactService(configuration.Identity, configuration.Artifacts)
+	if err != nil {
+		return nil, fmt.Errorf("construct HTTP artifact service: %w", err)
+	}
 	client := *configuration.OIDCHTTPClient
 	service := &Service{
 		publicOrigin:          configuration.PublicOrigin,
@@ -109,6 +114,7 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 		oidcHTTPClient:        &client,
 		admission:             configuration.Admission,
 		runs:                  configuration.Runs,
+		artifacts:             artifacts,
 		resolveEventCursorKey: configuration.ResolveEventCursorKey,
 		eventBufferSize:       configuration.EventBufferSize,
 		eventWriteTimeout:     configuration.EventWriteTimeout,
@@ -588,6 +594,8 @@ func newProblem(status int, code, retryAction string, outcome *api.SafeOutcomeRe
 		title, detail = "Request state expired", "The prior request state is no longer available."
 	case http.StatusPreconditionFailed, http.StatusPreconditionRequired:
 		title, detail = "Revision precondition failed", "Refresh the control revision before continuing."
+	case http.StatusRequestedRangeNotSatisfiable:
+		title, detail = "Range not satisfiable", "Correct the requested byte range and try again."
 	case http.StatusTooManyRequests:
 		title, detail = "Request limited", "The applicable request limit is currently reached."
 	case http.StatusServiceUnavailable:

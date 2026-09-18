@@ -69,6 +69,9 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if data.artifacts.AttemptKeyPolicy != "unique_immutable" {
 		return Configuration{}, diagnostic("artifacts.attempt_key_policy", DiagnosticValue)
 	}
+	if err := validateArtifactExecution(data.artifacts.Execution); err != nil {
+		return Configuration{}, err
+	}
 	if err := validateHTTPSURL(data.identity.Issuer, "identity.issuer", false); err != nil {
 		return Configuration{}, err
 	}

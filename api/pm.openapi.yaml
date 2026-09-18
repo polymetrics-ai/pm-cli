@@ -663,12 +663,10 @@ paths:
       summary: Request an authorized artifact upload capability
       operationId: uploadArtifact
       description: >-
-        M4 exposes only authorization and explicit capability refusal. No artifact
-        byte backend is installed, so this operation advertises no successful
-        representation and never fabricates artifact metadata. Send no request
-        body: the shared protocol guard rejects a nonempty entity as invalid_request.
-        A later byte-storage owner must declare the accepted raw-stream contract
-        before enabling byte input or adding a success response.
+        Public artifact upload remains unavailable on this route even when a
+        read backend is installed. Send no request body: the shared protocol
+        guard rejects a nonempty entity as invalid_request. Authorization still
+        precedes the explicit capability refusal.
       security:
         - PMSession: []
         - PMBrowserSession: []
@@ -693,16 +691,29 @@ paths:
       - $ref: "#/components/parameters/ArtifactID"
     get:
       tags: [artifacts]
-      summary: Authorize inspection of one artifact
+      summary: Inspect verified artifact metadata
       operationId: inspectArtifact
       description: >-
-        Authorizes the exact private artifact identity before reporting unavailable
-        byte storage. Foreign and unknown artifacts remain concealed as
-        resource_not_found. M4 advertises no successful metadata representation.
+        Authorizes the exact private artifact identity and verifies the complete
+        registered object before returning public digest, length, media type, and
+        artifact identity. Foreign and unknown artifacts remain concealed. The
+        response never exposes an object key, backend generation, URL, bucket, or
+        credential.
       security:
         - PMSession: []
         - PMBrowserSession: []
       responses:
+        "200":
+          description: Verified public artifact metadata
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactMetadata"
         "400":
           $ref: "#/components/responses/Problem400"
         "401":
@@ -721,16 +732,59 @@ paths:
       - $ref: "#/components/parameters/ArtifactID"
     get:
       tags: [artifacts]
-      summary: Authorize download of one artifact
+      summary: Download verified artifact bytes
       operationId: downloadArtifact
       description: >-
-        Applies the exact artifact authorization and concealment precedence before
-        reporting unavailable byte storage. M4 serves no body, range metadata,
-        digest, length, media type, or successful content response.
+        Authorizes the registered artifact before backend availability or range
+        validity is disclosed. A successful response contains exactly the full
+        object or one requested byte interval after complete digest, length, and
+        backend-generation verification. Multiple ranges are unsupported.
       security:
         - PMSession: []
         - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/ArtifactRange"
       responses:
+        "200":
+          description: Complete verified artifact bytes
+          headers:
+            Accept-Ranges:
+              $ref: "#/components/headers/AcceptRanges"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Content-Disposition:
+              $ref: "#/components/headers/ArtifactContentDisposition"
+            Content-Length:
+              $ref: "#/components/headers/ArtifactContentLength"
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: One verified artifact byte interval
+          headers:
+            Accept-Ranges:
+              $ref: "#/components/headers/AcceptRanges"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Content-Disposition:
+              $ref: "#/components/headers/ArtifactContentDisposition"
+            Content-Length:
+              $ref: "#/components/headers/ArtifactContentLength"
+            Content-Range:
+              $ref: "#/components/headers/ContentRange"
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "416":
+          $ref: "#/components/responses/Problem416"
         "400":
           $ref: "#/components/responses/Problem400"
         "401":
@@ -1563,6 +1617,18 @@ components:
         type: string
         minLength: 1
         maxLength: 512
+    ArtifactRange:
+      name: Range
+      in: header
+      required: false
+      description: >-
+        One bytes range in closed, open-ended, or suffix form. Multiple ranges
+        are unsupported. Malformed and unsatisfiable ranges return 416 only after
+        current artifact authorization and read-backend availability checks.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
     TaskID:
       name: task_id
       in: path
@@ -1603,6 +1669,39 @@ components:
         type: string
         minLength: 1
         maxLength: 512
+    ArtifactETag:
+      description: Strong validator derived only from the verified SHA-256 digest.
+      schema:
+        type: string
+        pattern: '^"sha256:[0-9a-f]{64}"$'
+    ArtifactContentDisposition:
+      description: Untrusted artifact bytes are downloaded, not rendered as a PM-origin document.
+      schema:
+        type: string
+        const: attachment
+    AcceptRanges:
+      description: The verified content route supports one bytes range.
+      schema:
+        type: string
+        const: bytes
+    ArtifactContentLength:
+      description: Exact number of bytes in this full or partial response body.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    CacheControlNoStore:
+      description: Private artifact representations must not be stored.
+      schema:
+        type: string
+        const: no-store
+    ContentRange:
+      description: Selected byte interval and complete registered length, or the complete length for a 416 response.
+      schema:
+        type: string
+        pattern: '^bytes ([0-9]+-[0-9]+|\*)/[0-9]+$'
+        minLength: 9
+        maxLength: 128
   responses:
     Problem400:
       description: Malformed or unsupported typed request
@@ -1642,6 +1741,19 @@ components:
             $ref: "#/components/schemas/Problem"
     Problem412:
       description: The supplied control revision is stale
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    Problem416:
+      description: The authorized single byte range is malformed or unsatisfiable for the registered length.
+      headers:
+        Accept-Ranges:
+          $ref: "#/components/headers/AcceptRanges"
+        Cache-Control:
+          $ref: "#/components/headers/CacheControlNoStore"
+        Content-Range:
+          $ref: "#/components/headers/ContentRange"
       content:
         application/problem+json:
           schema:
@@ -3277,6 +3389,26 @@ components:
       x-go-type-import:
         path: github.com/polymetrics-ai/pm-cli/internal/contract
         name: contract
+    ArtifactMetadata:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, sha256, byte_length, media_type]
+      properties:
+        artifact_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        byte_length:
+          type: integer
+          format: int64
+          minimum: 0
+        media_type:
+          type: string
+          minLength: 1
+          maxLength: 512
     ObjectRef:
       type: object
       additionalProperties: false

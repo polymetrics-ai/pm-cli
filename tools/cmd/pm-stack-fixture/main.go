@@ -666,6 +666,9 @@ func selectConfiguration(example []byte, project string, ports map[string]string
 	}); err != nil {
 		return nil, err
 	}
+	if err := setSelectedArtifactExecution(document); err != nil {
+		return nil, err
+	}
 	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return nil, errors.New("encode selected stack configuration")
@@ -713,6 +716,37 @@ func updateBundledSection(document map[string]json.RawMessage, name string, upda
 		return fmt.Errorf("encode selected %s section", name)
 	}
 	document[name] = encoded
+	return nil
+}
+
+func setSelectedArtifactExecution(document map[string]json.RawMessage) error {
+	raw, exists := document["artifacts"]
+	if !exists {
+		return errors.New("deploy/server.example.json is missing artifacts")
+	}
+	var section map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &section); err != nil || section == nil {
+		return errors.New("deploy/server.example.json has an invalid artifacts section")
+	}
+	execution, err := json.Marshal(map[string]any{
+		"region":                         "us-east-1",
+		"max_object_bytes":               16777216,
+		"max_in_flight":                  4,
+		"request_timeout":                "30s",
+		"organization_reserved_bytes":    1073741824,
+		"workspace_reserved_bytes":       268435456,
+		"organization_reserved_attempts": 4096,
+		"workspace_reserved_attempts":    1024,
+	})
+	if err != nil {
+		return errors.New("encode selected artifact execution configuration")
+	}
+	section["execution"] = execution
+	encoded, err := json.Marshal(section)
+	if err != nil {
+		return errors.New("encode selected artifacts section")
+	}
+	document["artifacts"] = encoded
 	return nil
 }
 

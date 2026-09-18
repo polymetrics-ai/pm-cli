@@ -107,6 +107,7 @@ type ArtifactsConfiguration struct {
 	Bucket           string
 	CredentialRef    string
 	AttemptKeyPolicy string
+	Execution        ArtifactExecutionConfiguration
 }
 
 type IdentityConfiguration struct {
@@ -407,8 +408,8 @@ func decodeTemporal(raw json.RawMessage) (TemporalConfiguration, error) {
 }
 
 func decodeArtifacts(raw json.RawMessage) (ArtifactsConfiguration, error) {
-	fields := []string{"ownership", "driver", "endpoint", "bucket", "credential_ref", "attempt_key_policy"}
-	object, err := decodeObject(raw, "artifacts", fields, fields)
+	fields := []string{"ownership", "driver", "endpoint", "bucket", "credential_ref", "attempt_key_policy", "execution"}
+	object, err := decodeObject(raw, "artifacts", fields, fields[:len(fields)-1])
 	if err != nil {
 		return ArtifactsConfiguration{}, err
 	}
@@ -436,6 +437,10 @@ func decodeArtifacts(raw json.RawMessage) (ArtifactsConfiguration, error) {
 	if err != nil {
 		return ArtifactsConfiguration{}, err
 	}
+	execution, err := decodeArtifactExecution(object["execution"])
+	if err != nil {
+		return ArtifactsConfiguration{}, err
+	}
 	return ArtifactsConfiguration{
 		Ownership:        Ownership(ownership),
 		Driver:           driver,
@@ -443,6 +448,7 @@ func decodeArtifacts(raw json.RawMessage) (ArtifactsConfiguration, error) {
 		Bucket:           bucket,
 		CredentialRef:    credentialRef,
 		AttemptKeyPolicy: attemptKeyPolicy,
+		Execution:        execution,
 	}, nil
 }
 

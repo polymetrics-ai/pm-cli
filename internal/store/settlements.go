@@ -48,6 +48,9 @@ func CommitSettlement(ctx context.Context, tx *Transaction, commit SettlementCom
 	if commit.Task.Revision != storedTask.Revision+1 || !sameTaskIdentity(storedTask, commit.Task) {
 		return contract.ServerEvent{}, ErrCASConflict
 	}
+	if err := validateWorkerResultArtifactReference(ctx, tx, commit.Receipt); err != nil {
+		return contract.ServerEvent{}, err
+	}
 
 	var dispatchJSON, effectJSON []byte
 	var effectDigest string

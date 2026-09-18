@@ -3,18 +3,24 @@ package httpapi_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
+	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
 )
@@ -25,6 +31,88 @@ type artifactRouteResponse struct {
 	status   int
 	header   http.Header
 	document []byte
+}
+
+// controlledArtifactBackend exercises the application/HTTP consumer contract.
+// It is deliberately not evidence for S3 behavior or selected-stack publication.
+type controlledArtifactBackend struct {
+	mutex       sync.Mutex
+	content     map[contract.ObjectRef][]byte
+	verifyError error
+	openError   error
+	verifyCalls int
+	openCalls   int
+}
+
+func newControlledArtifactBackend() *controlledArtifactBackend {
+	return &controlledArtifactBackend{content: make(map[contract.ObjectRef][]byte)}
+}
+
+func (backend *controlledArtifactBackend) register(ref contract.ObjectRef, payload []byte) {
+	backend.mutex.Lock()
+	defer backend.mutex.Unlock()
+	backend.content[ref] = append([]byte(nil), payload...)
+}
+
+func (backend *controlledArtifactBackend) setErrors(verifyError, openError error) {
+	backend.mutex.Lock()
+	defer backend.mutex.Unlock()
+	backend.verifyError = verifyError
+	backend.openError = openError
+}
+
+func (backend *controlledArtifactBackend) calls() (verify, open int) {
+	backend.mutex.Lock()
+	defer backend.mutex.Unlock()
+	return backend.verifyCalls, backend.openCalls
+}
+
+func (backend *controlledArtifactBackend) Verify(ctx context.Context, ref contract.ObjectRef) error {
+	backend.mutex.Lock()
+	defer backend.mutex.Unlock()
+	backend.verifyCalls++
+	if ctx == nil || ctx.Err() != nil {
+		return objects.ErrObjectUnavailable
+	}
+	if backend.verifyError != nil {
+		return backend.verifyError
+	}
+	payload, ok := backend.content[ref]
+	if !ok || !artifactPayloadMatches(ref, payload) {
+		return objects.ErrObjectIntegrity
+	}
+	return nil
+}
+
+func (backend *controlledArtifactBackend) OpenVerified(
+	ctx context.Context,
+	ref contract.ObjectRef,
+	selection objects.ByteRange,
+) (io.ReadCloser, error) {
+	backend.mutex.Lock()
+	defer backend.mutex.Unlock()
+	backend.openCalls++
+	if ctx == nil || ctx.Err() != nil {
+		return nil, objects.ErrObjectUnavailable
+	}
+	if backend.openError != nil {
+		return nil, backend.openError
+	}
+	payload, ok := backend.content[ref]
+	if !ok || !artifactPayloadMatches(ref, payload) {
+		return nil, objects.ErrObjectIntegrity
+	}
+	if selection.Offset < 0 || selection.Length < 0 || selection.Offset > ref.ByteLength ||
+		selection.Length > ref.ByteLength-selection.Offset {
+		return nil, objects.ErrInvalidRange
+	}
+	selected := append([]byte(nil), payload[selection.Offset:selection.Offset+selection.Length]...)
+	return io.NopCloser(bytes.NewReader(selected)), nil
+}
+
+func artifactPayloadMatches(ref contract.ObjectRef, payload []byte) bool {
+	digest := sha256.Sum256(payload)
+	return ref.ByteLength == int64(len(payload)) && ref.SHA256 == hex.EncodeToString(digest[:])
 }
 
 func TestScopedUnavailableArtifactRoutes(t *testing.T) {
@@ -110,6 +198,12 @@ func TestScopedUnavailableArtifactRoutes(t *testing.T) {
 			headers map[string]string
 		}{
 			{name: "inspect", method: http.MethodGet, path: resource},
+			{
+				name:    "download malformed range",
+				method:  http.MethodGet,
+				path:    resource + "/content",
+				headers: map[string]string{"Range": "bytes=not-a-range"},
+			},
 			{
 				name:    "download",
 				method:  http.MethodGet,
@@ -267,6 +361,368 @@ func TestScopedUnavailableArtifactRoutes(t *testing.T) {
 	})
 }
 
+func TestScopedArtifactReadRoutes(t *testing.T) {
+	t.Run("R17_E03_C02_inspection_returns_only_verified_public_metadata", func(t *testing.T) {
+		fixture, backend := newControlledArtifactFixture(t)
+		artifact := registerArtifactMetadata(t, fixture, "artifact-inspect-verified")
+		backend.register(artifact, []byte(artifactCanary))
+
+		response := sendArtifactRoute(
+			t,
+			fixture.Client,
+			http.MethodGet,
+			artifactPath(fixture, fixture.Scope, artifact.ArtifactID),
+			nil,
+		)
+		if response.status != http.StatusOK {
+			t.Fatalf("inspect status = %d; want 200: %s", response.status, response.document)
+		}
+		if contentType := response.header.Get("Content-Type"); !strings.HasPrefix(contentType, "application/json") {
+			t.Fatalf("inspect content type = %q; want application/json", contentType)
+		}
+		if response.header.Get("Cache-Control") != "no-store" {
+			t.Fatalf("inspect cache control = %q; want no-store", response.header.Get("Cache-Control"))
+		}
+		if response.header.Get("ETag") != artifactETag(artifact) {
+			t.Fatalf("inspect ETag = %q; want digest validator", response.header.Get("ETag"))
+		}
+
+		var members map[string]json.RawMessage
+		if err := json.Unmarshal(response.document, &members); err != nil {
+			t.Fatalf("decode inspect metadata: %v: %s", err, response.document)
+		}
+		allowed := map[string]bool{
+			"artifact_id": true,
+			"sha256":      true,
+			"byte_length": true,
+			"media_type":  true,
+		}
+		if len(members) != len(allowed) {
+			t.Fatalf("inspect metadata members = %v; want only public metadata", members)
+		}
+		for name := range members {
+			if !allowed[name] {
+				t.Fatalf("inspect metadata exposed %q", name)
+			}
+		}
+		var metadata struct {
+			ArtifactID string `json:"artifact_id"`
+			SHA256     string `json:"sha256"`
+			ByteLength int64  `json:"byte_length"`
+			MediaType  string `json:"media_type"`
+		}
+		if err := json.Unmarshal(response.document, &metadata); err != nil {
+			t.Fatalf("decode typed inspect metadata: %v", err)
+		}
+		if metadata.ArtifactID != artifact.ArtifactID || metadata.SHA256 != artifact.SHA256 ||
+			metadata.ByteLength != artifact.ByteLength || metadata.MediaType != artifact.MediaType {
+			t.Fatalf("inspect metadata = %#v; want registered public projection", metadata)
+		}
+		for _, private := range []string{
+			artifact.ObjectAttemptKey,
+			artifact.BackendGeneration,
+			artifact.OrgID,
+			artifact.WorkspaceID,
+		} {
+			if bytes.Contains(response.document, []byte(private)) {
+				t.Fatalf("inspect metadata exposed private backend or scope value %q: %s", private, response.document)
+			}
+		}
+		verifyCalls, openCalls := backend.calls()
+		if verifyCalls != 1 || openCalls != 0 {
+			t.Fatalf("inspect backend calls = verify %d/open %d; want 1/0", verifyCalls, openCalls)
+		}
+	})
+
+	t.Run("installed_read_backend_does_not_enable_the_bodyless_upload_route", func(t *testing.T) {
+		fixture, backend := newControlledArtifactFixture(t)
+		grantArtifactWrite(t, fixture)
+		response := sendArtifactRoute(
+			t,
+			fixture.Client,
+			http.MethodPost,
+			artifactCollectionPath(fixture, fixture.Scope),
+			nil,
+		)
+		requireArtifactProblem(t, response, http.StatusServiceUnavailable, "capability_unavailable")
+		verifyCalls, openCalls := backend.calls()
+		if verifyCalls != 0 || openCalls != 0 {
+			t.Fatalf("unavailable upload reached read backend: verify %d/open %d", verifyCalls, openCalls)
+		}
+	})
+
+	t.Run("R17_E03_C02_full_closed_from_and_suffix_ranges_return_exact_verified_bytes", func(t *testing.T) {
+		fixture, backend := newControlledArtifactFixture(t)
+		artifact := registerArtifactMetadata(t, fixture, "artifact-range-verified")
+		payload := []byte(artifactCanary)
+		backend.register(artifact, payload)
+		resource := artifactPath(fixture, fixture.Scope, artifact.ArtifactID) + "/content"
+
+		for _, test := range []struct {
+			name        string
+			rangeHeader string
+			offset      int64
+			length      int64
+			partial     bool
+		}{
+			{name: "full", offset: 0, length: int64(len(payload))},
+			{name: "closed", rangeHeader: "bytes=1-4", offset: 1, length: 4, partial: true},
+			{name: "closed end is clipped", rangeHeader: "bytes=5-999", offset: 5, length: int64(len(payload)) - 5, partial: true},
+			{name: "from", rangeHeader: "bytes=9-", offset: 9, length: int64(len(payload)) - 9, partial: true},
+			{name: "suffix", rangeHeader: "bytes=-6", offset: int64(len(payload)) - 6, length: 6, partial: true},
+			{name: "oversized suffix", rangeHeader: "bytes=-999", offset: 0, length: int64(len(payload)), partial: true},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				var headers map[string]string
+				if test.rangeHeader != "" {
+					headers = map[string]string{"Range": test.rangeHeader}
+				}
+				response := sendArtifactRoute(t, fixture.Client, http.MethodGet, resource, headers)
+				wantStatus := http.StatusOK
+				if test.partial {
+					wantStatus = http.StatusPartialContent
+				}
+				if response.status != wantStatus {
+					t.Fatalf("download status = %d; want %d: %s", response.status, wantStatus, response.document)
+				}
+				wantBody := payload[test.offset : test.offset+test.length]
+				if !bytes.Equal(response.document, wantBody) {
+					t.Fatalf("download bytes = %q; want %q", response.document, wantBody)
+				}
+				if response.header.Get("Content-Length") != strconv.FormatInt(test.length, 10) {
+					t.Fatalf("content length = %q; want %d", response.header.Get("Content-Length"), test.length)
+				}
+				if response.header.Get("Content-Type") != artifact.MediaType {
+					t.Fatalf("content type = %q; want %q", response.header.Get("Content-Type"), artifact.MediaType)
+				}
+				if response.header.Get("Accept-Ranges") != "bytes" ||
+					response.header.Get("Cache-Control") != "no-store" ||
+					response.header.Get("ETag") != artifactETag(artifact) {
+					t.Fatalf("download metadata headers are incomplete: %#v", response.header)
+				}
+				wantContentRange := ""
+				if test.partial {
+					wantContentRange = "bytes " + strconv.FormatInt(test.offset, 10) + "-" +
+						strconv.FormatInt(test.offset+test.length-1, 10) + "/" +
+						strconv.FormatInt(int64(len(payload)), 10)
+				}
+				if response.header.Get("Content-Range") != wantContentRange {
+					t.Fatalf("content range = %q; want %q", response.header.Get("Content-Range"), wantContentRange)
+				}
+			})
+		}
+		verifyCalls, openCalls := backend.calls()
+		if verifyCalls != 0 || openCalls != 6 {
+			t.Fatalf("download backend calls = verify %d/open %d; want 0/6", verifyCalls, openCalls)
+		}
+	})
+
+	t.Run("range_rejection_follows_authority_and_backend_availability_without_backend_io", func(t *testing.T) {
+		fixture, backend := newControlledArtifactFixture(t)
+		artifact := registerArtifactMetadata(t, fixture, "artifact-range-refusal")
+		backend.register(artifact, []byte(artifactCanary))
+		resource := artifactPath(fixture, fixture.Scope, artifact.ArtifactID) + "/content"
+		for _, value := range []string{
+			"bytes=0-1,3-4",
+			"items=0-1",
+			"bytes=-0",
+			"bytes=5-4",
+			"bytes=9223372036854775808-",
+			"bytes=" + strings.Repeat("9", 257) + "-",
+			"bytes=999-",
+		} {
+			response := sendArtifactRoute(
+				t,
+				fixture.Client,
+				http.MethodGet,
+				resource,
+				map[string]string{"Range": value},
+			)
+			requireArtifactProblem(t, response, http.StatusRequestedRangeNotSatisfiable, "artifact_range_not_satisfiable")
+			wantContentRange := "bytes */" + strconv.FormatInt(artifact.ByteLength, 10)
+			if response.header.Get("Content-Range") != wantContentRange ||
+				response.header.Get("Accept-Ranges") != "bytes" ||
+				response.header.Get("Cache-Control") != "no-store" {
+				t.Fatalf("range refusal headers for %q = %#v; want authorized length", value, response.header)
+			}
+			if response.header.Get("ETag") != "" {
+				t.Fatalf("range refusal for %q exposed a success validator", value)
+			}
+		}
+		verifyCalls, openCalls := backend.calls()
+		if verifyCalls != 0 || openCalls != 0 {
+			t.Fatalf("rejected ranges reached backend: verify %d/open %d", verifyCalls, openCalls)
+		}
+	})
+
+	t.Run("R17_E03_C01_C03_C04_concealment_precedes_configured_backend_and_range_disclosure", func(t *testing.T) {
+		fixture, backend := newControlledArtifactFixture(t)
+		artifact := registerArtifactMetadata(t, fixture, "artifact-configured-concealment")
+		backend.register(artifact, []byte(artifactCanary))
+		foreignClient := fixture.ClientFor(t, fixture.ForeignActor)
+		for _, request := range []struct {
+			name   string
+			client *http.Client
+			path   string
+		}{
+			{
+				name:   "foreign download",
+				client: foreignClient,
+				path:   artifactPath(fixture, fixture.Scope, artifact.ArtifactID) + "/content",
+			},
+			{
+				name:   "unknown download",
+				client: fixture.Client,
+				path:   artifactPath(fixture, fixture.Scope, "artifact-configured-unknown") + "/content",
+			},
+		} {
+			t.Run(request.name, func(t *testing.T) {
+				response := sendArtifactRoute(
+					t,
+					request.client,
+					http.MethodGet,
+					request.path,
+					map[string]string{"Range": "bytes=not-a-range"},
+				)
+				requireArtifactProblem(t, response, http.StatusNotFound, "resource_not_found")
+				if response.header.Get("Content-Range") != "" || response.header.Get("Accept-Ranges") != "" {
+					t.Fatalf("concealed request disclosed range availability: %#v", response.header)
+				}
+			})
+		}
+		verifyCalls, openCalls := backend.calls()
+		if verifyCalls != 0 || openCalls != 0 {
+			t.Fatalf("concealed requests reached backend: verify %d/open %d", verifyCalls, openCalls)
+		}
+	})
+
+	t.Run("controlled_backend_faults_are_sanitized_and_are_not_real_S3_proof", func(t *testing.T) {
+		const faultCanary = "controlled-backend-fault access_key=must-not-leak"
+		for _, test := range []struct {
+			name        string
+			inspect     bool
+			verifyError error
+			openError   error
+			payload     []byte
+			status      int
+			code        string
+		}{
+			{
+				name:        "inspection verification fault",
+				inspect:     true,
+				verifyError: errors.New(faultCanary),
+				status:      http.StatusInternalServerError,
+				code:        "internal_error",
+			},
+			{
+				name:      "download verification fault",
+				openError: errors.New(faultCanary),
+				status:    http.StatusInternalServerError,
+				code:      "internal_error",
+			},
+			{
+				name:    "registered digest mismatch",
+				payload: []byte("controlled-corrupt-object-bytes"),
+				status:  http.StatusInternalServerError,
+				code:    "internal_error",
+			},
+			{
+				name:      "download backend unavailable",
+				openError: objects.ErrObjectUnavailable,
+				status:    http.StatusServiceUnavailable,
+				code:      "capability_unavailable",
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				fixture, backend := newControlledArtifactFixture(t)
+				artifact := registerArtifactMetadata(t, fixture, "artifact-controlled-fault")
+				payload := []byte(artifactCanary)
+				if test.payload != nil {
+					payload = test.payload
+				}
+				backend.register(artifact, payload)
+				backend.setErrors(test.verifyError, test.openError)
+				resource := artifactPath(fixture, fixture.Scope, artifact.ArtifactID)
+				var headers map[string]string
+				if !test.inspect {
+					resource += "/content"
+					headers = map[string]string{"Range": "bytes=0-3"}
+				}
+				response := sendArtifactRoute(t, fixture.Client, http.MethodGet, resource, headers)
+				requireArtifactProblem(t, response, test.status, test.code)
+				if bytes.Contains(response.document, []byte(faultCanary)) {
+					t.Fatalf("controlled backend detail leaked: %s", response.document)
+				}
+				if response.header.Get("ETag") != "" || response.header.Get("Content-Range") != "" ||
+					response.header.Get("Accept-Ranges") != "" {
+					t.Fatalf("backend fault advertised successful content: %#v", response.header)
+				}
+				if test.payload != nil && bytes.Contains(response.document, test.payload) {
+					t.Fatalf("controlled corrupt object bytes leaked: %s", response.document)
+				}
+				verifyCalls, openCalls := backend.calls()
+				if test.inspect && (verifyCalls != 1 || openCalls != 0) {
+					t.Fatalf("inspection fault calls = verify %d/open %d; want 1/0", verifyCalls, openCalls)
+				}
+				if !test.inspect && (verifyCalls != 0 || openCalls != 1) {
+					t.Fatalf("download fault calls = verify %d/open %d; want 0/1", verifyCalls, openCalls)
+				}
+			})
+		}
+	})
+	t.Run("active_content_download_is_not_a_PM_origin_document", func(t *testing.T) {
+		fixture, backend := newControlledArtifactFixture(t)
+		payload := []byte("<!doctype html><script>document.title='artifact-script'</script>")
+		digest := sha256.Sum256(payload)
+		ref := artifactMetadataRef(fixture.Scope, "artifact-active-content")
+		ref.SHA256 = hex.EncodeToString(digest[:])
+		ref.ByteLength = int64(len(payload))
+		ref.MediaType = "text/html"
+		verified, err := store.NewPreverifiedObjectRef(ref, store.ObjectVerification{
+			ObservedSHA256:            ref.SHA256,
+			ObservedByteLength:        ref.ByteLength,
+			ObservedBackendGeneration: ref.BackendGeneration,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+			return store.RegisterArtifact(ctx, tx, fixture.Connection.ConnectionID, verified)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		backend.register(ref, payload)
+		response := sendArtifactRoute(t, fixture.Client, http.MethodGet, artifactPath(fixture, fixture.Scope, ref.ArtifactID)+"/content", nil)
+		if response.status != http.StatusOK || !bytes.Equal(response.document, payload) {
+			t.Fatalf("active content download changed: status=%d body=%q", response.status, response.document)
+		}
+		if response.header.Get("Content-Disposition") != "attachment" {
+			t.Fatalf("untrusted active content may render in the authenticated PM origin: disposition=%q", response.header.Get("Content-Disposition"))
+		}
+	})
+}
+
+func newControlledArtifactFixture(
+	t *testing.T,
+) (*testfixture.Fixture, *controlledArtifactBackend) {
+	t.Helper()
+	backend := newControlledArtifactBackend()
+	fixture := testfixture.New(t, func(
+		_ testfixture.ServiceDependencies,
+		configuration *httpapi.ServiceConfig,
+	) error {
+		configuration.Artifacts = backend
+		return nil
+	})
+	return fixture, backend
+}
+
+func artifactETag(ref contract.ObjectRef) string {
+	return `"sha256:` + ref.SHA256 + `"`
+}
+
 func registerArtifactMetadata(t *testing.T, fixture *testfixture.Fixture, artifactID string) contract.ObjectRef {
 	t.Helper()
 	return registerScopedArtifactMetadata(
@@ -332,12 +788,13 @@ func insertUnboundArtifactMetadata(
 }
 
 func artifactMetadataRef(scope contract.Scope, artifactID string) contract.ObjectRef {
+	digest := sha256.Sum256([]byte(artifactCanary))
 	return contract.ObjectRef{
 		OrgID:             scope.OrgID,
 		WorkspaceID:       scope.WorkspaceID,
 		ArtifactID:        artifactID,
 		ObjectAttemptKey:  artifactID + "-attempt-1",
-		SHA256:            strings.Repeat("a", 64),
+		SHA256:            hex.EncodeToString(digest[:]),
 		ByteLength:        int64(len(artifactCanary)),
 		MediaType:         "application/octet-stream",
 		BackendGeneration: "fixture-generation-1",

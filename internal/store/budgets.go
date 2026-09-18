@@ -12,6 +12,7 @@ import (
 
 var (
 	ErrAccountCapacity    = errors.New("provider account capacity unavailable")
+	ErrAccountCooldown    = errors.New("provider account cooldown is active")
 	ErrAccountPermitStale = errors.New("account permit is stale")
 )
 
@@ -136,6 +137,9 @@ func ReserveAccountPermit(ctx context.Context, tx *Transaction, request AccountP
 	if !errors.Is(err, ErrNotFound) {
 		return AccountPermit{}, err
 	}
+	if err := requireAccountCooldownElapsed(ctx, tx, scope.OrgID, connection.ProviderAccountID); err != nil {
+		return AccountPermit{}, err
+	}
 	if request.Units > capacity-reserved {
 		return AccountPermit{}, ErrAccountCapacity
 	}
@@ -200,6 +204,9 @@ func ReserveAccountPermit(ctx context.Context, tx *Transaction, request AccountP
 // dispatched state is conservative durable intent, not proof of provider I/O.
 func AuthorizeAccountPermit(ctx context.Context, tx *Transaction, permit AccountPermit) (AccountPermit, error) {
 	if err := requirePermitState(tx, permit, AccountPermitReserved); err != nil {
+		return AccountPermit{}, err
+	}
+	if err := CheckAccountCooldown(ctx, tx, permit); err != nil {
 		return AccountPermit{}, err
 	}
 	updated := permit

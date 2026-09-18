@@ -1242,6 +1242,13 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			return
 		}
 		for _, statement := range []string{
+			`UPDATE pm.object_org_capacity AS organization
+			 SET reserved_bytes = organization.reserved_bytes - workspace.reserved_bytes,
+			     reserved_attempts = organization.reserved_attempts - workspace.reserved_attempts
+			 FROM pm.object_workspace_capacity AS workspace
+			 WHERE organization.org_id = $1 AND workspace.org_id = $1 AND workspace.workspace_id = $2`,
+			`DELETE FROM pm.object_reservations WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.object_workspace_capacity WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workflow_reconciliation_witnesses WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workflow_command_intents WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.credential_refresh_leases WHERE org_id = $1 AND workspace_id = $2`,
@@ -1279,6 +1286,10 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 	}
 	if err := bindScope(ctx, tx, fixture.DeploymentID, fixture.Scope, fixture.Actor); err != nil {
 		t.Errorf("bind fixture organization cleanup: %T", err)
+		return
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM pm.object_org_capacity WHERE org_id = $1 AND reserved_bytes = 0 AND reserved_attempts = 0`, fixture.Scope.OrgID); err != nil {
+		t.Errorf("clean fixture object capacity: %T", err)
 		return
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM pm.identities WHERE org_id = $1`, fixture.Scope.OrgID); err != nil {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -158,9 +159,6 @@ func TestManualArtifactOperationsUseQualifiedSession(t *testing.T) {
 		{name: "inspect", call: func() (*ArtifactOperationResponse, error) {
 			return client.InspectArtifactWithResponse(t.Context(), WorkspaceID(workspaceID), ArtifactID("artifact-one"))
 		}},
-		{name: "download", call: func() (*ArtifactOperationResponse, error) {
-			return client.DownloadArtifactWithResponse(t.Context(), WorkspaceID(workspaceID), ArtifactID("artifact-one"))
-		}},
 	}
 	for _, request := range requests {
 		response, err := request.call()
@@ -171,6 +169,11 @@ func TestManualArtifactOperationsUseQualifiedSession(t *testing.T) {
 		if err != nil || envelope.Problem == nil || envelope.Problem.Value.Code != "capability_unavailable" {
 			t.Fatalf("%s artifact response = (%#v, %v)", request.name, envelope, err)
 		}
+	}
+	var problem *ProblemError
+	err = client.DownloadArtifact(t.Context(), WorkspaceID(workspaceID), ArtifactID("artifact-one"), "", io.Discard)
+	if !errors.As(err, &problem) || problem.Decoded.Value.Code != "capability_unavailable" {
+		t.Fatalf("download artifact error = %v, want typed capability_unavailable", err)
 	}
 	if artifactCalls.Load() != 3 {
 		t.Fatalf("artifact route calls = %d, want 3", artifactCalls.Load())

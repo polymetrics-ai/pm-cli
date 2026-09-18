@@ -79,6 +79,11 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 		}
 		pool.Close()
 
+		for version := ControlSchemaVersion; version > 12; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return owned retained-event fixture to v12: %v", err)
+			}
+		}
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 12); err != nil {
 			t.Fatalf("return owned retained-event fixture to v11: %v", err)
 		}
@@ -237,6 +242,11 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 		}
 		pool.Close()
 
+		for version := ControlSchemaVersion; version > 12; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained-tail fixture to v12: %v", err)
+			}
+		}
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 12); err != nil {
 			t.Fatalf("return retained-tail fixture to v11: %v", err)
 		}
@@ -289,6 +299,11 @@ func TestArtifactAuthorityMigrationRetainedData(t *testing.T) {
 	}
 	pool.Close()
 
+	for version := ControlSchemaVersion; version > 12; version-- {
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+			t.Fatalf("return retained artifact fixture to v12: %v", err)
+		}
+	}
 	err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 12)
 	if err == nil {
 		t.Fatal("artifact authority downgrade succeeded with a retained binding")
@@ -310,10 +325,13 @@ func TestArtifactAuthorityMigrationRetainedData(t *testing.T) {
 	if err := conn.Close(ctx); err != nil {
 		t.Fatal("close migrator after retained artifact authority downgrade refusal")
 	}
-	if revision != ControlSchemaRevision {
-		t.Fatalf("control revision after retained artifact authority downgrade refusal = %q; want %q", revision, ControlSchemaRevision)
+	if revision != "pm.control/v12" {
+		t.Fatalf("control revision after retained artifact authority downgrade refusal = %q; want v12", revision)
 	}
 
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatalf("restore current schema after artifact downgrade refusal: %v", err)
+	}
 	reopened := openEventWatermarkMigrationPool(t, ctx, credentials.runtimeDSN)
 	defer reopened.Close()
 	if err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
@@ -327,6 +345,118 @@ func TestArtifactAuthorityMigrationRetainedData(t *testing.T) {
 		return nil
 	}); err != nil {
 		t.Fatalf("load retained artifact authority after downgrade refusal: %v", err)
+	}
+}
+
+func TestAccountCooldownMigrationRetainedData(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 3)
+	fixture := registerPermitTestFixture(t, credentials, pool, permitFixtureOptions{Capacity: 2})
+	t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	source, err := reservePermitForTest(ctx, pool, fixture.alpha, AccountPermitRequest{
+		PermitID: "migration-source-" + fixture.suffix, ConnectionID: fixture.alphaConnections[0],
+		OwnerID: "source-worker", Units: 1, TTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("reserve migration cooldown source: %v", err)
+	}
+	source, err = authorizePermitForTest(ctx, pool, source)
+	if err != nil {
+		t.Fatalf("dispatch migration cooldown source: %v", err)
+	}
+	waiting, err := reservePermitForTest(ctx, pool, fixture.beta, AccountPermitRequest{
+		PermitID: "migration-waiting-" + fixture.suffix, ConnectionID: fixture.betaConnection,
+		OwnerID: "waiting-worker", Units: 1, TTL: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("reserve pre-cooldown migration permit: %v", err)
+	}
+	until := source.ReservedAt.Add(time.Hour)
+	if err := WithinScope(ctx, pool, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+		return RecordAccountCooldown(ctx, tx, source, until)
+	}); err != nil {
+		t.Fatalf("retain migration cooldown: %v", err)
+	}
+	pool.Close()
+	for version := ControlSchemaVersion; version > 13; version-- {
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+			t.Fatalf("return retained cooldown fixture to v13: %v", err)
+		}
+	}
+	err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 13)
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+		t.Fatalf("retained cooldown downgrade = %v; want transactional refusal", err)
+	}
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatalf("restore current schema after cooldown downgrade refusal: %v", err)
+	}
+	reopened := openPermitTestPool(t, credentials, 3)
+	_, err = authorizePermitForTest(ctx, reopened, waiting)
+	var cooldown *AccountCooldownError
+	if !errors.As(err, &cooldown) || !cooldown.NotBefore.Equal(until) {
+		t.Fatalf("retained cooldown after refused downgrade = %v; want original deadline", err)
+	}
+}
+
+func TestObjectPublicationMigrationRetainedData(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 3)
+	fixture := registerPermitTestFixture(t, credentials, pool, permitFixtureOptions{Capacity: 2})
+	t.Cleanup(func() { restoreEventWatermarkMigrationFixture(t, credentials) })
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	request := ObjectReservationRequest{
+		ReservationID: "migration-object-" + fixture.suffix,
+		ConnectionID:  fixture.alphaConnections[0],
+		ArtifactID:    "migration-artifact-" + fixture.suffix,
+		MaximumBytes:  8,
+	}
+	limits := ObjectCapacityLimits{OrganizationBytes: 16, WorkspaceBytes: 16, OrganizationAttempts: 2, WorkspaceAttempts: 2}
+	var original ObjectReservation
+	if err := WithinScope(ctx, pool, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+		var err error
+		original, err = ReserveObjectCapacity(ctx, tx, request, limits)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+	for pass := range 2 {
+		for version := ControlSchemaVersion; version > 14; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained object fixture to v14: %v", err)
+			}
+		}
+		err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 14)
+		var databaseError *pgconn.PgError
+		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+			t.Fatalf("retained object downgrade = %v; want transactional refusal", err)
+		}
+		if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+			t.Fatalf("restore schema after object downgrade refusal: %v", err)
+		}
+		reopened := openPermitTestPool(t, credentials, 3)
+		if err := WithinScope(ctx, reopened, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+			retained, err := LoadObjectReservation(ctx, tx, request.ReservationID)
+			if err != nil {
+				return err
+			}
+			wantState := ObjectReservationHeld
+			if pass == 1 {
+				wantState = ObjectReservationReleased
+			}
+			if retained.Request != original.Request || !retained.ReservedAt.Equal(original.ReservedAt) || retained.State != wantState {
+				return errors.New("refused downgrade changed retained reservation history")
+			}
+			if pass == 0 {
+				return CancelObjectReservation(ctx, tx, request.ReservationID)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+		reopened.Close()
 	}
 }
 

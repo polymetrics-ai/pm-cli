@@ -247,6 +247,52 @@ Canonical identity arrays use PostgreSQL `COLLATE "C"` to match Go's bytewise gr
 
 These are controlled local HTTP/TLS/PostgreSQL checks. They do not establish live provider effects, artifact-byte support, final-head Linux CI, cleanup of another job's fixtures, or merge.
 
+### Bounded shared artifact prerequisite M6
+
+The approved partial pull-forward from issue #29 adds real immutable object publication and authorized reads for M6's result-delivery dependency. It does not close #29 or add arbitrary public uploads, garbage collection, warehouse/query behavior, or host infrastructure. Production worker HTTP result/continuation integration remains a separate dependency.
+
+After rebuilding the fixture helpers from current source, run the artifact owners through the same selected fixture:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 -I -B scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //internal/store:store_test //internal/objects:objects_test \
+  //internal/api:api_test //internal/cli:cli_test //internal/httpapi:httpapi_test \
+  --test_output=errors --test_arg=-test.v --cache_test_results=no
+python3 -I -B scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-2.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //tests/client-parity:client-parity_test \
+  --test_filter='^TestArtifactCLISharedBytes$' \
+  --test_output=errors --test_arg=-test.v --cache_test_results=no
+```
+
+`TestUniqueAttemptPublication` uses selected real S3 gateways and PostgreSQL: uploaded bytes remain unreadable through the API after publication rollback; a retry uses a new immutable key; an independent adapter/gateway reads exact full and range bytes after producer closure and API restart. `TestArtifactCrashWindows` joins actual verified bytes, publication receipts and manifests in one PostgreSQL transaction. Its lost-reply case withholds the physical COMMIT acknowledgement only after an independent connection observes the atomic commit, then recovers that exact occurrence rather than inferring it from object existence.
+
+The quota checks cover cross-workspace organization contention, immutable reservation replay, cancellation racing with binding, retained unknown/bound attempts, and transactional downgrade refusal for held and released history. Route checks preserve concealed foreign/revoked scope behavior and prevent active provider-controlled documents through attachment disposition. Controlled SDK peers separately exercise unknown uploads, corrupt readback and cancellation; those are not selected-storage physical evidence.
+
+`TestArtifactCLISharedBytes` runs the actual Cobra entrypoint in isolated child processes with only owned TLS trust and a process-local PM session store injected. A persisted session reaches real Gin/PostgreSQL and the secondary S3 gateway; metadata, full binary output and a requested range remain exact after the producer's private scratch directory closes. This test does not execute a browser.
+
+These focused cases passed locally on Darwin arm64 with no skips and ownership-scoped fixture cleanup. The artifact store/object/API/CLI checks also passed with the race detector; serialize migration-bearing package tests with `-p 1`. A bounded `FuzzArtifactRangesStayWithinObject` run checks signed range arithmetic without services. None of this claims separate-host qualification, live GitHub execution, current-candidate CI, or a completed durable HTTP worker result path.
+
+`TestWorkerResultPublication` adds the common worker result boundary: selected PostgreSQL and Temporal establish the accepted execution identity, a controlled callback returns exact typed data, and the real publisher makes bytes readable through the public API and secondary S3 gateway after producer closure. Duplicate execution preserves the same result without re-entering the callback. Exhausted capacity leaves no recorded physical attempt; oversized output preserves known effects and releases its unused slot. `TestWorkerResultArtifactReceiptsControlRunProjection` separately checks PostgreSQL receipt/publication rollback, wrong connection/scope, unpublished references, and sorted/deduplicated run projections; it is metadata proof, not physical byte proof.
+
+Run these result-specific checks with the same rebuilt, selected fixture:
+
+```sh
+python3 -I -B scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-3.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //internal/app:app_test //internal/app:worker_runtime_test //internal/store:store_test \
+  --test_filter='TestWorkerResult|TestWorkerRuntimeClose' \
+  --test_output=errors --test_arg=-test.v --cache_test_results=no
+```
+
+The worker publication case has causal local RED/GREEN evidence for missing result delivery and missing pre-execution storage reservation. It does not execute the production HTTP handler, exercise a resumed provider continuation, prove durable retry timers, or certify a connector. Those integration obligations remain open.
+
 ### Thin-client and source-compiler checks M5/M6
 
 After rebuilding the existing fixture helpers, use the same owned wrapper for the client, API, compiler and shared-contract targets:

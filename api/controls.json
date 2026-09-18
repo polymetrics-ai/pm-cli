@@ -117,6 +117,12 @@
       "disposition": "confirmed_refusal"
     },
     {
+      "status": 416,
+      "code": "artifact_range_not_satisfiable",
+      "safe_retry_action": "correct_input",
+      "disposition": "confirmed_refusal"
+    },
+    {
       "status": 428,
       "code": "control_revision_required",
       "safe_retry_action": "refresh_control_revision",

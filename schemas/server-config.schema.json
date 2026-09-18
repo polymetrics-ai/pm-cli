@@ -176,6 +176,53 @@
         },
         "attempt_key_policy": {
           "const": "unique_immutable"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional complete artifact-byte execution policy. Absence leaves byte publication and reads unavailable. Go validation enforces the byte and retained-attempt hierarchies, the signed product bound, and the five-minute request-timeout ceiling.",
+          "required": [
+            "region",
+            "max_object_bytes",
+            "max_in_flight",
+            "request_timeout",
+            "organization_reserved_bytes",
+            "workspace_reserved_bytes",
+            "organization_reserved_attempts",
+            "workspace_reserved_attempts"
+          ],
+          "properties": {
+            "region": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9-]+$"
+            },
+            "max_object_bytes": {
+              "$ref": "#/$defs/positiveInteger",
+              "maximum": 9223372036854775806
+            },
+            "max_in_flight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "request_timeout": {
+              "$ref": "#/$defs/duration"
+            },
+            "organization_reserved_bytes": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "workspace_reserved_bytes": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "organization_reserved_attempts": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "workspace_reserved_attempts": {
+              "$ref": "#/$defs/positiveInteger"
+            }
+          }
         }
       }
     },

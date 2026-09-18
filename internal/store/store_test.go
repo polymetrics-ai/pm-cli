@@ -319,6 +319,13 @@ func cleanupTestScope(t *testing.T, credentials testStoreCredentials, scopes ...
 	for _, scope := range scopes {
 		setScope(scope)
 		for _, statement := range []string{
+			`UPDATE pm.object_org_capacity AS organization
+			 SET reserved_bytes = organization.reserved_bytes - workspace.reserved_bytes,
+			     reserved_attempts = organization.reserved_attempts - workspace.reserved_attempts
+			 FROM pm.object_workspace_capacity AS workspace
+			 WHERE organization.org_id = $1 AND workspace.org_id = $1 AND workspace.workspace_id = $2`,
+			`DELETE FROM pm.object_reservations WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.object_workspace_capacity WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.account_permits WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.checkpoints WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.encrypted_secrets WHERE org_id = $1 AND workspace_id = $2`,
@@ -348,6 +355,7 @@ func cleanupTestScope(t *testing.T, credentials testStoreCredentials, scopes ...
 	for _, scope := range scopes {
 		setScope(scope)
 		for _, statement := range []string{
+			`DELETE FROM pm.object_org_capacity WHERE org_id = $1 AND reserved_bytes = 0 AND reserved_attempts = 0`,
 			`DELETE FROM pm.identities WHERE org_id = $1`,
 			`DELETE FROM pm.provider_accounts WHERE org_id = $1`,
 		} {

@@ -4,6 +4,7 @@ go_library(
     name = "testfixture",
     testonly = True,
     srcs = [
+        "artifacts.go",
         "fixture.go",
         "worker.go",
         "worker_config.go",

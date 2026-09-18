@@ -206,7 +206,7 @@ export interface paths {
         put?: never;
         /**
          * Request an authorized artifact upload capability
-         * @description M4 exposes only authorization and explicit capability refusal. No artifact byte backend is installed, so this operation advertises no successful representation and never fabricates artifact metadata. Send no request body: the shared protocol guard rejects a nonempty entity as invalid_request. A later byte-storage owner must declare the accepted raw-stream contract before enabling byte input or adding a success response.
+         * @description Public artifact upload remains unavailable on this route even when a read backend is installed. Send no request body: the shared protocol guard rejects a nonempty entity as invalid_request. Authorization still precedes the explicit capability refusal.
          */
         post: operations["uploadArtifact"];
         delete?: never;
@@ -227,8 +227,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Authorize inspection of one artifact
-         * @description Authorizes the exact private artifact identity before reporting unavailable byte storage. Foreign and unknown artifacts remain concealed as resource_not_found. M4 advertises no successful metadata representation.
+         * Inspect verified artifact metadata
+         * @description Authorizes the exact private artifact identity and verifies the complete registered object before returning public digest, length, media type, and artifact identity. Foreign and unknown artifacts remain concealed. The response never exposes an object key, backend generation, URL, bucket, or credential.
          */
         get: operations["inspectArtifact"];
         put?: never;
@@ -251,8 +251,8 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Authorize download of one artifact
-         * @description Applies the exact artifact authorization and concealment precedence before reporting unavailable byte storage. M4 serves no body, range metadata, digest, length, media type, or successful content response.
+         * Download verified artifact bytes
+         * @description Authorizes the registered artifact before backend availability or range validity is disclosed. A successful response contains exactly the full object or one requested byte interval after complete digest, length, and backend-generation verification. Multiple ranges are unsupported.
          */
         get: operations["downloadArtifact"];
         put?: never;
@@ -728,6 +728,13 @@ export interface components {
             run_ref: string;
             /** @constant */
             state: "accepted";
+        };
+        ArtifactMetadata: {
+            artifact_id: string;
+            /** Format: int64 */
+            byte_length: number;
+            media_type: string;
+            sha256: string;
         };
         BrowserLogin: {
             code: string;
@@ -1479,6 +1486,18 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
+        /** @description The authorized single byte range is malformed or unsatisfiable for the registered length. */
+        Problem416: {
+            headers: {
+                "Accept-Ranges": components["headers"]["AcceptRanges"];
+                "Cache-Control": components["headers"]["CacheControlNoStore"];
+                "Content-Range": components["headers"]["ContentRange"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description A required control revision is absent */
         Problem428: {
             headers: {
@@ -1519,6 +1538,8 @@ export interface components {
     parameters: {
         /** @description Private opaque artifact identity; never a bearer capability. */
         ArtifactID: string;
+        /** @description One bytes range in closed, open-ended, or suffix form. Multiple ranges are unsupported. Malformed and unsatisfiable ranges return 416 only after current artifact authorization and read-backend availability checks. */
+        ArtifactRange: string;
         /** @description Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization. */
         CSRFToken: string;
         CatalogOperationID: string;
@@ -1543,6 +1564,18 @@ export interface components {
     };
     requestBodies: never;
     headers: {
+        /** @description The verified content route supports one bytes range. */
+        AcceptRanges: "bytes";
+        /** @description Untrusted artifact bytes are downloaded, not rendered as a PM-origin document. */
+        ArtifactContentDisposition: "attachment";
+        /** @description Exact number of bytes in this full or partial response body. */
+        ArtifactContentLength: number;
+        /** @description Strong validator derived only from the verified SHA-256 digest. */
+        ArtifactETag: string;
+        /** @description Private artifact representations must not be stored. */
+        CacheControlNoStore: "no-store";
+        /** @description Selected byte interval and complete registered length, or the complete length for a 416 response. */
+        ContentRange: string;
         /** @description Opaque scope-bound revision validator for this authorized representation; it is not a mutation idempotency key. */
         ETag: string;
     };
@@ -1888,6 +1921,17 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Verified public artifact metadata */
+            200: {
+                headers: {
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    ETag: components["headers"]["ArtifactETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ArtifactMetadata"];
+                };
+            };
             400: components["responses"]["Problem400"];
             401: components["responses"]["Problem401"];
             403: components["responses"]["Problem403"];
@@ -1899,7 +1943,10 @@ export interface operations {
     downloadArtifact: {
         parameters: {
             query?: never;
-            header?: never;
+            header?: {
+                /** @description One bytes range in closed, open-ended, or suffix form. Multiple ranges are unsupported. Malformed and unsatisfiable ranges return 416 only after current artifact authorization and read-backend availability checks. */
+                Range?: components["parameters"]["ArtifactRange"];
+            };
             path: {
                 workspace_id: components["parameters"]["WorkspaceID"];
                 /** @description Private opaque artifact identity; never a bearer capability. */
@@ -1909,10 +1956,40 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
+            /** @description Complete verified artifact bytes */
+            200: {
+                headers: {
+                    "Accept-Ranges": components["headers"]["AcceptRanges"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "Content-Disposition": components["headers"]["ArtifactContentDisposition"];
+                    "Content-Length": components["headers"]["ArtifactContentLength"];
+                    ETag: components["headers"]["ArtifactETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
+            /** @description One verified artifact byte interval */
+            206: {
+                headers: {
+                    "Accept-Ranges": components["headers"]["AcceptRanges"];
+                    "Cache-Control": components["headers"]["CacheControlNoStore"];
+                    "Content-Disposition": components["headers"]["ArtifactContentDisposition"];
+                    "Content-Length": components["headers"]["ArtifactContentLength"];
+                    "Content-Range": components["headers"]["ContentRange"];
+                    ETag: components["headers"]["ArtifactETag"];
+                    [name: string]: unknown;
+                };
+                content: {
+                    "*/*": string;
+                };
+            };
             400: components["responses"]["Problem400"];
             401: components["responses"]["Problem401"];
             403: components["responses"]["Problem403"];
             404: components["responses"]["Problem404"];
+            416: components["responses"]["Problem416"];
             500: components["responses"]["Problem500"];
             503: components["responses"]["Problem503"];
         };

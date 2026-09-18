@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -71,6 +73,8 @@ type WorkerServiceConfig struct {
 	ObserveContinuation  contract.WorkflowContinuationObserver
 	ActivityTimeouts     contract.ActivityTimeouts
 	ScheduledRunAdmitter ScheduledRunAdmitter
+	ArtifactPublisher    *objects.Publisher
+	MaximumResultBytes   int64
 }
 
 // WorkerService is the authenticated application boundary behind Temporal
@@ -85,6 +89,8 @@ type WorkerService struct {
 	observeContinuation contract.WorkflowContinuationObserver
 	timeouts            contract.ActivityTimeouts
 	scheduledAdmitter   ScheduledRunAdmitter
+	artifactPublisher   *objects.Publisher
+	maximumResultBytes  int64
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -101,6 +107,10 @@ func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error)
 	if err := configuration.ActivityTimeouts.Validate(); err != nil {
 		return nil, fmt.Errorf("validate worker activity timeouts: %w", err)
 	}
+	if configuration.ArtifactPublisher == nil && configuration.MaximumResultBytes != 0 ||
+		configuration.ArtifactPublisher != nil && (configuration.MaximumResultBytes <= 0 || configuration.MaximumResultBytes == math.MaxInt64) {
+		return nil, errors.New("worker result publisher requires a finite artifact byte bound")
+	}
 	return &WorkerService{
 		pool:                configuration.Pool,
 		deploymentID:        configuration.DeploymentID,
@@ -110,6 +120,8 @@ func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error)
 		observeContinuation: configuration.ObserveContinuation,
 		timeouts:            configuration.ActivityTimeouts,
 		scheduledAdmitter:   configuration.ScheduledRunAdmitter,
+		artifactPublisher:   configuration.ArtifactPublisher,
+		maximumResultBytes:  configuration.MaximumResultBytes,
 	}, nil
 }
 
@@ -367,16 +379,17 @@ func sameWorkerTaskIdentity(stored, expected contract.Task) bool {
 }
 
 type workerUnitPlan struct {
-	state     workerRunState
-	timeouts  contract.ActivityTimeouts
-	task      contract.Task
-	dispatch  store.DispatchRecord
-	lease     store.Lease
-	permit    store.AccountPermit
-	handler   ResolvedHandler
-	request   ExecutionRequest
-	reconcile bool
-	existing  *contract.WorkflowUnitResult
+	state             workerRunState
+	timeouts          contract.ActivityTimeouts
+	task              contract.Task
+	dispatch          store.DispatchRecord
+	lease             store.Lease
+	permit            store.AccountPermit
+	handler           ResolvedHandler
+	request           ExecutionRequest
+	reconcile         bool
+	existing          *contract.WorkflowUnitResult
+	resultReservation store.ObjectReservation
 }
 
 func (service *WorkerService) ExecuteUnit(
@@ -427,6 +440,7 @@ func (service *WorkerService) ExecuteUnit(
 	} else {
 		observation, callbackErr = plan.handler.Execute(callbackCtx, plan.request)
 	}
+	publication, publicationErr := service.prepareWorkerResult(callbackCtx, plan, observation.Result)
 	cancel()
 
 	settlementDeadline := plan.state.deadline
@@ -437,7 +451,7 @@ func (service *WorkerService) ExecuteUnit(
 		ctx, settlementDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 	)
 	defer settleCancel()
-	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, callbackErr)
+	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, publication, publicationErr, callbackErr)
 	stopHeartbeats()
 	if err != nil {
 		return contract.WorkflowUnitResult{}, service.mapWorkerError(err)
@@ -710,6 +724,10 @@ func (service *WorkerService) prepareWorkerUnit(
 			Run:                state.record.Spec, Task: task, Dispatch: dispatch.Intent, Attempt: attempt,
 			Input: state.input.Input, Controls: state.input.ResultControls, Deadline: state.deadline,
 		}
+		plan.resultReservation, err = service.reserveWorkerResult(ctx, tx, plan)
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 	if err != nil {
@@ -803,6 +821,8 @@ func (service *WorkerService) settleWorkerUnit(
 	request contract.WorkflowUnitRequest,
 	plan workerUnitPlan,
 	observation ExecutionObservation,
+	publication *objects.PreparedPublication,
+	publicationErr error,
 	callbackErr error,
 ) (contract.WorkflowUnitResult, error) {
 	var result contract.WorkflowUnitResult
@@ -895,13 +915,18 @@ func (service *WorkerService) settleWorkerUnit(
 		} else if permit.State != store.AccountPermitDispatched && permit.State != store.AccountPermitUnknown {
 			return workerFailure(ErrWorkerConflict, errors.New("known settlement has incompatible account permit state"))
 		}
+		resultArtifactID, err := commitWorkerResult(ctx, tx, plan, publication)
+		if err != nil {
+			return err
+		}
 		commit := workerSettlementCommit(
 			plan.lease,
 			updatedTask,
 			dispatch.Intent,
 			outcomes,
 			settlementRef,
-			observation.Result != nil,
+			resultArtifactID,
+			publicationErr != nil,
 			callbackErr != nil,
 		)
 		if _, err := store.CommitSettlement(ctx, tx, commit); err != nil {
@@ -936,6 +961,7 @@ func workerSettlementCommit(
 	dispatch contract.Dispatch,
 	outcomes []contract.MemberOutcome,
 	settlementRef string,
+	resultArtifactID string,
 	resultPublicationUnavailable bool,
 	callbackFailed bool,
 ) store.SettlementCommit {
@@ -958,6 +984,11 @@ func workerSettlementCommit(
 			{Name: "unknown", Value: task.UnknownEffectCount},
 		},
 		ReasonCodes: reasonCodes,
+	}
+	if resultArtifactID != "" {
+		payload.References = append(payload.References, contract.SafeReference{
+			Name: store.WorkerResultArtifactReferenceName, Ref: resultArtifactID,
+		})
 	}
 	base := strings.TrimPrefix(settlementRef, "worker-settlement-v1-")
 	return store.SettlementCommit{

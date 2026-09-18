@@ -2307,6 +2307,17 @@ type Problem410ApplicationProblemPlusJSONResponse Problem
 
 type Problem412ApplicationProblemPlusJSONResponse Problem
 
+type Problem416ResponseHeaders struct {
+	AcceptRanges *string
+	CacheControl *string
+	ContentRange *string
+}
+type Problem416ApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers Problem416ResponseHeaders
+}
+
 type Problem428ApplicationProblemPlusJSONResponse Problem
 
 type Problem429ApplicationProblemPlusJSONResponse Problem
@@ -8306,6 +8317,8 @@ type AdmissionResponseState = api.AdmissionResponseState
 type ApproveDeviceLoginJSONRequestBody = api.ApproveDeviceLoginJSONRequestBody
 type ApproveDeviceLoginParams = api.ApproveDeviceLoginParams
 type ArtifactID = api.ArtifactID
+type ArtifactMetadata = api.ArtifactMetadata
+type ArtifactRange = api.ArtifactRange
 type BrowserLogin = api.BrowserLogin
 type BrowserLoginChallenge = api.BrowserLoginChallenge
 type BrowserLoginStart = api.BrowserLoginStart
@@ -8412,6 +8425,7 @@ type Problem404 = api.Problem404
 type Problem409 = api.Problem409
 type Problem410 = api.Problem410
 type Problem412 = api.Problem412
+type Problem416 = api.Problem416
 type Problem428 = api.Problem428
 type Problem429 = api.Problem429
 type Problem500 = api.Problem500

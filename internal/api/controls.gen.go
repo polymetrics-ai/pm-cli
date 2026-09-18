@@ -34,6 +34,7 @@ var ProblemRules = [...]ProblemRule{
 	{Status: 409, Code: "specification_stale", SafeRetryAction: "refresh_specification", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 410, Code: "retry_receipt_expired", SafeRetryAction: "inspect_existing_result", Disposition: ProblemDisposition("resolved_receipt_expired")},
 	{Status: 412, Code: "control_revision_mismatch", SafeRetryAction: "refresh_control_revision", Disposition: ProblemDisposition("confirmed_refusal")},
+	{Status: 416, Code: "artifact_range_not_satisfiable", SafeRetryAction: "correct_input", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 428, Code: "control_revision_required", SafeRetryAction: "refresh_control_revision", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 429, Code: "workspace_admission_age_limit", SafeRetryAction: "after_backlog_progress", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 429, Code: "workspace_admission_count_limit", SafeRetryAction: "after_backlog_progress", Disposition: ProblemDisposition("confirmed_refusal")},
