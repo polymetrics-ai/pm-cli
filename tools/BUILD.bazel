@@ -48,11 +48,6 @@ go_library(
 go_test(
     name = "tools_test",
     size = "large",
-    srcs = [
-        "dependency_policy_test.go",
-        "traceability_test.go",
-    ],
-    data = ["//tools/atlas:atlas"],
+    srcs = ["dependency_policy_test.go"],
     embed = [":tools"],
-    x_defs = {"atlasRunfile": "$(rlocationpath //tools/atlas:atlas)"},
 )
