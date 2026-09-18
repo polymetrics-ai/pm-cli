@@ -100,17 +100,8 @@ func validTemporalIdentity(value string) bool {
 	return true
 }
 
+// temporalDuration is the one Temporal-boundary quantization, shared with the
+// store's continuation observation through contract.QuantizedTemporalDuration.
 func temporalDuration(value time.Duration) time.Duration {
-	if value <= 0 {
-		return 0
-	}
-	remainder := value % time.Second
-	if remainder == 0 {
-		return value
-	}
-	increment := time.Second - remainder
-	if value > time.Duration(1<<63-1)-increment {
-		return 0
-	}
-	return value + increment
+	return contract.QuantizedTemporalDuration(value)
 }

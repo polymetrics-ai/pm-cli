@@ -8,6 +8,26 @@ import (
 
 const WorkflowReferenceSchemaVersion = "pm.workflow-ref/v1"
 
+// QuantizedTemporalDuration returns the effective duration the Temporal boundary
+// records for a sealed plan. Temporal stores timeouts with second granularity, so
+// positive sub-second precision rounds up to the next whole second; zero and
+// negative values stay zero. Every comparison against a value Temporal reports
+// back must use this quantization.
+func QuantizedTemporalDuration(value time.Duration) time.Duration {
+	if value <= 0 {
+		return 0
+	}
+	remainder := value % time.Second
+	if remainder == 0 {
+		return value
+	}
+	increment := time.Second - remainder
+	if value > time.Duration(1<<63-1)-increment {
+		return 0
+	}
+	return value + increment
+}
+
 // These fixed values are the only SDK version-marker scalars admitted to history.
 const WorkflowRunDeadlineProjectionChangeID = "run-deadline-projection"
 const WorkflowRunDeadlineProjectionVersion = 1

@@ -129,7 +129,7 @@ func ObserveWorkerContinuation(
 			(intent.Plan.WorkflowType != contract.RunWorkflowType &&
 				intent.Plan.WorkflowType != contract.ScheduledWorkflowType) ||
 			intent.Plan.TaskQueue != observation.TaskQueue ||
-			intent.Plan.ExecutionTimeout != observation.ExecutionTimeout {
+			contract.QuantizedTemporalDuration(intent.Plan.ExecutionTimeout) != observation.ExecutionTimeout {
 			return ErrWorkflowBindingConflict
 		}
 		stored, err := loadRunForUpdate(ctx, tx, descriptor.RunID)
