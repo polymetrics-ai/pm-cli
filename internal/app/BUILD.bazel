@@ -54,6 +54,7 @@ go_test(
         "capabilities_test.go",
         "catalog_test.go",
         "connector_composition_test.go",
+        "generated_github_read_test.go",
         "http_continuation_test.go",
         "http_execution_test.go",
         "http_retry_test.go",
@@ -63,6 +64,10 @@ go_test(
         "worker_plan_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
+    ],
+    data = [
+        "//:connectors/github/lanes/direct_read.json",
+        "//internal/connectors:data/github.bundle.json",
     ],
     embed = [":app"],
     env_inherit = [
@@ -93,6 +98,7 @@ go_test(
         "//internal/store",
         "//internal/temporal",
         "//internal/testfixture",
+        "//internal/testfixture/githubcompat",
         "//internal/workflows",
         "@com_github_jackc_pgx_v5//:pgx",
         "@io_temporal_go_sdk//client",
