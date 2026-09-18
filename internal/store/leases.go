@@ -55,9 +55,10 @@ func ReleaseTaskLease(ctx context.Context, tx *Transaction, lease Lease) error {
 	}
 	tag, err := tx.exec(ctx, `
 		UPDATE pm.task_leases
-		SET lease_expires_at = claimed_at
+		SET lease_expires_at = claimed_at + interval '1 microsecond'
 		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND task_id = $4
-		  AND owner_id = $5 AND fence = $6 AND lease_expires_at > claimed_at
+		  AND owner_id = $5 AND fence = $6
+		  AND lease_expires_at > claimed_at + interval '1 microsecond'
 	`, scope.OrgID, scope.WorkspaceID, lease.Task.RunID, lease.Task.TaskID, lease.OwnerID, lease.Fence)
 	if err != nil {
 		return safeMetadataWriteError("release task lease", err)
