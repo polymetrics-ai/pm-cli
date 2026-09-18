@@ -37,7 +37,10 @@ run_npm() {
 }
 
 install_dependencies() {
-  mkdir -m 700 -p "$browser_cache/home" "$browser_cache/cache"
+  (
+    umask 077
+    mkdir -p "$browser_cache/home" "$browser_cache/cache"
+  )
   install -m 600 /dev/null "$browser_cache/user.npmrc"
   install -m 600 /dev/null "$browser_cache/global.npmrc"
   run_npm --prefix sdk/browser ci --ignore-scripts --no-audit --no-fund
