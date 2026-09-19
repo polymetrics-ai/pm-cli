@@ -68,7 +68,7 @@ func (service *WorkerService) planWorkerTaskDispatch(
 			"dispatch planning is defined only for an accepted operation reference",
 		))
 	}
-	if state.input.Lane != contract.LaneDirectRead {
+	if state.input.Lane != contract.LaneDirectRead && state.input.Lane != contract.LaneDirectWrite {
 		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
 			"dispatch planning supports only the direct_read lane",
 		))
@@ -90,28 +90,21 @@ func (service *WorkerService) planWorkerTaskDispatch(
 	if err != nil {
 		return err
 	}
-	if selection.Operation.Transport.Kind != contract.TransportKindHTTP {
+	if state.input.Lane == contract.LaneDirectWrite &&
+		selection.Operation.Transport.Kind != contract.TransportKindPostgreSQL {
 		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
-			"dispatch planning supports only the HTTP direct-read transport",
+			"dispatch planning supports only the direct_read lane",
 		))
 	}
-	if selection.Operation.Execution == nil || selection.Operation.Execution.HTTP == nil {
-		// The accepted operation declares no bounded HTTP execution, so there is
-		// nothing this planner may derive a dispatch from. Reporting no plan
-		// preserves the existing "accepted but not yet dispatchable" path; a
-		// declared HTTP execution that lacks its sealed policy below is still a
-		// hard capability failure.
+	responseBytes, err := workerDispatchResponseBytes(state, selection, handler, service.sqlBounds)
+	if err != nil {
+		return err
+	}
+	if responseBytes == 0 {
+		// The accepted operation declares no bounded execution this planner may
+		// derive a dispatch from. Reporting no plan preserves the existing
+		// "accepted but not yet dispatchable" path.
 		return nil
-	}
-	if handler.Kind != HandlerHTTP {
-		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
-			"dispatch planning requires the shared HTTP handler",
-		))
-	}
-	if state.budget.Policy.HTTP == nil {
-		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
-			"accepted run carries no sealed HTTP execution policy",
-		))
 	}
 	connection, err := store.LoadConnection(ctx, tx, state.input.ConnectionID)
 	if err != nil {
@@ -127,7 +120,7 @@ func (service *WorkerService) planWorkerTaskDispatch(
 			"encode the exact immutable invocation input",
 		))
 	}
-	dispatch, err := deriveWorkerDirectReadDispatch(state, task, account.AccountWitness, requestBytes)
+	dispatch, err := deriveWorkerDirectReadDispatch(state, task, account.AccountWitness, requestBytes, responseBytes)
 	if err != nil {
 		return err
 	}
@@ -173,15 +166,69 @@ func requireUnplannedRunEffects(
 	return nil
 }
 
+// workerDispatchResponseBytes resolves the sealed response byte bound of one
+// accepted operation. An operation that declares no bounded execution reports
+// zero, which keeps the existing "accepted but not yet dispatchable" path. An
+// operation whose declared transport has no usable bound in this process is a
+// hard capability failure: planning never invents a bound.
+func workerDispatchResponseBytes(
+	state workerRunState,
+	selection OperationSelection,
+	handler ResolvedHandler,
+	resolveSQLBounds SQLBoundsResolver,
+) (uint64, error) {
+	switch selection.Operation.Transport.Kind {
+	case contract.TransportKindHTTP:
+		if selection.Operation.Execution == nil || selection.Operation.Execution.HTTP == nil {
+			return 0, nil
+		}
+		if handler.Kind != HandlerHTTP {
+			return 0, workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
+				"dispatch planning requires the shared HTTP handler",
+			))
+		}
+		if state.budget.Policy.HTTP == nil {
+			return 0, workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
+				"accepted run carries no sealed HTTP execution policy",
+			))
+		}
+		return state.budget.Policy.HTTP.MaxResponseBytes, nil
+	case contract.TransportKindPostgreSQL:
+		if handler.Kind != HandlerSQL {
+			return 0, workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
+				"dispatch planning requires the shared PostgreSQL handler",
+			))
+		}
+		if resolveSQLBounds == nil {
+			return 0, workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
+				"this process resolves no declared customer SQL connection",
+			))
+		}
+		bounds, declared := resolveSQLBounds(state.route.Scope, state.input.ConnectionID)
+		if !declared {
+			return 0, workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
+				"no customer SQL connection is declared for this accepted connection",
+			))
+		}
+		return bounds.MaxBytes, nil
+	default:
+		return 0, workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
+			"dispatch planning supports only the HTTP and PostgreSQL transports",
+		))
+	}
+}
+
 // deriveWorkerDirectReadDispatch derives the exact dispatch intent for one
-// bounded direct-read call from the accepted durable facts. Identity is a pure
-// function of those facts, so repeated or concurrent planning converges on one
-// dispatch, one effect and one member.
+// bounded call from the accepted durable facts. Identity is a pure function of
+// those facts, so repeated or concurrent planning converges on one dispatch,
+// one effect and one member. responseBytes is the sealed response byte bound of
+// the declared transport and is reserved before any provider I/O.
 func deriveWorkerDirectReadDispatch(
 	state workerRunState,
 	task contract.Task,
 	accountWitness string,
 	requestBytes []byte,
+	responseBytes uint64,
 ) (contract.Dispatch, error) {
 	entity, err := contract.NewEntityKey(accountWitness, "operation", task.OperationID, task.BehaviorID)
 	if err != nil {
@@ -241,7 +288,7 @@ func deriveWorkerDirectReadDispatch(
 			ReadbackSlots: 1,
 			// Reserve the exact accepted request bytes plus the sealed response
 			// bound before any provider I/O.
-			EncodedBytes: uint64(len(requestBytes)) + state.budget.Policy.HTTP.MaxResponseBytes,
+			EncodedBytes: uint64(len(requestBytes)) + responseBytes,
 		},
 		AttemptID: contract.AttemptID(attemptID),
 	}

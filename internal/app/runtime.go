@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
+	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
@@ -47,6 +48,14 @@ type ServicesConfig struct {
 	ProviderHTTPTLS   *tls.Config
 	ConnectorBundles  []string
 	Artifacts         ArtifactExecution
+	// SQLDeclarations is the declared customer SQL declaration this process
+	// registers next to the HTTP one. An absent declaration registers nothing,
+	// so admission stays truthfully unavailable for the PostgreSQL transport
+	// instead of advertising a callback that is not registered.
+	SQLDeclarations config.ProviderSQLConfiguration
+	// SQLResources opens the process-static resources of one declared customer
+	// connection. It is required exactly when a SQL connection is declared.
+	SQLResources func(config.ProviderSQLConnection) (SQLConnectionResources, error)
 }
 
 func (ServicesConfig) String() string                 { return "application services configuration [REDACTED]" }
@@ -161,6 +170,17 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		Continuations: continuations,
 	}); err != nil {
 		return nil, errors.Join(errors.New("connector direct-read registration failed"), err)
+	}
+	sqlComposition, err := OpenSQLComposition(SQLCompositionConfig{
+		Declarations: configuration.SQLDeclarations,
+		Bundles:      composition.Registry(),
+		Resources:    configuration.SQLResources,
+	})
+	if err != nil {
+		return nil, errors.Join(errors.New("customer SQL composition is unavailable"), err)
+	}
+	if err := sqlComposition.Register(handlers); err != nil {
+		return nil, errors.Join(errors.New("customer SQL registration failed"), err)
 	}
 	catalog, err := ServeCatalog(CatalogServiceConfig{
 		Pool:      pool,

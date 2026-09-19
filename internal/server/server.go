@@ -153,6 +153,10 @@ func openWithOIDCFactory(
 		ProviderHTTPTLS:   providerHTTPTLS,
 		ConnectorBundles:  configuration.Connectors().BundlePaths(),
 		Artifacts:         artifactExecution,
+		SQLDeclarations:   configuration.ProviderSQL(),
+		SQLResources: func(connection config.ProviderSQLConnection) (app.SQLConnectionResources, error) {
+			return app.LoadProviderSQLResources(secrets, connection)
+		},
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,
