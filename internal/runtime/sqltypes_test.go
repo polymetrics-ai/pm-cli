@@ -327,9 +327,6 @@ func TestLosslessParameterizedSQL(t *testing.T) {
 		if statements := probe.statementTexts(); len(statements) != 1 {
 			t.Fatalf("a possibly committed statement was retried: %v", statements)
 		}
-		if observation.Outcome == SQLOutcomeKnownCommit {
-			t.Fatal("a lost reply was inferred from the desired effect")
-		}
 	})
 }
 

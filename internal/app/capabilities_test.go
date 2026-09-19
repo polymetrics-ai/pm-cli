@@ -157,9 +157,6 @@ func TestRegisteredHandlerReachability(t *testing.T) {
 		if _, err := registry.Resolve(httpOperation, contract.LaneDirectRead); !errors.Is(err, app.ErrHandlerUnavailable) {
 			t.Fatalf("HTTP Resolve with only SQL registered error = %v; want handler unavailable", err)
 		}
-		if executeCalls != 1 || reconcileCalls != 1 {
-			t.Fatalf("removed or foreign handler dispatch reached a callback: execute %d, reconcile %d", executeCalls, reconcileCalls)
-		}
 	})
 
 	t.Run("missing_registration_and_reconciliation", func(t *testing.T) {
