@@ -23,7 +23,9 @@ import (
 // after the producer and its private scratch root have closed.
 func TestArtifactCLISharedBytes(t *testing.T) {
 	if os.Getenv("PM_STACK_TEST_CONFIG") == "" && os.Getenv("PM_STORE_TEST_SECRETS_DIR") == "" {
-		t.Skip("requires the explicitly selected owned stack fixture")
+		// docs/development/testing.md and setup.md require missing fixture
+		// inputs to fail this case rather than skip it.
+		t.Fatal("this physical case requires the explicitly selected owned stack fixture; missing inputs fail rather than skip")
 	}
 	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
 	consumer := testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway)

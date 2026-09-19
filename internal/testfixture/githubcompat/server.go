@@ -52,7 +52,7 @@ const (
 	badRequestDocument       = `{"message":"Bad Request","documentation_url":"https://docs.github.com/rest"}`
 	notFoundDocument         = `{"message":"Not Found","documentation_url":"https://docs.github.com/rest"}`
 	methodNotAllowedDocument = `{"message":"Method Not Allowed","documentation_url":"https://docs.github.com/rest"}`
-	requestTooLargeDocument   = `{"message":"Request Entity Too Large","documentation_url":"https://docs.github.com/rest"}`
+	requestTooLargeDocument  = `{"message":"Request Entity Too Large","documentation_url":"https://docs.github.com/rest"}`
 	internalErrorDocument    = `{"message":"Internal Server Error","documentation_url":"https://docs.github.com/rest"}`
 )
 

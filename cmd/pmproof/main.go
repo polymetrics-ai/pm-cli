@@ -205,16 +205,23 @@ type resolvedTimeouts struct {
 
 func parseTimeouts(parsed options) (resolvedTimeouts, error) {
 	var result resolvedTimeouts
-	for value, destination := range map[string]*time.Duration{
-		parsed.requestTimeout: &result.request, parsed.waitTimeout: &result.wait,
-		parsed.caseTimeout: &result.caseRun, parsed.cleanupTimeout: &result.cleanup,
-		parsed.storeTimeout: &result.store,
+	// One entry per control: a map keyed by the duration text would collapse two
+	// controls that share a value and leave one of them unset.
+	for _, entry := range []struct {
+		value       string
+		destination *time.Duration
+	}{
+		{parsed.requestTimeout, &result.request},
+		{parsed.waitTimeout, &result.wait},
+		{parsed.caseTimeout, &result.caseRun},
+		{parsed.cleanupTimeout, &result.cleanup},
+		{parsed.storeTimeout, &result.store},
 	} {
-		parsedValue, err := time.ParseDuration(value)
+		parsedValue, err := time.ParseDuration(entry.value)
 		if err != nil || parsedValue <= 0 {
 			return resolvedTimeouts{}, fmt.Errorf("%w: every timeout must be a positive duration", errUsage)
 		}
-		*destination = parsedValue
+		*entry.destination = parsedValue
 	}
 	return result, nil
 }

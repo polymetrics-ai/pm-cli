@@ -72,15 +72,22 @@ type ReceiptStore struct {
 	rootIdentity         string
 	maximumDocumentBytes int64
 	closed               bool
-}
-
-var (
-	proofStoreProcessFence = make(chan struct{}, 1)
-	proofCaseLockRegistry  = struct {
+	// caseLocks serializes one case inside this process; the cross-process
+	// guarantee is the descriptor lock below.
+	caseLocks struct {
 		sync.Mutex
 		entries map[string]*inProcessCaseLock
-	}{entries: make(map[string]*inProcessCaseLock)}
-)
+	}
+}
+
+// ErrReportStale reports a retained report whose receipts are no longer the
+// latest for their cases, so it cannot stand for current evidence.
+var ErrReportStale = errors.New("proof lane report is stale")
+
+// proofStoreProcessFence serializes descriptor locking inside one process: an OS
+// file lock is held per process, so two stores in one process would otherwise
+// both observe it as acquired.
+var proofStoreProcessFence = make(chan struct{}, 1)
 
 func OpenReceiptStore(directory string, maximumDocumentBytes int64) (*ReceiptStore, error) {
 	if directory == "" || strings.ContainsRune(directory, '\x00') || !filepath.IsAbs(directory) {
@@ -279,7 +286,7 @@ func (store *ReceiptStore) LockCase(ctx context.Context, identity CaseIdentity) 
 		store.mu.RUnlock()
 		return nil, fmt.Errorf("proof receipt store is closed")
 	}
-	processRelease, err := acquireInProcessCaseLock(ctx, store.rootIdentity+"\x00"+key)
+	processRelease, err := store.acquireInProcessCaseLock(ctx, store.rootIdentity+"\x00"+key)
 	if err != nil {
 		store.mu.RUnlock()
 		return nil, err
@@ -368,6 +375,10 @@ func (store *ReceiptStore) PublishReport(ctx context.Context, report LaneReport)
 	return store.replaceAtomicallyLocked(ctx, rootFD, name, encoded)
 }
 
+// ReadReport returns the retained report for one connector lane together with
+// its exact immutable receipt references. A retained report is historical
+// evidence: a newer relevant failure does not rewrite or delete it, so callers
+// that need current evidence must use ReadCurrentReport.
 func (store *ReceiptStore) ReadReport(ctx context.Context, connectorID string, lane contract.Lane) (LaneReport, bool, error) {
 	name, err := reportFileName(connectorID, lane)
 	if err != nil {
@@ -397,6 +408,26 @@ func (store *ReceiptStore) ReadReport(ctx context.Context, connectorID string, l
 	}
 	if err := store.validateReportReferencesLocked(ctx, rootFD, report, false); err != nil {
 		return LaneReport{}, false, err
+	}
+	return report, true, nil
+}
+
+// ReadCurrentReport returns the retained report only while every case still
+// references the latest immutable receipt. A report that a newer failure or
+// invalidation has overtaken is refused with ErrReportStale instead of being
+// presented as current evidence.
+func (store *ReceiptStore) ReadCurrentReport(ctx context.Context, connectorID string, lane contract.Lane) (LaneReport, bool, error) {
+	report, found, err := store.ReadReport(ctx, connectorID, lane)
+	if err != nil || !found {
+		return report, found, err
+	}
+	rootFD, release, err := store.begin(ctx)
+	if err != nil {
+		return LaneReport{}, false, err
+	}
+	defer release()
+	if err := store.validateReportReferencesLocked(ctx, rootFD, report, true); err != nil {
+		return LaneReport{}, false, errors.Join(ErrReportStale, err)
 	}
 	return report, true, nil
 }
@@ -504,34 +535,37 @@ func acquireDescriptorLock(ctx context.Context, fd int) error {
 	}
 }
 
-func acquireInProcessCaseLock(ctx context.Context, key string) (func(), error) {
-	proofCaseLockRegistry.Lock()
-	entry := proofCaseLockRegistry.entries[key]
+func (store *ReceiptStore) acquireInProcessCaseLock(ctx context.Context, key string) (func(), error) {
+	store.caseLocks.Lock()
+	if store.caseLocks.entries == nil {
+		store.caseLocks.entries = make(map[string]*inProcessCaseLock)
+	}
+	entry := store.caseLocks.entries[key]
 	if entry == nil {
 		entry = &inProcessCaseLock{token: make(chan struct{}, 1)}
-		proofCaseLockRegistry.entries[key] = entry
+		store.caseLocks.entries[key] = entry
 	}
 	entry.references++
-	proofCaseLockRegistry.Unlock()
+	store.caseLocks.Unlock()
 
 	select {
 	case entry.token <- struct{}{}:
 		return func() {
 			<-entry.token
-			releaseInProcessCaseLockReference(key, entry)
+			store.releaseInProcessCaseLockReference(key, entry)
 		}, nil
 	case <-ctx.Done():
-		releaseInProcessCaseLockReference(key, entry)
+		store.releaseInProcessCaseLockReference(key, entry)
 		return nil, ctx.Err()
 	}
 }
 
-func releaseInProcessCaseLockReference(key string, entry *inProcessCaseLock) {
-	proofCaseLockRegistry.Lock()
-	defer proofCaseLockRegistry.Unlock()
+func (store *ReceiptStore) releaseInProcessCaseLockReference(key string, entry *inProcessCaseLock) {
+	store.caseLocks.Lock()
+	defer store.caseLocks.Unlock()
 	entry.references--
-	if entry.references == 0 && proofCaseLockRegistry.entries[key] == entry {
-		delete(proofCaseLockRegistry.entries, key)
+	if entry.references == 0 && store.caseLocks.entries[key] == entry {
+		delete(store.caseLocks.entries, key)
 	}
 }
 

@@ -504,7 +504,8 @@ func (executor *PMPathExecutor) readResult(
 	if view == nil || len(view.ResultReferences) == 0 {
 		return OracleObservation{}, nil, contract.ProofEffect{}, errors.New("run exposes no published result projection")
 	}
-	var document bytes.Buffer
+	var document boundedDocument
+	document.limit = executor.configuration.MaximumFileBytes
 	for _, reference := range view.ResultReferences {
 		requestContext, cancel := context.WithTimeout(ctx, executor.configuration.RequestTimeout)
 		err := client.DownloadArtifact(
@@ -520,6 +521,22 @@ func (executor *PMPathExecutor) readResult(
 	effect := effectFromSummary(view.EffectSummary)
 	return OracleObservation{Document: result}, result, effect, nil
 }
+
+// boundedDocument accumulates downloaded result bytes under an explicit bound so
+// an oversized published object cannot exhaust the runner's memory.
+type boundedDocument struct {
+	buffer bytes.Buffer
+	limit  int64
+}
+
+func (document *boundedDocument) Write(content []byte) (int, error) {
+	if document.limit <= 0 || int64(document.buffer.Len())+int64(len(content)) > document.limit {
+		return 0, errors.New("published result exceeds the declared byte bound")
+	}
+	return document.buffer.Write(content)
+}
+
+func (document *boundedDocument) Bytes() []byte { return document.buffer.Bytes() }
 
 func effectFromSummary(summary pmapi.EffectSummary) contract.ProofEffect {
 	effect := contract.ProofEffect{
@@ -598,7 +615,20 @@ func queryHelperText(hash *contract.SourceHash) string {
 // JSON shape does not match its declared logical type fails instead of being
 // coerced.
 func bindNativeInput(document json.RawMessage, descriptor pmapi.CommandDescriptor) (contract.PresentValue, error) {
+	if len(document) == 0 || len(document) > contract.MaxContractDocumentBytes {
+		return contract.PresentValue{}, errors.New("authored step input exceeds the contract document bound")
+	}
+	if _, err := contract.CanonicalDigest(document); err != nil {
+		return contract.PresentValue{}, errors.New("authored step input is not canonical exact JSON")
+	}
+	if trimmed := bytes.TrimSpace(document); len(trimmed) == 0 || trimmed[0] != '{' {
+		return contract.PresentValue{}, errors.New("authored step input must be a JSON object")
+	}
 	if len(descriptor.Fields) == 0 {
+		var empty map[string]json.RawMessage
+		if err := json.Unmarshal(document, &empty); err != nil || len(empty) != 0 {
+			return contract.PresentValue{}, errors.New("authored step input must be an empty object for this operation")
+		}
 		return contract.NewObjectValue(map[string]contract.PresentValue{}), nil
 	}
 	schemas := make(map[string]contract.Schema, len(descriptor.Fields))

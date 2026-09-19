@@ -325,7 +325,21 @@ func typedProviderValue(raw any, schema contract.Schema, depth int) (contract.Pr
 		for name, rawField := range rawFields {
 			property, declared := properties[name]
 			if !declared {
-				return contract.PresentValue{}, fmt.Errorf("%w: undeclared provider object field", ErrInvalidProviderValue)
+				// A declared-open object retains properties the pinned source
+				// does not enumerate; a closed object still refuses them.
+				if !schema.OpenProperties {
+					return contract.PresentValue{}, fmt.Errorf("%w: undeclared provider object field", ErrInvalidProviderValue)
+				}
+				if schema.AdditionalProperties != nil {
+					property = *schema.AdditionalProperties
+				} else {
+					field, fieldErr := exactProviderValue(rawField, depth+1)
+					if fieldErr != nil {
+						return contract.PresentValue{}, fieldErr
+					}
+					fields[name] = field
+					continue
+				}
 			}
 			field, fieldErr := typedProviderValue(rawField, property, depth+1)
 			if fieldErr != nil {
@@ -365,6 +379,59 @@ func typedProviderValue(raw any, schema contract.Schema, depth int) (contract.Pr
 		return contract.PresentValue{}, err
 	}
 	return value, nil
+}
+
+// exactProviderValue converts one decoded JSON node that the declared schema
+// does not enumerate. A declared-open object retains every property the provider
+// sent, so this path preserves exact numbers, explicit null, nested arrays and
+// nested objects instead of refusing or coercing them.
+func exactProviderValue(raw any, depth int) (contract.PresentValue, error) {
+	if depth > contract.MaxSchemaDepth {
+		return contract.PresentValue{}, fmt.Errorf("%w: value nesting exceeds the schema bound", ErrInvalidProviderValue)
+	}
+	switch typed := raw.(type) {
+	case nil:
+		return contract.NullValue(), nil
+	case bool:
+		return contract.NewBooleanValue(typed), nil
+	case string:
+		return contract.NewStringValue(typed), nil
+	case json.Number:
+		exact := typed.String()
+		if strings.ContainsAny(exact, "eE") {
+			return contract.PresentValue{}, fmt.Errorf("%w: exponential number cannot preserve its exact value", ErrInvalidProviderValue)
+		}
+		if strings.Contains(exact, ".") {
+			precision, scale, shapeOK := decimalShape(exact)
+			if !shapeOK {
+				return contract.PresentValue{}, typeMismatch()
+			}
+			return contract.NewDecimalValue(exact, precision, scale)
+		}
+		return contract.NewIntegerValue(exact)
+	case []any:
+		elements := make([]contract.PresentValue, 0, len(typed))
+		for _, rawElement := range typed {
+			element, err := exactProviderValue(rawElement, depth+1)
+			if err != nil {
+				return contract.PresentValue{}, err
+			}
+			elements = append(elements, element)
+		}
+		return contract.NewArrayValue(elements), nil
+	case map[string]any:
+		fields := make(map[string]contract.PresentValue, len(typed))
+		for name, rawField := range typed {
+			field, err := exactProviderValue(rawField, depth+1)
+			if err != nil {
+				return contract.PresentValue{}, err
+			}
+			fields[name] = field
+		}
+		return contract.NewObjectValue(fields), nil
+	default:
+		return contract.PresentValue{}, typeMismatch()
+	}
 }
 
 func mergedObjectSchema(schema contract.Schema) (map[string]contract.Schema, map[string]struct{}, error) {

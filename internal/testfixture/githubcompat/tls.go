@@ -12,6 +12,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"math/big"
 	"net"
@@ -345,22 +346,33 @@ func certificateCovers(certificate *x509.Certificate, name string) bool {
 	return certificate.VerifyHostname(name) == nil
 }
 
+// maximumMaterialBytes bounds every fixture authority file the endpoint reads.
+const maximumMaterialBytes = 1 << 20
+
 // readMaterial returns one declared material file and reports whether it exists
-// at all. A declared path that is not a regular file is refused.
+// at all. A declared path that is not a bounded regular file is refused.
 func readMaterial(path string) ([]byte, bool, error) {
-	information, err := os.Stat(path)
+	file, err := os.Open(path)
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil, false, nil
 		}
 		return nil, false, err
 	}
-	if !information.Mode().IsRegular() {
-		return nil, false, errors.New("declared material is not a regular file")
-	}
-	document, err := os.ReadFile(path)
+	defer file.Close()
+	information, err := file.Stat()
 	if err != nil {
 		return nil, false, err
+	}
+	if !information.Mode().IsRegular() || information.Size() <= 0 || information.Size() > maximumMaterialBytes {
+		return nil, false, errors.New("declared material is not a bounded regular file")
+	}
+	document, err := io.ReadAll(io.LimitReader(file, maximumMaterialBytes+1))
+	if err != nil {
+		return nil, false, err
+	}
+	if int64(len(document)) != information.Size() {
+		return nil, false, errors.New("declared material changed while it was read")
 	}
 	return document, true, nil
 }
