@@ -90,7 +90,7 @@
       "target": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
       "source": "data/pm-cli/implementation/FILE-OWNERSHIP.json",
       "source_sha256": "5c5b461dda1f81f10a63a7234e07792f54a9996d11df8a5d7cd88ca5f83f7411",
-      "sha256": "3fbb5732705011995a7ebddab4d00959e30dfca94b1329133d27433a2c3f490e",
+      "sha256": "caa663a88d93aeef700bb1d1c46e997492b3ed8d996b6f671a42195c3caa674d",
       "transformation": "Added N13-PG and serialized PostgreSQL #28-create/#34-update/#41-composition ownership while retaining disjoint owners. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled M3 physical paths, shared helpers, browser assets and registered-HTTP proof ownership without changing acceptance or later ownership. Reconciled 47 current Go path/group mappings into their retained aggregate first-owner responsibilities, including the F11/T_V13 secret-reader clean cutover; per-file package/import facts remain separately explicit in PACKET-CONTRACTS. Completed the Atlas 284-file WalkDir inventory by adding ten exact current Go-source owners to both ownership projections without changing group identity or order."
     },
     {
@@ -209,8 +209,8 @@
       "target": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
       "source": "baseline ISSUE-RECORDS.json",
       "source_sha256": "9ecc107c39976504d43b892a6c8f1e351c6a5adea1128bfc1cb0ca1c27eb20a9",
-      "sha256": "266016eb75b061ac64b925f27aa00a18f09d5d76d934d09a19aa1f4ff3ca330b",
-      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41; reconciled only #2/#3 integration policy and BOOT-4 workflow under September 15 OMP ownership, retaining every case and technical gate. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled #11–#13 physical ownership and bounded registered-route proof bindings without changing acceptance or later integration rights. Reconciled 47 current Go path/group mappings with observed per-file package, internal-import and interface facts: 45 declarations added and two obsolete server secret-reader declarations cleanly replaced; retained all 44 packet identities, cases, dependencies and later integration rights. Completed the same Go inventory by adding nine missing declarations and replacing the account-permit acceptance placeholder with its existing R14a owner and actual package/import boundary; acceptance is unchanged."
+      "sha256": "06e56af45b296c788bc63e56a315e78e874c199590ae698770d0cdbed6040a82",
+      "transformation": "Recorded accepted public amendment sources and packet-scoped acceptance for issues #8/#12/#14/#27/#28/#34/#41; reconciled only #2/#3 integration policy and BOOT-4 workflow under September 15 OMP ownership, retaining every case and technical gate. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled #11\u2013#13 physical ownership and bounded registered-route proof bindings without changing acceptance or later integration rights. Reconciled 47 current Go path/group mappings with observed per-file package, internal-import and interface facts: 45 declarations added and two obsolete server secret-reader declarations cleanly replaced; retained all 44 packet identities, cases, dependencies and later integration rights. Completed the same Go inventory by adding nine missing declarations and replacing the account-permit acceptance placeholder with its existing R14a owner and actual package/import boundary; acceptance is unchanged."
     },
     {
       "target": "docs/architecture/pm-server/reference/SOURCE-LEDGER.json",
