@@ -48,6 +48,8 @@ type Service struct {
 	admission             *app.AdmissionService
 	runs                  *app.RunService
 	artifacts             *app.ArtifactService
+	warehouse             *warehouseSurface
+	connectionMetadataRoot string
 	resolveEventCursorKey func(context.Context) ([]byte, error)
 	eventBufferSize       uint64
 	eventWriteTimeout     time.Duration
@@ -103,6 +105,10 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("construct HTTP artifact service: %w", err)
 	}
+	warehouse, err := newWarehouseSurface(configuration.Warehouse)
+	if err != nil {
+		return nil, fmt.Errorf("construct HTTP warehouse read surface: %w", err)
+	}
 	client := *configuration.OIDCHTTPClient
 	service := &Service{
 		publicOrigin:          configuration.PublicOrigin,
@@ -115,6 +121,8 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 		admission:             configuration.Admission,
 		runs:                  configuration.Runs,
 		artifacts:             artifacts,
+		warehouse:             warehouse,
+		connectionMetadataRoot: configuration.ConnectionMetadataRoot,
 		resolveEventCursorKey: configuration.ResolveEventCursorKey,
 		eventBufferSize:       configuration.EventBufferSize,
 		eventWriteTimeout:     configuration.EventWriteTimeout,
@@ -265,6 +273,9 @@ func policyForRequest(method, path string) (requestPolicy, bool) {
 		"GET /v1/workspaces/:workspace_id/artifacts/:artifact_id",
 		"GET /v1/workspaces/:workspace_id/artifacts/:artifact_id/content",
 		"GET /v1/workspaces/:workspace_id/tasks/:task_id",
+		"GET /v1/workspaces/:workspace_id/connections/:connection_id/schema",
+		"GET /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset",
+		"POST /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/cancel",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/resume",
 		"GET /v1/workspaces/:workspace_id/memberships", "POST /v1/workspaces/:workspace_id/memberships",

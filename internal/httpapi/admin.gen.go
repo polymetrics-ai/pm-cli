@@ -44,6 +44,8 @@ type AdminCredentialStatusStatus string
 
 // ConnectorCatalogID defines model for ConnectorCatalogID.
 
+// DatasetName defines model for DatasetName.
+
 // ResourceID defines model for ResourceID.
 
 // RunID defines model for RunID.

@@ -1,0 +1,212 @@
+package sync
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/store"
+	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
+)
+
+// ETLCheckpoint turns one fetched ETL page into verified immutable bytes and
+// then, in one manifest transaction, into a registered segment plus its cursor
+// advance. The order is the whole point of the type: a page is only ever
+// acknowledged after its exact bytes are durably readable through the shared
+// object store, and the cursor only ever moves to a registered revision. A
+// crash before the transaction leaves the previous checkpoint and, at most, an
+// unregistered retained object; a crash after it leaves the complete next
+// checkpoint. Nothing in between is observable.
+type ETLCheckpoint struct {
+	pool                *store.Pool
+	manifest            *warehouse.DatasetManifest
+	child               *warehouse.QueryChild
+	admittedDirectory   string
+	maximumSegmentBytes int64
+	bounds              warehouse.QueryBounds
+}
+
+// NewETLCheckpoint validates the publication surface before any object, child,
+// or database work. The admitted directory is the only place this protocol
+// materializes a page, and every bound is required rather than defaulted.
+func NewETLCheckpoint(
+	pool *store.Pool,
+	manifest *warehouse.DatasetManifest,
+	child *warehouse.QueryChild,
+	admittedDirectory string,
+	maximumSegmentBytes int64,
+	bounds warehouse.QueryBounds,
+) (*ETLCheckpoint, error) {
+	if pool == nil || manifest == nil || child == nil {
+		return nil, errors.New("an ETL checkpoint requires a store pool, a dataset manifest, and a query child supervisor")
+	}
+	if admittedDirectory == "" || !filepath.IsAbs(admittedDirectory) || filepath.Clean(admittedDirectory) != admittedDirectory {
+		return nil, errors.New("the admitted page directory must be one absolute, cleaned path")
+	}
+	info, err := os.Lstat(admittedDirectory)
+	if err != nil {
+		return nil, fmt.Errorf("inspect the admitted page directory: %w", err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil, errors.New("the admitted page directory must be a directory, not a symlink")
+	}
+	if maximumSegmentBytes <= 0 {
+		return nil, errors.New("an ETL checkpoint requires a positive segment byte cap")
+	}
+	if err := bounds.Validate(); err != nil {
+		return nil, err
+	}
+	return &ETLCheckpoint{
+		pool:                pool,
+		manifest:            manifest,
+		child:               child,
+		admittedDirectory:   admittedDirectory,
+		maximumSegmentBytes: maximumSegmentBytes,
+		bounds:              bounds,
+	}, nil
+}
+
+// PageRequest is one fetched ETL page proposed for acknowledgement.
+type PageRequest struct {
+	Actor contract.Actor
+	Scope contract.Scope
+	// Semantics is how the source produced this page. An acknowledgement must
+	// declare it, and only polling is admitted.
+	Semantics ETLSemantics
+	// Position is the one-based page position this acknowledgement names.
+	Position uint64
+	// Rows is the complete typed row set the fetch returned for this page.
+	Rows [][]warehouse.QueryValue
+	// Columns is the page's declared column schema.
+	Columns []warehouse.QueryColumn
+	// DeclaredRows is how many rows this acknowledgement covers. It must equal
+	// the page's complete row count: an acknowledgement that covers less would
+	// otherwise advance the checkpoint over rows that were never published.
+	DeclaredRows int64
+	// RequestID names this materialization attempt. It is unique per attempt,
+	// because an immutable admitted segment is never overwritten.
+	RequestID string
+}
+
+// CommitPage acknowledges one page. It refuses anything that is not the exact
+// successor of the committed checkpoint, materializes the complete page through
+// the restricted child, publishes the verified bytes, and returns the
+// checkpoint that the single manifest transaction committed.
+func (checkpoint *ETLCheckpoint) CommitPage(ctx context.Context, request PageRequest) (Checkpoint, error) {
+	if ctx == nil {
+		return Checkpoint{}, errors.New("an ETL page acknowledgement requires a non-nil context")
+	}
+	if request.Semantics != ETLSemanticsPolling {
+		return Checkpoint{}, fmt.Errorf("%w: the acknowledgement declared %q",
+			ErrNotPollingSource, string(request.Semantics))
+	}
+	if request.Position == 0 {
+		return Checkpoint{}, errors.New("an ETL page acknowledgement requires a position of at least one")
+	}
+	if request.RequestID == "" {
+		return Checkpoint{}, errors.New("an ETL page acknowledgement requires a materialization identity")
+	}
+	total := int64(len(request.Rows))
+	switch {
+	case total == 0:
+		return Checkpoint{}, fmt.Errorf("%w: page %d carries no row", ErrPartialAcknowledgement, request.Position)
+	case request.DeclaredRows != total:
+		return Checkpoint{}, fmt.Errorf("%w: page %d acknowledges %d of its %d rows",
+			ErrPartialAcknowledgement, request.Position, request.DeclaredRows, total)
+	}
+	schema, err := warehouse.NewSegmentSchema(request.Columns)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	committed, err := checkpoint.Load(ctx, request.Actor, request.Scope)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if request.Position > committed.Position+1 {
+		return Checkpoint{}, fmt.Errorf("%w: page %d follows the committed position %d",
+			ErrCheckpointGap, request.Position, committed.Position)
+	}
+	if request.Position < committed.Position {
+		// The acknowledged position is already covered by the committed prefix.
+		// Its registered segment must be this protocol's page for that position,
+		// so a superseded acknowledgement can never re-describe it.
+		segment, err := checkpoint.manifest.SegmentAt(ctx, request.Actor, request.Scope, request.Position)
+		if err != nil {
+			return Checkpoint{}, err
+		}
+		if err := requirePageSegment(committed.Layout, segment); err != nil {
+			return Checkpoint{}, fmt.Errorf("%w: %v", ErrCheckpointStale, err)
+		}
+	}
+	published, err := checkpoint.publish(ctx, request, schema, committed.Position)
+	if err != nil {
+		return Checkpoint{}, err
+	}
+	if published.Ordinal != request.Position {
+		return Checkpoint{}, fmt.Errorf("%w: page %d was registered as ordinal %d",
+			ErrDatasetNotCheckpointed, request.Position, published.Ordinal)
+	}
+	if request.Position <= committed.Position {
+		// An exact replay of an acknowledged page is idempotent, and a replay of
+		// a superseded position never rewinds the checkpoint.
+		return committed, nil
+	}
+	return Checkpoint{
+		Layout:   committed.Layout,
+		Position: published.Ordinal,
+		Rows:     published.RowCount,
+		Digest:   published.Object.SHA256,
+	}, nil
+}
+
+// publish materializes the complete page and registers the verified bytes. The
+// manifest compare-and-swap advances only from the committed revision this
+// acknowledgement observed, so a stale acknowledgement loses the race instead
+// of publishing its page over a newer one, and the registered row and the
+// cursor advance are committed by one transaction. An acknowledgement that
+// already resolved to a registered page never reaches the compare-and-swap.
+func (checkpoint *ETLCheckpoint) publish(
+	ctx context.Context,
+	request PageRequest,
+	schema warehouse.SegmentSchema,
+	baseRevision uint64,
+) (store.WarehouseSegment, error) {
+	segment, err := warehouse.MaterializeParquetSegment(ctx, checkpoint.child, warehouse.MaterializeRequest{
+		RequestID:           request.RequestID,
+		AdmittedDirectories: []string{checkpoint.admittedDirectory},
+		OutputPath:          filepath.Join(checkpoint.admittedDirectory, pageAttemptID(request.Position)+".parquet"),
+		Columns:             schema.Columns(),
+		Rows:                request.Rows,
+		Bounds:              checkpoint.bounds,
+		MaximumBytes:        checkpoint.maximumSegmentBytes,
+	})
+	if err != nil {
+		return store.WarehouseSegment{}, err
+	}
+	// The admitted segment is disposable scratch: the bytes that matter are the
+	// ones the shared object store now holds, and an immutable admitted file is
+	// never rewritten.
+	defer func() { _ = os.Remove(segment.Path) }()
+	published, err := checkpoint.manifest.PublishSegment(ctx, warehouse.PublishSegmentRequest{
+		Actor:        request.Actor,
+		Scope:        request.Scope,
+		AttemptID:    pageAttemptID(request.Position),
+		Segment:      segment,
+		RowCount:     int64(len(request.Rows)),
+		BaseRevision: baseRevision,
+	})
+	if err != nil {
+		if errors.Is(err, store.ErrCASConflict) || errors.Is(err, store.ErrImmutableConflict) {
+			// Either the committed revision moved since this acknowledgement
+			// read it, or the position already holds a different page. Both are
+			// a stale acknowledgement: the retained bytes stay unregistered and
+			// the cursor does not move.
+			return store.WarehouseSegment{}, fmt.Errorf("%w: %w", ErrCheckpointStale, err)
+		}
+		return store.WarehouseSegment{}, err
+	}
+	return published, nil
+}

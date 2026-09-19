@@ -74,6 +74,15 @@ type ServerInterface interface {
 	// UpdateConnection Update safe connection metadata while preserving its credential binding
 	// (PATCH /v1/workspaces/{workspace_id}/connections/{connection_id})
 	UpdateConnection(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params UpdateConnectionParams)
+	// GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
+	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema)
+	GetConnectionSchema(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params GetConnectionSchemaParams)
+	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
+	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset})
+	GetWarehouseDataset(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params GetWarehouseDatasetParams)
+	// RunWarehouseQuery Run one bounded typed query over a dataset's registered segments
+	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query)
+	RunWarehouseQuery(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params RunWarehouseQueryParams)
 	// ListCatalogConnectors List the authorized immutable connector catalog and actual lane availability
 	// (GET /v1/workspaces/{workspace_id}/connectors)
 	ListCatalogConnectors(c *gin.Context, workspaceId WorkspaceID, params ListCatalogConnectorsParams)
@@ -971,6 +980,204 @@ func (siw *ServerInterfaceWrapper) UpdateConnection(c *gin.Context) {
 	}
 
 	siw.Handler.UpdateConnection(c, workspaceId, connectionId, params)
+}
+
+// GetConnectionSchema operation middleware
+func (siw *ServerInterfaceWrapper) GetConnectionSchema(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "connection_id" -------------
+	var connectionId ConnectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connection_id", c.Param("connection_id"), &connectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connection_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetConnectionSchemaParams
+
+	// ------------- Required query parameter "resource" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "resource", c.Request.URL.Query(), &params.Resource, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter resource: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Required query parameter "permission_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "permission_revision", c.Request.URL.Query(), &params.PermissionRevision, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter permission_revision: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Required query parameter "source_revision" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, true, "source_revision", c.Request.URL.Query(), &params.SourceRevision, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter source_revision: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "provider_account_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "provider_account_id", c.Request.URL.Query(), &params.ProviderAccountId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter provider_account_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional query parameter "snapshot_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "snapshot_id", c.Request.URL.Query(), &params.SnapshotId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter snapshot_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetConnectionSchema(c, workspaceId, connectionId, params)
+}
+
+// GetWarehouseDataset operation middleware
+func (siw *ServerInterfaceWrapper) GetWarehouseDataset(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "connection_id" -------------
+	var connectionId ConnectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connection_id", c.Param("connection_id"), &connectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connection_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "dataset" -------------
+	var dataset DatasetName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "dataset", c.Param("dataset"), &dataset, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter dataset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params GetWarehouseDatasetParams
+
+	// ------------- Optional query parameter "snapshot_id" -------------
+
+	err = runtime.BindQueryParameterWithOptions("form", true, false, "snapshot_id", c.Request.URL.Query(), &params.SnapshotId, runtime.BindQueryParameterOptions{Type: "string", Format: ""})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter snapshot_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.GetWarehouseDataset(c, workspaceId, connectionId, dataset, params)
+}
+
+// RunWarehouseQuery operation middleware
+func (siw *ServerInterfaceWrapper) RunWarehouseQuery(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "connection_id" -------------
+	var connectionId ConnectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connection_id", c.Param("connection_id"), &connectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connection_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "dataset" -------------
+	var dataset DatasetName
+
+	err = runtime.BindStyledParameterWithOptions("simple", "dataset", c.Param("dataset"), &dataset, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter dataset: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params RunWarehouseQueryParams
+
+	headers := c.Request.Header
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for X-CSRF-Token, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter X-CSRF-Token: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.RunWarehouseQuery(c, workspaceId, connectionId, dataset, params)
 }
 
 // ListCatalogConnectors operation middleware
@@ -2272,6 +2479,9 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.DELETE(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.DeleteConnection)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.GetConnection)
 	router.PATCH(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.UpdateConnection)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/schema", wrapper.GetConnectionSchema)
+	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset", wrapper.GetWarehouseDataset)
+	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query", wrapper.RunWarehouseQuery)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connectors", wrapper.ListCatalogConnectors)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connectors/:connector_id", wrapper.GetCatalogConnector)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/delegations", wrapper.ListDelegations)
@@ -4340,6 +4550,321 @@ type UpdateConnection503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response UpdateConnection503ApplicationProblemPlusJSONResponse) VisitUpdateConnectionResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConnectionSchemaRequestObject struct {
+	WorkspaceId  WorkspaceID  `json:"workspace_id"`
+	ConnectionId ConnectionID `json:"connection_id"`
+	Params       GetConnectionSchemaParams
+}
+
+type GetConnectionSchemaResponseObject interface {
+	VisitGetConnectionSchemaResponse(w http.ResponseWriter) error
+}
+
+type GetConnectionSchema200JSONResponse ConnectionSchemaInspection
+
+func (response GetConnectionSchema200JSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConnectionSchema400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response GetConnectionSchema400ApplicationProblemPlusJSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConnectionSchema401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response GetConnectionSchema401ApplicationProblemPlusJSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConnectionSchema403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response GetConnectionSchema403ApplicationProblemPlusJSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConnectionSchema404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response GetConnectionSchema404ApplicationProblemPlusJSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetConnectionSchema503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response GetConnectionSchema503ApplicationProblemPlusJSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseDatasetRequestObject struct {
+	WorkspaceId  WorkspaceID  `json:"workspace_id"`
+	ConnectionId ConnectionID `json:"connection_id"`
+	Dataset      DatasetName  `json:"dataset"`
+	Params       GetWarehouseDatasetParams
+}
+
+type GetWarehouseDatasetResponseObject interface {
+	VisitGetWarehouseDatasetResponse(w http.ResponseWriter) error
+}
+
+type GetWarehouseDataset200JSONResponse WarehouseDatasetSnapshot
+
+func (response GetWarehouseDataset200JSONResponse) VisitGetWarehouseDatasetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseDataset400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response GetWarehouseDataset400ApplicationProblemPlusJSONResponse) VisitGetWarehouseDatasetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseDataset401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response GetWarehouseDataset401ApplicationProblemPlusJSONResponse) VisitGetWarehouseDatasetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseDataset403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response GetWarehouseDataset403ApplicationProblemPlusJSONResponse) VisitGetWarehouseDatasetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseDataset404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response GetWarehouseDataset404ApplicationProblemPlusJSONResponse) VisitGetWarehouseDatasetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetWarehouseDataset503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response GetWarehouseDataset503ApplicationProblemPlusJSONResponse) VisitGetWarehouseDatasetResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunWarehouseQueryRequestObject struct {
+	WorkspaceId  WorkspaceID  `json:"workspace_id"`
+	ConnectionId ConnectionID `json:"connection_id"`
+	Dataset      DatasetName  `json:"dataset"`
+	Params       RunWarehouseQueryParams
+	Body         *RunWarehouseQueryJSONRequestBody
+}
+
+type RunWarehouseQueryResponseObject interface {
+	VisitRunWarehouseQueryResponse(w http.ResponseWriter) error
+}
+
+type RunWarehouseQuery200JSONResponse WarehouseQueryResult
+
+func (response RunWarehouseQuery200JSONResponse) VisitRunWarehouseQueryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunWarehouseQuery400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response RunWarehouseQuery400ApplicationProblemPlusJSONResponse) VisitRunWarehouseQueryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunWarehouseQuery401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response RunWarehouseQuery401ApplicationProblemPlusJSONResponse) VisitRunWarehouseQueryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunWarehouseQuery403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response RunWarehouseQuery403ApplicationProblemPlusJSONResponse) VisitRunWarehouseQueryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunWarehouseQuery404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response RunWarehouseQuery404ApplicationProblemPlusJSONResponse) VisitRunWarehouseQueryResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type RunWarehouseQuery503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response RunWarehouseQuery503ApplicationProblemPlusJSONResponse) VisitRunWarehouseQueryResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7046,6 +7571,15 @@ type StrictServerInterface interface {
 	// UpdateConnection Update safe connection metadata while preserving its credential binding
 	// (PATCH /v1/workspaces/{workspace_id}/connections/{connection_id})
 	UpdateConnection(ctx context.Context, request UpdateConnectionRequestObject) (UpdateConnectionResponseObject, error)
+	// GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
+	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema)
+	GetConnectionSchema(ctx context.Context, request GetConnectionSchemaRequestObject) (GetConnectionSchemaResponseObject, error)
+	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
+	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset})
+	GetWarehouseDataset(ctx context.Context, request GetWarehouseDatasetRequestObject) (GetWarehouseDatasetResponseObject, error)
+	// RunWarehouseQuery Run one bounded typed query over a dataset's registered segments
+	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query)
+	RunWarehouseQuery(ctx context.Context, request RunWarehouseQueryRequestObject) (RunWarehouseQueryResponseObject, error)
 	// ListCatalogConnectors List the authorized immutable connector catalog and actual lane availability
 	// (GET /v1/workspaces/{workspace_id}/connectors)
 	ListCatalogConnectors(ctx context.Context, request ListCatalogConnectorsRequestObject) (ListCatalogConnectorsResponseObject, error)
@@ -7728,6 +8262,99 @@ func (sh *strictHandler) UpdateConnection(ctx *gin.Context, workspaceId Workspac
 	}
 }
 
+// GetConnectionSchema operation middleware
+func (sh *strictHandler) GetConnectionSchema(ctx *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params GetConnectionSchemaParams) {
+	var request GetConnectionSchemaRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.ConnectionId = connectionId
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetConnectionSchema(ctx.Request.Context(), request.(GetConnectionSchemaRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetConnectionSchema")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetConnectionSchemaResponseObject); ok {
+		if err := validResponse.VisitGetConnectionSchemaResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// GetWarehouseDataset operation middleware
+func (sh *strictHandler) GetWarehouseDataset(ctx *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params GetWarehouseDatasetParams) {
+	var request GetWarehouseDatasetRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.ConnectionId = connectionId
+	request.Dataset = dataset
+	request.Params = params
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.GetWarehouseDataset(ctx.Request.Context(), request.(GetWarehouseDatasetRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetWarehouseDataset")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(GetWarehouseDatasetResponseObject); ok {
+		if err := validResponse.VisitGetWarehouseDatasetResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// RunWarehouseQuery operation middleware
+func (sh *strictHandler) RunWarehouseQuery(ctx *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params RunWarehouseQueryParams) {
+	var request RunWarehouseQueryRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.ConnectionId = connectionId
+	request.Dataset = dataset
+	request.Params = params
+
+	var body RunWarehouseQueryJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.RunWarehouseQuery(ctx.Request.Context(), request.(RunWarehouseQueryRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "RunWarehouseQuery")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(RunWarehouseQueryResponseObject); ok {
+		if err := validResponse.VisitRunWarehouseQueryResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // ListCatalogConnectors operation middleware
 func (sh *strictHandler) ListCatalogConnectors(ctx *gin.Context, workspaceId WorkspaceID, params ListCatalogConnectorsParams) {
 	var request ListCatalogConnectorsRequestObject
@@ -8346,6 +8973,8 @@ type ConnectionID = api.ConnectionID
 type ConnectionMutationResponse = api.ConnectionMutationResponse
 type ConnectionMutationResponseResultDisposition = api.ConnectionMutationResponseResultDisposition
 type ConnectionPage = api.ConnectionPage
+type ConnectionSchemaInspection = api.ConnectionSchemaInspection
+type ConnectionSchemaSnapshot = api.ConnectionSchemaSnapshot
 type ConnectionState = api.ConnectionState
 type ConnectionUpdateRequest = api.ConnectionUpdateRequest
 type ConnectorCatalogID = api.ConnectorCatalogID
@@ -8358,6 +8987,7 @@ type CreateServiceAccountParams = api.CreateServiceAccountParams
 type CurrentSession = api.CurrentSession
 type CurrentSessionTransport = api.CurrentSessionTransport
 type Cursor = api.Cursor
+type DatasetName = api.DatasetName
 type Delegation = api.Delegation
 type DelegationCreateRequest = api.DelegationCreateRequest
 type DelegationPage = api.DelegationPage
@@ -8381,7 +9011,9 @@ type ExactNumber = api.ExactNumber
 type ExchangeDeviceLoginJSONRequestBody = api.ExchangeDeviceLoginJSONRequestBody
 type FieldSelection = api.FieldSelection
 type GetCatalogCommandParams = api.GetCatalogCommandParams
+type GetConnectionSchemaParams = api.GetConnectionSchemaParams
 type GetCurrentSessionParams = api.GetCurrentSessionParams
+type GetWarehouseDatasetParams = api.GetWarehouseDatasetParams
 type GrantMembershipJSONRequestBody = api.GrantMembershipJSONRequestBody
 type GrantMembershipParams = api.GrantMembershipParams
 type IdempotencyKey = api.IdempotencyKey
@@ -8467,11 +9099,19 @@ type RunResumeResponse = api.RunResumeResponse
 type RunState = api.RunState
 type RunStateFilter = api.RunStateFilter
 type RunView = api.RunView
+type RunWarehouseQueryJSONRequestBody = api.RunWarehouseQueryJSONRequestBody
+type RunWarehouseQueryParams = api.RunWarehouseQueryParams
 type SafeCommandPage = api.SafeCommandPage
 type SafeConnectionInput = api.SafeConnectionInput
 type SafeConnectionPatch = api.SafeConnectionPatch
 type SafeOutcomeReference = api.SafeOutcomeReference
 type SafeOutcomeReferenceKind = api.SafeOutcomeReferenceKind
+type SchemaField = api.SchemaField
+type SchemaFieldType = api.SchemaFieldType
+type SchemaPermissionRevision = api.SchemaPermissionRevision
+type SchemaProviderAccount = api.SchemaProviderAccount
+type SchemaResource = api.SchemaResource
+type SchemaSourceRevision = api.SchemaSourceRevision
 type ServerInfo = api.ServerInfo
 type ServerInfoProtocolVersion = api.ServerInfoProtocolVersion
 type ServiceAccount = api.ServiceAccount
@@ -8481,6 +9121,7 @@ type ServiceAccountCreationResponseReplay = api.ServiceAccountCreationResponseRe
 type ServiceAccountCreationResponseResultDisposition = api.ServiceAccountCreationResponseResultDisposition
 type ServiceAccountPage = api.ServiceAccountPage
 type ServiceAccountRevokeRequest = api.ServiceAccountRevokeRequest
+type SnapshotID = api.SnapshotID
 type StartBrowserLoginJSONRequestBody = api.StartBrowserLoginJSONRequestBody
 type StartDeviceLoginJSONRequestBody = api.StartDeviceLoginJSONRequestBody
 type SubmitInvocationJSONRequestBody = api.SubmitInvocationJSONRequestBody
@@ -8492,6 +9133,19 @@ type TaskViewLane = api.TaskViewLane
 type TypedSchema = api.TypedSchema
 type UpdateConnectionJSONRequestBody = api.UpdateConnectionJSONRequestBody
 type UpdateConnectionParams = api.UpdateConnectionParams
+type WarehouseColumn = api.WarehouseColumn
+type WarehouseColumnKind = api.WarehouseColumnKind
+type WarehouseDatasetSnapshot = api.WarehouseDatasetSnapshot
+type WarehouseObject = api.WarehouseObject
+type WarehouseOrdering = api.WarehouseOrdering
+type WarehouseParameter = api.WarehouseParameter
+type WarehousePredicate = api.WarehousePredicate
+type WarehousePredicateOperator = api.WarehousePredicateOperator
+type WarehouseProjection = api.WarehouseProjection
+type WarehouseQueryRequest = api.WarehouseQueryRequest
+type WarehouseQueryResult = api.WarehouseQueryResult
+type WarehouseSegment = api.WarehouseSegment
+type WarehouseSegmentState = api.WarehouseSegmentState
 type Workspace = api.Workspace
 type WorkspaceID = api.WorkspaceID
 type WorkspacePage = api.WorkspacePage

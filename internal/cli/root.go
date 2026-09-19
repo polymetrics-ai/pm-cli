@@ -132,6 +132,8 @@ func newRoot(options Options) (*cobra.Command, *commandRuntime) {
 	root.AddCommand(newTasksCommand(runtime))
 	root.AddCommand(NewRunsCommands(runtime))
 	root.AddCommand(newArtifactsCommand(runtime))
+	root.AddCommand(newWarehouseCommand(runtime))
+	root.AddCommand(newSchemaCommand(runtime))
 	root.AddCommand(NewAccessCommands(runtime))
 	root.AddCommand(newManualCommand(root))
 	root.AddCommand(newCompletionCommand(root))
