@@ -1,21 +1,34 @@
 package sync_test
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/app"
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
-	etl "github.com/polymetrics-ai/pm-cli/internal/sync"
+	"github.com/polymetrics-ai/pm-cli/internal/schema"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
+	etl "github.com/polymetrics-ai/pm-cli/internal/sync"
 	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
 	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
@@ -33,6 +46,36 @@ const (
 	// etlMaximumSegment stays well inside the child's own document capability,
 	// so no admitted page is refused by an envelope bound after the child ran.
 	etlMaximumSegment = warehouse.MaxQueryDocumentBytes / 4
+)
+
+// The ETL-QUERY-PUBLIC case installs the two read dependencies no composition
+// in this tree binds yet: the service's warehouse resources, and the
+// server-owned root of the connection's promoted metadata snapshot.
+const (
+	// etlSchemaCapability names the declared metadata capability the promoted
+	// discovery was observed through.
+	etlSchemaCapability = "orders_metadata"
+	// etlSchemaPermissionRevision and etlSchemaSourceRevision are the declared
+	// revisions the promoted discovery is bound to. The schema route serves a
+	// snapshot only for the exact binding the caller asks about.
+	etlSchemaPermissionRevision = "fixture-permission-1"
+	etlSchemaSourceRevision     = "fixture-source-1"
+	// childStartAnnouncement is the restricted child's own startup line, written
+	// before it reads any request. The supervisor forwards every child
+	// diagnostic byte to the writer the harness installs, so this line counts
+	// real child processes rather than executions the read surface claims.
+	childStartAnnouncement = "pm-query ready pid="
+	// etlStartSettle bounds the wait for a started child's announcement to
+	// reach the counting writer.
+	etlStartSettle = 30 * time.Second
+	// etlHTTPTimeout bounds one request to the fixture's authenticated router.
+	etlHTTPTimeout = 2 * time.Minute
+	// acknowledgedPages is how many pages the public-path case acknowledges
+	// through the checkpoint protocol before it reads. It fixes every derived
+	// expectation in that case: the registered ledger holds this many segments,
+	// and the query service runs one bounded analytical attempt per registered
+	// segment, so one answered query is this many child processes.
+	acknowledgedPages = 2
 )
 
 // TestPartialAckContiguousCursor is the V39 acceptance case. Only the committed
@@ -203,10 +246,11 @@ func foreignAttemptArtifactID(t *testing.T, layout warehouse.WarehouseLayout, at
 	return artifactID
 }
 
-// etlHarness owns only what this case needs from the selected stack: the
+// etlHarness owns only what this file's cases need from the selected stack: the
 // PostgreSQL fixture, both selected artifact gateways, the real restricted
-// query child, the owner-only admitted directory the child may write, and the
-// page protocol under test.
+// query child, the owner-only admitted directory the child may write, the page
+// protocol under test, and the count of real child processes the fixture's
+// router reached.
 type etlHarness struct {
 	t          *testing.T
 	fixture    *testfixture.Fixture
@@ -223,6 +267,44 @@ type etlHarness struct {
 	staging    string
 	bounds     warehouse.QueryBounds
 	columns    []warehouse.QueryColumn
+	// starts counts the restricted child's own startup announcements, and
+	// metadataRoot is the server-owned root the case installs on the HTTP
+	// service together with the snapshot it promoted for the fixture's own
+	// connection.
+	starts       *childStarts
+	metadataRoot string
+	metadata     *connectionMetadata
+}
+
+// connectionMetadata is the connection state the case installed beneath the
+// server-owned root: the exact binding the schema route must ask about and the
+// snapshot the case promoted into it.
+type connectionMetadata struct {
+	binding  schema.Binding
+	snapshot schema.Snapshot
+}
+
+// childStarts counts the restricted child's own startup announcements. Every
+// count is observed from the child process itself; nothing here trusts the read
+// surface's account of what it executed.
+type childStarts struct {
+	mutex   sync.Mutex
+	written strings.Builder
+	starts  int
+}
+
+func (starts *childStarts) Write(data []byte) (int, error) {
+	starts.mutex.Lock()
+	defer starts.mutex.Unlock()
+	starts.written.Write(data)
+	starts.starts = strings.Count(starts.written.String(), childStartAnnouncement)
+	return len(data), nil
+}
+
+func (starts *childStarts) count() int {
+	starts.mutex.Lock()
+	defer starts.mutex.Unlock()
+	return starts.starts
 }
 
 func newETLHarness(t *testing.T) *etlHarness {
@@ -236,6 +318,11 @@ func newETLHarness(t *testing.T) *etlHarness {
 		producer: testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway),
 		consumer: testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway),
 		bounds:   etlQueryBounds(),
+		starts:   &childStarts{},
+		// The server-owned metadata root exists before the service is
+		// constructed; the connection's own state directory and the promoted
+		// snapshot are written into it once the fixture owns an identity.
+		metadataRoot: t.TempDir(),
 		columns: []warehouse.QueryColumn{
 			{Name: "id", Kind: warehouse.QueryKindInt64, Nullable: false},
 			{Name: "note", Kind: warehouse.QueryKindText, Nullable: false},
@@ -252,8 +339,8 @@ func newETLHarness(t *testing.T) *etlHarness {
 			t.Fatalf("create the admitted directory %s: %v", filepath.Base(directory), err)
 		}
 	}
-	harness.child = newRestrictedQueryChild(t, harness.admitted)
-	harness.fixture = testfixture.New(t)
+	harness.child = newRestrictedQueryChild(t, harness.admitted, harness.starts)
+	harness.fixture = testfixture.New(t, harness.installReadSurface)
 	layout, err := warehouse.NewWarehouseLayout(
 		harness.fixture.Connection.ConnectorID, harness.fixture.Connection.ConnectionID, etlDatasetName,
 	)
@@ -284,7 +371,88 @@ func newETLHarness(t *testing.T) *etlHarness {
 		t.Fatalf("construct the ETL checkpoint: %v", err)
 	}
 	harness.checkpoint = checkpoint
+	harness.metadata = harness.promoteConnectionSchema(t)
 	return harness
+}
+
+// installReadSurface declares the composition this case reads through: the
+// warehouse resources and the connection metadata root that no composition in
+// this tree binds yet. The registered bytes are read through the fixture's own
+// second shared gateway by the same restricted child the checkpoint protocol
+// publishes through, and the metadata root is the case-owned directory the
+// promoted snapshot was written into. The fixture re-runs this configurator on
+// every restart, so a replacement host installs the surface against its own
+// pool.
+func (harness *etlHarness) installReadSurface(
+	dependencies testfixture.ServiceDependencies,
+	config *httpapi.ServiceConfig,
+) error {
+	config.Warehouse = &httpapi.WarehouseResources{
+		Pool:                dependencies.Pool,
+		Backend:             harness.consumer.Backend,
+		Child:               harness.child,
+		StagingRoot:         harness.staging,
+		MaximumSegmentBytes: etlMaximumSegment,
+		Bounds:              harness.bounds,
+	}
+	config.ConnectionMetadataRoot = harness.metadataRoot
+	return nil
+}
+
+// promoteConnectionSchema installs the connection's own metadata state beneath
+// the server-owned root. The case composes one complete declared discovery for
+// the fixture's connection and promotes it exactly as a discovery boundary
+// would, so the schema route reads a genuinely promoted snapshot rather than an
+// arrangement the route was taught to expect.
+func (harness *etlHarness) promoteConnectionSchema(t *testing.T) *connectionMetadata {
+	t.Helper()
+	connection := harness.fixture.Connection
+	binding := schema.Binding{
+		ConnectorID:        connection.ConnectorID,
+		ConnectionID:       connection.ConnectionID,
+		ProviderAccountID:  connection.ProviderAccountID,
+		PermissionRevision: etlSchemaPermissionRevision,
+		Resource:           etlDatasetName,
+		SourceRevision:     etlSchemaSourceRevision,
+	}
+	directory := filepath.Join(harness.metadataRoot, connection.ConnectionID)
+	if err := os.Mkdir(directory, 0o700); err != nil {
+		t.Fatalf("create the connection metadata state directory: %v", err)
+	}
+	store, err := schema.NewStore(directory)
+	if err != nil {
+		t.Fatalf("open the connection metadata store: %v", err)
+	}
+	candidate, err := schema.Discover(binding, []schema.Observation{{
+		Capability: etlSchemaCapability,
+		Resource:   binding.Resource,
+		Available:  true,
+		Fields: []schema.Field{
+			{
+				Name:     "id",
+				Pointer:  "/properties/id",
+				Schema:   contract.Schema{Type: contract.SchemaTypeInteger},
+				Required: true,
+			},
+			{
+				Name:     "note",
+				Pointer:  "/properties/note",
+				Schema:   contract.Schema{Type: contract.SchemaTypeString},
+				Required: true,
+			},
+		},
+	}})
+	if err != nil {
+		t.Fatalf("declare the connection discovery: %v", err)
+	}
+	if !candidate.Completeness.Complete {
+		t.Fatal("the declared connection discovery is not complete")
+	}
+	snapshot, err := store.Promote(binding, candidate, "")
+	if err != nil {
+		t.Fatalf("promote the connection schema snapshot: %v", err)
+	}
+	return &connectionMetadata{binding: binding, snapshot: snapshot}
 }
 
 func (harness *etlHarness) newPublisher(t *testing.T, resources *app.ArtifactResources) *objects.Publisher {
@@ -489,7 +657,9 @@ func etlChildLimits() warehouse.ChildLimits {
 // newRestrictedQueryChild builds cmd/pm-query with the pinned toolchain. The
 // child is the only process that links the native analytical engine, so the
 // acceptance case must drive a real binary rather than an in-test stand-in.
-func newRestrictedQueryChild(t *testing.T, admittedRoot string) *warehouse.QueryChild {
+// starts receives the child's own startup announcement, which is how this file
+// counts real child processes instead of executions the surface claims.
+func newRestrictedQueryChild(t *testing.T, admittedRoot string, starts io.Writer) *warehouse.QueryChild {
 	t.Helper()
 	root := isolationRepositoryRoot(t)
 	output := filepath.Join(t.TempDir(), "pm-query")
@@ -521,6 +691,7 @@ func newRestrictedQueryChild(t *testing.T, admittedRoot string) *warehouse.Query
 		ScratchRoot:   scratch,
 		AdmittedRoots: []string{admittedRoot},
 		Limits:        etlChildLimits(),
+		Diagnostics:   starts,
 	})
 	if err != nil {
 		t.Fatalf("construct the query child supervisor: %v", err)
@@ -561,5 +732,444 @@ func isolationRepositoryRoot(t *testing.T) string {
 			t.Fatal("the checkout root carrying tools/bootstrap.py was not found above the working directory")
 		}
 		directory = parent
+	}
+}
+
+// TestETLQueryPublicPath is the ETL-QUERY-PUBLIC acceptance case. It drives the
+// three warehouse read routes this candidate added through the real
+// authenticated router, over pages the checkpoint protocol genuinely published,
+// with the read surface and the connection metadata root installed by the case
+// itself. The case observes the answers rather than the handlers' own account of
+// them: the schema read is checked against the snapshot the case promoted, the
+// dataset read against the registered ledger in the database, the typed query
+// against the exact expected rows and types, every concealed or refused request
+// against the shared problem document, and every one of them against the number
+// of real restricted child processes that announced their own startup.
+func TestETLQueryPublicPath(t *testing.T) {
+	harness := newETLHarness(t)
+	// The public path reads what the protocol registered: acknowledged pages,
+	// published and cursor-advancing in order.
+	for position := 1; position <= acknowledgedPages; position++ {
+		harness.commit(t, harness.page(uint64(position)))
+	}
+	published := harness.starts.count()
+	workspace := harness.fixture.Scope.WorkspaceID
+	client := harness.fixture.Client
+
+	t.Run("connection_schema_read_answers_the_promoted_snapshot", func(t *testing.T) {
+		before := harness.starts.count()
+		response := harness.send(t, client, http.MethodGet, harness.schemaRoutePath(workspace), nil)
+		inspection := decodeWarehouseRoute[api.ConnectionSchemaInspection](t, response, http.StatusOK)
+		harness.requireConnectionIdentity(t, "the connection schema read",
+			inspection.OrgId, inspection.WorkspaceId, inspection.ConnectorId, inspection.ConnectionId)
+		binding := harness.metadata.binding
+		selected, err := inspection.Selected.Get()
+		if err != nil || selected != string(harness.metadata.snapshot.Fingerprint) {
+			t.Fatalf("connection schema selected = %q (%v); want the promoted %s",
+				selected, err, harness.metadata.snapshot.Fingerprint)
+		}
+		snapshot := inspection.Snapshot
+		if snapshot.ContentFingerprint != string(harness.metadata.snapshot.Fingerprint) ||
+			!snapshot.Complete || len(snapshot.Blockers) != 0 ||
+			snapshot.FieldCount != len(harness.metadata.snapshot.Fields) {
+			t.Fatalf("connection schema snapshot = %#v; want the complete promoted snapshot over %d fields",
+				snapshot, len(harness.metadata.snapshot.Fields))
+		}
+		if snapshot.ConnectorId != binding.ConnectorID || snapshot.ConnectionId != binding.ConnectionID ||
+			snapshot.ProviderAccountId != binding.ProviderAccountID ||
+			snapshot.PermissionRevision != binding.PermissionRevision ||
+			snapshot.Resource != binding.Resource || snapshot.SourceRevision != binding.SourceRevision {
+			t.Fatalf("connection schema snapshot is bound to %#v; want the promoted %#v", snapshot, binding)
+		}
+		want := []api.SchemaField{
+			{Name: "id", Pointer: "/properties/id", Type: api.SchemaFieldTypeInteger, Required: true},
+			{Name: "note", Pointer: "/properties/note", Type: api.SchemaFieldTypeString, Required: true},
+		}
+		if !reflect.DeepEqual(inspection.Fields, want) {
+			t.Fatalf("connection schema fields = %#v; want the promoted %#v", inspection.Fields, want)
+		}
+		// Reading a promoted snapshot never runs the analytical child.
+		harness.requireStartDelta(t, before, 0, "the connection schema read")
+	})
+
+	t.Run("dataset_read_answers_the_registered_ledger", func(t *testing.T) {
+		before := harness.starts.count()
+		response := harness.send(t, client, http.MethodGet, harness.datasetRoutePath(workspace), nil)
+		view := decodeWarehouseRoute[api.WarehouseDatasetSnapshot](t, response, http.StatusOK)
+		harness.requireConnectionIdentity(t, "the dataset read",
+			view.OrgId, view.WorkspaceId, view.ConnectorId, view.ConnectionId)
+		if view.Dataset != etlDatasetName {
+			t.Fatalf("dataset read names dataset %q; want %q", view.Dataset, etlDatasetName)
+		}
+		// The comparison is the durable ledger the protocol committed, read
+		// directly from the database rather than from the answer under test.
+		state, err := harness.manifest.State(context.Background(), harness.fixture.Actor, harness.fixture.Scope)
+		if err != nil {
+			t.Fatalf("load the committed dataset state: %v", err)
+		}
+		if len(state.Segments) != acknowledgedPages {
+			t.Fatalf("the acknowledged prefix registered %d segments; want the %d acknowledged pages",
+				len(state.Segments), acknowledgedPages)
+		}
+		if view.Revision != int64(state.Revision) || view.CursorOrdinal != int64(state.Cursor.Ordinal) {
+			t.Fatalf("dataset read reports revision %d at cursor %d; want the committed revision %d at cursor %d",
+				view.Revision, view.CursorOrdinal, state.Revision, state.Cursor.Ordinal)
+		}
+		if len(view.Segments) != len(state.Segments) {
+			t.Fatalf("dataset read reports %d segments; want the %d registered ones", len(view.Segments), len(state.Segments))
+		}
+		var reported int64
+		for index, registered := range state.Segments {
+			segment := view.Segments[index]
+			reported += segment.RowCount
+			if segment.Ordinal != int64(registered.Ordinal) ||
+				segment.ManifestRevision != int64(registered.ManifestRevision) ||
+				segment.RowCount != registered.RowCount || segment.State != api.Live ||
+				segment.ColumnFingerprint != registered.ColumnFingerprint ||
+				segment.Object.ArtifactId != registered.Object.ArtifactID ||
+				segment.Object.ByteLength != registered.Object.ByteLength ||
+				segment.Object.Sha256 != registered.Object.SHA256 ||
+				segment.Object.MediaType != registered.Object.MediaType ||
+				segment.Object.BackendGeneration != registered.Object.BackendGeneration {
+				t.Fatalf("dataset read segment %d = %#v; want the registered %#v", index, segment, registered)
+			}
+			if err := harness.consumer.Backend.Verify(context.Background(), registered.Object); err != nil {
+				t.Fatalf("registered segment %d is unreadable through the independent gateway: %v", index, err)
+			}
+		}
+		if reported != int64(acknowledgedPages*etlPageRows) || view.Rows != reported {
+			t.Fatalf("dataset read reports %d rows (%d in its segments); want the %d acknowledged rows",
+				view.Rows, reported, acknowledgedPages*etlPageRows)
+		}
+		harness.requireStartDelta(t, before, 0, "the dataset read")
+	})
+
+	t.Run("typed_query_answers_the_registered_rows", func(t *testing.T) {
+		before := harness.starts.count()
+		response := harness.send(t, client, http.MethodPost, harness.queryRoutePath(workspace),
+			harness.queryDocument(etlDatasetName, int64(acknowledgedPages*etlPageRows)+1))
+		result := decodeWarehouseRoute[api.WarehouseQueryResult](t, response, http.StatusOK)
+		harness.requireConnectionIdentity(t, "the dataset query",
+			result.OrgId, result.WorkspaceId, result.ConnectorId, result.ConnectionId)
+		if result.Dataset != etlDatasetName {
+			t.Fatalf("dataset query names dataset %q; want %q", result.Dataset, etlDatasetName)
+		}
+		wantColumns := []api.WarehouseColumn{
+			{Name: "id", Kind: api.WarehouseColumnKindInt64, Nullable: false},
+			{Name: "note", Kind: api.WarehouseColumnKindText, Nullable: false},
+		}
+		if !reflect.DeepEqual(result.Columns, wantColumns) {
+			t.Fatalf("dataset query columns = %#v; want the registered %#v", result.Columns, wantColumns)
+		}
+		if result.Truncated {
+			t.Fatal("dataset query reports a truncated answer for a limit above its registered row count")
+		}
+		wantRows := harness.wireRows(0, acknowledgedPages*etlPageRows)
+		if len(result.Rows) != len(wantRows) {
+			t.Fatalf("dataset query answered %d rows; want the %d acknowledged rows", len(result.Rows), len(wantRows))
+		}
+		for index, row := range result.Rows {
+			if len(row) != len(wantRows[index]) {
+				t.Fatalf("dataset query row %d carries %d cells; want %d", index, len(row), len(wantRows[index]))
+			}
+			for cell, value := range row {
+				if !value.Equal(wantRows[index][cell]) {
+					t.Fatalf("dataset query row %d cell %d = %#v; want the exact typed %#v",
+						index, cell, value, wantRows[index][cell])
+				}
+			}
+		}
+		// The query service runs one bounded analytical attempt per registered
+		// segment, so one answer over the acknowledged prefix is one real child
+		// process per acknowledged page.
+		harness.requireStartDelta(t, before, acknowledgedPages, "the typed query")
+	})
+
+	t.Run("a_wrong_workspace_or_another_callers_authority_is_concealed", func(t *testing.T) {
+		before := harness.starts.count()
+		foreignWorkspace := harness.fixture.ForeignScope.WorkspaceID
+		for _, route := range []struct {
+			what     string
+			method   string
+			endpoint string
+			body     any
+		}{
+			{"the connection schema read in another workspace", http.MethodGet,
+				harness.schemaRoutePath(foreignWorkspace), nil},
+			{"the dataset read in another workspace", http.MethodGet,
+				harness.datasetRoutePath(foreignWorkspace), nil},
+			{"the query in another workspace", http.MethodPost,
+				harness.queryRoutePath(foreignWorkspace), harness.queryDocument(etlDatasetName, int64(acknowledgedPages*etlPageRows)+1)},
+		} {
+			requireConcealed(t, harness.send(t, client, route.method, route.endpoint, route.body), route.what)
+		}
+		// The same connection is concealed from an authenticated caller of
+		// another workspace, whose own authority never reaches it.
+		stranger := harness.fixture.ClientFor(t, harness.fixture.ForeignActor)
+		requireConcealed(t, harness.send(t, stranger, http.MethodGet, harness.datasetRoutePath(workspace), nil),
+			"another workspace's caller reading the dataset")
+		requireConcealed(t, harness.send(t, stranger, http.MethodPost, harness.queryRoutePath(workspace),
+			harness.queryDocument(etlDatasetName, int64(acknowledgedPages*etlPageRows)+1)), "another workspace's caller querying the dataset")
+		// Concealment is concealment: no concealed request reached the child.
+		harness.requireStartDelta(t, before, 0, "every concealed read")
+	})
+
+	t.Run("the_connection_permission_is_required_and_sufficient", func(t *testing.T) {
+		before := harness.starts.count()
+		harness.withdrawConnectionRead(t, false)
+		// The exact permission is restored for every later case even when an
+		// assertion below stops this one.
+		t.Cleanup(func() { harness.withdrawConnectionReadQuietly(t, true) })
+		requireConcealed(t, harness.send(t, client, http.MethodGet, harness.datasetRoutePath(workspace), nil),
+			"the dataset read without the connection permission")
+		requireConcealed(t, harness.send(t, client, http.MethodPost, harness.queryRoutePath(workspace),
+			harness.queryDocument(etlDatasetName, int64(acknowledgedPages*etlPageRows)+1)), "the query without the connection permission")
+		harness.requireStartDelta(t, before, 0, "every read without the connection permission")
+		// Restoring the exact permission makes the same read answer again, so
+		// the concealment above is caused by the missing permission rather than
+		// by an unavailable read surface.
+		harness.withdrawConnectionRead(t, true)
+		restored := harness.send(t, client, http.MethodGet, harness.datasetRoutePath(workspace), nil)
+		if restored.status != http.StatusOK {
+			t.Fatalf("dataset read after restoring the connection permission = HTTP %d; want 200: %s",
+				restored.status, restored.document)
+		}
+		harness.requireStartDelta(t, before, 0, "the restored dataset read")
+	})
+
+	t.Run("raw_and_external_expressions_are_refused", func(t *testing.T) {
+		before := harness.starts.count()
+		for _, refusal := range []struct {
+			what string
+			body any
+		}{
+			// Statement text in the member that names the relation. The body is
+			// otherwise the exact body the typed query above answered with, so
+			// the refusal is caused by the expression alone.
+			{"statement text in the relation", harness.queryDocument("SELECT id, note FROM orders", int64(acknowledgedPages*etlPageRows)+1)},
+			// An external function expression naming a file outside the dataset.
+			{"an external function expression in the relation", harness.queryDocument("read_parquet('/etc/passwd')", int64(acknowledgedPages*etlPageRows)+1)},
+			// Statement text where this surface declares no member at all: the
+			// declared request is closed, so raw text has nowhere to bind.
+			{"statement text where the surface declares no member", map[string]any{"statement": "SELECT id, note FROM orders"}},
+		} {
+			response := harness.send(t, client, http.MethodPost, harness.queryRoutePath(workspace), refusal.body)
+			if response.status != http.StatusBadRequest {
+				t.Fatalf("a query carrying %s = HTTP %d; want the refused 400: %s",
+					refusal.what, response.status, response.document)
+			}
+			problem := decodeWarehouseRoute[api.Problem](t, response, http.StatusBadRequest)
+			if problem.Status != http.StatusBadRequest || problem.Code != "invalid_request" {
+				t.Fatalf("a query carrying %s was refused as %#v; want the shared invalid_request problem",
+					refusal.what, problem)
+			}
+		}
+		harness.requireStartDelta(t, before, 0, "every refused expression")
+	})
+
+	// Across every route above, the only child processes that ran are the ones
+	// the answered typed query needs, one per registered segment. Every
+	// concealed and every refused request ran none; the pages this case
+	// acknowledged are excluded by the count taken after them.
+	harness.requireStartDelta(t, published, acknowledgedPages, "the public read path")
+}
+
+// requireConnectionIdentity asserts that one answered read reports the exact
+// scope and connection that owns the dataset and the promoted snapshot.
+func (harness *etlHarness) requireConnectionIdentity(t *testing.T, what, orgID, workspaceID, connectorID, connectionID string) {
+	t.Helper()
+	if orgID != harness.fixture.Scope.OrgID || workspaceID != harness.fixture.Scope.WorkspaceID ||
+		connectorID != harness.fixture.Connection.ConnectorID ||
+		connectionID != harness.fixture.Connection.ConnectionID {
+		t.Fatalf("%s reported %s/%s/%s/%s; want the authorized connection of the fixture's own scope",
+			what, orgID, workspaceID, connectorID, connectionID)
+	}
+}
+
+// requireStartDelta asserts how many real child processes one observation
+// started. A concealed or refused request must start none and an answered query
+// must start exactly one; the count is the child's own startup announcement,
+// which the supervisor forwards before the attempt can produce an answer, so a
+// child that started is counted by the time the answer is observable.
+func (harness *etlHarness) requireStartDelta(t *testing.T, before, want int, what string) {
+	t.Helper()
+	deadline := time.Now().Add(etlStartSettle)
+	for {
+		if started := harness.starts.count() - before; started >= want {
+			if started != want {
+				t.Fatalf("%s started %d query child process(es); want %d", what, started, want)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s started %d query child process(es); want %d", what, harness.starts.count()-before, want)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// wireRows declares the exact typed rows two acknowledged pages registered,
+// independently of the read surface: the same values the checkpoint protocol
+// published, projected onto the shared exact value union.
+func (harness *etlHarness) wireRows(from, to int) [][]contract.PresentValue {
+	rows := make([][]contract.PresentValue, 0, to-from)
+	for index := from; index < to; index++ {
+		integer, err := contract.NewIntegerValue(strconv.Itoa(index))
+		if err != nil {
+			harness.t.Fatalf("declare the expected integer row value %d: %v", index, err)
+		}
+		rows = append(rows, []contract.PresentValue{
+			integer,
+			contract.NewStringValue("bounded page row " + strconv.Itoa(index)),
+		})
+	}
+	return rows
+}
+
+// queryDocument declares one bounded typed query in the closed wire form: a
+// declared relation, a declared projection, a declared order and a declared
+// limit. No member of it can carry statement text.
+func (harness *etlHarness) queryDocument(relation string, limit int64) api.WarehouseQueryRequest {
+	return api.WarehouseQueryRequest{
+		Relation:   relation,
+		Project:    []api.WarehouseProjection{{Column: "id"}, {Column: "note"}},
+		Predicates: []api.WarehousePredicate{},
+		Parameters: []api.WarehouseParameter{},
+		Order:      []api.WarehouseOrdering{{Column: "id"}},
+		Limit:      limit,
+	}
+}
+
+// withdrawConnectionRead removes and restores the single permission the three
+// read routes authorize with. The member keeps its workspace, its connection and
+// every other permission, so a concealment it then observes is caused by the
+// missing permission alone. Both directions rewrite the declared permission set
+// in its own sorted order, and both are idempotent.
+func (harness *etlHarness) withdrawConnectionRead(t *testing.T, restore bool) {
+	t.Helper()
+	// Revoking drops the entry and keeps the surrounding order; restoring folds
+	// the entry back in, so the declared membership constraint holds either way.
+	const revoke = `UPDATE pm.memberships
+		SET permissions = COALESCE((
+				SELECT array_agg(entry ORDER BY entry) FROM unnest(permissions) AS entry WHERE entry <> $4
+			), ARRAY[]::text[]),
+			control_revision = control_revision + 1
+		WHERE org_id = $1 AND workspace_id = $2 AND identity_id = $3`
+	const restorePermission = `UPDATE pm.memberships
+		SET permissions = (
+				SELECT array_agg(entry ORDER BY entry)
+				FROM (SELECT unnest(permissions) AS entry UNION SELECT $4::text) AS merged
+			),
+			control_revision = control_revision + 1
+		WHERE org_id = $1 AND workspace_id = $2 AND identity_id = $3`
+	statement := revoke
+	if restore {
+		statement = restorePermission
+	}
+	harness.fixture.SetupSQL(t, harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, statement,
+			harness.fixture.Scope.OrgID, harness.fixture.Scope.WorkspaceID,
+			harness.fixture.Actor.RequestedActor.PrincipalID, "connection.read")
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("the fixture membership update affected %d rows; want exactly one", tag.RowsAffected())
+		}
+		return nil
+	})
+}
+
+// withdrawConnectionReadQuietly restores the permission without failing a case
+// that has already reported its own outcome.
+func (harness *etlHarness) withdrawConnectionReadQuietly(t *testing.T, restore bool) {
+	t.Helper()
+	defer func() { _ = recover() }()
+	harness.withdrawConnectionRead(t, restore)
+}
+
+func (harness *etlHarness) schemaRoutePath(workspaceID string) string {
+	return fmt.Sprintf("%s/v1/workspaces/%s/connections/%s/schema?resource=%s&permission_revision=%s&source_revision=%s",
+		harness.fixture.BaseURL, url.PathEscape(workspaceID),
+		url.PathEscape(harness.fixture.Connection.ConnectionID),
+		url.QueryEscape(harness.metadata.binding.Resource),
+		url.QueryEscape(harness.metadata.binding.PermissionRevision),
+		url.QueryEscape(harness.metadata.binding.SourceRevision))
+}
+
+func (harness *etlHarness) datasetRoutePath(workspaceID string) string {
+	return fmt.Sprintf("%s/v1/workspaces/%s/connections/%s/warehouse/datasets/%s",
+		harness.fixture.BaseURL, url.PathEscape(workspaceID),
+		url.PathEscape(harness.fixture.Connection.ConnectionID), url.PathEscape(etlDatasetName))
+}
+
+func (harness *etlHarness) queryRoutePath(workspaceID string) string {
+	return harness.datasetRoutePath(workspaceID) + "/query"
+}
+
+// warehouseRouteResponse is one real answer from the fixture's authenticated
+// router.
+type warehouseRouteResponse struct {
+	status   int
+	document []byte
+}
+
+// send executes one request through the fixture's real TLS router with the
+// caller's real session, and reads a bounded answer.
+func (harness *etlHarness) send(
+	t *testing.T,
+	client *http.Client,
+	method, endpoint string,
+	body any,
+) warehouseRouteResponse {
+	t.Helper()
+	var reader io.Reader
+	if body != nil {
+		encoded, err := json.Marshal(body)
+		if err != nil {
+			t.Fatalf("encode the declared %s request: %v", method, err)
+		}
+		reader = bytes.NewReader(encoded)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), etlHTTPTimeout)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, method, endpoint, reader)
+	if err != nil {
+		t.Fatalf("construct the %s request: %v", method, err)
+	}
+	if body != nil {
+		request.Header.Set("Content-Type", "application/json")
+	}
+	response, err := client.Do(request)
+	if err != nil {
+		t.Fatalf("execute the %s request: %v", method, err)
+	}
+	defer func() { _ = response.Body.Close() }()
+	document, err := io.ReadAll(io.LimitReader(response.Body, 1<<20+1))
+	if err != nil || len(document) > 1<<20 {
+		t.Fatalf("the answer to %s exceeded its readable envelope: %v", method, err)
+	}
+	return warehouseRouteResponse{status: response.StatusCode, document: document}
+}
+
+func decodeWarehouseRoute[T any](t *testing.T, response warehouseRouteResponse, wantStatus int) T {
+	t.Helper()
+	if response.status != wantStatus {
+		t.Fatalf("route answered HTTP %d; want %d: %s", response.status, wantStatus, response.document)
+	}
+	var decoded T
+	if err := json.Unmarshal(response.document, &decoded); err != nil {
+		t.Fatalf("decode the route answer: %v: %s", err, response.document)
+	}
+	return decoded
+}
+
+// requireConcealed asserts one refusal that must not reveal whether the
+// connection, its metadata or its dataset exist.
+func requireConcealed(t *testing.T, response warehouseRouteResponse, what string) {
+	t.Helper()
+	problem := decodeWarehouseRoute[api.Problem](t, response, http.StatusNotFound)
+	if problem.Status != http.StatusNotFound || problem.Code != "resource_not_found" {
+		t.Fatalf("%s was answered %#v; want the concealed resource_not_found problem", what, problem)
 	}
 }

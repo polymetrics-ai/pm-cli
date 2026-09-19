@@ -19,7 +19,11 @@ go_library(
 
 go_test(
     name = "sync_test",
-    srcs = ["ack_test.go"],
+    srcs = [
+        "ack_test.go",
+        "etl_scratch_test.go",
+        "read_selector_refusal_test.go",
+    ],
     env_inherit = [
         "PM_STACK_ROOT",
         "PM_STACK_SECRETS_DIR",
@@ -35,10 +39,16 @@ go_test(
     ],
     deps = [
         ":sync",
+        "//internal/api",
         "//internal/app",
+        "//internal/contract",
+        "//internal/httpapi",
         "//internal/objects",
+        "//internal/schema",
         "//internal/store",
         "//internal/testfixture",
         "//internal/warehouse",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_oapi_codegen_nullable//:nullable",
     ],
 )
