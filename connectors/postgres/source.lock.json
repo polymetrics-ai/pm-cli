@@ -1,0 +1,201 @@
+{
+  "schema_version": "pm.connector-source/v1",
+  "connector_id": "postgres",
+  "source_set": {
+    "dialect": "postgresql-docs-16",
+    "documents": [
+      {
+        "source_id": "postgresql-16-protocol",
+        "official_url": "https://www.postgresql.org/docs/16/protocol.html",
+        "path": "docs/16/protocol.html",
+        "captured_at": "2026-09-19T02:00:48Z",
+        "byte_length": 20903,
+        "sha256": "6ab0a6269160ffd04871b84b60d69b0dd55c445bb7d0a894041bc3c10ba64791",
+        "license": {
+          "spdx": "PostgreSQL",
+          "path": "connectors/postgres/captures/LICENCE.html",
+          "sha256": "0b7ded1cfdf32c6e31083d009075cf8e8c65568e37ab4f2e722a183e77911fb1",
+          "copyright": "Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+          "notice_required": true
+        }
+      },
+      {
+        "source_id": "postgresql-16-protocol-flow",
+        "official_url": "https://www.postgresql.org/docs/16/protocol-flow.html",
+        "path": "docs/16/protocol-flow.html",
+        "captured_at": "2026-09-19T02:00:48Z",
+        "byte_length": 77224,
+        "sha256": "a0c29926058b1fa46df278b6ad0504495794cd845946034ed4d5d8fc36150c2e",
+        "license": {
+          "spdx": "PostgreSQL",
+          "path": "connectors/postgres/captures/LICENCE.html",
+          "sha256": "0b7ded1cfdf32c6e31083d009075cf8e8c65568e37ab4f2e722a183e77911fb1",
+          "copyright": "Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+          "notice_required": true
+        }
+      },
+      {
+        "source_id": "postgresql-16-sql-select",
+        "official_url": "https://www.postgresql.org/docs/16/sql-select.html",
+        "path": "docs/16/sql-select.html",
+        "captured_at": "2026-09-19T02:00:48Z",
+        "byte_length": 117667,
+        "sha256": "a8f4ce1405802cacbb35e6fb88f5e3cf138a4e872910cdfd276f378f13371657",
+        "license": {
+          "spdx": "PostgreSQL",
+          "path": "connectors/postgres/captures/LICENCE.html",
+          "sha256": "0b7ded1cfdf32c6e31083d009075cf8e8c65568e37ab4f2e722a183e77911fb1",
+          "copyright": "Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+          "notice_required": true
+        }
+      },
+      {
+        "source_id": "postgresql-16-sql-insert",
+        "official_url": "https://www.postgresql.org/docs/16/sql-insert.html",
+        "path": "docs/16/sql-insert.html",
+        "captured_at": "2026-09-19T02:00:48Z",
+        "byte_length": 45673,
+        "sha256": "82c04c612f65a7864e53d6052d4c5f6dd244ba20f5509c4f7ffa84b0347e4f07",
+        "license": {
+          "spdx": "PostgreSQL",
+          "path": "connectors/postgres/captures/LICENCE.html",
+          "sha256": "0b7ded1cfdf32c6e31083d009075cf8e8c65568e37ab4f2e722a183e77911fb1",
+          "copyright": "Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+          "notice_required": true
+        }
+      },
+      {
+        "source_id": "postgresql-16-sql-update",
+        "official_url": "https://www.postgresql.org/docs/16/sql-update.html",
+        "path": "docs/16/sql-update.html",
+        "captured_at": "2026-09-19T02:00:48Z",
+        "byte_length": 31768,
+        "sha256": "c6ed6d6b4979a37ef08e7364656a0a81d5f5da35f1aba49092106c9959c7f7b3",
+        "license": {
+          "spdx": "PostgreSQL",
+          "path": "connectors/postgres/captures/LICENCE.html",
+          "sha256": "0b7ded1cfdf32c6e31083d009075cf8e8c65568e37ab4f2e722a183e77911fb1",
+          "copyright": "Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+          "notice_required": true
+        }
+      },
+      {
+        "source_id": "postgresql-16-information-schema",
+        "official_url": "https://www.postgresql.org/docs/16/information-schema.html",
+        "path": "docs/16/information-schema.html",
+        "captured_at": "2026-09-19T02:00:48Z",
+        "byte_length": 25578,
+        "sha256": "8ebd1c385edf424da8ed141db8631cf8d248473eedf858a202404f45a9a580ef",
+        "license": {
+          "spdx": "PostgreSQL",
+          "path": "connectors/postgres/captures/LICENCE.html",
+          "sha256": "0b7ded1cfdf32c6e31083d009075cf8e8c65568e37ab4f2e722a183e77911fb1",
+          "copyright": "Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+          "notice_required": true
+        }
+      },
+      {
+        "source_id": "postgresql-16-infoschema-columns",
+        "official_url": "https://www.postgresql.org/docs/16/infoschema-columns.html",
+        "path": "docs/16/infoschema-columns.html",
+        "captured_at": "2026-09-19T02:00:48Z",
+        "byte_length": 34400,
+        "sha256": "cb80abcf9798a3547753cced5e64e6987abf4f2bbfad20cd3871914822859063",
+        "license": {
+          "spdx": "PostgreSQL",
+          "path": "connectors/postgres/captures/LICENCE.html",
+          "sha256": "0b7ded1cfdf32c6e31083d009075cf8e8c65568e37ab4f2e722a183e77911fb1",
+          "copyright": "Portions Copyright (c) 1996-2026, The PostgreSQL Global Development Group; Portions Copyright (c) 1994, The Regents of the University of California",
+          "notice_required": true
+        }
+      }
+    ],
+    "references_closed": true
+  },
+  "operations": [
+    {
+      "source_operation_id": "relation/metadata",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-information-schema",
+          "pointer": "#INFORMATION-SCHEMA"
+        },
+        {
+          "source_id": "postgresql-16-infoschema-columns",
+          "pointer": "#INFOSCHEMA-COLUMNS"
+        }
+      ],
+      "request_variants": [],
+      "response_variants": [],
+      "statement_kind": "metadata",
+      "relation_binding": "postgres.reusable-relation"
+    },
+    {
+      "source_operation_id": "relation/select",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-SELECT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-WHERE"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-LIMIT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-ORDERBY"
+        }
+      ],
+      "request_variants": [],
+      "response_variants": [],
+      "statement_kind": "select",
+      "relation_binding": "postgres.reusable-relation"
+    },
+    {
+      "source_operation_id": "relation/mapped-upsert",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-INSERT"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-ON-CONFLICT"
+        },
+        {
+          "source_id": "postgresql-16-sql-update",
+          "pointer": "#SQL-UPDATE"
+        }
+      ],
+      "request_variants": [],
+      "response_variants": [],
+      "statement_kind": "mapped_upsert",
+      "relation_binding": "postgres.reusable-relation"
+    }
+  ],
+  "semantics_revision": "sha256:b6da965c0ae2e20bcf58e615293497fed7c49b25cad90648e2e9d830550462a3"
+}

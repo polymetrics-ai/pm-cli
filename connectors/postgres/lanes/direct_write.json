@@ -1,0 +1,481 @@
+{
+  "schema_version": "pm.lane-inventory/v1",
+  "connector_id": "postgres",
+  "lane": "direct_write",
+  "source_digest": "sha256:cb28f4284a5e08e03cbc5e14e72e259506bda6dc382f9fe87c2a7a660489900b",
+  "bundle_hash": "sha256:3626047454d4ddf509ada4aecb4bf36c26e86fc4000068308a879c27cdadb373",
+  "operations": [
+    {
+      "operation_id": "relation/mapped-upsert",
+      "status": "eligible",
+      "reason": "declared mapped insert-or-update over one relation with a stable unique key, approved writable-column mappings, changed-value-only assignment and unchanged-value suppression",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-INSERT"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-ON-CONFLICT"
+        },
+        {
+          "source_id": "postgresql-16-sql-update",
+          "pointer": "#SQL-UPDATE"
+        }
+      ],
+      "cases": [
+        {
+          "behavior_id": "postgres-upsert-insert-absent-key",
+          "case_id": "postgres-upsert-insert-absent-key",
+          "scenario_hash": "sha256:b263eda5f07fdc85ea4c8993599c68c60c8e41a24a709312cd4dca18944814ba",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-upsert-insert-absent-key",
+            "connector_id": "postgres",
+            "lane": "direct_write",
+            "operation_id": "relation/mapped-upsert",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-sql-insert",
+                "pointer": "#SQL-INSERT"
+              },
+              {
+                "source_id": "postgresql-16-sql-insert",
+                "pointer": "#SQL-ON-CONFLICT"
+              },
+              {
+                "source_id": "postgresql-16-protocol-flow",
+                "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-write"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.absent-key"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "apply_insert",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/mapped-upsert",
+                "input": {
+                  "account_id": 9002,
+                  "display_name": "grace",
+                  "balance": 250.0
+                },
+                "captures": []
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "stable-key",
+                "step_id": "apply_insert",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/account_id",
+                "expected": {
+                  "presence": "value",
+                  "type": "integer",
+                  "exact": "9002",
+                  "precision": 4,
+                  "scale": 0
+                }
+              },
+              {
+                "assertion_id": "inserted-text",
+                "step_id": "apply_insert",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/display_name",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "grace"
+                }
+              },
+              {
+                "assertion_id": "inserted-numeric",
+                "step_id": "apply_insert",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/balance",
+                "expected": {
+                  "presence": "value",
+                  "type": "decimal",
+                  "exact": "250.00",
+                  "precision": 5,
+                  "scale": 2
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        },
+        {
+          "behavior_id": "postgres-upsert-missing-key-refusal",
+          "case_id": "postgres-upsert-missing-key-refusal",
+          "scenario_hash": "sha256:21fc74d95d86f8def4cedb2236af9447173d492bbac6021b11ac99b35de6a025",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-upsert-missing-key-refusal",
+            "connector_id": "postgres",
+            "lane": "direct_write",
+            "operation_id": "relation/mapped-upsert",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-sql-insert",
+                "pointer": "#SQL-INSERT"
+              },
+              {
+                "source_id": "postgresql-16-sql-insert",
+                "pointer": "#SQL-ON-CONFLICT"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-write"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.existing-key"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "apply_without_key",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/mapped-upsert",
+                "input": {
+                  "display_name": "ada lovelace"
+                },
+                "captures": []
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "refused-no-effect",
+                "step_id": "apply_without_key",
+                "kind": "absent",
+                "pointer": "/data",
+                "expected": {
+                  "presence": "absent"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        },
+        {
+          "behavior_id": "postgres-upsert-update-changed-column",
+          "case_id": "postgres-upsert-update-changed-column",
+          "scenario_hash": "sha256:01edc4deb9cb0ec3ef8e27d9ea501ce83f0f579679665cb580e7239ab1020d50",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-upsert-update-changed-column",
+            "connector_id": "postgres",
+            "lane": "direct_write",
+            "operation_id": "relation/mapped-upsert",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-sql-insert",
+                "pointer": "#SQL-INSERT"
+              },
+              {
+                "source_id": "postgresql-16-sql-insert",
+                "pointer": "#SQL-ON-CONFLICT"
+              },
+              {
+                "source_id": "postgresql-16-sql-update",
+                "pointer": "#SQL-UPDATE"
+              },
+              {
+                "source_id": "postgresql-16-protocol-flow",
+                "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-write"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.existing-key"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "apply_update",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/mapped-upsert",
+                "input": {
+                  "account_id": 9001,
+                  "display_name": "ada lovelace",
+                  "balance": 1250.5
+                },
+                "captures": []
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "changed-column-assigned",
+                "step_id": "apply_update",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/display_name",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "ada lovelace"
+                }
+              },
+              {
+                "assertion_id": "unchanged-column-preserved",
+                "step_id": "apply_update",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/balance",
+                "expected": {
+                  "presence": "value",
+                  "type": "decimal",
+                  "exact": "1250.50",
+                  "precision": 6,
+                  "scale": 2
+                }
+              },
+              {
+                "assertion_id": "unmapped-sentinel-preserved",
+                "step_id": "apply_update",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/note",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "unmapped-sentinel"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "operation_id": "relation/metadata",
+      "status": "not_applicable",
+      "reason": "the metadata statement takes no mapped input and performs no destination mutation",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-information-schema",
+          "pointer": "#INFORMATION-SCHEMA"
+        },
+        {
+          "source_id": "postgresql-16-infoschema-columns",
+          "pointer": "#INFOSCHEMA-COLUMNS"
+        }
+      ],
+      "cases": []
+    },
+    {
+      "operation_id": "relation/select",
+      "status": "not_applicable",
+      "reason": "the select statement performs no destination mutation",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-SELECT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-WHERE"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-LIMIT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-ORDERBY"
+        }
+      ],
+      "cases": []
+    }
+  ]
+}

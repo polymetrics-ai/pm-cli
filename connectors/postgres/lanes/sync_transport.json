@@ -1,0 +1,89 @@
+{
+  "schema_version": "pm.lane-inventory/v1",
+  "connector_id": "postgres",
+  "lane": "sync_transport",
+  "source_digest": "sha256:cb28f4284a5e08e03cbc5e14e72e259506bda6dc382f9fe87c2a7a660489900b",
+  "bundle_hash": "sha256:3626047454d4ddf509ada4aecb4bf36c26e86fc4000068308a879c27cdadb373",
+  "operations": [
+    {
+      "operation_id": "relation/mapped-upsert",
+      "status": "unproven",
+      "reason": "the change-set transport, ordering and reconciliation semantics this lane needs are not implemented in this slice",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-INSERT"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-ON-CONFLICT"
+        },
+        {
+          "source_id": "postgresql-16-sql-update",
+          "pointer": "#SQL-UPDATE"
+        }
+      ],
+      "cases": []
+    },
+    {
+      "operation_id": "relation/metadata",
+      "status": "unproven",
+      "reason": "scheduled transport with cadence, deduplication and checkpoint semantics is not implemented in this slice; PostgreSQL logical CDC remains deferred",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-information-schema",
+          "pointer": "#INFORMATION-SCHEMA"
+        },
+        {
+          "source_id": "postgresql-16-infoschema-columns",
+          "pointer": "#INFOSCHEMA-COLUMNS"
+        }
+      ],
+      "cases": []
+    },
+    {
+      "operation_id": "relation/select",
+      "status": "unproven",
+      "reason": "durable scheduled transport with cadence, deduplication and checkpoint semantics is not implemented in this slice",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-SELECT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-WHERE"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-LIMIT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-ORDERBY"
+        }
+      ],
+      "cases": []
+    }
+  ]
+}

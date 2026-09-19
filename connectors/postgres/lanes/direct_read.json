@@ -1,0 +1,834 @@
+{
+  "schema_version": "pm.lane-inventory/v1",
+  "connector_id": "postgres",
+  "lane": "direct_read",
+  "source_digest": "sha256:cb28f4284a5e08e03cbc5e14e72e259506bda6dc382f9fe87c2a7a660489900b",
+  "bundle_hash": "sha256:3626047454d4ddf509ada4aecb4bf36c26e86fc4000068308a879c27cdadb373",
+  "operations": [
+    {
+      "operation_id": "relation/mapped-upsert",
+      "status": "not_applicable",
+      "reason": "the mapped insert-or-update is a destination mutation; its typed row projection reports its own effects, not a read of provider state",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-INSERT"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-ON-CONFLICT"
+        },
+        {
+          "source_id": "postgresql-16-sql-update",
+          "pointer": "#SQL-UPDATE"
+        }
+      ],
+      "cases": []
+    },
+    {
+      "operation_id": "relation/metadata",
+      "status": "eligible",
+      "reason": "the declared metadata statement reads one live relation's column names and types over the native protocol, so an authorized bounded relation read is reachable",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-information-schema",
+          "pointer": "#INFORMATION-SCHEMA"
+        },
+        {
+          "source_id": "postgresql-16-infoschema-columns",
+          "pointer": "#INFOSCHEMA-COLUMNS"
+        }
+      ],
+      "cases": [
+        {
+          "behavior_id": "postgres-metadata-declared-relation",
+          "case_id": "postgres-metadata-declared-relation",
+          "scenario_hash": "sha256:240efcc06a68376ccf10180067b01f137a15081005b51bf5205d4d95502d32b3",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-metadata-declared-relation",
+            "connector_id": "postgres",
+            "lane": "direct_read",
+            "operation_id": "relation/metadata",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-infoschema-columns",
+                "pointer": "#INFOSCHEMA-COLUMNS"
+              },
+              {
+                "source_id": "postgresql-16-information-schema",
+                "pointer": "#INFORMATION-SCHEMA"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-read"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.metadata"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "read_metadata",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/metadata",
+                "input": {},
+                "captures": []
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "first-column-name",
+                "step_id": "read_metadata",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/column_name",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "account_id"
+                }
+              },
+              {
+                "assertion_id": "first-column-type",
+                "step_id": "read_metadata",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/data_type",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "bigint"
+                }
+              },
+              {
+                "assertion_id": "second-column-type",
+                "step_id": "read_metadata",
+                "kind": "equals",
+                "pointer": "/data/elements/1/fields/data_type",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "text"
+                }
+              },
+              {
+                "assertion_id": "third-column-type",
+                "step_id": "read_metadata",
+                "kind": "equals",
+                "pointer": "/data/elements/2/fields/data_type",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "numeric(12,2)"
+                }
+              },
+              {
+                "assertion_id": "fourth-column-type",
+                "step_id": "read_metadata",
+                "kind": "equals",
+                "pointer": "/data/elements/3/fields/data_type",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "timestamp with time zone"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        },
+        {
+          "behavior_id": "postgres-metadata-missing-relation",
+          "case_id": "postgres-metadata-missing-relation",
+          "scenario_hash": "sha256:ad92e62ef30694594ad2bc4ad99ca538f490c3c6778b8376ed0fb6e98581cca9",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-metadata-missing-relation",
+            "connector_id": "postgres",
+            "lane": "direct_read",
+            "operation_id": "relation/metadata",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-information-schema",
+                "pointer": "#INFORMATION-SCHEMA"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-read-missing-relation"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.missing"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "read_missing_relation",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/metadata",
+                "input": {},
+                "captures": []
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "refused-no-metadata",
+                "step_id": "read_missing_relation",
+                "kind": "absent",
+                "pointer": "/data",
+                "expected": {
+                  "presence": "absent"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        },
+        {
+          "behavior_id": "postgres-metadata-unavailable-authority",
+          "case_id": "postgres-metadata-unavailable-authority",
+          "scenario_hash": "sha256:643c5d70399c8798af8f2ffc1e22cf6cb7ff53c0c2f91d5e219d692c7fc4f00f",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-metadata-unavailable-authority",
+            "connector_id": "postgres",
+            "lane": "direct_read",
+            "operation_id": "relation/metadata",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-information-schema",
+                "pointer": "#INFORMATION-SCHEMA"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-read-unavailable"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-unavailable"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.metadata"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "read_without_authority",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/metadata",
+                "input": {},
+                "captures": [],
+                "connection_ref": "pm-postgres-read-revoked"
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "refused-no-metadata",
+                "step_id": "read_without_authority",
+                "kind": "absent",
+                "pointer": "/data",
+                "expected": {
+                  "presence": "absent"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        }
+      ]
+    },
+    {
+      "operation_id": "relation/select",
+      "status": "eligible",
+      "reason": "bounded keyed select over declared columns with an explicit row bound, positional parameters and a deterministic order",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-SELECT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-WHERE"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-LIMIT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-ORDERBY"
+        }
+      ],
+      "cases": [
+        {
+          "behavior_id": "postgres-select-denied-connection",
+          "case_id": "postgres-select-denied-connection",
+          "scenario_hash": "sha256:e949a956a07e2a28657cf319f0e5157289d42f2e38d0b5359e9791e6979e7428",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-select-denied-connection",
+            "connector_id": "postgres",
+            "lane": "direct_read",
+            "operation_id": "relation/select",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-SELECT"
+              },
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-WHERE"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-read"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.exact-row"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "read_refused",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/select",
+                "input": {
+                  "account_id": 9001
+                },
+                "captures": [],
+                "connection_ref": "pm-postgres-read-denied"
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "refused-no-rows",
+                "step_id": "read_refused",
+                "kind": "absent",
+                "pointer": "/data",
+                "expected": {
+                  "presence": "absent"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        },
+        {
+          "behavior_id": "postgres-select-exact-typed-row",
+          "case_id": "postgres-select-exact-typed-row",
+          "scenario_hash": "sha256:a40069a2fda04dbc0d9d7f0d35a0393be46148f30c26e404ef3bd9a73982bd0e",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-select-exact-typed-row",
+            "connector_id": "postgres",
+            "lane": "direct_read",
+            "operation_id": "relation/select",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-SELECT"
+              },
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-WHERE"
+              },
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-LIMIT"
+              },
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-ORDERBY"
+              },
+              {
+                "source_id": "postgresql-16-protocol-flow",
+                "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-read"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.exact-row"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "read_exact_row",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/select",
+                "input": {
+                  "account_id": 9001
+                },
+                "captures": []
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "stable-key",
+                "step_id": "read_exact_row",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/account_id",
+                "expected": {
+                  "presence": "value",
+                  "type": "integer",
+                  "exact": "9001",
+                  "precision": 4,
+                  "scale": 0
+                }
+              },
+              {
+                "assertion_id": "mapped-text",
+                "step_id": "read_exact_row",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/display_name",
+                "expected": {
+                  "presence": "value",
+                  "type": "string",
+                  "text": "ada"
+                }
+              },
+              {
+                "assertion_id": "exact-numeric-scale",
+                "step_id": "read_exact_row",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/balance",
+                "expected": {
+                  "presence": "value",
+                  "type": "decimal",
+                  "exact": "1250.50",
+                  "precision": 6,
+                  "scale": 2
+                }
+              },
+              {
+                "assertion_id": "instant-normalized-utc",
+                "step_id": "read_exact_row",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/updated_at",
+                "expected": {
+                  "presence": "value",
+                  "type": "timestamp_instant",
+                  "text": "2026-09-17T12:00:00Z"
+                }
+              },
+              {
+                "assertion_id": "explicit-null-note",
+                "step_id": "read_exact_row",
+                "kind": "equals",
+                "pointer": "/data/elements/0/fields/note",
+                "expected": {
+                  "presence": "null"
+                }
+              },
+              {
+                "assertion_id": "one-declared-row",
+                "step_id": "read_exact_row",
+                "kind": "absent",
+                "pointer": "/data/elements/1",
+                "expected": {
+                  "presence": "absent"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        },
+        {
+          "behavior_id": "postgres-select-missing-key-refusal",
+          "case_id": "postgres-select-missing-key-refusal",
+          "scenario_hash": "sha256:a9992115eea24ef54566049cd63dc3850b7ed85e595f4a7a70afa65b07ed1b3d",
+          "scenario": {
+            "scenario_version": "pm.scenario/v1",
+            "scenario_id": "postgres-select-missing-key-refusal",
+            "connector_id": "postgres",
+            "lane": "direct_read",
+            "operation_id": "relation/select",
+            "source_refs": [
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-SELECT"
+              },
+              {
+                "source_id": "postgresql-16-sql-select",
+                "pointer": "#SQL-WHERE"
+              }
+            ],
+            "requirements": [
+              {
+                "requirement_id": "secret.pm-connection",
+                "kind": "secret_reference",
+                "value": "connection/pm-postgres-read"
+              },
+              {
+                "requirement_id": "service.authorized-connection",
+                "kind": "service",
+                "value": "deployment/pm-postgres-authorized"
+              },
+              {
+                "requirement_id": "fixture.declared-relation",
+                "kind": "fixture",
+                "value": "fixture.postgres.accounts.exact-row"
+              },
+              {
+                "requirement_id": "capability.sql.execute",
+                "kind": "capability",
+                "value": "sql.execute"
+              },
+              {
+                "requirement_id": "capability.value.serialize",
+                "kind": "capability",
+                "value": "value.serialize"
+              },
+              {
+                "requirement_id": "capability.effect.authorize",
+                "kind": "capability",
+                "value": "effect.authorize"
+              },
+              {
+                "requirement_id": "capability.effect.limit",
+                "kind": "capability",
+                "value": "effect.limit"
+              },
+              {
+                "requirement_id": "foundation.sql.execute",
+                "kind": "foundation",
+                "value": "FND-07@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.value.serialize",
+                "kind": "foundation",
+                "value": "FND-03@1.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.authorize",
+                "kind": "foundation",
+                "value": "FND-05@2.0.0"
+              },
+              {
+                "requirement_id": "foundation.effect.limit",
+                "kind": "foundation",
+                "value": "FND-10@2.0.0"
+              }
+            ],
+            "steps": [
+              {
+                "step_id": "read_without_key",
+                "kind": "invoke",
+                "depends_on": [],
+                "action": "relation/select",
+                "input": {},
+                "captures": []
+              }
+            ],
+            "assertions": [
+              {
+                "assertion_id": "refused-no-rows",
+                "step_id": "read_without_key",
+                "kind": "absent",
+                "pointer": "/data",
+                "expected": {
+                  "presence": "absent"
+                }
+              }
+            ],
+            "cleanup": {
+              "always": true,
+              "owned_id_captures": [],
+              "steps": []
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,344 @@
+<!doctype html>
+<html lang="en">
+ <head>
+  <title>PostgreSQL: Documentation: 16: Chapter 55. Frontend/Backend Protocol</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <meta http-equiv="Content-Type" content="text/xhtml; charset=utf-8" />
+   
+  <meta name="theme-color" content="#336791"/>
+  <meta name="copyright" content="The PostgreSQL Global Development Group" />
+  <meta property="og:url" content="https://www.postgresql.org/docs/16/protocol.html" />
+  <meta property="og:type" content="article" />
+
+  <meta property="article:published_time" content="2026-08-13T12:52:44.176831" />
+  <meta property="og:image" content="https://www.postgresql.org/media/img/about/press/elephant.png" />
+  <meta property="og:title" content="Chapter 55. Frontend/Backend Protocol" />
+  <meta property="og:description" content="Chapter&amp;nbsp;55.&amp;nbsp;Frontend/Backend Protocol Table of Contents 55.1. Overview 55.1.1. Messaging Overview 55.1.2. Extended Query Overview 55.1.3. Formats and Format Codes 55.2. …" />
+  <meta property="og:site_name" content="PostgreSQL Documentation" />
+  <link href="/media/css/fontawesome.css?e5c079de" rel="stylesheet">
+  <link rel="stylesheet" href="/media/css/bootstrap-4.4.1.min.css">
+  <link rel="shortcut icon" href="/favicon.ico" />
+  
+  <link rel="stylesheet" type="text/css" href="/dyncss/base.css?e5c079de">
+
+  <script src="/media/js/theme.js?e5c079de"></script>
+
+  
+
+
+  <link rel="canonical" href="https://www.postgresql.org/docs/current/protocol.html" />
+
+
+  </head>
+  <body>
+    <div class="container-fluid">
+      <div class="row justify-content-md-center">
+        <div class="col">
+          <!-- Header -->
+          <nav class="navbar navbar-expand-lg navbar-light bg-light">
+            <a class="navbar-brand p-0" href="/">
+              <img class="logo" src="/media/img/about/press/elephant.png" alt="PostgreSQL Elephant Logo">
+            </a>
+            <input type="checkbox" id="navbar-toggler" aria-controls="pgNavbar" aria-expanded="false" aria-label="Toggle navigation">
+            <label for="navbar-toggler" id="navbar-toggler-label" class="navbar-toggler" tabindex="0"><span class="navbar-toggler-icon"></span></label>
+            <div class="navbar-collapse" id="pgNavbar">
+              <ul class="navbar-nav mr-auto">
+                <li class="nav-item p-2"><a href="/" title="Home">Home</a></li>
+                <li class="nav-item p-2"><a href="/about/" title="About">About</a></li>
+                <li class="nav-item p-2"><a href="/download/" title="Download">Download</a></li>
+                <li class="nav-item p-2"><a href="/docs/" title="Documentation">Documentation</a></li>
+                <li class="nav-item p-2"><a href="/community/" title="Community">Community</a></li>
+                <li class="nav-item p-2"><a href="/developer/" title="Developers">Developers</a></li>
+                <li class="nav-item p-2"><a href="/support/" title="Support">Support</a></li>
+                <li class="nav-item p-2"><a href="/about/donate/" title="Donate">Donate</a></li>
+                <li class="nav-item p-2"><a href="/account/" title="Your account">Your account</a></li>
+              </ul>
+              <form role="search" method="get" action="/search/">
+                <div class="input-group">
+                  <input id="q" name="q" type="text" size="20" maxlength="255" accesskey="s"  class="form-control" placeholder="Search for...">
+                  <span class="input-group-btn">
+                    <button class="btn btn-default" type="submit"><i class="fas fa-search"></i></button>
+                  </span>
+                </div><!-- /input-group -->
+              </form>
+              <form id="form-theme" class="form-inline d-none">
+                <button id="btn-theme" class="btn btn-default ml-1" type="button"></button>
+              </form>
+            </div>
+          </nav>
+        </div>
+      </div>
+      <div class="row justify-content-center pg-shout-box">
+        <div class="col text-white text-center">August 13, 2026: <a href="/about/news/postgresql-186-1711-1615-1519-1424-and-19-beta-3-released-3365/">PostgreSQL 18.6, 17.11, 16.15, 15.19, 14.24 and 19 Beta 3 Released!</a>
+
+</div>
+      </div>
+    </div>
+    
+    <div class="container-fluid margin">
+      <div class="row">
+        <div id="pgContentWrap" class="col-11">
+          <div class="row">
+            <div class="col-md-6 mb-2">
+              <div class="row">
+                <div class="col">
+                  <div>
+                    <a href="/docs/" title="Documentation">Documentation</a> &rarr; <a href="/docs/16/index.html">PostgreSQL 16</a>
+                  </div>
+                </div>
+              </div>
+              
+                <div class="row">
+                  <div class="col">
+                    Supported Versions:
+                      
+                        
+                        
+                          <a href="/docs/current/protocol.html" title="PostgreSQL 18 - Chapter 55. Frontend/Backend Protocol" >Current</a>
+                          (<a href="/docs/18/protocol.html" title="PostgreSQL 18 - Chapter 55. Frontend/Backend Protocol" >18</a>)
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/17/protocol.html" title="PostgreSQL 17 - Chapter 55. Frontend/Backend Protocol" >17</a>
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/16/protocol.html" title="PostgreSQL 16 - Chapter 55. Frontend/Backend Protocol" class="docs-version-selected">16</a>
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/15/protocol.html" title="PostgreSQL 15 - Chapter 55. Frontend/Backend Protocol" >15</a>
+                        
+                      
+                         / 
+                        
+                          <a href="/docs/14/protocol.html" title="PostgreSQL 14 - Chapter 55. Frontend/Backend Protocol" >14</a>
+                        
+                      
+                  </div>
+                </div>
+              
+              
+                <div class="row">
+                  <div class="col">
+                    Development Versions:
+                    
+                      
+                      <a href="/docs/19/protocol.html" title="PostgreSQL 19 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">19</a>
+                    
+                       / 
+                      <a href="/docs/devel/protocol.html" title="PostgreSQL devel - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">devel</a>
+                    
+                  </div>
+                </div>
+              
+              
+                <div class="row">
+                  <div class="col-12">
+                    Unsupported versions:
+                    
+                      
+                      <a href="/docs/13/protocol.html" title="PostgreSQL 13 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">13</a>
+                    
+                       / 
+                      <a href="/docs/12/protocol.html" title="PostgreSQL 12 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">12</a>
+                    
+                       / 
+                      <a href="/docs/11/protocol.html" title="PostgreSQL 11 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">11</a>
+                    
+                       / 
+                      <a href="/docs/10/protocol.html" title="PostgreSQL 10 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">10</a>
+                    
+                       / 
+                      <a href="/docs/9.6/protocol.html" title="PostgreSQL 9.6 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">9.6</a>
+                    
+                       / 
+                      <a href="/docs/9.5/protocol.html" title="PostgreSQL 9.5 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">9.5</a>
+                    
+                       / 
+                      <a href="/docs/9.4/protocol.html" title="PostgreSQL 9.4 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">9.4</a>
+                    
+                       / 
+                      <a href="/docs/9.3/protocol.html" title="PostgreSQL 9.3 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">9.3</a>
+                    
+                       / 
+                      <a href="/docs/9.2/protocol.html" title="PostgreSQL 9.2 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">9.2</a>
+                    
+                       / 
+                      <a href="/docs/9.1/protocol.html" title="PostgreSQL 9.1 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">9.1</a>
+                    
+                       / 
+                      <a href="/docs/9.0/protocol.html" title="PostgreSQL 9.0 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">9.0</a>
+                    
+                       / 
+                      <a href="/docs/8.4/protocol.html" title="PostgreSQL 8.4 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">8.4</a>
+                    
+                       / 
+                      <a href="/docs/8.3/protocol.html" title="PostgreSQL 8.3 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">8.3</a>
+                    
+                       / 
+                      <a href="/docs/8.2/protocol.html" title="PostgreSQL 8.2 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">8.2</a>
+                    
+                       / 
+                      <a href="/docs/8.1/protocol.html" title="PostgreSQL 8.1 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">8.1</a>
+                    
+                       / 
+                      <a href="/docs/8.0/protocol.html" title="PostgreSQL 8.0 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">8.0</a>
+                    
+                       / 
+                      <a href="/docs/7.4/protocol.html" title="PostgreSQL 7.4 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">7.4</a>
+                    
+                       / 
+                      <a href="/docs/7.3/protocol.html" title="PostgreSQL 7.3 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">7.3</a>
+                    
+                       / 
+                      <a href="/docs/7.2/protocol.html" title="PostgreSQL 7.2 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">7.2</a>
+                    
+                       / 
+                      <a href="/docs/7.1/protocol.html" title="PostgreSQL 7.1 - Chapter 55. Frontend/Backend Protocol"  rel="nofollow">7.1</a>
+                    
+                  </div>
+                </div>
+              
+            </div>
+            <div class="col-md-6 col-lg-5 offset-lg-1">
+              <form id="docSearchForm" role="search" method="get" action="/search/">
+                <input type="hidden" name="u" value="/docs/16/" />
+                <div class="input-group">
+                  <input type="text" id="q" name="q" class="form-control" placeholder="Search the documentation for..."/>
+                  <span class="input-group-btn">
+                    <button class="btn btn-default" type="submit"><i class="fas fa-search"></i></button>
+                  </span>
+                </div><!-- /input-group -->
+              </form>
+            </div>
+          </div>
+
+          <div id="docContent">
+            <div class="navheader">
+  <table width="100%" summary="Navigation header">
+    <tr>
+      <th colspan="5" align="center">Chapter&nbsp;55.&nbsp;Frontend/Backend Protocol</th>
+    </tr>
+    <tr>
+      <td width="10%" align="left"><a accesskey="p" href="view-pg-views.html" title="54.35.&nbsp;pg_views">Prev</a>&nbsp;</td>
+      <td width="10%" align="left"><a accesskey="u" href="internals.html" title="Part&nbsp;VII.&nbsp;Internals">Up</a></td>
+      <th width="60%" align="center">Part&nbsp;VII.&nbsp;Internals</th>
+      <td width="10%" align="right"><a accesskey="h" href="index.html" title="PostgreSQL 16.15 Documentation">Home</a></td>
+      <td width="10%" align="right">&nbsp;<a accesskey="n" href="protocol-overview.html" title="55.1.&nbsp;Overview">Next</a></td>
+    </tr>
+  </table>
+  <hr />
+</div>
+<div class="chapter" id="PROTOCOL">
+  <div class="titlepage">
+    <div>
+      <div>
+        <h2 class="title">Chapter&nbsp;55.&nbsp;Frontend/Backend Protocol</h2>
+      </div>
+    </div>
+  </div>
+  <div class="toc">
+    <p><strong>Table of Contents</strong></p>
+    <dl class="toc">
+      <dt><span class="sect1"><a href="protocol-overview.html">55.1. Overview</a></span></dt>
+      <dd>
+        <dl>
+          <dt><span class="sect2"><a href="protocol-overview.html#PROTOCOL-MESSAGE-CONCEPTS">55.1.1. Messaging Overview</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-overview.html#PROTOCOL-QUERY-CONCEPTS">55.1.2. Extended Query Overview</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-overview.html#PROTOCOL-FORMAT-CODES">55.1.3. Formats and Format Codes</a></span></dt>
+        </dl>
+      </dd>
+      <dt><span class="sect1"><a href="protocol-flow.html">55.2. Message Flow</a></span></dt>
+      <dd>
+        <dl>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-START-UP">55.2.1. Start-up</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-SIMPLE-QUERY">55.2.2. Simple Query</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-EXT-QUERY">55.2.3. Extended Query</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-PIPELINING">55.2.4. Pipelining</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-FUNCTION-CALL">55.2.5. Function Call</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-COPY">55.2.6. COPY Operations</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-ASYNC">55.2.7. Asynchronous Operations</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-CANCELING-REQUESTS">55.2.8. Canceling Requests in Progress</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-TERMINATION">55.2.9. Termination</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-SSL">55.2.10. <acronym class="acronym">SSL</acronym> Session Encryption</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-flow.html#PROTOCOL-FLOW-GSSAPI">55.2.11. <acronym class="acronym">GSSAPI</acronym> Session Encryption</a></span></dt>
+        </dl>
+      </dd>
+      <dt><span class="sect1"><a href="sasl-authentication.html">55.3. SASL Authentication</a></span></dt>
+      <dd>
+        <dl>
+          <dt><span class="sect2"><a href="sasl-authentication.html#SASL-SCRAM-SHA-256">55.3.1. SCRAM-SHA-256 Authentication</a></span></dt>
+        </dl>
+      </dd>
+      <dt><span class="sect1"><a href="protocol-replication.html">55.4. Streaming Replication Protocol</a></span></dt>
+      <dt><span class="sect1"><a href="protocol-logical-replication.html">55.5. Logical Streaming Replication Protocol</a></span></dt>
+      <dd>
+        <dl>
+          <dt><span class="sect2"><a href="protocol-logical-replication.html#PROTOCOL-LOGICAL-REPLICATION-PARAMS">55.5.1. Logical Streaming Replication Parameters</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-logical-replication.html#PROTOCOL-LOGICAL-MESSAGES">55.5.2. Logical Replication Protocol Messages</a></span></dt>
+          <dt><span class="sect2"><a href="protocol-logical-replication.html#PROTOCOL-LOGICAL-MESSAGES-FLOW">55.5.3. Logical Replication Protocol Message Flow</a></span></dt>
+        </dl>
+      </dd>
+      <dt><span class="sect1"><a href="protocol-message-types.html">55.6. Message Data Types</a></span></dt>
+      <dt><span class="sect1"><a href="protocol-message-formats.html">55.7. Message Formats</a></span></dt>
+      <dt><span class="sect1"><a href="protocol-error-fields.html">55.8. Error and Notice Message Fields</a></span></dt>
+      <dt><span class="sect1"><a href="protocol-logicalrep-message-formats.html">55.9. Logical Replication Message Formats</a></span></dt>
+      <dt><span class="sect1"><a href="protocol-changes.html">55.10. Summary of Changes since Protocol 2.0</a></span></dt>
+    </dl>
+  </div><a id="id-1.10.6.2" class="indexterm" name="id-1.10.6.2"></a>
+  <p><span class="productname">PostgreSQL</span> uses a message-based protocol for communication between frontends and backends (clients and servers). The protocol is supported over <acronym class="acronym">TCP/IP</acronym> and also over Unix-domain sockets. Port number 5432 has been registered with IANA as the customary TCP port number for servers supporting this protocol, but in practice any non-privileged port number can be used.</p>
+  <p>This document describes version 3.0 of the protocol, implemented in <span class="productname">PostgreSQL</span> 7.4 and later. For descriptions of the earlier protocol versions, see previous releases of the <span class="productname">PostgreSQL</span> documentation. A single server can support multiple protocol versions. The initial startup-request message tells the server which protocol version the client is attempting to use. If the major version requested by the client is not supported by the server, the connection will be rejected (for example, this would occur if the client requested protocol version 4.0, which does not exist as of this writing). If the minor version requested by the client is not supported by the server (e.g., the client requests version 3.1, but the server supports only 3.0), the server may either reject the connection or may respond with a NegotiateProtocolVersion message containing the highest minor protocol version which it supports. The client may then choose either to continue with the connection using the specified protocol version or to abort the connection.</p>
+  <p>In order to serve multiple clients efficiently, the server launches a new <span class="quote">“<span class="quote">backend</span>”</span> process for each client. In the current implementation, a new child process is created immediately after an incoming connection is detected. This is transparent to the protocol, however. For purposes of the protocol, the terms <span class="quote">“<span class="quote">backend</span>”</span> and <span class="quote">“<span class="quote">server</span>”</span> are interchangeable; likewise <span class="quote">“<span class="quote">frontend</span>”</span> and <span class="quote">“<span class="quote">client</span>”</span> are interchangeable.</p>
+</div>
+<div class="navfooter">
+  <hr />
+  <table width="100%" summary="Navigation footer">
+    <tr>
+      <td width="40%" align="left"><a accesskey="p" href="view-pg-views.html" title="54.35.&nbsp;pg_views">Prev</a>&nbsp;</td>
+      <td width="20%" align="center"><a accesskey="u" href="internals.html" title="Part&nbsp;VII.&nbsp;Internals">Up</a></td>
+      <td width="40%" align="right">&nbsp;<a accesskey="n" href="protocol-overview.html" title="55.1.&nbsp;Overview">Next</a></td>
+    </tr>
+    <tr>
+      <td width="40%" align="left" valign="top">54.35.&nbsp;<code class="structname">pg_views</code>&nbsp;</td>
+      <td width="20%" align="center"><a accesskey="h" href="index.html" title="PostgreSQL 16.15 Documentation">Home</a></td>
+      <td width="40%" align="right" valign="top">&nbsp;55.1.&nbsp;Overview</td>
+    </tr>
+  </table>
+</div>
+
+          </div>
+          
+            <div id="docComments">
+              <h2>Submit correction</h2>
+              <p>
+              If you see anything in the documentation that is not correct, does not match
+              your experience with the particular feature or requires further clarification,
+              please use
+              <a href="/account/comments/new/16/protocol.html/" rel="nofollow">this form</a>
+              to report a documentation issue.
+              </p>
+            </div>
+          
+        </div> <!-- pgContentWrap -->
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer id="footer">
+      <!-- Copyright -->
+      <div class="container">
+        <a href="/about/policies/">Policies</a> |
+        <a href="/about/policies/coc/">Code of Conduct</a> |
+        <a href="/about/">About PostgreSQL</a> |
+        <a href="/about/contact/">Contact</a><br/>
+        <p>Copyright &copy; 1996-2026 The PostgreSQL Global Development Group</p>
+      </div>
+    </footer>
+    <script src="/media/js/main.js?e5c079de"></script>
+
+  </body>
+</html>
