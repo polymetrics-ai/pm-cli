@@ -297,6 +297,204 @@ paths:
 			t.Fatal("identical documentation inputs produced different bundle bytes")
 		}
 	})
+
+	t.Run("C14 documentation revision diff admits declared anchors", func(t *testing.T) {
+		operation := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		lock, captures := testSourceInput(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil, []SourceOperation{operation})
+		captured, err := CaptureSource(lock, captures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := ResolveRefs(captured)
+		if err != nil {
+			t.Fatal(err)
+		}
+		anchorHash, ok := resolved.PointerHash("pg-select", "SQL-WHERE")
+		if !ok {
+			t.Fatal("declared documentation anchor has no captured witness")
+		}
+		lockDocument, err := json.Marshal(lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		previousDigest := "sha256:" + strings.Repeat("b", 64)
+		previousHash := "sha256:" + strings.Repeat("c", 64)
+		revisionDiff := func(pointer, currentHash string) []byte {
+			t.Helper()
+			encoded, err := json.Marshal(SourceRevisionDiff{
+				SchemaVersion:  SourceRevisionDiffSchemaVersion,
+				PreviousDigest: previousDigest,
+				CurrentDigest:  captured.Digest,
+				Changes: []PointerChange{{
+					SourceID: "pg-select", Pointer: pointer,
+					PreviousSHA256: previousHash, CurrentSHA256: currentHash,
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return encoded
+		}
+		input := CompilationInput{
+			SourceLock: lockDocument, Captures: captures, PreviousSourceDigest: previousDigest,
+			RevisionDiff: revisionDiff("#SQL-WHERE", anchorHash),
+			Semantics:    documentationSemanticsDocument(t, lock, captured.Digest, []SourceOperation{operation}),
+		}
+		artifacts, err := Compile(context.Background(), input)
+		if err != nil {
+			t.Fatalf("documentation revision diff compile: %v", err)
+		}
+		var bundle Bundle
+		if err := json.Unmarshal(artifacts.Bundle, &bundle); err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Operations) != 1 || bundle.Operations[0].OperationID != operation.SourceOperationID {
+			t.Fatalf("documentation revision bundle inventory = %#v", bundle)
+		}
+
+		// A selector of the other admitted grammar stays refused: the source
+		// set's own grammar decides, and a malformed anchor is refused too.
+		pointerInput := input
+		pointerInput.RevisionDiff = revisionDiff("/paths/~1x/get", anchorHash)
+		if _, err := Compile(context.Background(), pointerInput); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("documentation revision diff with a JSON pointer error = %v", err)
+		}
+		malformedInput := input
+		malformedInput.RevisionDiff = revisionDiff("#id-1.9.3.172.1", anchorHash)
+		if _, err := Compile(context.Background(), malformedInput); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("malformed documentation revision selector error = %v", err)
+		}
+
+		// An interface-description source set still refuses a documentation anchor,
+		// and a malformed pointer keeps its refusal too.
+		httpOperation := testOperation("getWidgets", "root", "#/paths/~1widgets/get", nil, []VariantRef{{Pointer: "#/paths/~1widgets/get/responses/204", Status: "204", MediaType: noContentMediaType}})
+		httpCaptured := testCapturedSource(t, DialectOpenAPI30, map[string][]byte{"root": testFixture(t, "complete-openapi.yaml")}, nil, []SourceOperation{httpOperation})
+		httpResolved := testResolve(t, httpCaptured)
+		httpDiff := &SourceRevisionDiff{
+			SchemaVersion:  SourceRevisionDiffSchemaVersion,
+			PreviousDigest: previousDigest,
+			CurrentDigest:  httpCaptured.Digest,
+			Changes: []PointerChange{{
+				SourceID: "root", Pointer: "#PROTOCOL",
+				PreviousSHA256: previousHash, CurrentSHA256: anchorHash,
+			}},
+		}
+		if err := ValidateCurrentRevisionDiff(httpResolved, httpDiff); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("interface-description revision selector error = %v", err)
+		}
+		malformedHTTPDiff := *httpDiff
+		malformedHTTPDiff.Changes = []PointerChange{{
+			SourceID: "root", Pointer: "#/paths/~1widgets~2get",
+			PreviousSHA256: previousHash, CurrentSHA256: previousHash,
+		}}
+		if err := ValidateCurrentRevisionDiff(httpResolved, &malformedHTTPDiff); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("malformed interface-description revision selector error = %v", err)
+		}
+
+		// The exact captured witness of a declared anchor is still required, so a
+		// documentation source update cannot claim an unrelated hash.
+		staleDiff := &SourceRevisionDiff{
+			SchemaVersion:  SourceRevisionDiffSchemaVersion,
+			PreviousDigest: previousDigest,
+			CurrentDigest:  captured.Digest,
+			Changes: []PointerChange{{
+				SourceID: "pg-select", Pointer: "#SQL-WHERE",
+				PreviousSHA256: previousHash, CurrentSHA256: previousHash,
+			}},
+		}
+		if err := ValidateCurrentRevisionDiff(resolved, staleDiff); err == nil || !strings.Contains(err.Error(), "hash disagrees") {
+			t.Fatalf("stale documentation revision diff error = %v", err)
+		}
+	})
+
+	t.Run("C15 documentation diagnostics isolate to unavailable metadata", func(t *testing.T) {
+		operation := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		lock, captures := testSourceInput(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil, []SourceOperation{operation})
+		captured, err := CaptureSource(lock, captures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := ResolveRefs(captured)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadDialects(context.Background(), resolved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		normalization, err := Normalize(context.Background(), loaded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		semantics, err := DecodeSemantics(documentationSemanticsDocument(t, lock, captured.Digest, []SourceOperation{operation}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ApplyAmendments(normalization, resolved, &semantics); err != nil {
+			t.Fatal(err)
+		}
+		target := ConnectorCompilationTargetFoundations()
+		if err := CheckRequirements(normalization, resolved, target); err != nil {
+			t.Fatal(err)
+		}
+
+		// The documentation dialect emits no diagnostic of its own yet, so the
+		// diagnostic boundary is exercised with a diagnostic that carries the
+		// operation's own verified anchor facts, exactly as an unclassified
+		// documentation fact would arrive, and with the operation marked blocked
+		// exactly as the normalizer marks a diagnostic-bearing operation.
+		diagnostic := newDiagnostic(
+			"unknown_sensitivity", SeverityError, operation.SourceOperationID, "",
+			operationFacts(normalization.Operations[0]),
+			"/operations/relation-select/response_variants/0/sensitivity",
+			nil, []contract.Lane{contract.LaneDirectRead},
+			"documentation response sensitivity is not classified",
+		)
+		normalization.Diagnostics = append(normalization.Diagnostics, diagnostic)
+		normalization.Operations[0].BlockedDiagnosticIDs = []string{diagnostic.ID}
+		applyBlockingDiagnostics(&normalization.Operations[0], normalization.Diagnostics)
+
+		encoded, err := EmitBundle(normalization, target)
+		if err != nil {
+			t.Fatalf("documentation diagnostic refused bundle emission: %v", err)
+		}
+		var bundle Bundle
+		if err := json.Unmarshal(encoded, &bundle); err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Operations) != 0 || len(bundle.UnavailableOperations) != 1 {
+			t.Fatalf("documentation diagnostic inventory = %#v", bundle)
+		}
+		unavailable := bundle.UnavailableOperations[0]
+		if unavailable.OperationID != operation.SourceOperationID ||
+			len(unavailable.DiagnosticCodes) != 1 || unavailable.DiagnosticCodes[0] != "unknown_sensitivity" {
+			t.Fatalf("documentation unavailable metadata = %#v", unavailable)
+		}
+		if len(unavailable.SourceRefs) != 1 || unavailable.SourceRefs[0].Pointer != "#SQL-WHERE" {
+			t.Fatalf("documentation unavailable source refs = %#v", unavailable.SourceRefs)
+		}
+
+		// An interface-description operation cannot absorb a documentation anchor
+		// as unavailable metadata.
+		httpNormalization := &Normalization{
+			ConnectorID: "synthetic", SourceDigest: captured.Digest, SemanticsRevision: lock.SemanticsRevision,
+			SourceOperationIDs: []string{"getWidgets"},
+			Operations: []NormalizedOperation{{
+				OperationID: "getWidgets",
+				Transport:   contract.Transport{Kind: contract.TransportKindHTTP, Method: "GET", Path: "/widgets"},
+			}},
+			Diagnostics: []Diagnostic{newDiagnostic(
+				"unknown_sensitivity", SeverityError, "getWidgets", "",
+				[]SourceFact{{SourceRef: contract.SourceRef{SourceID: "root", Pointer: "#PROTOCOL"}, SHA256: "sha256:" + strings.Repeat("f", 64)}},
+				"/operations/getWidgets/response_variants/0/sensitivity",
+				nil, []contract.Lane{contract.LaneDirectRead},
+				"interface-description response sensitivity is not classified",
+			)},
+		}
+		if _, err := EmitBundle(httpNormalization, target); err == nil || !strings.Contains(err.Error(), "blocked by diagnostic") {
+			t.Fatalf("interface-description diagnostic with an anchor fact error = %v", err)
+		}
+	})
 }
 
 // documentationSelectPage is the smallest captured page that carries the
