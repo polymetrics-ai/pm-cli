@@ -69,6 +69,83 @@ func TestTypedServerStartup(t *testing.T) {
 		})
 	}
 }
+
+// identityTrustRootPair is the optional operator-owned identity provider trust
+// root reference. Its confined bundle member is ca.pem.
+const identityTrustRootPair = `"ca_ref":"secret://fixture/oidc-ca"`
+
+func TestIdentityTrustRootReference(t *testing.T) {
+	withIdentityTrustRoot := func(pairs string) string {
+		raw := strings.Replace(
+			startupConfiguration,
+			`"client_secret_ref":"secret://fixture/oidc"`,
+			`"client_secret_ref":"secret://fixture/oidc",`+pairs,
+			1,
+		)
+		if raw == startupConfiguration {
+			t.Fatal("identity fixture was not replaced")
+		}
+		return raw
+	}
+	loadIdentityTrustRoot := func(t *testing.T, raw string) (string, bool) {
+		t.Helper()
+		document, err := config.Load(strings.NewReader(raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		configuration, err := config.Validate(document, config.Prelaunch{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return configuration.Identity().CATrustRootRef()
+	}
+
+	t.Run("absence keeps the process system root store", func(t *testing.T) {
+		reference, declared := loadIdentityTrustRoot(t, startupConfiguration)
+		if declared || reference != "" {
+			t.Fatalf("absent identity trust root = (%q, %t); want empty, false", reference, declared)
+		}
+	})
+
+	t.Run("declared reference is retained exactly", func(t *testing.T) {
+		reference, declared := loadIdentityTrustRoot(t, withIdentityTrustRoot(identityTrustRootPair))
+		if !declared || reference != "secret://fixture/oidc-ca" {
+			t.Fatalf("declared identity trust root = (%q, %t); want the exact declared reference, true", reference, declared)
+		}
+	})
+
+	for _, fixture := range []struct {
+		name  string
+		pairs string
+		field string
+		kind  config.DiagnosticKind
+	}{
+		{"unknown identity member", `"ca_trust_root_ref":"secret://fixture/oidc-ca"`, "identity.ca_trust_root_ref", config.DiagnosticUnknown},
+		{"number is not a reference", `"ca_ref":7`, "identity.ca_ref", config.DiagnosticType},
+		{"null is not a reference", `"ca_ref":null`, "identity.ca_ref", config.DiagnosticType},
+		{"object is not a reference", `"ca_ref":{"member":"ca.pem"}`, "identity.ca_ref", config.DiagnosticType},
+		{"array is not a reference", `"ca_ref":["secret://fixture/oidc-ca"]`, "identity.ca_ref", config.DiagnosticType},
+		{"empty reference", `"ca_ref":""`, "identity.ca_ref", config.DiagnosticValue},
+		{"plaintext scheme is not a secret reference", `"ca_ref":"https://fixture/oidc-ca"`, "identity.ca_ref", config.DiagnosticValue},
+		{"reference without a bundle path", `"ca_ref":"secret://fixture"`, "identity.ca_ref", config.DiagnosticValue},
+		{"query is not part of a reference", `"ca_ref":"secret://fixture/oidc-ca?version=1"`, "identity.ca_ref", config.DiagnosticValue},
+		{"fragment is not part of a reference", `"ca_ref":"secret://fixture/oidc-ca#pem"`, "identity.ca_ref", config.DiagnosticValue},
+		{"oversized reference", `"ca_ref":"secret://fixture/` + strings.Repeat("r", 2048) + `"`, "identity.ca_ref", config.DiagnosticValue},
+		{"duplicate reference", identityTrustRootPair + `,` + identityTrustRootPair, "identity.ca_ref", config.DiagnosticDuplicate},
+	} {
+		t.Run(fixture.name, func(t *testing.T) {
+			document, err := config.Load(strings.NewReader(withIdentityTrustRoot(fixture.pairs)))
+			if err == nil {
+				_, err = config.Validate(document, config.Prelaunch{})
+			}
+			var diagnostic *config.Diagnostic
+			if !errors.As(err, &diagnostic) || diagnostic.Field != fixture.field || diagnostic.Kind != fixture.kind {
+				t.Fatalf("identity trust root refusal = %v; want %s/%s", err, fixture.field, fixture.kind)
+			}
+		})
+	}
+}
+
 func TestRunLifetimeIsRequiredFinitePolicy(t *testing.T) {
 	for _, test := range []struct {
 		name        string
