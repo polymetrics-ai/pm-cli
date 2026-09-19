@@ -182,15 +182,23 @@ func (service *Service) RunWarehouseQuery(
 	return RunWarehouseQuery200JSONResponse(projected), nil
 }
 
-// concealedWarehouseSelector translates the query service's not-found and
-// scope-mismatch refusals into the shared concealment refusal. The selector —
+// concealedWarehouseSelector translates the query service's refusals about the
+// caller's own selector into the shared concealment refusal. The selector —
 // the dataset the caller names and the retained snapshot it asks for — is
 // correctable input, so a read view this authenticated scope cannot reach is
 // refused exactly like a restricted artifact: one 404 that does not disclose
 // whether the dataset, the snapshot or the binding exists elsewhere, never an
 // internal fault. Both read routes conceal the resolution step they take before
-// they read anything; a later refusal (a corrupt, collected or unreadable
-// registered segment) keeps the query service's own answer.
+// reading anything, and that step answers a selector this scope cannot reach with
+// the supervisor's unknown_relation and unadmitted_path refusals, so both codes
+// are concealed here; a refusal the later read step produces is passed through
+// unchanged, because no selector answers a corrupt, collected or unreadable
+// registered segment. One resolution-step refusal is not about the selector's
+// reachability — a selected segment that was collected and can no longer be read
+// — and it shares the unadmitted_path code, so this mapping would conceal it as
+// well. That arm is unreachable while retention never collects a segment a
+// snapshot still holds and neither resolution caller selects an explicit
+// ordinal; it is named here rather than silently relied on.
 func concealedWarehouseSelector(err error) error {
 	var refusal *warehouse.Refusal
 	if !errors.As(err, &refusal) {

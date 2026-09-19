@@ -84,19 +84,20 @@ func (service *Service) GetConnectionSchema(
 	return GetConnectionSchema200JSONResponse(projected), nil
 }
 
-// concealedSchemaSelector translates the metadata store's not-found and
-// scope-mismatch refusals into the shared concealment refusal. The selector is
-// the caller's own: the binding members and the snapshot identity it names are
-// correctable input, so a snapshot this exact binding cannot see is refused
-// exactly like a restricted artifact — one 404 that does not disclose whether
-// the snapshot exists under another connection, account, permission revision,
-// resource or source revision — and never as an internal fault. The store
-// cannot tell this route which of the two it held, and concealing both is the
-// answer that reveals nothing. A stored payload that is present but unusable
-// keeps the store's own refusal.
+// concealedSchemaSelector translates the metadata store's refusals that the
+// caller's own selector can correct into the shared concealment refusal. The
+// selector is the caller's own: the binding members and the snapshot identity it
+// names are correctable input, so a snapshot this exact binding cannot see, and
+// a reference no stored payload answers, are refused exactly like a restricted
+// artifact — one 404 that does not disclose whether the snapshot exists under
+// another connection, account, permission revision, resource or source revision
+// — and never as an internal fault. Only those two refusals are concealed. A
+// selected payload that is present but unreadable, or unreadable because it is
+// corrupt, keeps the store's own refusal: no selector the caller can name
+// answers it, so reporting it as a missing one would hide a storage fault.
 func concealedSchemaSelector(err error) error {
 	switch {
-	case errors.Is(err, schema.ErrSnapshotScope), errors.Is(err, schema.ErrSnapshotUnavailable):
+	case errors.Is(err, schema.ErrSnapshotScope), errors.Is(err, schema.ErrSnapshotNotFound):
 		return fmt.Errorf("%w: the selected metadata snapshot is unavailable in the authenticated scope",
 			auth.ErrResourceNotFound)
 	default:

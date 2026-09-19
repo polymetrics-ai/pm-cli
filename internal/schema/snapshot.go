@@ -46,8 +46,14 @@ var (
 	ErrSnapshotScope = errors.New("schema snapshot scope mismatch")
 	// ErrSnapshotCorrupt reports stored bytes that do not match their reference.
 	ErrSnapshotCorrupt = errors.New("schema snapshot content does not match its fingerprint")
-	// ErrSnapshotUnavailable reports a snapshot or state directory that is not
-	// present under its reference.
+	// ErrSnapshotNotFound reports that no stored payload exists for a declared
+	// reference, so the caller's own selector named nothing this store holds and
+	// can name a reachable one instead. A payload that is present but cannot be
+	// read stays ErrSnapshotUnavailable, which is never the caller's to correct.
+	ErrSnapshotNotFound = errors.New("schema snapshot is not found")
+	// ErrSnapshotUnavailable reports a snapshot or state directory that cannot be
+	// made available under its reference, including a payload that is present but
+	// unreadable.
 	ErrSnapshotUnavailable = errors.New("schema snapshot is unavailable")
 	// ErrSelectionConflict reports a connection selection that changed since it
 	// was read, so the caller's expectation no longer holds.
@@ -482,7 +488,7 @@ func (store *Store) load(reference contract.SemanticDigest) (Snapshot, error) {
 	}
 	information, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return Snapshot{}, errorf(ErrSnapshotUnavailable, "reference", "no snapshot payload is stored for this reference")
+		return Snapshot{}, errorf(ErrSnapshotNotFound, "reference", "no snapshot payload is stored for this reference")
 	}
 	if err != nil || information.Mode()&os.ModeSymlink != 0 || !information.Mode().IsRegular() ||
 		information.Mode().Perm()&0o077 != 0 || information.Size() <= 0 || information.Size() > MaxSnapshotDocumentBytes {

@@ -8,12 +8,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/oapi-codegen/nullable"
 
 	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/schema"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
@@ -26,7 +29,9 @@ import (
 // scope can reach is correctable input, so both routes must answer it the way
 // the artifact routes answer a restricted or unknown artifact: one concealed
 // 404, never an internal fault. The positive paths keep answering the authorized
-// document.
+// document. The converse is owned here too: a selected snapshot whose stored
+// payload cannot be read is no selector's mistake, so it keeps the store's own
+// refusal instead of being reported as a missing one.
 const (
 	readRefusalForeignDataset  = "returns"
 	readRefusalSnapshot        = "snapshot-orders-1"
@@ -131,6 +136,42 @@ func TestConnectionReadSelectorRefusalsAreConcealed(t *testing.T) {
 		}
 		harness.requireStartDelta(t, before, 0, "every dataset selector refusal")
 	})
+
+	t.Run("a_snapshot_that_cannot_be_read_is_not_reported_as_a_missing_one", func(t *testing.T) {
+		before := harness.starts.count()
+		// The promoted payload is present and the positive paths above read it.
+		// Closing its read permission leaves exactly the state the store answers
+		// for itself: its private-file check admits a mode 0o000 payload and its
+		// own read then fails. No selector the caller can name reaches that
+		// payload, so the refusal is not the caller's to correct and must not be
+		// concealed as a missing one — neither for the connection's own selection
+		// nor for the same promoted identity declared explicitly, which names the
+		// same stored payload.
+		payload := promotedSchemaPayload(t, harness)
+		if err := os.Chmod(payload, 0o000); err != nil {
+			t.Fatalf("close the read permission of the promoted payload: %v", err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(payload, 0o600) })
+		if _, err := os.ReadFile(payload); err == nil {
+			t.Fatal("this case needs a process that cannot read a mode 0o000 payload, but this one still reads it")
+		}
+		for _, selector := range []struct {
+			what   string
+			values url.Values
+		}{
+			{"the selected snapshot", nil},
+			{"the promoted identity declared explicitly",
+				url.Values{"snapshot_id": {string(harness.metadata.snapshot.Fingerprint)}}},
+		} {
+			response := harness.send(t, client, http.MethodGet, schemaSelectorPath(harness, workspace, selector.values), nil)
+			problem := decodeWarehouseRoute[api.Problem](t, response, http.StatusInternalServerError)
+			if problem.Code != "internal_error" {
+				t.Fatalf("the read of %s was answered %#v; want the store's own refusal for a payload it cannot read",
+					selector.what, problem)
+			}
+		}
+		harness.requireStartDelta(t, before, 0, "the unreadable-snapshot refusal")
+	})
 }
 
 // unknownSchemaSnapshot declares one well-formed snapshot identity that no
@@ -144,6 +185,38 @@ func unknownSchemaSnapshot(t *testing.T) contract.SemanticDigest {
 		t.Fatalf("declare an unknown snapshot identity: %v", err)
 	}
 	return reference
+}
+
+// promotedSchemaPayload resolves the one stored payload the fixture promoted
+// without restating the store's own layout: every regular file beneath the
+// installed metadata root is decoded as a snapshot, and the single file that
+// decodes with the promoted content fingerprint is the payload the store reads.
+func promotedSchemaPayload(t *testing.T, harness *etlHarness) string {
+	t.Helper()
+	var found []string
+	err := filepath.WalkDir(harness.metadataRoot, func(path string, entry os.DirEntry, err error) error {
+		if err != nil || entry.IsDir() {
+			return err
+		}
+		document, readErr := os.ReadFile(path)
+		if readErr != nil {
+			t.Fatalf("read the stored connection metadata %s: %v", path, readErr)
+		}
+		snapshot, decodeErr := schema.DecodeSnapshot(document)
+		if decodeErr != nil || snapshot.Fingerprint != harness.metadata.snapshot.Fingerprint {
+			return nil
+		}
+		found = append(found, path)
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk the installed connection metadata state: %v", err)
+	}
+	if len(found) != 1 {
+		t.Fatalf("the promoted snapshot payload = %v; want exactly one stored payload for %s",
+			found, harness.metadata.snapshot.Fingerprint)
+	}
+	return found[0]
 }
 
 // retainReadSnapshot pins the registered read view of the acknowledged dataset

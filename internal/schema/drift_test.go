@@ -171,6 +171,23 @@ func TestScopedCompleteSchema(t *testing.T) {
 			t.Fatalf("active after a retained payload was tampered: %v", err)
 		}
 	})
+
+	t.Run("a_reference_no_stored_payload_answers_is_refused_as_not_found", func(t *testing.T) {
+		binding := testBinding(testAccountID)
+		store := testStore(t, binding)
+		active := promoteComplete(t, store, binding)
+		payload := filepath.Join(store.directory, snapshotDirectoryName, snapshotPayloadDirectoryName, snapshotFileName(active.Fingerprint))
+		if err := os.Remove(payload); err != nil {
+			t.Fatalf("remove the stored payload: %v", err)
+		}
+		// Absence is the refusal a caller's own selector can correct, and it stays
+		// its own identity: a read route conceals exactly this one, while a payload
+		// that is present but cannot be read keeps ErrSnapshotUnavailable instead
+		// of being reported as a reference nothing answers.
+		if _, err := store.LoadFor(binding, active.Fingerprint); !errors.Is(err, ErrSnapshotNotFound) || errors.Is(err, ErrSnapshotUnavailable) {
+			t.Fatalf("reference with no stored payload = %v; want %v alone", err, ErrSnapshotNotFound)
+		}
+	})
 }
 
 func promoteCandidate(t *testing.T, store *Store, binding Binding, fields []Field) Snapshot {

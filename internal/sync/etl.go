@@ -233,8 +233,16 @@ const (
 	// whatever identity an attempt declares.
 	maximumScratchTokenBytes = 48
 	// scratchDigestBytes is how much of an identity digest binds a sanitized or
-	// truncated token to the exact attempt identity it was derived from.
-	scratchDigestBytes = 8
+	// truncated token to the exact attempt identity it was derived from. Two
+	// identities can only share such a token by colliding over these bytes, so
+	// the whole digest the name has room for is kept.
+	scratchDigestBytes = 16
+	// scratchDigestSeparator joins a sanitized or truncated rendering to its
+	// identity digest. isScratchCharacter excludes it, so no identity the
+	// verbatim rendering admits can spell a digest-bearing token: the two
+	// renderings of scratchAttemptToken stay disjoint whatever identity an
+	// attempt declares.
+	scratchDigestSeparator = "+"
 )
 
 // pageScratchName is the admitted scratch identity of one materialization
@@ -252,9 +260,11 @@ func pageScratchName(position uint64, requestID string) string {
 // token. An identity that already is one run of admitted characters is kept
 // exactly as declared, so an operator can attribute a leftover scratch file to
 // the attempt that wrote it. Every other identity is sanitized into that
-// alphabet and carries a digest of the exact identity, so sanitizing can never
-// collapse two attempts onto one name and no identity can reach outside the
-// admitted directory.
+// alphabet, bounded to the same length, and carries a digest of the exact
+// identity after a separator the admitted alphabet excludes, so sanitizing can
+// never collapse two attempts onto one name, no admitted identity can spell a
+// digest-bearing token of another attempt, and no identity can reach outside
+// the admitted directory.
 func scratchAttemptToken(requestID string) string {
 	token := make([]byte, 0, min(len(requestID), maximumScratchTokenBytes))
 	for _, character := range requestID {
@@ -271,7 +281,7 @@ func scratchAttemptToken(requestID string) string {
 		return string(token)
 	}
 	digest := sha256.Sum256([]byte(requestID))
-	return string(token) + "-" + hex.EncodeToString(digest[:scratchDigestBytes])
+	return string(token) + scratchDigestSeparator + hex.EncodeToString(digest[:scratchDigestBytes])
 }
 
 // isScratchCharacter reports whether one character may appear verbatim in an

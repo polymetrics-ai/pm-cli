@@ -22,10 +22,25 @@ import (
 // process: the bytes a dead attempt would have left are planted at the exact
 // admitted path the naming rule derives for that attempt.
 
+// The crafted identity pair keeps the naming rule honest about whose file a
+// leftover is. craftedAttemptIdentity is composed from slashAttemptIdentity the
+// way the rule before the digest separator moved outside the admitted alphabet
+// spelled a sanitized rendering — the sanitized token, a hyphen, and the first
+// eight bytes of the identity's own digest (sha256("a/b") begins
+// c14cddc033f64b9d) — and every character of the result is admitted, so that
+// rule rendered the crafted identity verbatim. Both identities then derived one
+// admitted path, and a leftover of either refused the other: the very refusal
+// the per-attempt naming exists to remove. The digests below are fixture
+// constants of that attack, not a second copy of the naming rule.
+const (
+	slashAttemptIdentity   = "a/b"
+	craftedAttemptIdentity = "a_b-c14cddc033f64b9d"
+)
+
 // TestPageAcknowledgedAfterCrashedAttemptScratch is the crashed-attempt case.
-// Its two cases share one harness but not one precondition: the second case
-// reads the committed checkpoint for itself, so a failure in the first cannot
-// decide what the second observes.
+// Its cases share one harness but not one precondition: each later case reads
+// the committed checkpoint for itself, so a failure in an earlier one cannot
+// decide what the next observes.
 func TestPageAcknowledgedAfterCrashedAttemptScratch(t *testing.T) {
 	harness := newETLHarness(t)
 	harness.commit(t, harness.page(1))
@@ -76,6 +91,41 @@ func TestPageAcknowledgedAfterCrashedAttemptScratch(t *testing.T) {
 			t.Fatalf("attempt whose own scratch already exists = %v; want an unadmitted-path refusal", attemptErr)
 		}
 		harness.assertPrefix(t, committed.Position)
+	})
+
+	t.Run("a_crafted_identity_cannot_take_another_attempts_admitted_name", func(t *testing.T) {
+		// The naming rule must keep every attempt identity apart, not only the
+		// ones a page protocol ordinarily declares. The crafted identity above is
+		// planted first, and the plant is observed before the other identity
+		// attempts the page: the attempt that declares the crafted identity is
+		// refused by its own leftover, which proves the plant landed on the path
+		// the protocol derives for it, and only then does the attempt that
+		// declares the identity the crafted one was built from have to be
+		// admitted. Both identities derived this one path before the digest
+		// separator moved outside the admitted alphabet, so the second attempt
+		// was refused by the first identity's leftover.
+		committed, err := harness.checkpoint.Load(t.Context(), harness.fixture.Actor, harness.fixture.Scope)
+		if err != nil {
+			t.Fatalf("load the committed checkpoint: %v", err)
+		}
+		position := committed.Position + 1
+		plantedAttemptScratch(t, harness, position, craftedAttemptIdentity)
+
+		crafted := harness.page(position)
+		crafted.RequestID = craftedAttemptIdentity
+		if _, craftedErr := harness.attempt(crafted); !isUnadmittedPathRefusal(craftedErr) {
+			t.Fatalf("attempt that declares the identity whose own scratch is planted = %v; want an unadmitted-path refusal", craftedErr)
+		}
+
+		slash := harness.page(position)
+		slash.RequestID = slashAttemptIdentity
+		acknowledged := harness.commit(t, slash)
+		if acknowledged.Position != position || acknowledged.Rows != etlPageRows {
+			t.Fatalf("attempt beside another identity's leftover = position %d over %d rows; want position %d over %d rows",
+				acknowledged.Position, acknowledged.Rows, position, etlPageRows)
+		}
+		harness.assertPrefix(t, position)
+		requirePageArtifact(t, harness, position)
 	})
 }
 
