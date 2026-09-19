@@ -39,5 +39,12 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     embed = [":compile"],
+    env_inherit = [
+        "PM_STACK_ROOT",
+    ],
+    tags = [
+        "external",
+        "no-remote",
+    ],
     deps = ["//internal/contract"],
 )

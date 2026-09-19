@@ -13,7 +13,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -1090,17 +1089,18 @@ func emittedInput(t *testing.T, operation contract.Operation, fieldID string) co
 }
 
 // pinnedConnectorInput loads one committed connector source lock, capture and
-// semantics document. Bazel test sandboxes do not carry the connector checkout,
-// so the pinned check is skipped there instead of asserting absent inputs.
+// semantics document. The checkout that carries the connector roots is resolved
+// from the owned fixture, then a runfiles tree that declares it, then the test
+// working directory. A checkout without the pinned root fails the case instead
+// of skipping it, so the pinned check cannot silently disappear from a
+// sandboxed run.
 func pinnedConnectorInput(t *testing.T, connector string) (CompilationInput, string) {
 	t.Helper()
-	root := filepath.Join("..", "..", "connectors", connector)
+	checkout := connectorCheckoutRoot(t)
+	root := filepath.Join(checkout, "connectors", connector)
 	lockDocument, err := os.ReadFile(filepath.Join(root, "source.lock.json"))
-	if errors.Is(err, fs.ErrNotExist) {
-		t.Skipf("pinned %s connector checkout is unavailable in this test sandbox", connector)
-	}
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("read the pinned %s connector at %s: %v", connector, root, err)
 	}
 	semantics, err := os.ReadFile(filepath.Join(root, "semantics.json"))
 	if err != nil {
@@ -1116,7 +1116,7 @@ func pinnedConnectorInput(t *testing.T, connector string) (CompilationInput, str
 		if err != nil {
 			t.Fatal(err)
 		}
-		license, err := os.ReadFile(filepath.Join("..", "..", document.License.Path))
+		license, err := os.ReadFile(filepath.Join(checkout, document.License.Path))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -1127,4 +1127,55 @@ func pinnedConnectorInput(t *testing.T, connector string) (CompilationInput, str
 		SourceLock: lockDocument, Captures: captures, Semantics: semantics,
 		TargetFoundations: HTTPCompilationTargetFoundations(),
 	}, lock.ConnectorID
+}
+
+// connectorCheckoutRoot resolves the checkout that carries the committed
+// connector roots. The owned fixture exports it explicitly; a runfiles tree may
+// declare it too; otherwise the working directory walk is used. The caller
+// fails when the resolved checkout does not carry the requested connector, so
+// no pinned check can pass by being absent.
+func connectorCheckoutRoot(t *testing.T) string {
+	t.Helper()
+	carries := func(candidate string) bool {
+		// internal/connectors also matches a bare "connectors" directory, so the
+		// module root must be required as well.
+		module, err := os.Stat(filepath.Join(candidate, "go.mod"))
+		if err != nil || !module.Mode().IsRegular() {
+			return false
+		}
+		info, err := os.Stat(filepath.Join(candidate, "connectors"))
+		return err == nil && info.IsDir()
+	}
+	if root := os.Getenv("PM_STACK_ROOT"); filepath.IsAbs(root) && carries(root) {
+		return root
+	}
+	if runfiles := os.Getenv("TEST_SRCDIR"); runfiles != "" {
+		workspace := os.Getenv("TEST_WORKSPACE")
+		if workspace == "" {
+			t.Fatal("declared Bazel workspace name is required to locate the checkout")
+		}
+		if candidate := filepath.Join(runfiles, workspace); carries(candidate) {
+			return candidate
+		}
+		// A Bazel test working directory lives inside the output base, whose
+		// ancestors can be an unrelated checkout that merely contains that
+		// output base. Walking up from a sandbox would read another tree's
+		// pinned sources, so a runfiles tree without the checkout fails here
+		// instead.
+		t.Fatal("declared runfiles tree does not carry the repository checkout; run this case through the owned fixture")
+	}
+	directory, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("resolve the working directory: %v", err)
+	}
+	for {
+		if carries(directory) {
+			return directory
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			t.Fatal("could not locate the repository checkout carrying the connector roots")
+		}
+		directory = parent
+	}
 }
