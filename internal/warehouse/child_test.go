@@ -1292,12 +1292,26 @@ func buildRestrictedQueryChild(t *testing.T) string {
 
 func isolationRepositoryRoot(t *testing.T) string {
 	t.Helper()
+	// The owned stack fixture exports the checkout it was started for, and the
+	// thin-client qualification already resolves the repository through that
+	// same explicit path. Prefer it, because a sandboxed Bazel test otherwise
+	// picks its runfiles tree, which does not carry the pinned bootstrap script
+	// this case builds the restricted child with.
+	if root := os.Getenv("PM_STACK_ROOT"); filepath.IsAbs(root) {
+		if info, err := os.Stat(filepath.Join(root, "tools", "bootstrap.py")); err == nil && info.Mode().IsRegular() {
+			return root
+		}
+	}
 	if runfiles := os.Getenv("TEST_SRCDIR"); runfiles != "" {
 		workspace := os.Getenv("TEST_WORKSPACE")
 		if workspace == "" {
 			t.Fatal("declared Bazel workspace name is required to locate the checkout")
 		}
-		return filepath.Join(runfiles, workspace)
+		candidate := filepath.Join(runfiles, workspace)
+		if info, err := os.Stat(filepath.Join(candidate, "tools", "bootstrap.py")); err == nil && info.Mode().IsRegular() {
+			return candidate
+		}
+		t.Fatal("declared runfiles tree does not carry tools/bootstrap.py; run this case through the owned fixture")
 	}
 	directory, err := os.Getwd()
 	if err != nil {

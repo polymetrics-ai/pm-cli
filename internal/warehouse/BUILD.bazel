@@ -16,4 +16,13 @@ go_test(
     name = "warehouse_test",
     srcs = ["child_test.go"],
     embed = [":warehouse"],
+    env_inherit = [
+        "PM_STACK_ROOT",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
 )
