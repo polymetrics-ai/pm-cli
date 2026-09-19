@@ -1,4 +1,4 @@
-package warehouse
+package warehouse_test
 
 import (
 	"bytes"
@@ -16,6 +16,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
+	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
 
 // TestRowsBeforeCheckpoint is the V38 acceptance case. It exercises the three
@@ -30,20 +31,20 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 	harness := newWarehouseHarness(t)
 
 	t.Run("segment_refused_before_object_completion_registers_nothing", func(t *testing.T) {
-		columns := []QueryColumn{
-			{Name: "id", Kind: QueryKindInt64, Nullable: false},
-			{Name: "note", Kind: QueryKindText, Nullable: false},
+		columns := []warehouse.QueryColumn{
+			{Name: "id", Kind: warehouse.QueryKindInt64, Nullable: false},
+			{Name: "note", Kind: warehouse.QueryKindText, Nullable: false},
 		}
-		rows := make([][]QueryValue, 2000)
+		rows := make([][]warehouse.QueryValue, 2000)
 		for index := range rows {
-			rows[index] = []QueryValue{Int64QueryValue(int64(index)), TextQueryValue(fmt.Sprintf("bounded row %d", index))}
+			rows[index] = []warehouse.QueryValue{warehouse.Int64QueryValue(int64(index)), warehouse.TextQueryValue(fmt.Sprintf("bounded row %d", index))}
 		}
 		// The declared byte bound is far below the segment the child would
 		// materialize, so the child refuses and removes its partial output.
 		bounds := harness.bounds
 		bounds.Bytes = 4096
 		output := filepath.Join(harness.materials, "oversized.parquet")
-		_, err := MaterializeParquetSegment(context.Background(), harness.newChild(t, nil), MaterializeRequest{
+		_, err := warehouse.MaterializeParquetSegment(context.Background(), harness.newChild(t, nil), warehouse.MaterializeRequest{
 			RequestID:           "oversized",
 			AdmittedDirectories: []string{harness.materials},
 			OutputPath:          output,
@@ -53,7 +54,7 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 			MaximumBytes:        warehouseMaximumSegment,
 		})
 		failure := requireRefusal(t, err)
-		if failure.Code != RefusalBoundExceeded || failure.Origin != RefusalOriginChild {
+		if failure.Code != warehouse.RefusalBoundExceeded || failure.Origin != warehouse.RefusalOriginChild {
 			t.Fatalf("oversized materialization refusal = %v; want a child byte-bound refusal", failure)
 		}
 		if _, err := os.Lstat(output); !errors.Is(err, os.ErrNotExist) {
@@ -77,7 +78,7 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 	t.Run("interrupted_manifest_transaction_retains_only_an_orphan", func(t *testing.T) {
 		segment := harness.materialize(t, "interrupted", harness.rows[warehouseSegmentSplit:warehouseSegmentSplit*2])
 		interrupted := errors.New("owned interruption inside the manifest and cursor transaction")
-		_, err := harness.manifest.PublishSegment(context.Background(), PublishSegmentRequest{
+		_, err := harness.manifest.PublishSegment(context.Background(), warehouse.PublishSegmentRequest{
 			Actor:     harness.fixture.Actor,
 			Scope:     harness.fixture.Scope,
 			AttemptID: "interrupted",
@@ -87,7 +88,7 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 				return interrupted
 			},
 		})
-		var refused *PublicationRefusedError
+		var refused *warehouse.PublicationRefusedError
 		if !errors.As(err, &refused) {
 			t.Fatalf("interrupted publication error = %v; want a retained refused publication", err)
 		}
@@ -139,7 +140,7 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 		// A competing publisher that based its work on revision 1 uploads and
 		// independently verifies real bytes, then loses the manifest CAS.
 		segment := harness.materialize(t, "stale-attempt", harness.rows[warehouseSegmentSplit:warehouseSegmentSplit+1])
-		_, err := harness.manifest.PublishSegment(context.Background(), PublishSegmentRequest{
+		_, err := harness.manifest.PublishSegment(context.Background(), warehouse.PublishSegmentRequest{
 			Actor:        harness.fixture.Actor,
 			Scope:        harness.fixture.Scope,
 			AttemptID:    "stale-attempt",
@@ -147,7 +148,7 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 			RowCount:     1,
 			BaseRevision: 1,
 		})
-		var refused *PublicationRefusedError
+		var refused *warehouse.PublicationRefusedError
 		if !errors.As(err, &refused) {
 			t.Fatalf("stale publication error = %v; want a retained refused publication", err)
 		}
@@ -232,7 +233,7 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 		}
 		harness.fixture.Restart(t)
 		reader := harness.newPublisher(t, harness.consumer)
-		manifest, err := NewDatasetManifest(harness.fixture.Pool, reader, harness.layout, warehouseMaximumSegment)
+		manifest, err := warehouse.NewDatasetManifest(harness.fixture.Pool, reader, harness.layout, warehouseMaximumSegment)
 		if err != nil {
 			t.Fatalf("construct the second host manifest: %v", err)
 		}
@@ -242,7 +243,7 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 		if err := os.MkdirAll(secondHostStaging, 0o700); err != nil {
 			t.Fatalf("create the second host staging root: %v", err)
 		}
-		service, err := NewQueryService(harness.fixture.Pool, harness.consumer.Backend,
+		service, err := warehouse.NewQueryService(harness.fixture.Pool, harness.consumer.Backend,
 			harness.newChild(t, []string{secondHostAdmitted}), secondHostStaging)
 		if err != nil {
 			t.Fatalf("construct the second host query service: %v", err)
@@ -255,13 +256,13 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 			t.Fatalf("second host state = revision %d over %d segments at cursor %d; want 3/3/3",
 				state.Revision, len(state.Segments), state.Cursor.Ordinal)
 		}
-		response, err := service.Query(context.Background(), DatasetQueryRequest{
+		response, err := service.Query(context.Background(), warehouse.DatasetQueryRequest{
 			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope, Layout: harness.layout,
 			QueryID: "second-host-query",
-			Query: SavedQuery{
+			Query: warehouse.SavedQuery{
 				Name: "orders_all", Relation: warehouseRelationName,
 				Project: allColumnProjections(harness.columns),
-				Order:   []QueryOrder{{Column: "id"}},
+				Order:   []warehouse.QueryOrder{{Column: "id"}},
 				Limit:   int64(len(harness.rows)),
 			},
 			MaximumSegmentBytes: warehouseMaximumSegment,

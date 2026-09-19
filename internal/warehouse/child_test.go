@@ -1,4 +1,4 @@
-package warehouse
+package warehouse_test
 
 import (
 	"bytes"
@@ -21,6 +21,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
 
 // The isolation fixture owns four observable surfaces: the admitted directory
@@ -75,8 +77,8 @@ func TestQueryProcessIsolation(t *testing.T) {
 		// A typed predicate, order and limit travel as data. The same query
 		// with a two-row bound must truncate truthfully rather than silently.
 		bounded := fixture.sourceRequest()
-		bounded.Select.Predicates = []QueryPredicate{{Column: "id", Operator: QueryOperatorGreaterEqual, Value: Int64QueryValue(0)}}
-		bounded.Select.Order = []QueryOrder{{Column: "id", Descending: true}}
+		bounded.Select.Predicates = []warehouse.QueryPredicate{{Column: "id", Operator: warehouse.QueryOperatorGreaterEqual, Value: warehouse.Int64QueryValue(0)}}
+		bounded.Select.Order = []warehouse.QueryOrder{{Column: "id", Descending: true}}
 		bounded.Bounds.Rows = 2
 		truncated, err := child.Execute(t.Context(), bounded)
 		if err != nil {
@@ -96,7 +98,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		}
 
 		// The protocol carries typed intent, never statement text.
-		encoded, err := EncodeQueryRequest(bounded)
+		encoded, err := warehouse.EncodeQueryRequest(bounded)
 		if err != nil {
 			t.Fatalf("encode request: %v", err)
 		}
@@ -105,7 +107,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 				t.Fatalf("encoded request carried statement text %q", forbidden)
 			}
 		}
-		decoded, err := DecodeQueryRequest(encoded)
+		decoded, err := warehouse.DecodeQueryRequest(encoded)
 		if err != nil {
 			t.Fatalf("decode encoded request: %v", err)
 		}
@@ -126,7 +128,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		// constructed supervisor uses it.
 		request := fixture.sourceRequest()
 		request.Select.Limit = 2
-		response, err := ExecuteQueryChild(t.Context(), ChildConfig{
+		response, err := warehouse.ExecuteQueryChild(t.Context(), warehouse.ChildConfig{
 			BinaryPath:    fixture.childPath,
 			ScratchRoot:   fixture.scratchRoot,
 			AdmittedRoots: []string{fixture.admitted, fixture.probes},
@@ -148,15 +150,15 @@ func TestQueryProcessIsolation(t *testing.T) {
 		// capability would admit an attempt whose typed document the codec
 		// refuses, after the child had already run and materialized an immutable
 		// segment at the admitted output path.
-		unhonourable := map[string]func(limits *ChildLimits){
-			"response_cap": func(limits *ChildLimits) { limits.MaxResponseBytes = maximumResponseCap + 1 },
-			"request_cap":  func(limits *ChildLimits) { limits.MaxRequestBytes = MaxQueryDocumentBytes + 1 },
+		unhonourable := map[string]func(limits *warehouse.ChildLimits){
+			"response_cap": func(limits *warehouse.ChildLimits) { limits.MaxResponseBytes = warehouseMaximumResponseCap + 1 },
+			"request_cap":  func(limits *warehouse.ChildLimits) { limits.MaxRequestBytes = warehouse.MaxQueryDocumentBytes + 1 },
 		}
 		for name, mutate := range unhonourable {
 			t.Run("supervisor_refuses_"+name, func(t *testing.T) {
 				limits := fixture.maximumLimits()
 				mutate(&limits)
-				child, err := NewQueryChild(ChildConfig{
+				child, err := warehouse.NewQueryChild(warehouse.ChildConfig{
 					BinaryPath:    fixture.childPath,
 					ScratchRoot:   fixture.scratchRoot,
 					AdmittedRoots: []string{fixture.admitted, fixture.probes},
@@ -165,8 +167,8 @@ func TestQueryProcessIsolation(t *testing.T) {
 				if err == nil {
 					t.Fatalf("the supervisor accepted a %s the protocol document codec cannot carry", name)
 				}
-				if refusal := requireRefusal(t, err); refusal.Code != RefusalBoundExceeded {
-					t.Fatalf("%s refusal code = %q, want %q: %s", name, refusal.Code, RefusalBoundExceeded, refusal.Reason)
+				if refusal := requireRefusal(t, err); refusal.Code != warehouse.RefusalBoundExceeded {
+					t.Fatalf("%s refusal code = %q, want %q: %s", name, refusal.Code, warehouse.RefusalBoundExceeded, refusal.Reason)
 				}
 				if child != nil {
 					t.Fatalf("an unhonourable %s produced a usable supervisor", name)
@@ -192,8 +194,8 @@ func TestQueryProcessIsolation(t *testing.T) {
 			t.Fatalf("the supervisor admitted a byte bound beyond its honourable response cap and returned %d rows", len(response.Rows))
 		}
 		refusal := requireRefusal(t, err)
-		if refusal.Code != RefusalBoundExceeded {
-			t.Fatalf("byte-bound refusal code = %q, want %q: %s", refusal.Code, RefusalBoundExceeded, refusal.Reason)
+		if refusal.Code != warehouse.RefusalBoundExceeded {
+			t.Fatalf("byte-bound refusal code = %q, want %q: %s", refusal.Code, warehouse.RefusalBoundExceeded, refusal.Reason)
 		}
 		if refusal.Child != nil {
 			t.Fatal("an over-cap byte bound reached a child process instead of being refused before execution")
@@ -226,7 +228,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		}
 		for _, testCase := range prohibited {
 			t.Run("codec_refuses_"+testCase.name, func(t *testing.T) {
-				if _, err := DecodeQueryRequest([]byte(testCase.document)); err == nil {
+				if _, err := warehouse.DecodeQueryRequest([]byte(testCase.document)); err == nil {
 					t.Fatalf("parent codec accepted a prohibited request document: %s", testCase.document)
 				}
 			})
@@ -236,16 +238,16 @@ func TestQueryProcessIsolation(t *testing.T) {
 					t.Fatalf("child exited zero for a prohibited request; stdout=%q stderr=%q", run.stdout, run.stderr)
 				}
 				refusal := run.refusal(t)
-				if refusal.Code != RefusalProtocol {
-					t.Fatalf("child refusal code = %q, want %q: %s", refusal.Code, RefusalProtocol, refusal.Reason)
+				if refusal.Code != warehouse.RefusalProtocol {
+					t.Fatalf("child refusal code = %q, want %q: %s", refusal.Code, warehouse.RefusalProtocol, refusal.Reason)
 				}
 			})
 		}
 
 		t.Run("codec_refuses_oversized_document", func(t *testing.T) {
 			oversized := fmt.Sprintf(`{"protocol":"pm.query/1","request_id":"r1","padding":"%s"}`,
-				strings.Repeat("p", MaxQueryDocumentBytes))
-			if _, err := DecodeQueryRequest([]byte(oversized)); err == nil {
+				strings.Repeat("p", warehouse.MaxQueryDocumentBytes))
+			if _, err := warehouse.DecodeQueryRequest([]byte(oversized)); err == nil {
 				t.Fatal("parent codec accepted a document above its declared byte bound")
 			}
 		})
@@ -255,51 +257,51 @@ func TestQueryProcessIsolation(t *testing.T) {
 		// admission checks before a child process exists.
 		supervisorRefusals := []struct {
 			name   string
-			mutate func(t *testing.T, request *QueryRequest)
-			code   RefusalCode
+			mutate func(t *testing.T, request *warehouse.QueryRequest)
+			code   warehouse.RefusalCode
 		}{
-			{"cross_scope_path", func(_ *testing.T, request *QueryRequest) {
+			{"cross_scope_path", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Path = fixture.outsidePath()
-			}, RefusalUnadmittedPath},
-			{"remote_url_path", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnadmittedPath},
+			{"remote_url_path", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Path = "http://169.254.169.254/source.parquet"
-			}, RefusalUnadmittedPath},
-			{"symlink_path", func(t *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnadmittedPath},
+			{"symlink_path", func(t *testing.T, request *warehouse.QueryRequest) {
 				link := filepath.Join(fixture.probes, "linked.parquet")
 				if err := os.Symlink(fixture.sourcePath(), link); err != nil {
 					t.Fatalf("create the symlink input: %v", err)
 				}
 				request.Relations[0].Path = link
 				request.AdmittedDirectories = []string{fixture.admitted, fixture.probes}
-			}, RefusalUnadmittedPath},
-			{"directory_path", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnadmittedPath},
+			{"directory_path", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Path = fixture.outside
-			}, RefusalUnadmittedPath},
-			{"absent_path", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnadmittedPath},
+			{"absent_path", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Path = filepath.Join(fixture.probes, "absent.parquet")
 				request.AdmittedDirectories = []string{fixture.admitted, fixture.probes}
-			}, RefusalUnadmittedPath},
-			{"unknown_relation", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnadmittedPath},
+			{"unknown_relation", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Select.From = "missing"
-			}, RefusalUnknownRelation},
-			{"unknown_column", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Project = []QueryProjection{{Column: "no_such_column"}}
-			}, RefusalUnknownColumn},
-			{"function_shaped_column", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Project = []QueryProjection{{Column: "read_csv('/etc/hosts')"}}
-			}, RefusalUnknownColumn},
-			{"function_shaped_predicate", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Predicates = []QueryPredicate{{Column: "id", Operator: QueryOperator("read_csv")}}
-			}, RefusalProtocol},
-			{"output_outside_admitted_directory", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Output = &QueryOutput{Path: filepath.Join(fixture.outside, "written.parquet")}
-			}, RefusalUnadmittedPath},
-			{"unadmitted_scope_declaration", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnknownRelation},
+			{"unknown_column", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Project = []warehouse.QueryProjection{{Column: "no_such_column"}}
+			}, warehouse.RefusalUnknownColumn},
+			{"function_shaped_column", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Project = []warehouse.QueryProjection{{Column: "read_csv('/etc/hosts')"}}
+			}, warehouse.RefusalUnknownColumn},
+			{"function_shaped_predicate", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Predicates = []warehouse.QueryPredicate{{Column: "id", Operator: warehouse.QueryOperator("read_csv")}}
+			}, warehouse.RefusalProtocol},
+			{"output_outside_admitted_directory", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Output = &warehouse.QueryOutput{Path: filepath.Join(fixture.outside, "written.parquet")}
+			}, warehouse.RefusalUnadmittedPath},
+			{"unadmitted_scope_declaration", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.AdmittedDirectories = []string{fixture.outside}
-			}, RefusalUnadmittedPath},
-			{"unknown_operator", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Predicates = []QueryPredicate{{Column: "id", Operator: QueryOperator("like")}}
-			}, RefusalProtocol},
+			}, warehouse.RefusalUnadmittedPath},
+			{"unknown_operator", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Predicates = []warehouse.QueryPredicate{{Column: "id", Operator: warehouse.QueryOperator("like")}}
+			}, warehouse.RefusalProtocol},
 		}
 		for _, testCase := range supervisorRefusals {
 			t.Run("supervisor_refuses_"+testCase.name, func(t *testing.T) {
@@ -314,7 +316,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 				if refusal.Code != testCase.code {
 					t.Fatalf("refusal code = %q, want %q: %s", refusal.Code, testCase.code, refusal.Reason)
 				}
-				if refusal.Origin != RefusalOriginSupervisor {
+				if refusal.Origin != warehouse.RefusalOriginSupervisor {
 					t.Fatalf("refusal origin = %q, want supervisor: this class must be refused before a child executes", refusal.Origin)
 				}
 				if refusal.Child != nil {
@@ -337,45 +339,45 @@ func TestQueryProcessIsolation(t *testing.T) {
 		// child's own guards are observable.
 		childRefusals := []struct {
 			name   string
-			mutate func(t *testing.T, request *QueryRequest)
-			code   RefusalCode
+			mutate func(t *testing.T, request *warehouse.QueryRequest)
+			code   warehouse.RefusalCode
 		}{
-			{"cross_scope_path", func(_ *testing.T, request *QueryRequest) {
+			{"cross_scope_path", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Path = fixture.outsidePath()
 				request.AdmittedDirectories = []string{fixture.outside}
-			}, RefusalUnadmittedPath},
-			{"undeclared_relation", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnadmittedPath},
+			{"undeclared_relation", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Select.From = "positions"
-			}, RefusalUnknownRelation},
-			{"unknown_column", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Project = []QueryProjection{{Column: "no_such_column"}}
-			}, RefusalUnknownColumn},
-			{"digest_mismatch", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalUnknownRelation},
+			{"unknown_column", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Project = []warehouse.QueryProjection{{Column: "no_such_column"}}
+			}, warehouse.RefusalUnknownColumn},
+			{"digest_mismatch", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].SHA256 = strings.Repeat("0", 64)
-			}, RefusalDigestMismatch},
-			{"declared_kind_mismatch", func(_ *testing.T, request *QueryRequest) {
-				request.Relations[0].Columns[0].Kind = QueryKindText
-			}, RefusalSchemaMismatch},
-			{"declared_scale_mismatch", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalDigestMismatch},
+			{"declared_kind_mismatch", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Relations[0].Columns[0].Kind = warehouse.QueryKindText
+			}, warehouse.RefusalSchemaMismatch},
+			{"declared_scale_mismatch", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Columns[1].Scale = 2
-			}, RefusalSchemaMismatch},
-			{"declared_precision_mismatch", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalSchemaMismatch},
+			{"declared_precision_mismatch", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Columns[1].Precision = 9
-			}, RefusalSchemaMismatch},
-			{"non_nullable_null", func(_ *testing.T, request *QueryRequest) {
+			}, warehouse.RefusalSchemaMismatch},
+			{"non_nullable_null", func(_ *testing.T, request *warehouse.QueryRequest) {
 				request.Relations[0].Columns[10].Nullable = false
-			}, RefusalSchemaMismatch},
-			{"output_outside_admitted_directory", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Output = &QueryOutput{Path: filepath.Join(fixture.outside, "written.parquet")}
+			}, warehouse.RefusalSchemaMismatch},
+			{"output_outside_admitted_directory", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Output = &warehouse.QueryOutput{Path: filepath.Join(fixture.outside, "written.parquet")}
 				request.AdmittedDirectories = []string{fixture.outside}
-			}, RefusalUnadmittedPath},
-			{"existing_output_is_not_overwritten", func(_ *testing.T, request *QueryRequest) {
-				request.Select.Output = &QueryOutput{Path: fixture.source}
-			}, RefusalUnadmittedPath},
+			}, warehouse.RefusalUnadmittedPath},
+			{"existing_output_is_not_overwritten", func(_ *testing.T, request *warehouse.QueryRequest) {
+				request.Select.Output = &warehouse.QueryOutput{Path: fixture.source}
+			}, warehouse.RefusalUnadmittedPath},
 		}
 		for _, testCase := range childRefusals {
 			t.Run("child_refuses_"+testCase.name, func(t *testing.T) {
-				document := fixture.childDocument(t, func(request *QueryRequest) {
+				document := fixture.childDocument(t, func(request *warehouse.QueryRequest) {
 					request.RequestID = "child-refusal"
 					request.Select.Limit = 1
 					testCase.mutate(t, request)
@@ -388,7 +390,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 				if refusal.Code != testCase.code {
 					t.Fatalf("child refusal code = %q, want %q: %s", refusal.Code, testCase.code, refusal.Reason)
 				}
-				if refusal.Origin != RefusalOriginChild {
+				if refusal.Origin != warehouse.RefusalOriginChild {
 					t.Fatalf("child refusal origin = %q, want child", refusal.Origin)
 				}
 			})
@@ -402,7 +404,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 			if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 				t.Fatalf("create the FIFO input for the isolation case: %v", err)
 			}
-			document := fixture.childDocument(t, func(request *QueryRequest) {
+			document := fixture.childDocument(t, func(request *warehouse.QueryRequest) {
 				request.Relations[0].Path = fifo
 				request.AdmittedDirectories = []string{fixture.admitted, fixture.probes}
 			})
@@ -414,8 +416,8 @@ func TestQueryProcessIsolation(t *testing.T) {
 			if elapsed := time.Since(started); elapsed > 10*time.Second {
 				t.Fatalf("child blocked for %s on a FIFO, so it opened a non-regular input", elapsed)
 			}
-			if code := run.refusal(t).Code; code != RefusalUnadmittedPath {
-				t.Fatalf("FIFO refusal code = %q, want %q", code, RefusalUnadmittedPath)
+			if code := run.refusal(t).Code; code != warehouse.RefusalUnadmittedPath {
+				t.Fatalf("FIFO refusal code = %q, want %q", code, warehouse.RefusalUnadmittedPath)
 			}
 		})
 
@@ -440,10 +442,10 @@ func TestQueryProcessIsolation(t *testing.T) {
 			t.Fatalf("the supervisor admitted a relation that resolves outside its admitted roots and returned %d rows", len(response.Rows))
 		}
 		refusal := requireRefusal(t, err)
-		if refusal.Code != RefusalUnadmittedPath {
-			t.Fatalf("escaped relation refusal code = %q, want %q: %s", refusal.Code, RefusalUnadmittedPath, refusal.Reason)
+		if refusal.Code != warehouse.RefusalUnadmittedPath {
+			t.Fatalf("escaped relation refusal code = %q, want %q: %s", refusal.Code, warehouse.RefusalUnadmittedPath, refusal.Reason)
 		}
-		if refusal.Origin != RefusalOriginSupervisor {
+		if refusal.Origin != warehouse.RefusalOriginSupervisor {
 			t.Fatalf("escaped relation refusal origin = %q, want the supervisor", refusal.Origin)
 		}
 		if refusal.Child != nil {
@@ -455,7 +457,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		fixture.expectScratchEmpty(t)
 
 		// The child refuses the same class on its own, without the supervisor.
-		document := fixture.childDocument(t, func(request *QueryRequest) {
+		document := fixture.childDocument(t, func(request *warehouse.QueryRequest) {
 			request.AdmittedDirectories = []string{fixture.probes}
 			request.Relations[0].Path = layout.relation
 			request.Select.Limit = 1
@@ -465,14 +467,14 @@ func TestQueryProcessIsolation(t *testing.T) {
 			t.Fatalf("the child read a relation that resolves outside its admitted directories: %s", run.stdout)
 		}
 		childRefusal := run.refusal(t)
-		if childRefusal.Code != RefusalUnadmittedPath || childRefusal.Origin != RefusalOriginChild {
+		if childRefusal.Code != warehouse.RefusalUnadmittedPath || childRefusal.Origin != warehouse.RefusalOriginChild {
 			t.Fatalf("child-origin escaped relation refusal = %q/%q, want %q/child: %s",
-				childRefusal.Code, childRefusal.Origin, RefusalUnadmittedPath, childRefusal.Reason)
+				childRefusal.Code, childRefusal.Origin, warehouse.RefusalUnadmittedPath, childRefusal.Reason)
 		}
 
 		// A declared admitted directory that is itself a symlink is refused by
 		// the child's own anchor check, before any component below it is used.
-		symlinked := fixture.childDocument(t, func(request *QueryRequest) {
+		symlinked := fixture.childDocument(t, func(request *warehouse.QueryRequest) {
 			request.AdmittedDirectories = []string{layout.link}
 			request.Relations[0].Path = layout.relation
 			request.Select.Limit = 1
@@ -481,8 +483,8 @@ func TestQueryProcessIsolation(t *testing.T) {
 		if run.exitCode == 0 {
 			t.Fatalf("the child admitted a declared admitted directory that is a symlink: %s", run.stdout)
 		}
-		if code := run.refusal(t).Code; code != RefusalUnadmittedPath {
-			t.Fatalf("symlinked admitted directory refusal code = %q, want %q", code, RefusalUnadmittedPath)
+		if code := run.refusal(t).Code; code != warehouse.RefusalUnadmittedPath {
+			t.Fatalf("symlinked admitted directory refusal code = %q, want %q", code, warehouse.RefusalUnadmittedPath)
 		}
 
 		// An output path whose grandparent is a symlink: refused, and nothing is
@@ -490,16 +492,16 @@ func TestQueryProcessIsolation(t *testing.T) {
 		written := fixture.sourceRequest()
 		written.AdmittedDirectories = []string{fixture.probes}
 		written.Relations[0].Path = layout.nested
-		written.Select.Output = &QueryOutput{Path: layout.output}
+		written.Select.Output = &warehouse.QueryOutput{Path: layout.output}
 		written.Select.Limit = 1
 		response, err = child.Execute(t.Context(), written)
 		if err == nil {
 			t.Fatalf("the supervisor admitted an output that resolves outside its admitted roots and returned %d rows", len(response.Rows))
 		}
 		refusal = requireRefusal(t, err)
-		if refusal.Code != RefusalUnadmittedPath || refusal.Origin != RefusalOriginSupervisor || refusal.Child != nil {
+		if refusal.Code != warehouse.RefusalUnadmittedPath || refusal.Origin != warehouse.RefusalOriginSupervisor || refusal.Child != nil {
 			t.Fatalf("escaped output refusal = %q/%q child=%v, want %q/supervisor and no child: %s",
-				refusal.Code, refusal.Origin, refusal.Child, RefusalUnadmittedPath, refusal.Reason)
+				refusal.Code, refusal.Origin, refusal.Child, warehouse.RefusalUnadmittedPath, refusal.Reason)
 		}
 		if _, statErr := os.Lstat(layout.output); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("the refused attempt left a segment outside the admitted roots at %s", layout.output)
@@ -508,18 +510,18 @@ func TestQueryProcessIsolation(t *testing.T) {
 		fixture.expectDurableStateUnchanged(t)
 
 		// The child refuses that output on its own and materializes nothing.
-		childOutput := fixture.childDocument(t, func(request *QueryRequest) {
+		childOutput := fixture.childDocument(t, func(request *warehouse.QueryRequest) {
 			request.AdmittedDirectories = []string{fixture.probes}
 			request.Relations[0].Path = layout.nested
-			request.Select.Output = &QueryOutput{Path: layout.output}
+			request.Select.Output = &warehouse.QueryOutput{Path: layout.output}
 			request.Select.Limit = 1
 		})
 		run = fixture.runChildDocument(t, string(childOutput), fixture.defaultLimits())
 		if run.exitCode == 0 {
 			t.Fatalf("the child materialized a segment outside its admitted directories: %s", run.stdout)
 		}
-		if code := run.refusal(t).Code; code != RefusalUnadmittedPath {
-			t.Fatalf("child-origin escaped output refusal code = %q, want %q", code, RefusalUnadmittedPath)
+		if code := run.refusal(t).Code; code != warehouse.RefusalUnadmittedPath {
+			t.Fatalf("child-origin escaped output refusal code = %q, want %q", code, warehouse.RefusalUnadmittedPath)
 		}
 		if _, statErr := os.Lstat(layout.output); !errors.Is(statErr, os.ErrNotExist) {
 			t.Fatalf("the child left a segment outside its admitted directories at %s", layout.output)
@@ -548,11 +550,11 @@ func TestQueryProcessIsolation(t *testing.T) {
 		limits.TempBytes = 16 << 20
 		child := fixture.newChild(t, limits)
 
-		for name, mutate := range map[string]func(request *QueryRequest){
-			"memory_bound": func(request *QueryRequest) { request.Bounds.MemoryBytes = 64 << 20 },
-			"temp_bound":   func(request *QueryRequest) { request.Bounds.TempBytes = 128 << 20 },
-			"row_bound":    func(request *QueryRequest) { request.Bounds.Rows = 1 << 40 },
-			"byte_bound":   func(request *QueryRequest) { request.Bounds.Bytes = 1 << 40 },
+		for name, mutate := range map[string]func(request *warehouse.QueryRequest){
+			"memory_bound": func(request *warehouse.QueryRequest) { request.Bounds.MemoryBytes = 64 << 20 },
+			"temp_bound":   func(request *warehouse.QueryRequest) { request.Bounds.TempBytes = 128 << 20 },
+			"row_bound":    func(request *warehouse.QueryRequest) { request.Bounds.Rows = 1 << 40 },
+			"byte_bound":   func(request *warehouse.QueryRequest) { request.Bounds.Bytes = 1 << 40 },
 		} {
 			t.Run("supervisor_refuses_"+name, func(t *testing.T) {
 				request := fixture.sourceRequest()
@@ -563,8 +565,8 @@ func TestQueryProcessIsolation(t *testing.T) {
 					t.Fatalf("supervisor accepted an oversized %s and returned %d rows", name, len(response.Rows))
 				}
 				refusal := requireRefusal(t, err)
-				if refusal.Code != RefusalBoundExceeded {
-					t.Fatalf("oversized %s refusal code = %q, want %q: %s", name, refusal.Code, RefusalBoundExceeded, refusal.Reason)
+				if refusal.Code != warehouse.RefusalBoundExceeded {
+					t.Fatalf("oversized %s refusal code = %q, want %q: %s", name, refusal.Code, warehouse.RefusalBoundExceeded, refusal.Reason)
 				}
 				if refusal.Child != nil {
 					t.Fatalf("oversized %s reached a child process instead of being refused before execution", name)
@@ -576,13 +578,13 @@ func TestQueryProcessIsolation(t *testing.T) {
 		// A request the supervisor accepts still carries its declared bounds to
 		// the child, which refuses a value beyond its own hard capability
 		// before executing anything.
-		for name, mutate := range map[string]func(request *QueryRequest){
-			"memory_bound": func(request *QueryRequest) { request.Bounds.MemoryBytes = 1 << 40 },
-			"temp_bound":   func(request *QueryRequest) { request.Bounds.TempBytes = 1 << 40 },
-			"row_bound":    func(request *QueryRequest) { request.Bounds.Rows = 1 << 40 },
+		for name, mutate := range map[string]func(request *warehouse.QueryRequest){
+			"memory_bound": func(request *warehouse.QueryRequest) { request.Bounds.MemoryBytes = 1 << 40 },
+			"temp_bound":   func(request *warehouse.QueryRequest) { request.Bounds.TempBytes = 1 << 40 },
+			"row_bound":    func(request *warehouse.QueryRequest) { request.Bounds.Rows = 1 << 40 },
 		} {
 			t.Run("child_refuses_"+name, func(t *testing.T) {
-				document := fixture.childDocument(t, func(request *QueryRequest) {
+				document := fixture.childDocument(t, func(request *warehouse.QueryRequest) {
 					request.Select.Limit = 1
 					mutate(request)
 				})
@@ -591,10 +593,10 @@ func TestQueryProcessIsolation(t *testing.T) {
 					t.Fatalf("child accepted an oversized %s", name)
 				}
 				refusal := run.refusal(t)
-				if refusal.Code != RefusalBoundExceeded {
-					t.Fatalf("child %s refusal code = %q, want %q", name, refusal.Code, RefusalBoundExceeded)
+				if refusal.Code != warehouse.RefusalBoundExceeded {
+					t.Fatalf("child %s refusal code = %q, want %q", name, refusal.Code, warehouse.RefusalBoundExceeded)
 				}
-				if refusal.Origin != RefusalOriginChild {
+				if refusal.Origin != warehouse.RefusalOriginChild {
 					t.Fatalf("child %s refusal origin = %q, want child", name, refusal.Origin)
 				}
 			})
@@ -609,7 +611,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		}
 		for name, document := range codecCases {
 			t.Run("codec_refuses_"+name, func(t *testing.T) {
-				if _, err := DecodeQueryRequest([]byte(document)); err == nil {
+				if _, err := warehouse.DecodeQueryRequest([]byte(document)); err == nil {
 					t.Fatalf("parent codec accepted a request with an %s: %s", name, document)
 				}
 			})
@@ -628,7 +630,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		reasons := map[string]string{}
 		for name, document := range documents {
 			t.Run("codec_refuses_"+name, func(t *testing.T) {
-				_, err := DecodeQueryRequest([]byte(document))
+				_, err := warehouse.DecodeQueryRequest([]byte(document))
 				if err == nil {
 					t.Fatalf("the parent codec accepted a %s wall-time bound: %s", name, document)
 				}
@@ -647,9 +649,9 @@ func TestQueryProcessIsolation(t *testing.T) {
 				t.Fatalf("the child executed a request whose wrapped wall-time bound decoded to exactly one second: %s", run.stdout)
 			}
 			refusal := run.refusal(t)
-			if refusal.Code != RefusalBoundExceeded || refusal.Origin != RefusalOriginChild {
+			if refusal.Code != warehouse.RefusalBoundExceeded || refusal.Origin != warehouse.RefusalOriginChild {
 				t.Fatalf("child refusal for a wrapped wall-time bound = %q/%q, want %q/child: %s",
-					refusal.Code, refusal.Origin, RefusalBoundExceeded, refusal.Reason)
+					refusal.Code, refusal.Origin, warehouse.RefusalBoundExceeded, refusal.Reason)
 			}
 		})
 	})
@@ -676,7 +678,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		}
 		child := fixture.newChild(t, fixture.defaultLimits())
 		type outcome struct {
-			response QueryResponse
+			response warehouse.QueryResponse
 			err      error
 		}
 		results := make(chan outcome, 1)
@@ -698,9 +700,9 @@ func TestQueryProcessIsolation(t *testing.T) {
 			t.Fatalf("an over-bound segment whose removal failed returned %d rows instead of a refusal", len(result.response.Rows))
 		}
 		refusal := requireRefusal(t, result.err)
-		if refusal.Code != RefusalOutputFailed {
+		if refusal.Code != warehouse.RefusalOutputFailed {
 			t.Fatalf("refusal code for an unremovable over-bound segment = %q, want %q: %s",
-				refusal.Code, RefusalOutputFailed, refusal.Reason)
+				refusal.Code, warehouse.RefusalOutputFailed, refusal.Reason)
 		}
 		if _, err := os.Lstat(output); err != nil {
 			t.Fatalf("the fixture did not leave the over-bound segment at the admitted output path: %v", err)
@@ -722,10 +724,10 @@ func TestQueryProcessIsolation(t *testing.T) {
 				t.Fatalf("a five-millisecond wall time returned %d rows instead of killing the child", len(response.Rows))
 			}
 			refusal := requireRefusal(t, err)
-			if refusal.Code != RefusalChildTimeout {
-				t.Fatalf("wall-time refusal code = %q, want %q: %s", refusal.Code, RefusalChildTimeout, refusal.Reason)
+			if refusal.Code != warehouse.RefusalChildTimeout {
+				t.Fatalf("wall-time refusal code = %q, want %q: %s", refusal.Code, warehouse.RefusalChildTimeout, refusal.Reason)
 			}
-			if refusal.Origin != RefusalOriginSupervisor {
+			if refusal.Origin != warehouse.RefusalOriginSupervisor {
 				t.Fatalf("wall-time refusal origin = %q, want supervisor", refusal.Origin)
 			}
 			if len(response.Rows) != 0 {
@@ -749,11 +751,11 @@ func TestQueryProcessIsolation(t *testing.T) {
 				t.Fatalf("declared wall time returned %d rows instead of refusing", len(response.Rows))
 			}
 			refusal := requireRefusal(t, err)
-			if refusal.Origin != RefusalOriginChild {
+			if refusal.Origin != warehouse.RefusalOriginChild {
 				t.Fatalf("declared wall-time refusal origin = %q, want the child: the supervisor wall time was generous", refusal.Origin)
 			}
-			if refusal.Code != RefusalBoundExceeded {
-				t.Fatalf("declared wall-time refusal code = %q, want %q: %s", refusal.Code, RefusalBoundExceeded, refusal.Reason)
+			if refusal.Code != warehouse.RefusalBoundExceeded {
+				t.Fatalf("declared wall-time refusal code = %q, want %q: %s", refusal.Code, warehouse.RefusalBoundExceeded, refusal.Reason)
 			}
 			if refusal.ExitCode != isolationChildRefusalStatus {
 				t.Fatalf("an explicit child refusal reported exit status %d, want %d", refusal.ExitCode, isolationChildRefusalStatus)
@@ -769,7 +771,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 			diagnostics := &isolationDiagnostics{}
 			child := fixture.newObservedChild(t, fixture.defaultLimits(), diagnostics)
 			type outcome struct {
-				response QueryResponse
+				response warehouse.QueryResponse
 				err      error
 			}
 			results := make(chan outcome, 1)
@@ -787,8 +789,8 @@ func TestQueryProcessIsolation(t *testing.T) {
 					t.Fatalf("an externally killed child returned %d rows", len(result.response.Rows))
 				}
 				refusal := requireRefusal(t, result.err)
-				if refusal.Code != RefusalChildKilled && refusal.Code != RefusalChildExit {
-					t.Fatalf("killed child refusal code = %q, want %q or %q: %s", refusal.Code, RefusalChildKilled, RefusalChildExit, refusal.Reason)
+				if refusal.Code != warehouse.RefusalChildKilled && refusal.Code != warehouse.RefusalChildExit {
+					t.Fatalf("killed child refusal code = %q, want %q or %q: %s", refusal.Code, warehouse.RefusalChildKilled, warehouse.RefusalChildExit, refusal.Reason)
 				}
 				// A process killed by a signal has no exit status, and the refusal
 				// reports the kill through its code instead of inventing one.
@@ -842,7 +844,7 @@ func TestQueryProcessIsolation(t *testing.T) {
 		// child's engine spill, so the supervisor reports the removal failure.
 		child := fixture.newChild(t, fixture.defaultLimits())
 		type outcome struct {
-			response QueryResponse
+			response warehouse.QueryResponse
 			err      error
 		}
 		results := make(chan outcome, 1)
@@ -866,9 +868,9 @@ func TestQueryProcessIsolation(t *testing.T) {
 			t.Fatalf("an attempt whose scratch could not be removed returned %d rows as a clean outcome", len(result.response.Rows))
 		}
 		refusal := requireRefusal(t, result.err)
-		if refusal.Code != RefusalEnvironment || refusal.Origin != RefusalOriginSupervisor {
+		if refusal.Code != warehouse.RefusalEnvironment || refusal.Origin != warehouse.RefusalOriginSupervisor {
 			t.Fatalf("scratch removal refusal = %q/%q, want %q/supervisor: %s",
-				refusal.Code, refusal.Origin, RefusalEnvironment, refusal.Reason)
+				refusal.Code, refusal.Origin, warehouse.RefusalEnvironment, refusal.Reason)
 		}
 		if len(result.response.Rows) != 0 {
 			t.Fatalf("an undisposable attempt reported %d invented rows", len(result.response.Rows))
@@ -889,9 +891,9 @@ func TestQueryProcessIsolation(t *testing.T) {
 					t.Fatalf("a child stand-in that exited %d returned %d rows", status, len(response.Rows))
 				}
 				refusal := requireRefusal(t, err)
-				if refusal.Code != RefusalChildExit || refusal.Origin != RefusalOriginSupervisor {
+				if refusal.Code != warehouse.RefusalChildExit || refusal.Origin != warehouse.RefusalOriginSupervisor {
 					t.Fatalf("child stand-in refusal = %q/%q, want %q/supervisor: %s",
-						refusal.Code, refusal.Origin, RefusalChildExit, refusal.Reason)
+						refusal.Code, refusal.Origin, warehouse.RefusalChildExit, refusal.Reason)
 				}
 				if refusal.ExitCode != status {
 					t.Fatalf("child stand-in exit status reported as %d, want %d", refusal.ExitCode, status)
@@ -1044,8 +1046,8 @@ type queryIsolationFixture struct {
 	bulk         string
 	bulkDigest   string
 	bulkBytes    int64
-	columns      []QueryColumn
-	rows         [][]QueryValue
+	columns      []warehouse.QueryColumn
+	rows         [][]warehouse.QueryValue
 	manifestPath string
 	effectsPath  string
 	sealed       isolationSeal
@@ -1084,10 +1086,10 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 	// reads exactly those bytes back. No binary fixture is committed and no
 	// other writer touches the admitted directory.
 	child := fixture.newChild(t, fixture.maximumLimits())
-	encode := QueryRequest{
+	encode := warehouse.QueryRequest{
 		RequestID:           "fixture-source",
 		AdmittedDirectories: []string{fixture.admitted},
-		Bounds: QueryBounds{
+		Bounds: warehouse.QueryBounds{
 			Relations:   2,
 			Columns:     32,
 			Rows:        int64(len(fixture.rows)),
@@ -1096,10 +1098,10 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 			MemoryBytes: 128 << 20,
 			WallTime:    time.Minute,
 		},
-		Encode: &QueryEncode{
+		Encode: &warehouse.QueryEncode{
 			Columns: fixture.columnCopy(),
 			Rows:    fixture.rows,
-			Output:  QueryOutput{Path: fixture.source},
+			Output:  warehouse.QueryOutput{Path: fixture.source},
 		},
 	}
 	response, err := child.Execute(t.Context(), encode)
@@ -1114,14 +1116,14 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 		t.Fatalf("source segment descriptor disagrees with the admitted bytes: %+v", response.Output)
 	}
 
-	bulkRows := make([][]QueryValue, isolationBulkRows)
+	bulkRows := make([][]warehouse.QueryValue, isolationBulkRows)
 	for index := range bulkRows {
-		bulkRows[index] = []QueryValue{Int64QueryValue(int64(index))}
+		bulkRows[index] = []warehouse.QueryValue{warehouse.Int64QueryValue(int64(index))}
 	}
-	bulkEncode := QueryRequest{
+	bulkEncode := warehouse.QueryRequest{
 		RequestID:           "fixture-bulk",
 		AdmittedDirectories: []string{fixture.admitted},
-		Bounds: QueryBounds{
+		Bounds: warehouse.QueryBounds{
 			Relations:   2,
 			Columns:     32,
 			Rows:        isolationBulkRows,
@@ -1130,10 +1132,10 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 			MemoryBytes: 128 << 20,
 			WallTime:    2 * time.Minute,
 		},
-		Encode: &QueryEncode{
-			Columns: []QueryColumn{{Name: "position", Kind: QueryKindInt64, Nullable: false}},
+		Encode: &warehouse.QueryEncode{
+			Columns: []warehouse.QueryColumn{{Name: "position", Kind: warehouse.QueryKindInt64, Nullable: false}},
 			Rows:    bulkRows,
-			Output:  QueryOutput{Path: fixture.bulk},
+			Output:  warehouse.QueryOutput{Path: fixture.bulk},
 		},
 	}
 	if _, err := child.Execute(t.Context(), bulkEncode); err != nil {
@@ -1153,7 +1155,7 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 // isolationByteBound is the largest declared byte bound the fixture's
 // supervisor admits: the supervisor reads a declared bound plus the document
 // envelope, both bounded by the protocol codec's own document capability.
-const isolationByteBound = maximumResponseCap - responseEnvelopeSlack
+const isolationByteBound = warehouseMaximumResponseCap - warehouseResponseEnvelopeSlack
 
 // isolationOverBoundRows and isolationOverBoundValueBytes size one encoded
 // payload the wire form can still carry as a single request document: the
@@ -1181,23 +1183,23 @@ const boundsProbeDocument = `{"protocol":"pm.query/1","request_id":"wall-time-pr
 	`"bounds":{"relations":"1","columns":"1","rows":"1","bytes":"1","temp_bytes":"1","memory_bytes":"1","wall_millis":"%s"},` +
 	`"relations":[],"select":{"from":"orders","project":[{"column":"id"}],"limit":"1"}}`
 
-func (fixture *queryIsolationFixture) overBoundEncodeRequest(output string) QueryRequest {
+func (fixture *queryIsolationFixture) overBoundEncodeRequest(output string) warehouse.QueryRequest {
 	// The payload is drawn from a fixed generator rather than a repeating
 	// pattern: a compressible payload would materialize a segment that fits the
 	// declared bound and never exercise the over-bound removal.
 	random := rand.New(rand.NewPCG(1, 2))
-	rows := make([][]QueryValue, isolationOverBoundRows)
+	rows := make([][]warehouse.QueryValue, isolationOverBoundRows)
 	for index := range rows {
 		payload := make([]byte, isolationOverBoundValueBytes)
 		for position := range payload {
 			payload[position] = byte(random.Uint32())
 		}
-		rows[index] = []QueryValue{BytesQueryValue(payload)}
+		rows[index] = []warehouse.QueryValue{warehouse.BytesQueryValue(payload)}
 	}
-	return QueryRequest{
+	return warehouse.QueryRequest{
 		RequestID:           "isolation-over-bound",
 		AdmittedDirectories: []string{fixture.admitted},
-		Bounds: QueryBounds{
+		Bounds: warehouse.QueryBounds{
 			Relations:   1,
 			Columns:     4,
 			Rows:        isolationOverBoundRows,
@@ -1206,10 +1208,10 @@ func (fixture *queryIsolationFixture) overBoundEncodeRequest(output string) Quer
 			MemoryBytes: 128 << 20,
 			WallTime:    time.Minute,
 		},
-		Encode: &QueryEncode{
-			Columns: []QueryColumn{{Name: "payload", Kind: QueryKindBytea, Nullable: false}},
+		Encode: &warehouse.QueryEncode{
+			Columns: []warehouse.QueryColumn{{Name: "payload", Kind: warehouse.QueryKindBytea, Nullable: false}},
 			Rows:    rows,
-			Output:  QueryOutput{Path: output},
+			Output:  warehouse.QueryOutput{Path: output},
 		},
 	}
 }
@@ -1228,10 +1230,10 @@ func awaitRegularFile(t *testing.T, path string, timeout time.Duration) {
 	t.Fatalf("no writer presented a regular file at %s within %s", path, timeout)
 }
 
-func (fixture *queryIsolationFixture) defaultLimits() ChildLimits {
-	return ChildLimits{
-		MaxRequestBytes:     MaxQueryDocumentBytes,
-		MaxResponseBytes:    maximumResponseCap,
+func (fixture *queryIsolationFixture) defaultLimits() warehouse.ChildLimits {
+	return warehouse.ChildLimits{
+		MaxRequestBytes:     warehouse.MaxQueryDocumentBytes,
+		MaxResponseBytes:    warehouseMaximumResponseCap,
 		MaxDiagnosticsBytes: 64 << 10,
 		MemoryBytes:         128 << 20,
 		TempBytes:           64 << 20,
@@ -1240,16 +1242,16 @@ func (fixture *queryIsolationFixture) defaultLimits() ChildLimits {
 	}
 }
 
-func (fixture *queryIsolationFixture) maximumLimits() ChildLimits {
+func (fixture *queryIsolationFixture) maximumLimits() warehouse.ChildLimits {
 	limits := fixture.defaultLimits()
 	limits.WallTime = 2 * time.Minute
 	limits.MemoryBytes = 256 << 20
 	return limits
 }
 
-func (fixture *queryIsolationFixture) newChild(t *testing.T, limits ChildLimits) *QueryChild {
+func (fixture *queryIsolationFixture) newChild(t *testing.T, limits warehouse.ChildLimits) *warehouse.QueryChild {
 	t.Helper()
-	child, err := NewQueryChild(ChildConfig{
+	child, err := warehouse.NewQueryChild(warehouse.ChildConfig{
 		BinaryPath:    fixture.childPath,
 		ScratchRoot:   fixture.scratchRoot,
 		AdmittedRoots: []string{fixture.admitted, fixture.probes},
@@ -1261,9 +1263,9 @@ func (fixture *queryIsolationFixture) newChild(t *testing.T, limits ChildLimits)
 	return child
 }
 
-func (fixture *queryIsolationFixture) newObservedChild(t *testing.T, limits ChildLimits, diagnostics *isolationDiagnostics) *QueryChild {
+func (fixture *queryIsolationFixture) newObservedChild(t *testing.T, limits warehouse.ChildLimits, diagnostics *isolationDiagnostics) *warehouse.QueryChild {
 	t.Helper()
-	child, err := NewQueryChild(ChildConfig{
+	child, err := warehouse.NewQueryChild(warehouse.ChildConfig{
 		BinaryPath:    fixture.childPath,
 		ScratchRoot:   fixture.scratchRoot,
 		AdmittedRoots: []string{fixture.admitted, fixture.probes},
@@ -1417,9 +1419,9 @@ func (fixture *queryIsolationFixture) writeStubChild(t *testing.T, status int) s
 	return path
 }
 
-func (fixture *queryIsolationFixture) newChildWithBinary(t *testing.T, binary string, limits ChildLimits) *QueryChild {
+func (fixture *queryIsolationFixture) newChildWithBinary(t *testing.T, binary string, limits warehouse.ChildLimits) *warehouse.QueryChild {
 	t.Helper()
-	child, err := NewQueryChild(ChildConfig{
+	child, err := warehouse.NewQueryChild(warehouse.ChildConfig{
 		BinaryPath:    binary,
 		ScratchRoot:   fixture.scratchRoot,
 		AdmittedRoots: []string{fixture.admitted, fixture.probes},
@@ -1434,12 +1436,12 @@ func (fixture *queryIsolationFixture) newChildWithBinary(t *testing.T, binary st
 // columnCopy hands out the declared schema without sharing its backing array:
 // a negative subtest mutates the request it sends, and that must never corrupt
 // the fixture for later subtests.
-func (fixture *queryIsolationFixture) columnCopy() []QueryColumn {
-	return append([]QueryColumn(nil), fixture.columns...)
+func (fixture *queryIsolationFixture) columnCopy() []warehouse.QueryColumn {
+	return append([]warehouse.QueryColumn(nil), fixture.columns...)
 }
 
-func (fixture *queryIsolationFixture) relation() QueryRelation {
-	return QueryRelation{
+func (fixture *queryIsolationFixture) relation() warehouse.QueryRelation {
+	return warehouse.QueryRelation{
 		Name:    isolationSourceRelation,
 		Path:    fixture.source,
 		SHA256:  fixture.sourceDigest,
@@ -1448,15 +1450,15 @@ func (fixture *queryIsolationFixture) relation() QueryRelation {
 	}
 }
 
-func (fixture *queryIsolationFixture) sourceRequest() QueryRequest {
-	projections := make([]QueryProjection, 0, len(fixture.columns))
+func (fixture *queryIsolationFixture) sourceRequest() warehouse.QueryRequest {
+	projections := make([]warehouse.QueryProjection, 0, len(fixture.columns))
 	for _, column := range fixture.columns {
-		projections = append(projections, QueryProjection{Column: column.Name})
+		projections = append(projections, warehouse.QueryProjection{Column: column.Name})
 	}
-	return QueryRequest{
+	return warehouse.QueryRequest{
 		RequestID:           "isolation-source",
 		AdmittedDirectories: []string{fixture.admitted},
-		Bounds: QueryBounds{
+		Bounds: warehouse.QueryBounds{
 			Relations:   2,
 			Columns:     32,
 			Rows:        int64(len(fixture.rows)),
@@ -1465,21 +1467,21 @@ func (fixture *queryIsolationFixture) sourceRequest() QueryRequest {
 			MemoryBytes: 128 << 20,
 			WallTime:    30 * time.Second,
 		},
-		Relations: []QueryRelation{fixture.relation()},
-		Select: &QuerySelect{
+		Relations: []warehouse.QueryRelation{fixture.relation()},
+		Select: &warehouse.QuerySelect{
 			From:    isolationSourceRelation,
 			Project: projections,
-			Order:   []QueryOrder{{Column: "id"}},
+			Order:   []warehouse.QueryOrder{{Column: "id"}},
 			Limit:   int64(len(fixture.rows)),
 		},
 	}
 }
 
-func (fixture *queryIsolationFixture) bulkRequest() QueryRequest {
-	return QueryRequest{
+func (fixture *queryIsolationFixture) bulkRequest() warehouse.QueryRequest {
+	return warehouse.QueryRequest{
 		RequestID:           "isolation-bulk",
 		AdmittedDirectories: []string{fixture.admitted},
-		Bounds: QueryBounds{
+		Bounds: warehouse.QueryBounds{
 			Relations:   1,
 			Columns:     4,
 			Rows:        isolationBulkRows,
@@ -1488,17 +1490,17 @@ func (fixture *queryIsolationFixture) bulkRequest() QueryRequest {
 			MemoryBytes: 128 << 20,
 			WallTime:    time.Minute,
 		},
-		Relations: []QueryRelation{{
+		Relations: []warehouse.QueryRelation{{
 			Name:    "positions",
 			Path:    fixture.bulk,
 			SHA256:  fixture.bulkDigest,
 			Bytes:   fixture.bulkBytes,
-			Columns: []QueryColumn{{Name: "position", Kind: QueryKindInt64, Nullable: false}},
+			Columns: []warehouse.QueryColumn{{Name: "position", Kind: warehouse.QueryKindInt64, Nullable: false}},
 		}},
-		Select: &QuerySelect{
+		Select: &warehouse.QuerySelect{
 			From:    "positions",
-			Project: []QueryProjection{{Column: "position"}},
-			Order:   []QueryOrder{{Column: "position", Descending: true}},
+			Project: []warehouse.QueryProjection{{Column: "position"}},
+			Order:   []warehouse.QueryOrder{{Column: "position", Descending: true}},
 			Limit:   isolationBulkRows,
 		},
 	}
@@ -1507,19 +1509,180 @@ func (fixture *queryIsolationFixture) bulkRequest() QueryRequest {
 // childDocument renders one request document as the child receives it. The
 // supervisor is deliberately bypassed so that the child's own admission and
 // protocol guards are observable.
-func (fixture *queryIsolationFixture) childDocument(t *testing.T, mutate func(request *QueryRequest)) []byte {
+func (fixture *queryIsolationFixture) childDocument(t *testing.T, mutate func(request *warehouse.QueryRequest)) []byte {
 	t.Helper()
 	request := fixture.sourceRequest()
 	if mutate != nil {
 		mutate(&request)
 	}
 	// The document is rendered without the supervisor's own admission checks:
-	// the child's independent guards must observe it.
-	document, err := renderQueryRequest(request)
+	// the child's independent guards must observe it. The package's exported
+	// encoder validates the typed request first, and it refuses exactly the
+	// classes this case presents (an undeclared relation, an unknown column, a
+	// digest the admitted bytes do not have, and a bound beyond the child's own
+	// capability), so the case renders the child's own wire form itself.
+	document, err := isolationWireRequest(request)
 	if err != nil {
 		t.Fatalf("render child request document: %v", err)
 	}
 	return document
+}
+
+// The wire documents below are the isolation case's own rendering of the
+// child's request form. The child decodes them with its own strict decoder and
+// refuses any member that drifts from the form, so a mistake here fails the
+// case instead of quietly presenting a different document.
+type isolationColumnDocument struct {
+	Name      string  `json:"name"`
+	Kind      string  `json:"kind"`
+	Precision *string `json:"precision,omitempty"`
+	Scale     *string `json:"scale,omitempty"`
+	Nullable  bool    `json:"nullable"`
+}
+
+type isolationRelationDocument struct {
+	Name    string                    `json:"name"`
+	Path    string                    `json:"path"`
+	SHA256  string                    `json:"sha256"`
+	Bytes   string                    `json:"bytes"`
+	Columns []isolationColumnDocument `json:"columns"`
+}
+
+type isolationProjectionDocument struct {
+	Column string `json:"column"`
+	Alias  string `json:"alias,omitempty"`
+}
+
+type isolationPredicateDocument struct {
+	Column   string                 `json:"column"`
+	Operator string                 `json:"operator"`
+	Value    *warehouse.QueryValue  `json:"value,omitempty"`
+	Values   []warehouse.QueryValue `json:"values,omitempty"`
+}
+
+type isolationOrderDocument struct {
+	Column    string `json:"column"`
+	Direction string `json:"direction"`
+}
+
+type isolationOutputDocument struct {
+	Path string `json:"path"`
+}
+
+type isolationSelectDocument struct {
+	From       string                        `json:"from"`
+	Project    []isolationProjectionDocument `json:"project"`
+	Predicates []isolationPredicateDocument  `json:"predicates,omitempty"`
+	Order      []isolationOrderDocument      `json:"order,omitempty"`
+	Limit      string                        `json:"limit"`
+	Output     *isolationOutputDocument      `json:"output,omitempty"`
+}
+
+type isolationBoundsDocument struct {
+	Relations   string `json:"relations"`
+	Columns     string `json:"columns"`
+	Rows        string `json:"rows"`
+	Bytes       string `json:"bytes"`
+	TempBytes   string `json:"temp_bytes"`
+	MemoryBytes string `json:"memory_bytes"`
+	WallMillis  string `json:"wall_millis"`
+}
+
+type isolationRequestDocument struct {
+	Protocol            string                      `json:"protocol"`
+	RequestID           string                      `json:"request_id"`
+	AdmittedDirectories []string                    `json:"admitted_directories"`
+	Bounds              isolationBoundsDocument     `json:"bounds"`
+	Relations           []isolationRelationDocument `json:"relations"`
+	Select              *isolationSelectDocument    `json:"select,omitempty"`
+}
+
+func isolationColumnDocumentFor(column warehouse.QueryColumn) isolationColumnDocument {
+	document := isolationColumnDocument{Name: column.Name, Kind: string(column.Kind), Nullable: column.Nullable}
+	if column.Kind == warehouse.QueryKindDecimal {
+		precision := strconv.FormatInt(int64(column.Precision), 10)
+		scale := strconv.FormatInt(int64(column.Scale), 10)
+		document.Precision = &precision
+		document.Scale = &scale
+	}
+	return document
+}
+
+// isolationWireRequest renders one typed request into the exact wire form the
+// child reads. Only the typed select operation is rendered: the case presents
+// read documents, and an unrendered operation is refused here rather than sent
+// as a different document.
+func isolationWireRequest(request warehouse.QueryRequest) ([]byte, error) {
+	if request.Select == nil {
+		return nil, errors.New("the isolation case renders one select document; an encode document needs its own rendering here")
+	}
+	document := isolationRequestDocument{
+		Protocol:            warehouse.QueryProtocolVersion,
+		RequestID:           request.RequestID,
+		AdmittedDirectories: request.AdmittedDirectories,
+		Bounds: isolationBoundsDocument{
+			Relations:   strconv.FormatInt(int64(request.Bounds.Relations), 10),
+			Columns:     strconv.FormatInt(int64(request.Bounds.Columns), 10),
+			Rows:        strconv.FormatInt(request.Bounds.Rows, 10),
+			Bytes:       strconv.FormatInt(request.Bounds.Bytes, 10),
+			TempBytes:   strconv.FormatInt(request.Bounds.TempBytes, 10),
+			MemoryBytes: strconv.FormatInt(request.Bounds.MemoryBytes, 10),
+			WallMillis:  strconv.FormatInt(request.Bounds.WallTime.Milliseconds(), 10),
+		},
+		Relations: make([]isolationRelationDocument, 0, len(request.Relations)),
+	}
+	if document.AdmittedDirectories == nil {
+		document.AdmittedDirectories = []string{}
+	}
+	for _, relation := range request.Relations {
+		entry := isolationRelationDocument{
+			Name:    relation.Name,
+			Path:    relation.Path,
+			SHA256:  relation.SHA256,
+			Bytes:   strconv.FormatInt(relation.Bytes, 10),
+			Columns: make([]isolationColumnDocument, 0, len(relation.Columns)),
+		}
+		for _, column := range relation.Columns {
+			entry.Columns = append(entry.Columns, isolationColumnDocumentFor(column))
+		}
+		document.Relations = append(document.Relations, entry)
+	}
+	selected := &isolationSelectDocument{
+		From:    request.Select.From,
+		Limit:   strconv.FormatInt(request.Select.Limit, 10),
+		Project: make([]isolationProjectionDocument, 0, len(request.Select.Project)),
+	}
+	for _, projection := range request.Select.Project {
+		selected.Project = append(selected.Project, isolationProjectionDocument{Column: projection.Column, Alias: projection.Alias})
+	}
+	for _, predicate := range request.Select.Predicates {
+		entry := isolationPredicateDocument{Column: predicate.Column, Operator: string(predicate.Operator)}
+		if predicate.Value.Present() {
+			value := predicate.Value
+			entry.Value = &value
+		}
+		entry.Values = append(entry.Values, predicate.Values...)
+		selected.Predicates = append(selected.Predicates, entry)
+	}
+	for _, ordering := range request.Select.Order {
+		direction := "asc"
+		if ordering.Descending {
+			direction = "desc"
+		}
+		selected.Order = append(selected.Order, isolationOrderDocument{Column: ordering.Column, Direction: direction})
+	}
+	if request.Select.Output != nil {
+		selected.Output = &isolationOutputDocument{Path: request.Select.Output.Path}
+	}
+	document.Select = selected
+	rendered, err := json.Marshal(document)
+	if err != nil {
+		return nil, fmt.Errorf("encode the child request document: %w", err)
+	}
+	if len(rendered) > warehouse.MaxQueryDocumentBytes {
+		return nil, fmt.Errorf("the rendered request document exceeds the protocol byte bound of %d bytes", warehouse.MaxQueryDocumentBytes)
+	}
+	return rendered, nil
 }
 
 type isolationChildRun struct {
@@ -1530,7 +1693,7 @@ type isolationChildRun struct {
 
 // runChildDocument starts the real child binary directly, writes one bounded
 // request document, and reports the raw process outcome.
-func (fixture *queryIsolationFixture) runChildDocument(t *testing.T, document string, limits ChildLimits) isolationChildRun {
+func (fixture *queryIsolationFixture) runChildDocument(t *testing.T, document string, limits warehouse.ChildLimits) isolationChildRun {
 	t.Helper()
 	temporary := t.TempDir()
 	command := exec.Command(fixture.childPath)
@@ -1571,12 +1734,12 @@ func (fixture *queryIsolationFixture) runChildDocument(t *testing.T, document st
 	}
 }
 
-func (run isolationChildRun) refusal(t *testing.T) *Refusal {
+func (run isolationChildRun) refusal(t *testing.T) *warehouse.Refusal {
 	t.Helper()
 	if strings.TrimSpace(run.stdout) == "" {
 		t.Fatalf("child produced no refusal document; stderr=%q", run.stderr)
 	}
-	_, err := DecodeQueryResponse([]byte(run.stdout))
+	_, err := warehouse.DecodeQueryResponse([]byte(run.stdout))
 	if err == nil {
 		t.Fatal("child refusal document decoded as a successful response")
 	}
@@ -1587,7 +1750,7 @@ func (run isolationChildRun) refusal(t *testing.T) *Refusal {
 	return refusal
 }
 
-func (fixture *queryIsolationFixture) observeChildReport(t *testing.T, response QueryResponse) {
+func (fixture *queryIsolationFixture) observeChildReport(t *testing.T, response warehouse.QueryResponse) {
 	t.Helper()
 	if response.Child == nil {
 		t.Fatal("successful response carried no child observation")
@@ -1769,20 +1932,20 @@ func (diagnostics *isolationDiagnostics) waitForProcessID(t *testing.T, timeout 
 
 // isolationSourceRows builds the admitted relation's declared schema and exact
 // typed rows. Every value class the child must project exactly is present.
-func isolationSourceRows(t *testing.T) ([]QueryColumn, [][]QueryValue) {
+func isolationSourceRows(t *testing.T) ([]warehouse.QueryColumn, [][]warehouse.QueryValue) {
 	t.Helper()
-	columns := []QueryColumn{
-		{Name: "id", Kind: QueryKindInt64, Nullable: false},
-		{Name: "amount", Kind: QueryKindDecimal, Precision: 18, Scale: 3, Nullable: false},
-		{Name: "label", Kind: QueryKindText, Nullable: false},
-		{Name: "flag", Kind: QueryKindBoolean, Nullable: false},
-		{Name: "payload", Kind: QueryKindBytea, Nullable: false},
-		{Name: "day", Kind: QueryKindDate, Nullable: false},
-		{Name: "naive", Kind: QueryKindTimestamp, Nullable: false},
-		{Name: "instant", Kind: QueryKindTimestampTZ, Nullable: false},
-		{Name: "identifier", Kind: QueryKindUUID, Nullable: false},
-		{Name: "document", Kind: QueryKindJSON, Nullable: false},
-		{Name: "maybe", Kind: QueryKindText, Nullable: true},
+	columns := []warehouse.QueryColumn{
+		{Name: "id", Kind: warehouse.QueryKindInt64, Nullable: false},
+		{Name: "amount", Kind: warehouse.QueryKindDecimal, Precision: 18, Scale: 3, Nullable: false},
+		{Name: "label", Kind: warehouse.QueryKindText, Nullable: false},
+		{Name: "flag", Kind: warehouse.QueryKindBoolean, Nullable: false},
+		{Name: "payload", Kind: warehouse.QueryKindBytea, Nullable: false},
+		{Name: "day", Kind: warehouse.QueryKindDate, Nullable: false},
+		{Name: "naive", Kind: warehouse.QueryKindTimestamp, Nullable: false},
+		{Name: "instant", Kind: warehouse.QueryKindTimestampTZ, Nullable: false},
+		{Name: "identifier", Kind: warehouse.QueryKindUUID, Nullable: false},
+		{Name: "document", Kind: warehouse.QueryKindJSON, Nullable: false},
+		{Name: "maybe", Kind: warehouse.QueryKindText, Nullable: true},
 	}
 	uuid := mustUUID(t, "6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 	day := mustDate(t, "2024-02-29")
@@ -1800,58 +1963,58 @@ func isolationSourceRows(t *testing.T) ([]QueryColumn, [][]QueryValue) {
 	firstDay := mustDate(t, "0001-01-01")
 	lastIdentifier := mustUUID(t, "01234567-89ab-cdef-0123-456789abcdef")
 	objectDocument := mustJSON(t, `{"z":null}`)
-	rows := [][]QueryValue{
+	rows := [][]warehouse.QueryValue{
 		{
-			Int64QueryValue(9007199254740993),
+			warehouse.Int64QueryValue(9007199254740993),
 			amount,
-			TextQueryValue("alpha"),
-			BooleanQueryValue(true),
-			BytesQueryValue([]byte{0xde, 0xad, 0xbe, 0xef}),
+			warehouse.TextQueryValue("alpha"),
+			warehouse.BooleanQueryValue(true),
+			warehouse.BytesQueryValue([]byte{0xde, 0xad, 0xbe, 0xef}),
 			day,
-			TimestampQueryValue(1709212455123456),
-			TimestampTZQueryValue(1709212455123456),
+			warehouse.TimestampQueryValue(1709212455123456),
+			warehouse.TimestampTZQueryValue(1709212455123456),
 			uuid,
 			document,
-			NullQueryValue(),
+			warehouse.NullQueryValue(),
 		},
 		{
-			Int64QueryValue(-9007199254740993),
+			warehouse.Int64QueryValue(-9007199254740993),
 			zeroAmount,
-			TextQueryValue(""),
-			BooleanQueryValue(false),
-			BytesQueryValue([]byte{}),
+			warehouse.TextQueryValue(""),
+			warehouse.BooleanQueryValue(false),
+			warehouse.BytesQueryValue([]byte{}),
 			zeroDay,
-			TimestampQueryValue(0),
-			TimestampTZQueryValue(0),
+			warehouse.TimestampQueryValue(0),
+			warehouse.TimestampTZQueryValue(0),
 			zeroUUID,
 			emptyDocument,
-			TextQueryValue("present"),
+			warehouse.TextQueryValue("present"),
 		},
 		{
-			Int64QueryValue(0),
+			warehouse.Int64QueryValue(0),
 			unitAmount,
-			TextQueryValue("λ-テキスト"),
-			BooleanQueryValue(true),
-			BytesQueryValue([]byte{0x00}),
+			warehouse.TextQueryValue("λ-テキスト"),
+			warehouse.BooleanQueryValue(true),
+			warehouse.BytesQueryValue([]byte{0x00}),
 			lastDay,
-			TimestampQueryValue(-1),
-			TimestampTZQueryValue(-1),
+			warehouse.TimestampQueryValue(-1),
+			warehouse.TimestampTZQueryValue(-1),
 			lastUUID,
 			scalarDocument,
-			NullQueryValue(),
+			warehouse.NullQueryValue(),
 		},
 		{
-			Int64QueryValue(9223372036854775807),
+			warehouse.Int64QueryValue(9223372036854775807),
 			minAmount,
-			TextQueryValue("omega"),
-			BooleanQueryValue(false),
-			BytesQueryValue([]byte{0x01, 0x02, 0x03}),
+			warehouse.TextQueryValue("omega"),
+			warehouse.BooleanQueryValue(false),
+			warehouse.BytesQueryValue([]byte{0x01, 0x02, 0x03}),
 			firstDay,
-			TimestampQueryValue(253402300799999999),
-			TimestampTZQueryValue(253402300799999999),
+			warehouse.TimestampQueryValue(253402300799999999),
+			warehouse.TimestampTZQueryValue(253402300799999999),
 			lastIdentifier,
 			objectDocument,
-			TextQueryValue(""),
+			warehouse.TextQueryValue(""),
 		},
 	}
 	return columns, rows
@@ -1962,45 +2125,45 @@ func digestFileString(t *testing.T, path string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func mustDecimal(t *testing.T, unscaled string, scale int) QueryValue {
+func mustDecimal(t *testing.T, unscaled string, scale int) warehouse.QueryValue {
 	t.Helper()
-	value, err := DecimalQueryValue(unscaled, scale)
+	value, err := warehouse.DecimalQueryValue(unscaled, scale)
 	if err != nil {
 		t.Fatalf("construct decimal value: %v", err)
 	}
 	return value
 }
 
-func mustDate(t *testing.T, value string) QueryValue {
+func mustDate(t *testing.T, value string) warehouse.QueryValue {
 	t.Helper()
-	date, err := DateQueryValue(value)
+	date, err := warehouse.DateQueryValue(value)
 	if err != nil {
 		t.Fatalf("construct date value: %v", err)
 	}
 	return date
 }
 
-func mustUUID(t *testing.T, value string) QueryValue {
+func mustUUID(t *testing.T, value string) warehouse.QueryValue {
 	t.Helper()
-	identifier, err := UUIDQueryValue(value)
+	identifier, err := warehouse.UUIDQueryValue(value)
 	if err != nil {
 		t.Fatalf("construct UUID value: %v", err)
 	}
 	return identifier
 }
 
-func mustJSON(t *testing.T, value string) QueryValue {
+func mustJSON(t *testing.T, value string) warehouse.QueryValue {
 	t.Helper()
-	document, err := JSONQueryValue(value)
+	document, err := warehouse.JSONQueryValue(value)
 	if err != nil {
 		t.Fatalf("construct JSON value: %v", err)
 	}
 	return document
 }
 
-func requireRefusal(t *testing.T, err error) *Refusal {
+func requireRefusal(t *testing.T, err error) *warehouse.Refusal {
 	t.Helper()
-	var refusal *Refusal
+	var refusal *warehouse.Refusal
 	if !errors.As(err, &refusal) {
 		t.Fatalf("expected an explicit refusal, got %T: %v", err, err)
 	}
@@ -2036,7 +2199,7 @@ func containsInt(values []int, wanted int) bool {
 	return false
 }
 
-func describeColumns(columns []QueryColumn) string {
+func describeColumns(columns []warehouse.QueryColumn) string {
 	parts := make([]string, 0, len(columns))
 	for _, column := range columns {
 		parts = append(parts, fmt.Sprintf("%s:%s[%d,%d]null=%t", column.Name, column.Kind, column.Precision, column.Scale, column.Nullable))
@@ -2044,7 +2207,7 @@ func describeColumns(columns []QueryColumn) string {
 	return "[" + strings.Join(parts, " ") + "]"
 }
 
-func describeRows(rows [][]QueryValue) string {
+func describeRows(rows [][]warehouse.QueryValue) string {
 	parts := make([]string, 0, len(rows))
 	for _, row := range rows {
 		cells := make([]string, 0, len(row))
@@ -2058,8 +2221,8 @@ func describeRows(rows [][]QueryValue) string {
 
 // rowsAscendingByID returns the fixture rows in the ascending identifier order
 // the isolation requests declare.
-func (fixture *queryIsolationFixture) rowsAscendingByID() [][]QueryValue {
-	indexed := append([][]QueryValue(nil), fixture.rows...)
+func (fixture *queryIsolationFixture) rowsAscendingByID() [][]warehouse.QueryValue {
+	indexed := append([][]warehouse.QueryValue(nil), fixture.rows...)
 	sort.SliceStable(indexed, func(left, right int) bool {
 		leftID, _ := indexed[left][0].Int64()
 		rightID, _ := indexed[right][0].Int64()

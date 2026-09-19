@@ -1,4 +1,4 @@
-package warehouse
+package warehouse_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
+	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
 
 // TestBoundedSegmentsManifestAndGC is the V57 acceptance case. It observes that
@@ -46,7 +47,7 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 			}
 			digests[segment.Object.SHA256] = segment.Ordinal
 			attempts[segment.Object.ObjectAttemptKey] = segment.Ordinal
-			if segment.Object.MediaType != ParquetSegmentMediaType {
+			if segment.Object.MediaType != warehouse.ParquetSegmentMediaType {
 				t.Fatalf("segment %d carries media type %q", index, segment.Object.MediaType)
 			}
 			if segment.Object.ByteLength <= 0 || segment.Object.ByteLength > warehouseMaximumSegment {
@@ -63,17 +64,17 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 
 		// A segment above the manifest's own byte bound is refused before any
 		// reservation or object byte exists.
-		oversized := SegmentBytes{
+		oversized := warehouse.SegmentBytes{
 			Path:   filepath.Join(harness.materials, "oversized.parquet"),
 			SHA256: segmentDigestOf(make([]byte, 8)),
 			Bytes:  warehouseMaximumSegment + 1,
 			Schema: mustSegmentSchema(t, harness.columns),
 		}
-		_, err := harness.manifest.PublishSegment(context.Background(), PublishSegmentRequest{
+		_, err := harness.manifest.PublishSegment(context.Background(), warehouse.PublishSegmentRequest{
 			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope,
 			AttemptID: "oversized", Segment: oversized, RowCount: 1,
 		})
-		if FailureCodeOf(err) != RefusalBoundExceeded {
+		if warehouse.FailureCodeOf(err) != warehouse.RefusalBoundExceeded {
 			t.Fatalf("oversized segment publication = %v; want a byte-bound refusal", err)
 		}
 		reservationID, err := harness.layout.SegmentReservationID("oversized")
@@ -95,11 +96,11 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 		// A publication based on revision 3 loses against committed revision 4
 		// after its bytes were really uploaded and verified.
 		segment := harness.materialize(t, "lagging", harness.rows[:2])
-		_, err := harness.manifest.PublishSegment(context.Background(), PublishSegmentRequest{
+		_, err := harness.manifest.PublishSegment(context.Background(), warehouse.PublishSegmentRequest{
 			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope,
 			AttemptID: "lagging", Segment: segment, RowCount: 2, BaseRevision: 3,
 		})
-		var refused *PublicationRefusedError
+		var refused *warehouse.PublicationRefusedError
 		if !errors.As(err, &refused) || !errors.Is(err, store.ErrCASConflict) {
 			t.Fatalf("lagging publication = %v; want a refused publication reporting the CAS conflict", err)
 		}
@@ -115,20 +116,20 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 		right := harness.materialize(t, "race-right", rightRows)
 		type outcome struct {
 			attemptID string
-			rows      [][]QueryValue
+			rows      [][]warehouse.QueryValue
 			result    store.WarehouseSegment
 			err       error
 		}
 		outcomes := make(chan outcome, 2)
 		start := make(chan struct{})
-		run := func(attemptID string, rows [][]QueryValue, segment SegmentBytes) {
-			candidate, err := NewDatasetManifest(harness.fixture.Pool, harness.publisher, harness.layout, warehouseMaximumSegment)
+		run := func(attemptID string, rows [][]warehouse.QueryValue, segment warehouse.SegmentBytes) {
+			candidate, err := warehouse.NewDatasetManifest(harness.fixture.Pool, harness.publisher, harness.layout, warehouseMaximumSegment)
 			if err != nil {
 				outcomes <- outcome{attemptID: attemptID, err: err}
 				return
 			}
 			<-start
-			result, err := candidate.PublishSegment(context.Background(), PublishSegmentRequest{
+			result, err := candidate.PublishSegment(context.Background(), warehouse.PublishSegmentRequest{
 				Actor: harness.fixture.Actor, Scope: harness.fixture.Scope,
 				AttemptID: attemptID, Segment: segment, RowCount: int64(len(rows)), BaseRevision: 4,
 			})
@@ -150,7 +151,7 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 			t.Fatalf("competing publications = winner error %v, loser error %v; want exactly one of each",
 				winner.err, loser.err)
 		}
-		var refusedLoser *PublicationRefusedError
+		var refusedLoser *warehouse.PublicationRefusedError
 		if !errors.As(loser.err, &refusedLoser) || !errors.Is(loser.err, store.ErrCASConflict) {
 			t.Fatalf("losing publication = %v; want a refused publication reporting the CAS conflict", loser.err)
 		}
@@ -182,7 +183,7 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 		// A query snapshot pins the exact set at revision 3, and every remaining
 		// retention kind pins one registered segment.
 		snapshot, err := harness.manifest.TakeSnapshot(context.Background(), harness.fixture.Actor, harness.fixture.Scope,
-			SnapshotRequest{SnapshotID: "snapshot-1", Revision: 3})
+			warehouse.SnapshotRequest{SnapshotID: "snapshot-1", Revision: 3})
 		if err != nil {
 			t.Fatalf("take a query snapshot: %v", err)
 		}
@@ -200,13 +201,13 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 			{store.WarehouseRetentionReservation, "reservation-1", []uint64{4}},
 		} {
 			if err := harness.manifest.RetainSegments(context.Background(), harness.fixture.Actor, harness.fixture.Scope,
-				RetainRequest{Kind: holder.kind, HolderID: holder.id, Ordinals: holder.at}); err != nil {
+				warehouse.RetainRequest{Kind: holder.kind, HolderID: holder.id, Ordinals: holder.at}); err != nil {
 				t.Fatalf("record retention holder %s: %v", holder.id, err)
 			}
 		}
 
 		before := harness.state(t)
-		result, err := CompactDatasetSegments(context.Background(), harness.manifest, harness.newService(t), CompactionRequest{
+		result, err := warehouse.CompactDatasetSegments(context.Background(), harness.manifest, harness.newService(t), warehouse.CompactionRequest{
 			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope,
 			ThroughRevision: before.Revision, AttemptID: "compaction-1", Bounds: harness.bounds,
 		})
@@ -279,7 +280,7 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 		if !reflect.DeepEqual(loaded.Segments, []uint64{1, 2, 3}) {
 			t.Fatalf("retained snapshot set changed to %v", loaded.Segments)
 		}
-		response, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *DatasetQueryRequest) {
+		response, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
 			request.SnapshotID = "snapshot-1"
 		}))
 		if err != nil {
@@ -290,19 +291,19 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 				describeRows(response.Rows), describeRows(harness.rows[:6]))
 		}
 		// The whole dataset now reads exactly the compacted rows.
-		total, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *DatasetQueryRequest) {
+		total, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
 			request.Query.Limit = int64(len(harness.rows) + len(harness.raceWinnerRows))
 		}))
 		if err != nil {
 			t.Fatalf("query the compacted dataset: %v", err)
 		}
-		compacted := append(append([][]QueryValue{}, harness.rows...), harness.raceWinnerRows...)
+		compacted := append(append([][]warehouse.QueryValue{}, harness.rows...), harness.raceWinnerRows...)
 		if !reflect.DeepEqual(total.Rows, compacted) {
 			t.Fatalf("compacted dataset rows differ:\n got %s\nwant %s", describeRows(total.Rows), describeRows(compacted))
 		}
 		// A row set that was already collected can no longer be pinned.
 		if _, err := harness.manifest.TakeSnapshot(context.Background(), harness.fixture.Actor, harness.fixture.Scope,
-			SnapshotRequest{SnapshotID: "snapshot-collected", Revision: 5}); err == nil {
+			warehouse.SnapshotRequest{SnapshotID: "snapshot-collected", Revision: 5}); err == nil {
 			t.Fatal("a snapshot pinned a row set whose segment was already collected")
 		}
 		if _, err := harness.manifest.LoadSnapshot(context.Background(), harness.fixture.Actor, harness.fixture.Scope, "snapshot-collected"); !errors.Is(err, store.ErrNotFound) {
@@ -334,7 +335,7 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 			}); err != nil {
 			t.Fatalf("reserve the orphan attempt: %v", err)
 		}
-		attempt, err := objects.NewAttempt(harness.fixture.Scope, artifactID, ParquetSegmentMediaType, payload, warehouseMaximumSegment)
+		attempt, err := objects.NewAttempt(harness.fixture.Scope, artifactID, warehouse.ParquetSegmentMediaType, payload, warehouseMaximumSegment)
 		if err != nil {
 			t.Fatalf("compose the orphan attempt: %v", err)
 		}
@@ -372,7 +373,7 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 			t.Fatalf("unregistered object bytes changed dataset membership: %d/%d -> %d/%d",
 				before.Revision, len(before.Segments), after.Revision, len(after.Segments))
 		}
-		response, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *DatasetQueryRequest) {
+		response, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
 			request.Query.Limit = int64(len(harness.rows) + len(harness.raceWinnerRows))
 		}))
 		if err != nil {
@@ -385,7 +386,7 @@ func TestBoundedSegmentsManifestAndGC(t *testing.T) {
 }
 
 // segmentPath returns the admitted local path of one competing segment.
-func segmentPath(left, right SegmentBytes, attemptID string) string {
+func segmentPath(left, right warehouse.SegmentBytes, attemptID string) string {
 	if attemptID == "race-left" {
 		return left.Path
 	}

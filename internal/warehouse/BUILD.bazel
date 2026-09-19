@@ -29,7 +29,6 @@ go_test(
         "query_test.go",
         "segments_test.go",
     ],
-    embed = [":warehouse"],
     env_inherit = [
         "PM_STACK_ROOT",
         "PM_STACK_SECRETS_DIR",
@@ -44,6 +43,7 @@ go_test(
         "no-remote",
     ],
     deps = [
+        ":warehouse",
         "//internal/app",
         "//internal/contract",
         "//internal/objects",

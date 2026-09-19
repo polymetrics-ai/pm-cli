@@ -1,4 +1,4 @@
-package warehouse
+package warehouse_test
 
 import (
 	"context"
@@ -16,6 +16,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
+	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
 
 // This file owns the shared physical fixture for the warehouse acceptance cases
@@ -32,8 +33,38 @@ const (
 	// warehouseMaximumSegment is the largest segment this fixture admits. It
 	// matches the largest declared byte bound the child's own document
 	// capability can carry, so no admitted segment is ever refused later.
-	warehouseMaximumSegment = MaxQueryDocumentBytes - 2*responseEnvelopeSlack
+	warehouseMaximumSegment = warehouse.MaxQueryDocumentBytes - 2*warehouseResponseEnvelopeSlack
 )
+
+// The fixture mirrors the two package constants that bound one declared
+// document, because the external test package cannot reach the package's own
+// unexported values. warehouseResponseEnvelopeSlack is the document envelope
+// the supervisor reserves above a declared payload byte bound, and
+// warehouseMaximumResponseCap is the largest response byte cap it can honour:
+// the supervisor reads a declared response cap plus the envelope, and the
+// protocol codec refuses any document above warehouse.MaxQueryDocumentBytes, so
+// a larger cap would admit an attempt whose typed document the codec refuses
+// after the child has run.
+//
+// Both are probe magnitudes, not a private copy of the package's rule: every
+// case that uses them asserts the supervisor's own behaviour on both sides of
+// the boundary (the largest honourable configuration is accepted and executes,
+// one byte more is refused by admission), so a moved envelope fails the case
+// instead of quietly probing a different point.
+const (
+	warehouseResponseEnvelopeSlack = 1 << 16
+	warehouseMaximumResponseCap    = warehouse.MaxQueryDocumentBytes - warehouseResponseEnvelopeSlack
+)
+
+// allColumnProjections declares one projection per declared column, in the
+// declared order: the fixture's queries read the whole relation.
+func allColumnProjections(columns []warehouse.QueryColumn) []warehouse.QueryProjection {
+	projections := make([]warehouse.QueryProjection, 0, len(columns))
+	for _, column := range columns {
+		projections = append(projections, warehouse.QueryProjection{Column: column.Name})
+	}
+	return projections
+}
 
 // warehouseQueryChildPath builds the restricted child for one case. The build
 // helper writes into that case's own temporary directory, so every acceptance
@@ -57,28 +88,28 @@ type warehouseHarness struct {
 	producer       *app.ArtifactResources
 	consumer       *app.ArtifactResources
 	publisher      *objects.Publisher
-	manifest       *DatasetManifest
+	manifest       *warehouse.DatasetManifest
 	consumerReader *objects.Publisher
-	layout         WarehouseLayout
+	layout         warehouse.WarehouseLayout
 	childPath      string
 	root           string
 	admitted       string
 	materials      string
 	staging        string
 	scratch        string
-	limits         ChildLimits
-	bounds         QueryBounds
-	columns        []QueryColumn
-	rows           [][]QueryValue
+	limits         warehouse.ChildLimits
+	bounds         warehouse.QueryBounds
+	columns        []warehouse.QueryColumn
+	rows           [][]warehouse.QueryValue
 	// raceWinnerRows records the rows of the segment that won the concurrent
 	// publication race in the V57 case, so a later compaction can name them.
-	raceWinnerRows [][]QueryValue
+	raceWinnerRows [][]warehouse.QueryValue
 }
 
 // mustSegmentSchema composes the canonical registered segment schema.
-func mustSegmentSchema(t *testing.T, columns []QueryColumn) SegmentSchema {
+func mustSegmentSchema(t *testing.T, columns []warehouse.QueryColumn) warehouse.SegmentSchema {
 	t.Helper()
-	schema, err := NewSegmentSchema(columns)
+	schema, err := warehouse.NewSegmentSchema(columns)
 	if err != nil {
 		t.Fatalf("compose the declared segment schema: %v", err)
 	}
@@ -88,10 +119,10 @@ func mustSegmentSchema(t *testing.T, columns []QueryColumn) SegmentSchema {
 // warehouseChildLimits stay inside the protocol's own document capability: a
 // request or response cap above it would admit an attempt whose typed document
 // the codec refuses after a child has already run.
-func warehouseChildLimits() ChildLimits {
-	return ChildLimits{
-		MaxRequestBytes:     MaxQueryDocumentBytes,
-		MaxResponseBytes:    MaxQueryDocumentBytes - responseEnvelopeSlack,
+func warehouseChildLimits() warehouse.ChildLimits {
+	return warehouse.ChildLimits{
+		MaxRequestBytes:     warehouse.MaxQueryDocumentBytes,
+		MaxResponseBytes:    warehouse.MaxQueryDocumentBytes - warehouseResponseEnvelopeSlack,
 		MaxDiagnosticsBytes: 64 << 10,
 		MemoryBytes:         256 << 20,
 		TempBytes:           256 << 20,
@@ -102,12 +133,12 @@ func warehouseChildLimits() ChildLimits {
 
 // warehouseQueryBounds leave room for the response envelope inside the
 // supervisor's own response cap.
-func warehouseQueryBounds() QueryBounds {
-	return QueryBounds{
+func warehouseQueryBounds() warehouse.QueryBounds {
+	return warehouse.QueryBounds{
 		Relations:   4,
 		Columns:     32,
 		Rows:        1 << 16,
-		Bytes:       MaxQueryDocumentBytes - 2*responseEnvelopeSlack,
+		Bytes:       warehouse.MaxQueryDocumentBytes - 2*warehouseResponseEnvelopeSlack,
 		TempBytes:   64 << 20,
 		MemoryBytes: 128 << 20,
 		WallTime:    time.Minute,
@@ -129,7 +160,7 @@ func newWarehouseHarness(t *testing.T) *warehouseHarness {
 		bounds:    warehouseQueryBounds(),
 	}
 	harness.fixture = testfixture.New(t)
-	layout, err := NewWarehouseLayout(
+	layout, err := warehouse.NewWarehouseLayout(
 		harness.fixture.Connection.ConnectorID,
 		harness.fixture.Connection.ConnectionID,
 		warehouseRelationName,
@@ -173,9 +204,9 @@ func (harness *warehouseHarness) newPublisher(t *testing.T, resources *app.Artif
 	return publisher
 }
 
-func (harness *warehouseHarness) newManifest(t *testing.T, layout WarehouseLayout) *DatasetManifest {
+func (harness *warehouseHarness) newManifest(t *testing.T, layout warehouse.WarehouseLayout) *warehouse.DatasetManifest {
 	t.Helper()
-	manifest, err := NewDatasetManifest(harness.fixture.Pool, harness.publisher, layout, warehouseMaximumSegment)
+	manifest, err := warehouse.NewDatasetManifest(harness.fixture.Pool, harness.publisher, layout, warehouseMaximumSegment)
 	if err != nil {
 		t.Fatalf("construct the dataset manifest publisher: %v", err)
 	}
@@ -189,7 +220,7 @@ func (harness *warehouseHarness) actorFor(scope contract.Scope) contract.Actor {
 	return harness.fixture.Actor
 }
 
-func (harness *warehouseHarness) registerDataset(t *testing.T, scope contract.Scope, layout WarehouseLayout) {
+func (harness *warehouseHarness) registerDataset(t *testing.T, scope contract.Scope, layout warehouse.WarehouseLayout) {
 	t.Helper()
 	if err := store.WithinScope(context.Background(), harness.fixture.Pool, scope, harness.actorFor(scope),
 		func(ctx context.Context, tx *store.Transaction) error {
@@ -207,12 +238,12 @@ func (harness *warehouseHarness) registerDataset(t *testing.T, scope contract.Sc
 
 // newChild hands out one supervisor over the harness's admitted root so a case
 // can observe the real child's own refusals separately from this slice's.
-func (harness *warehouseHarness) newChild(t *testing.T, roots []string) *QueryChild {
+func (harness *warehouseHarness) newChild(t *testing.T, roots []string) *warehouse.QueryChild {
 	t.Helper()
 	if len(roots) == 0 {
 		roots = []string{harness.admitted}
 	}
-	child, err := NewQueryChild(ChildConfig{
+	child, err := warehouse.NewQueryChild(warehouse.ChildConfig{
 		BinaryPath:    harness.childPath,
 		ScratchRoot:   harness.scratch,
 		AdmittedRoots: roots,
@@ -224,9 +255,9 @@ func (harness *warehouseHarness) newChild(t *testing.T, roots []string) *QueryCh
 	return child
 }
 
-func (harness *warehouseHarness) newService(t *testing.T) *QueryService {
+func (harness *warehouseHarness) newService(t *testing.T) *warehouse.QueryService {
 	t.Helper()
-	service, err := NewQueryService(
+	service, err := warehouse.NewQueryService(
 		harness.fixture.Pool, harness.producer.Backend, harness.newChild(t, nil), harness.staging,
 	)
 	if err != nil {
@@ -238,9 +269,9 @@ func (harness *warehouseHarness) newService(t *testing.T) *QueryService {
 // materialize writes one immutable Parquet segment through the real child into
 // the admitted materials directory and returns its independently re-verified
 // byte identity.
-func (harness *warehouseHarness) materialize(t *testing.T, requestID string, rows [][]QueryValue) SegmentBytes {
+func (harness *warehouseHarness) materialize(t *testing.T, requestID string, rows [][]warehouse.QueryValue) warehouse.SegmentBytes {
 	t.Helper()
-	segment, err := MaterializeParquetSegment(context.Background(), harness.newChild(t, nil), MaterializeRequest{
+	segment, err := warehouse.MaterializeParquetSegment(context.Background(), harness.newChild(t, nil), warehouse.MaterializeRequest{
 		RequestID:           requestID,
 		AdmittedDirectories: []string{harness.materials},
 		OutputPath:          filepath.Join(harness.materials, requestID+".parquet"),
@@ -255,16 +286,16 @@ func (harness *warehouseHarness) materialize(t *testing.T, requestID string, row
 	return segment
 }
 
-func (harness *warehouseHarness) columnCopy() []QueryColumn {
-	return append([]QueryColumn(nil), harness.columns...)
+func (harness *warehouseHarness) columnCopy() []warehouse.QueryColumn {
+	return append([]warehouse.QueryColumn(nil), harness.columns...)
 }
 
 // publishSegment materializes and publishes one segment at the next manifest
 // revision, so the segment ledger and the manifest agree by construction.
-func (harness *warehouseHarness) publishSegment(t *testing.T, requestID string, rows [][]QueryValue) PublishedSegment {
+func (harness *warehouseHarness) publishSegment(t *testing.T, requestID string, rows [][]warehouse.QueryValue) PublishedSegment {
 	t.Helper()
 	segment := harness.materialize(t, requestID, rows)
-	published, err := harness.manifest.PublishSegment(context.Background(), PublishSegmentRequest{
+	published, err := harness.manifest.PublishSegment(context.Background(), warehouse.PublishSegmentRequest{
 		Actor:     harness.fixture.Actor,
 		Scope:     harness.fixture.Scope,
 		AttemptID: requestID,
@@ -281,7 +312,7 @@ func (harness *warehouseHarness) publishSegment(t *testing.T, requestID string, 
 // bytes it was published from, so a case can compare both independently.
 type PublishedSegment struct {
 	Segment store.WarehouseSegment
-	Bytes   SegmentBytes
+	Bytes   warehouse.SegmentBytes
 }
 
 // publishSegments publishes the fixture rows split across two immutable
@@ -294,7 +325,7 @@ func (harness *warehouseHarness) publishSegments(t *testing.T) []PublishedSegmen
 	}
 }
 
-func (harness *warehouseHarness) state(t *testing.T) DatasetState {
+func (harness *warehouseHarness) state(t *testing.T) warehouse.DatasetState {
 	t.Helper()
 	state, err := harness.manifest.State(context.Background(), harness.fixture.Actor, harness.fixture.Scope)
 	if err != nil {
@@ -303,18 +334,18 @@ func (harness *warehouseHarness) state(t *testing.T) DatasetState {
 	return state
 }
 
-func (harness *warehouseHarness) datasetQuery(t *testing.T, mutate func(*DatasetQueryRequest)) DatasetQueryRequest {
+func (harness *warehouseHarness) datasetQuery(t *testing.T, mutate func(*warehouse.DatasetQueryRequest)) warehouse.DatasetQueryRequest {
 	t.Helper()
-	request := DatasetQueryRequest{
+	request := warehouse.DatasetQueryRequest{
 		Actor:   harness.fixture.Actor,
 		Scope:   harness.fixture.Scope,
 		Layout:  harness.layout,
 		QueryID: "warehouse-query",
-		Query: SavedQuery{
+		Query: warehouse.SavedQuery{
 			Name:     "orders_all",
 			Relation: warehouseRelationName,
 			Project:  allColumnProjections(harness.columns),
-			Order:    []QueryOrder{{Column: "id"}},
+			Order:    []warehouse.QueryOrder{{Column: "id"}},
 			Limit:    int64(len(harness.rows)),
 		},
 		MaximumSegmentBytes: warehouseMaximumSegment,
@@ -330,18 +361,18 @@ func (harness *warehouseHarness) datasetQuery(t *testing.T, mutate func(*Dataset
 // publish. They cover every nullable and temporal distinction the protocol must
 // preserve: an explicit null, a decimal scale, an exact instant, and text that
 // must never be interpreted as statement text.
-func warehouseSourceRows(t *testing.T) ([]QueryColumn, [][]QueryValue) {
+func warehouseSourceRows(t *testing.T) ([]warehouse.QueryColumn, [][]warehouse.QueryValue) {
 	t.Helper()
-	columns := []QueryColumn{
-		{Name: "id", Kind: QueryKindInt64, Nullable: false},
-		{Name: "region", Kind: QueryKindText, Nullable: false},
-		{Name: "amount", Kind: QueryKindDecimal, Precision: 18, Scale: 4, Nullable: true},
-		{Name: "active", Kind: QueryKindBoolean, Nullable: false},
-		{Name: "recorded_at", Kind: QueryKindTimestampTZ, Nullable: false},
-		{Name: "note", Kind: QueryKindText, Nullable: true},
-		{Name: "tag", Kind: QueryKindUUID, Nullable: false},
-		{Name: "day", Kind: QueryKindDate, Nullable: false},
-		{Name: "document", Kind: QueryKindJSON, Nullable: true},
+	columns := []warehouse.QueryColumn{
+		{Name: "id", Kind: warehouse.QueryKindInt64, Nullable: false},
+		{Name: "region", Kind: warehouse.QueryKindText, Nullable: false},
+		{Name: "amount", Kind: warehouse.QueryKindDecimal, Precision: 18, Scale: 4, Nullable: true},
+		{Name: "active", Kind: warehouse.QueryKindBoolean, Nullable: false},
+		{Name: "recorded_at", Kind: warehouse.QueryKindTimestampTZ, Nullable: false},
+		{Name: "note", Kind: warehouse.QueryKindText, Nullable: true},
+		{Name: "tag", Kind: warehouse.QueryKindUUID, Nullable: false},
+		{Name: "day", Kind: warehouse.QueryKindDate, Nullable: false},
+		{Name: "document", Kind: warehouse.QueryKindJSON, Nullable: true},
 	}
 	regions := []string{"north", "south", "north", "east", "south", "east", "west", "north"}
 	ids := make([]int64, 0, warehouseSegmentRows)
@@ -350,13 +381,13 @@ func warehouseSourceRows(t *testing.T) ([]QueryColumn, [][]QueryValue) {
 	}
 	rows := warehouseRows(t, ids...)
 	for index, row := range rows {
-		row[1] = TextQueryValue(regions[index])
+		row[1] = warehouse.TextQueryValue(regions[index])
 		if index == 2 {
-			row[5] = NullQueryValue()
+			row[5] = warehouse.NullQueryValue()
 		}
 		if index == 4 {
-			row[8] = NullQueryValue()
-			row[2] = NullQueryValue()
+			row[8] = warehouse.NullQueryValue()
+			row[2] = warehouse.NullQueryValue()
 		}
 	}
 	return columns, rows
@@ -364,17 +395,17 @@ func warehouseSourceRows(t *testing.T) ([]QueryColumn, [][]QueryValue) {
 
 // warehouseRows composes one exactly typed row per identifier, using the
 // fixture's registered column order.
-func warehouseRows(t *testing.T, ids ...int64) [][]QueryValue {
+func warehouseRows(t *testing.T, ids ...int64) [][]warehouse.QueryValue {
 	t.Helper()
-	rows := make([][]QueryValue, 0, len(ids))
+	rows := make([][]warehouse.QueryValue, 0, len(ids))
 	for _, id := range ids {
-		rows = append(rows, []QueryValue{
-			Int64QueryValue(id),
-			TextQueryValue("north"),
+		rows = append(rows, []warehouse.QueryValue{
+			warehouse.Int64QueryValue(id),
+			warehouse.TextQueryValue("north"),
 			mustDecimal(t, fmt.Sprintf("%d12345", id), 4),
-			BooleanQueryValue(id%2 == 0),
-			TimestampTZQueryValue(1_710_000_000_000_000 + id),
-			TextQueryValue(fmt.Sprintf("row %d", id)),
+			warehouse.BooleanQueryValue(id%2 == 0),
+			warehouse.TimestampTZQueryValue(1_710_000_000_000_000 + id),
+			warehouse.TextQueryValue(fmt.Sprintf("row %d", id)),
 			mustUUID(t, fmt.Sprintf("00000000-0000-4000-8000-%012d", id)),
 			mustDate(t, fmt.Sprintf("2024-03-%02d", id%28+1)),
 			mustJSON(t, fmt.Sprintf(`{"id": %d}`, id)),
@@ -439,10 +470,10 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 
 	t.Run("retained_snapshot_returns_its_exact_rows", func(t *testing.T) {
 		if _, err := harness.manifest.TakeSnapshot(context.Background(), harness.fixture.Actor, harness.fixture.Scope,
-			SnapshotRequest{SnapshotID: "orders-revision-1", Revision: 1}); err != nil {
+			warehouse.SnapshotRequest{SnapshotID: "orders-revision-1", Revision: 1}); err != nil {
 			t.Fatalf("take the first publication's snapshot: %v", err)
 		}
-		response, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *DatasetQueryRequest) {
+		response, err := harness.newService(t).Query(context.Background(), harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
 			request.SnapshotID = "orders-revision-1"
 		}))
 		if err != nil {
@@ -455,29 +486,29 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 	})
 
 	t.Run("saved_query_parameters_bind_exact_typed_values", func(t *testing.T) {
-		query := harness.datasetQuery(t, func(request *DatasetQueryRequest) {
-			request.Query.Project = []QueryProjection{{Column: "id"}, {Column: "region", Alias: "label"}}
-			request.Query.Order = []QueryOrder{{Column: "id", Descending: true}}
+		query := harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
+			request.Query.Project = []warehouse.QueryProjection{{Column: "id"}, {Column: "region", Alias: "label"}}
+			request.Query.Order = []warehouse.QueryOrder{{Column: "id", Descending: true}}
 			request.Query.Limit = 1
-			request.Query.Parameters = []QueryParameterDeclaration{
-				{Name: "minimum_id", Kind: QueryKindInt64},
-				{Name: "region_name", Kind: QueryKindText},
+			request.Query.Parameters = []warehouse.QueryParameterDeclaration{
+				{Name: "minimum_id", Kind: warehouse.QueryKindInt64},
+				{Name: "region_name", Kind: warehouse.QueryKindText},
 			}
-			request.Query.Predicates = []SavedPredicate{
-				{Column: "id", Operator: QueryOperatorGreaterEqual, Parameter: "minimum_id"},
-				{Column: "region", Operator: QueryOperatorEqual, Parameter: "region_name"},
+			request.Query.Predicates = []warehouse.SavedPredicate{
+				{Column: "id", Operator: warehouse.QueryOperatorGreaterEqual, Parameter: "minimum_id"},
+				{Column: "region", Operator: warehouse.QueryOperatorEqual, Parameter: "region_name"},
 			}
-			request.Bindings = []QueryParameter{
-				{Name: "minimum_id", Kind: QueryKindInt64, Value: Int64QueryValue(2)},
-				{Name: "region_name", Kind: QueryKindText, Value: TextQueryValue("south")},
+			request.Bindings = []warehouse.QueryParameter{
+				{Name: "minimum_id", Kind: warehouse.QueryKindInt64, Value: warehouse.Int64QueryValue(2)},
+				{Name: "region_name", Kind: warehouse.QueryKindText, Value: warehouse.TextQueryValue("south")},
 			}
 		})
 		response, err := harness.newService(t).Query(context.Background(), query)
 		if err != nil {
 			t.Fatalf("query with bound saved-query parameters: %v", err)
 		}
-		want := [][]QueryValue{
-			{Int64QueryValue(5), TextQueryValue("south")},
+		want := [][]warehouse.QueryValue{
+			{warehouse.Int64QueryValue(5), warehouse.TextQueryValue("south")},
 		}
 		if !reflect.DeepEqual(response.Rows, want) {
 			t.Fatalf("parameter-bound rows differ:\n got %s\nwant %s", describeRows(response.Rows), describeRows(want))
@@ -485,9 +516,9 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 		if !response.Truncated {
 			t.Fatal("a row bound that cut the parameter-bound result was not reported as truncated")
 		}
-		wantColumns := []QueryColumn{
-			{Name: "id", Kind: QueryKindInt64, Nullable: false},
-			{Name: "label", Kind: QueryKindText, Nullable: false},
+		wantColumns := []warehouse.QueryColumn{
+			{Name: "id", Kind: warehouse.QueryKindInt64, Nullable: false},
+			{Name: "label", Kind: warehouse.QueryKindText, Nullable: false},
 		}
 		if !reflect.DeepEqual(response.Columns, wantColumns) {
 			t.Fatalf("aliased projection columns differ:\n got %s\nwant %s", describeColumns(response.Columns), describeColumns(wantColumns))
@@ -495,43 +526,43 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 
 		refusals := []struct {
 			name   string
-			mutate func(*DatasetQueryRequest)
+			mutate func(*warehouse.DatasetQueryRequest)
 		}{
-			{"unknown_binding", func(request *DatasetQueryRequest) {
-				request.Bindings = append(request.Bindings, QueryParameter{Name: "unlisted", Kind: QueryKindText, Value: TextQueryValue("south")})
+			{"unknown_binding", func(request *warehouse.DatasetQueryRequest) {
+				request.Bindings = append(request.Bindings, warehouse.QueryParameter{Name: "unlisted", Kind: warehouse.QueryKindText, Value: warehouse.TextQueryValue("south")})
 			}},
-			{"missing_binding", func(request *DatasetQueryRequest) { request.Bindings = request.Bindings[:1] }},
-			{"duplicate_binding", func(request *DatasetQueryRequest) {
+			{"missing_binding", func(request *warehouse.DatasetQueryRequest) { request.Bindings = request.Bindings[:1] }},
+			{"duplicate_binding", func(request *warehouse.DatasetQueryRequest) {
 				request.Bindings = append(request.Bindings, request.Bindings[0])
 			}},
-			{"binding_kind_mismatch", func(request *DatasetQueryRequest) {
-				request.Bindings[0] = QueryParameter{Name: "minimum_id", Kind: QueryKindText, Value: TextQueryValue("2")}
+			{"binding_kind_mismatch", func(request *warehouse.DatasetQueryRequest) {
+				request.Bindings[0] = warehouse.QueryParameter{Name: "minimum_id", Kind: warehouse.QueryKindText, Value: warehouse.TextQueryValue("2")}
 			}},
-			{"undeclared_parameter_use", func(request *DatasetQueryRequest) {
+			{"undeclared_parameter_use", func(request *warehouse.DatasetQueryRequest) {
 				request.Query.Predicates[0].Parameter = "unlisted"
 			}},
-			{"parameter_in_list", func(request *DatasetQueryRequest) {
-				request.Query.Predicates[0] = SavedPredicate{Column: "id", Operator: QueryOperatorIn, Parameter: "minimum_id"}
+			{"parameter_in_list", func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Predicates[0] = warehouse.SavedPredicate{Column: "id", Operator: warehouse.QueryOperatorIn, Parameter: "minimum_id"}
 			}},
-			{"null_for_non_nullable_parameter", func(request *DatasetQueryRequest) {
-				request.Bindings[0] = QueryParameter{Name: "minimum_id", Kind: QueryKindInt64, Value: NullQueryValue()}
+			{"null_for_non_nullable_parameter", func(request *warehouse.DatasetQueryRequest) {
+				request.Bindings[0] = warehouse.QueryParameter{Name: "minimum_id", Kind: warehouse.QueryKindInt64, Value: warehouse.NullQueryValue()}
 			}},
 		}
 		for _, refusal := range refusals {
 			t.Run(refusal.name, func(t *testing.T) {
 				candidate := query
-				candidate.Query.Parameters = append([]QueryParameterDeclaration(nil), query.Query.Parameters...)
-				candidate.Query.Predicates = append([]SavedPredicate(nil), query.Query.Predicates...)
-				candidate.Bindings = append([]QueryParameter(nil), query.Bindings...)
+				candidate.Query.Parameters = append([]warehouse.QueryParameterDeclaration(nil), query.Query.Parameters...)
+				candidate.Query.Predicates = append([]warehouse.SavedPredicate(nil), query.Query.Predicates...)
+				candidate.Bindings = append([]warehouse.QueryParameter(nil), query.Bindings...)
 				refusal.mutate(&candidate)
 				canary := newCanaryChild(t, harness)
-				service, err := NewQueryService(harness.fixture.Pool, harness.producer.Backend, canary.child, harness.staging)
+				service, err := warehouse.NewQueryService(harness.fixture.Pool, harness.producer.Backend, canary.child, harness.staging)
 				if err != nil {
 					t.Fatalf("construct the canary query service: %v", err)
 				}
 				_, err = service.Query(context.Background(), candidate)
 				failure := requireRefusal(t, err)
-				if failure.Origin != RefusalOriginSupervisor {
+				if failure.Origin != warehouse.RefusalOriginSupervisor {
 					t.Fatalf("parameter refusal %q came from the child: %v", refusal.name, failure)
 				}
 				canary.expectNoExecution(t)
@@ -542,46 +573,46 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 	t.Run("statement_text_and_unknown_identifiers_are_refused", func(t *testing.T) {
 		// Every hostile shape is data in this protocol: it can only arrive as a
 		// declared name or a bound value, and none of it may reach a child.
-		cases := map[string]func(*DatasetQueryRequest){
-			"raw_sql_relation": func(request *DatasetQueryRequest) {
+		cases := map[string]func(*warehouse.DatasetQueryRequest){
+			"raw_sql_relation": func(request *warehouse.DatasetQueryRequest) {
 				request.Query.Relation = "select * from orders"
 			},
-			"raw_sql_alias": func(request *DatasetQueryRequest) {
-				request.Query.Project = []QueryProjection{{Column: "id", Alias: "id; DROP TABLE pm.artifacts"}}
+			"raw_sql_alias": func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Project = []warehouse.QueryProjection{{Column: "id", Alias: "id; DROP TABLE pm.artifacts"}}
 			},
-			"file_function_column": func(request *DatasetQueryRequest) {
-				request.Query.Project = []QueryProjection{{Column: "read_parquet"}}
+			"file_function_column": func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Project = []warehouse.QueryProjection{{Column: "read_parquet"}}
 			},
-			"extension_parameter": func(request *DatasetQueryRequest) {
-				request.Query.Parameters = []QueryParameterDeclaration{{Name: "INSTALL httpfs", Kind: QueryKindText}}
+			"extension_parameter": func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Parameters = []warehouse.QueryParameterDeclaration{{Name: "INSTALL httpfs", Kind: warehouse.QueryKindText}}
 			},
-			"write_statement_predicate": func(request *DatasetQueryRequest) {
-				request.Query.Predicates = []SavedPredicate{{Column: "INSERT", Operator: QueryOperatorEqual, Value: TextQueryValue("x")}}
+			"write_statement_predicate": func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Predicates = []warehouse.SavedPredicate{{Column: "INSERT", Operator: warehouse.QueryOperatorEqual, Value: warehouse.TextQueryValue("x")}}
 			},
-			"copy_output": func(request *DatasetQueryRequest) {
+			"copy_output": func(request *warehouse.DatasetQueryRequest) {
 				request.Query.Name = "COPY orders TO '/tmp/leak.parquet'"
 			},
-			"unknown_relation": func(request *DatasetQueryRequest) { request.Query.Relation = "pm_artifacts" },
-			"unknown_projection": func(request *DatasetQueryRequest) {
-				request.Query.Project = []QueryProjection{{Column: "credential_ref"}}
+			"unknown_relation": func(request *warehouse.DatasetQueryRequest) { request.Query.Relation = "pm_artifacts" },
+			"unknown_projection": func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Project = []warehouse.QueryProjection{{Column: "credential_ref"}}
 			},
-			"unknown_predicate": func(request *DatasetQueryRequest) {
-				request.Query.Predicates = []SavedPredicate{{Column: "provider_account_id", Operator: QueryOperatorEqual, Value: TextQueryValue("x")}}
+			"unknown_predicate": func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Predicates = []warehouse.SavedPredicate{{Column: "provider_account_id", Operator: warehouse.QueryOperatorEqual, Value: warehouse.TextQueryValue("x")}}
 			},
-			"unknown_ordering": func(request *DatasetQueryRequest) {
-				request.Query.Order = []QueryOrder{{Column: "unknown_column"}}
+			"unknown_ordering": func(request *warehouse.DatasetQueryRequest) {
+				request.Query.Order = []warehouse.QueryOrder{{Column: "unknown_column"}}
 			},
 		}
 		for name, mutate := range cases {
 			t.Run(name, func(t *testing.T) {
 				canary := newCanaryChild(t, harness)
-				service, err := NewQueryService(harness.fixture.Pool, harness.producer.Backend, canary.child, harness.staging)
+				service, err := warehouse.NewQueryService(harness.fixture.Pool, harness.producer.Backend, canary.child, harness.staging)
 				if err != nil {
 					t.Fatalf("construct the canary query service: %v", err)
 				}
 				_, err = service.Query(context.Background(), harness.datasetQuery(t, mutate))
 				failure := requireRefusal(t, err)
-				if failure.Origin != RefusalOriginSupervisor {
+				if failure.Origin != warehouse.RefusalOriginSupervisor {
 					t.Fatalf("refusal %q came from the child: %v", name, failure)
 				}
 				canary.expectNoExecution(t)
@@ -593,15 +624,15 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 		// The same text as a declared column value is data, never statement
 		// text: it must round-trip exactly through the registered segments.
 		hostile := "DROP TABLE pm.artifacts; INSTALL httpfs"
-		rows := [][]QueryValue{
-			{Int64QueryValue(100), TextQueryValue(hostile)},
-			{Int64QueryValue(101), TextQueryValue("read_parquet('/etc/passwd')")},
+		rows := [][]warehouse.QueryValue{
+			{warehouse.Int64QueryValue(100), warehouse.TextQueryValue(hostile)},
+			{warehouse.Int64QueryValue(101), warehouse.TextQueryValue("read_parquet('/etc/passwd')")},
 		}
-		columns := []QueryColumn{
-			{Name: "id", Kind: QueryKindInt64, Nullable: false},
-			{Name: "note", Kind: QueryKindText, Nullable: false},
+		columns := []warehouse.QueryColumn{
+			{Name: "id", Kind: warehouse.QueryKindInt64, Nullable: false},
+			{Name: "note", Kind: warehouse.QueryKindText, Nullable: false},
 		}
-		segment, err := MaterializeParquetSegment(context.Background(), harness.newChild(t, nil), MaterializeRequest{
+		segment, err := warehouse.MaterializeParquetSegment(context.Background(), harness.newChild(t, nil), warehouse.MaterializeRequest{
 			RequestID:           "hostile-text",
 			AdmittedDirectories: []string{harness.materials},
 			OutputPath:          filepath.Join(harness.materials, "hostile-text.parquet"),
@@ -613,29 +644,29 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 		if err != nil {
 			t.Fatalf("materialize the hostile-text segment: %v", err)
 		}
-		layout, err := NewWarehouseLayout(harness.layout.ConnectorID, harness.layout.ConnectionID, "hostile_notes")
+		layout, err := warehouse.NewWarehouseLayout(harness.layout.ConnectorID, harness.layout.ConnectionID, "hostile_notes")
 		if err != nil {
 			t.Fatalf("compose the hostile-text dataset namespace: %v", err)
 		}
 		harness.registerDataset(t, harness.fixture.Scope, layout)
 		manifest := harness.newManifest(t, layout)
-		if _, err := manifest.PublishSegment(context.Background(), PublishSegmentRequest{
+		if _, err := manifest.PublishSegment(context.Background(), warehouse.PublishSegmentRequest{
 			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope, AttemptID: "hostile-text",
 			Segment: segment, RowCount: int64(len(rows)),
 		}); err != nil {
 			t.Fatalf("publish the hostile-text segment: %v", err)
 		}
-		service, err := NewQueryService(harness.fixture.Pool, harness.producer.Backend, harness.newChild(t, nil), harness.staging)
+		service, err := warehouse.NewQueryService(harness.fixture.Pool, harness.producer.Backend, harness.newChild(t, nil), harness.staging)
 		if err != nil {
 			t.Fatalf("construct the query service: %v", err)
 		}
-		response, err := service.Query(context.Background(), DatasetQueryRequest{
+		response, err := service.Query(context.Background(), warehouse.DatasetQueryRequest{
 			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope, Layout: layout,
 			QueryID: "hostile-query",
-			Query: SavedQuery{
+			Query: warehouse.SavedQuery{
 				Name: "hostile_notes", Relation: "hostile_notes",
-				Project: []QueryProjection{{Column: "id"}, {Column: "note"}},
-				Order:   []QueryOrder{{Column: "id"}},
+				Project: []warehouse.QueryProjection{{Column: "id"}, {Column: "note"}},
+				Order:   []warehouse.QueryOrder{{Column: "id"}},
 				Limit:   int64(len(rows)),
 			},
 			MaximumSegmentBytes: warehouseMaximumSegment,
@@ -650,7 +681,7 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 	})
 
 	t.Run("cross_scope_datasets_are_refused", func(t *testing.T) {
-		foreignLayout, err := NewWarehouseLayout(
+		foreignLayout, err := warehouse.NewWarehouseLayout(
 			harness.fixture.ForeignConnection.ConnectorID,
 			harness.fixture.ForeignConnection.ConnectionID,
 			warehouseRelationName,
@@ -661,22 +692,22 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 		// The same dataset name is registered for another connection in another
 		// workspace. It is not this workspace's dataset.
 		harness.registerDataset(t, harness.fixture.ForeignScope, foreignLayout)
-		otherConnector, err := NewWarehouseLayout("other-connector", harness.layout.ConnectionID, warehouseRelationName)
+		otherConnector, err := warehouse.NewWarehouseLayout("other-connector", harness.layout.ConnectionID, warehouseRelationName)
 		if err != nil {
 			t.Fatalf("compose the foreign connector namespace: %v", err)
 		}
-		otherDataset, err := NewWarehouseLayout(harness.layout.ConnectorID, harness.layout.ConnectionID, "secret_orders")
+		otherDataset, err := warehouse.NewWarehouseLayout(harness.layout.ConnectorID, harness.layout.ConnectionID, "secret_orders")
 		if err != nil {
 			t.Fatalf("compose the unregistered dataset namespace: %v", err)
 		}
-		cases := map[string]DatasetQueryRequest{
-			"foreign_connection": harness.datasetQuery(t, func(request *DatasetQueryRequest) {
+		cases := map[string]warehouse.DatasetQueryRequest{
+			"foreign_connection": harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
 				request.Layout = foreignLayout
 			}),
-			"foreign_connector": harness.datasetQuery(t, func(request *DatasetQueryRequest) {
+			"foreign_connector": harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
 				request.Layout = otherConnector
 			}),
-			"unregistered_dataset": harness.datasetQuery(t, func(request *DatasetQueryRequest) {
+			"unregistered_dataset": harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
 				request.Layout = otherDataset
 			}),
 		}
@@ -686,7 +717,7 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 				if err == nil {
 					t.Fatalf("cross-scope dataset %q was answered", name)
 				}
-				if failure := requireRefusal(t, err); failure.Origin != RefusalOriginSupervisor {
+				if failure := requireRefusal(t, err); failure.Origin != warehouse.RefusalOriginSupervisor {
 					t.Fatalf("cross-scope refusal %q came from the child: %v", name, failure)
 				}
 			})
@@ -709,7 +740,7 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 			{"github", "connection-primary", ""},
 			{"", "connection-primary", "orders"},
 		} {
-			if _, err := NewWarehouseLayout(invalid[0], invalid[1], invalid[2]); !errors.Is(err, ErrObjectLayout) {
+			if _, err := warehouse.NewWarehouseLayout(invalid[0], invalid[1], invalid[2]); !errors.Is(err, warehouse.ErrObjectLayout) {
 				t.Fatalf("unsafe layout component accepted for %#v: %v", invalid, err)
 			}
 		}
@@ -724,7 +755,7 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 			{"github", "connection-primary", "orders-1"},
 			{"github", "connection-primary", "orders_1"},
 		} {
-			layout, err := NewWarehouseLayout(candidate[0], candidate[1], candidate[2])
+			layout, err := warehouse.NewWarehouseLayout(candidate[0], candidate[1], candidate[2])
 			if err != nil {
 				t.Fatalf("compose layout %#v: %v", candidate, err)
 			}
@@ -736,7 +767,7 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 			if canonical == "" {
 				canonical = identity
 			}
-			parsed, err := ParseWarehouseDatasetID(identity)
+			parsed, err := warehouse.ParseWarehouseDatasetID(identity)
 			if err != nil || parsed != layout {
 				t.Fatalf("dataset identity %q did not round-trip: %v", identity, err)
 			}
@@ -762,7 +793,7 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 			"wh2.github.connection-primary.orders",
 			strings.ToUpper(canonical),
 		} {
-			if _, err := ParseWarehouseDatasetID(legacy); !errors.Is(err, ErrAmbiguousLayout) {
+			if _, err := warehouse.ParseWarehouseDatasetID(legacy); !errors.Is(err, warehouse.ErrAmbiguousLayout) {
 				t.Fatalf("legacy dataset identity %q was accepted or misreported: %v", legacy, err)
 			}
 		}
@@ -774,7 +805,7 @@ func TestQueryReturnsRowsAndRejectsWrites(t *testing.T) {
 // observation this test process makes from outside both the supervisor and the
 // child.
 type canaryChild struct {
-	child  *QueryChild
+	child  *warehouse.QueryChild
 	canary string
 }
 
@@ -790,7 +821,7 @@ func newCanaryChild(t *testing.T, harness *warehouseHarness) canaryChild {
 	if err := os.WriteFile(binary, []byte(script), 0o700); err != nil {
 		t.Fatalf("write the canary child: %v", err)
 	}
-	child, err := NewQueryChild(ChildConfig{
+	child, err := warehouse.NewQueryChild(warehouse.ChildConfig{
 		BinaryPath:    binary,
 		ScratchRoot:   harness.scratch,
 		AdmittedRoots: []string{harness.admitted},
