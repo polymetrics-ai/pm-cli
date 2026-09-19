@@ -76,6 +76,7 @@ go_test(
     env_inherit = [
         "GOMAXPROCS",
         "GOMEMLIMIT",
+        "PM_STACK_POSTGRES_PORT",
         "PM_STACK_SECRETS_DIR",
         "PM_STACK_TEST_S3_PRIMARY_ENDPOINT",
         "PM_STACK_TEST_S3_SECONDARY_ENDPOINT",
