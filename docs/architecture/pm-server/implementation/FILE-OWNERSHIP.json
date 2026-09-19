@@ -6384,6 +6384,58 @@
         "internal/testfixture/artifacts.go",
         "tests/client-parity/artifact_test.go"
       ]
+    },
+    {
+      "id": "T_V36b",
+      "first_milestone": "M7",
+      "action": "CREATE",
+      "paths": [
+        "internal/sync/read_selector_refusal_test.go"
+      ],
+      "package": "sync",
+      "process_owner": "Worker",
+      "public_interfaces": [
+        "TestConnectionReadSelectorRefusalsAreConcealed"
+      ],
+      "data_owned": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "api",
+        "contract",
+        "store",
+        "warehouse"
+      ],
+      "test_ids": [
+        "V36",
+        "V37"
+      ],
+      "sequence_within_milestone": 1,
+      "prior_group_id": "T_V36b",
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
+    },
+    {
+      "id": "T_V39b",
+      "first_milestone": "M7",
+      "action": "CREATE",
+      "paths": [
+        "internal/sync/etl_scratch_test.go"
+      ],
+      "package": "sync",
+      "process_owner": "Worker",
+      "public_interfaces": [
+        "TestPageAcknowledgedAfterCrashedAttemptScratch"
+      ],
+      "data_owned": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "warehouse"
+      ],
+      "test_ids": [
+        "V39"
+      ],
+      "sequence_within_milestone": 1,
+      "prior_group_id": "T_V39b",
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
     }
   ],
   "files": [
@@ -33035,6 +33087,98 @@
         {
           "package": "credentials",
           "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/sync/read_selector_refusal_test.go",
+      "group_id": "T_V36b",
+      "prior_group_id": "T_V36b",
+      "owner": "sync",
+      "process": "Worker",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+      "interfaces": [
+        "TestConnectionReadSelectorRefusalsAreConcealed"
+      ],
+      "dependencies": [
+        "api",
+        "contract",
+        "store",
+        "warehouse"
+      ],
+      "test_ids": [
+        "V36",
+        "V37"
+      ],
+      "generator": null,
+      "go_package": "sync",
+      "assignment_owner": "sync",
+      "group_responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+      "allowed_internal_dependencies": [
+        "api",
+        "contract",
+        "store",
+        "warehouse"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "warehouse",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/sync/etl_scratch_test.go",
+      "group_id": "T_V39b",
+      "prior_group_id": "T_V39b",
+      "owner": "sync",
+      "process": "Worker",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+      "interfaces": [
+        "TestPageAcknowledgedAfterCrashedAttemptScratch"
+      ],
+      "dependencies": [
+        "warehouse"
+      ],
+      "test_ids": [
+        "V39"
+      ],
+      "generator": null,
+      "go_package": "sync",
+      "assignment_owner": "sync",
+      "group_responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+      "allowed_internal_dependencies": [
+        "warehouse"
+      ],
+      "import_activation": [
+        {
+          "package": "warehouse",
+          "earliest_milestone": "M7",
           "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
         }
       ],

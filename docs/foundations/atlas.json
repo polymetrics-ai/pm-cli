@@ -12,7 +12,7 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
-      "sha256": "be131f4596e11cf6677876e48bc9f41feb1da49ba67cb00a8fe5dde5977bdc6e"
+      "sha256": "60297bc416698a360b2003b1a73dea55df1e2142661ae9d5d3a0725e91286e3e"
     },
     {
       "path": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
@@ -20,15 +20,15 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
-      "sha256": "bcab0f7722e16d87e9f286f8db9d2be195bc2896bb493caaa36b98c1dd3c910d"
+      "sha256": "7b76ca3c78d105246f68cf2f75936a510ae87fb97ef408de178c73e0dbcd141b"
     }
   ],
   "counts": {
     "foundations": 20,
     "requirements": 43,
     "packets": 44,
-    "declared_paths": 714,
-    "actual_go_files": 402
+    "declared_paths": 716,
+    "actual_go_files": 404
   },
   "validation": {
     "id": "V80",
@@ -2969,7 +2969,7 @@
         {
           "path": "internal/warehouse/manifest.go",
           "symbol": "PublishManifest",
-          "declaration_state": "missing"
+          "declaration_state": "present"
         },
         {
           "path": "internal/warehouse/child.go",
@@ -2988,13 +2988,7 @@
         "V57",
         "V72"
       ],
-      "gaps": [
-        {
-          "kind": "handler_missing",
-          "pointer": "/foundations/FND-13/registration_bindings/0",
-          "detail": "internal/warehouse/manifest.go:PublishManifest"
-        }
-      ]
+      "gaps": []
     },
     {
       "id": "FND-14",
@@ -7962,6 +7956,12 @@
       "declaration_state": "unavailable"
     },
     {
+      "packet_id": "pm-etl-checkpoint-publication",
+      "path": "internal/sync/etl_scratch_test.go",
+      "symbol": "TestPageAcknowledgedAfterCrashedAttemptScratch",
+      "declaration_state": "present"
+    },
+    {
       "packet_id": "pm-reverse-etl-settlement",
       "path": "internal/sync/identity_test.go",
       "symbol": "TestStableCreateMappingAcrossRevisions",
@@ -7972,6 +7972,12 @@
       "path": "internal/sync/modes_test.go",
       "symbol": "TestIndependentSemanticAxes",
       "declaration_state": "unavailable"
+    },
+    {
+      "packet_id": "pm-etl-checkpoint-publication",
+      "path": "internal/sync/read_selector_refusal_test.go",
+      "symbol": "TestConnectionReadSelectorRefusalsAreConcealed",
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-reverse-etl-settlement",
@@ -8205,13 +8211,13 @@
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/warehouse/manifest.go",
       "symbol": "PublishManifest",
-      "declaration_state": "missing"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/warehouse/parquet.go",
       "symbol": "WriteSegment",
-      "declaration_state": "missing"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
@@ -8474,11 +8480,6 @@
       "kind": "handler_missing",
       "pointer": "/foundations/FND-10/registration_bindings/1",
       "detail": "internal/runtime/admission.go:AdmitPhysicalCall"
-    },
-    {
-      "kind": "handler_missing",
-      "pointer": "/foundations/FND-13/registration_bindings/0",
-      "detail": "internal/warehouse/manifest.go:PublishManifest"
     },
     {
       "kind": "handler_unavailable",

@@ -18781,7 +18781,8 @@
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
-        "No full provider-parity or live-certification claim from generated descriptors or fixtures."
+        "No full provider-parity or live-certification claim from generated descriptors or fixtures.",
+        "Provider SQL attempt retries are not scheduled by this packet: the shared worker retry planner admits one retry basis, for the registered HTTP handler only, so provider_sql.max_attempts is a declared and validated ceiling for the single physical attempt this composition performs today. Forwarding the transport's retry eligibility into the SQL execution observation and admitting a SQL retry basis in the planner is later integration work, not delivered behaviour."
       ],
       "stage_contract": "Issue #28 keeps M7 first ownership of official PostgreSQL source.lock/NOTICE/semantics/lifecycle and reusable native protocol/metadata/TLS/cancellation/grant capability, including bounded keyed/mapped-column support. After first-owner merge, #34 may serialized-UPDATE semantics/lifecycle for mapped upsert; no arbitrary SQL, sync/demo executor or OpenAPI assumption.",
       "source_authority": {
@@ -19313,6 +19314,20 @@
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
+      ],
+      "integration_edits": [
+        {
+          "paths": [
+            "internal/schema/snapshot.go",
+            "internal/schema/effective.go",
+            "internal/schema/predicates.go",
+            "internal/schema/discover.go",
+            "internal/schema/drift.go",
+            "internal/schema/completeness.go"
+          ],
+          "reason": "Delivered durable authority differs from this packet's planned S15 wording. The packet and STATE-OWNERSHIP plan PM PostgreSQL snapshot tables from shared-object-publication migration 0004; that migration does not exist at the delivered head (0004 is credential_lifecycle.sql and the current head is 0019), while the repository's dynamic-field rules require immutable snapshots under the connection's owned state directory with the connection config.json as the sole schema_ref selection and no second catalog. The delivered store is exactly that: content-addressed immutable payloads below the connection directory with compare-and-swap promotion on the config selection, completeness-gated so a partial discovery never replaces a complete snapshot. The declared acceptance rules V25/V36/V73 are unchanged and pass.",
+          "authority": "Recorded substitution with its reason; S15's declared PostgreSQL authority is not claimed as delivered, and no second metadata catalog or global current selector is introduced."
+        }
       ]
     },
     {
@@ -20859,7 +20874,9 @@
         "F28b",
         "F29",
         "F29b",
-        "T_V39"
+        "T_V39",
+        "T_V39b",
+        "T_V36b"
       ],
       "files": [
         {
@@ -21246,6 +21263,98 @@
             }
           ],
           "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/sync/etl_scratch_test.go",
+          "group_id": "T_V39b",
+          "prior_group_id": "T_V39b",
+          "owner": "sync",
+          "process": "Worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+          "interfaces": [
+            "TestPageAcknowledgedAfterCrashedAttemptScratch"
+          ],
+          "dependencies": [
+            "warehouse"
+          ],
+          "test_ids": [
+            "V39"
+          ],
+          "generator": null,
+          "go_package": "sync",
+          "assignment_owner": "sync",
+          "group_responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+          "allowed_internal_dependencies": [
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/sync/read_selector_refusal_test.go",
+          "group_id": "T_V36b",
+          "prior_group_id": "T_V36b",
+          "owner": "sync",
+          "process": "Worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+          "interfaces": [
+            "TestConnectionReadSelectorRefusalsAreConcealed"
+          ],
+          "dependencies": [
+            "api",
+            "contract",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [
+            "V36",
+            "V37"
+          ],
+          "generator": null,
+          "go_package": "sync",
+          "assignment_owner": "sync",
+          "group_responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+          "allowed_internal_dependencies": [
+            "api",
+            "contract",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
         }
       ],
       "acceptance": [
@@ -21280,6 +21389,25 @@
           "id": "ETL-QUERY-PUBLIC",
           "assertion": "Own CP14/CP16 public wiring: exact typed query rows and current authorized schema through the real CLI/API; wrong workspace/permission causes zero query; reject raw/external expressions; enforce declared RunRef/status/result handling. Add named public-path test in already owned internal/sync/ack_test.go as external integration test, using real registered handlers.",
           "command": "set -eu\ngo test ./internal/sync -run '^TestETLQueryPublicPath$' -count=1 -timeout 10m",
+          "environment": [
+            "selected same-stack fixture after dependency qualification"
+          ],
+          "status": "UNEXECUTED"
+        },
+        {
+          "id": "ETL-CRASHED-ATTEMPT-SCRATCH",
+          "assertion": "A page whose previous attempt died after materializing it is still acknowledged: the admitted scratch names the attempt that wrote it, the registered segment identity stays position-derived, and an exact replay resolves to the one registration.",
+          "command": "set -eu\ngo test ./internal/sync -run '^TestPageAcknowledgedAfterCrashedAttemptScratch$' -count=1 -timeout 10m",
+          "environment": [
+            "foundation_fixture",
+            "same_stack_integration"
+          ],
+          "status": "UNEXECUTED"
+        },
+        {
+          "id": "ETL-READ-SELECTOR-CONCEALMENT",
+          "assertion": "A caller-supplied schema binding the exact stored binding cannot serve, an unknown snapshot identity, an unknown retained snapshot and a retained snapshot of another dataset are each concealed as one shared resource_not_found refusal on both read routes, while the authorized schema and dataset documents keep answering.",
+          "command": "set -eu\ngo test ./internal/sync -run '^TestConnectionReadSelectorRefusalsAreConcealed$' -count=1 -timeout 10m",
           "environment": [
             "selected same-stack fixture after dependency qualification"
           ],
