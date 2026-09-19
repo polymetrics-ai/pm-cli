@@ -118,6 +118,8 @@
           "type": "object",
           "additionalProperties": {"$ref": "#/$defs/schema"}
         },
+        "open_properties": {"type": "boolean"},
+        "additional_properties": {"$ref": "#/$defs/schema"},
         "items": {"$ref": "#/$defs/schema"},
         "oneOf": {
           "type": "array",
@@ -216,17 +218,28 @@
           }
         },
         {
+          "if": {"required": ["additional_properties"]},
+          "then": {
+            "required": ["open_properties"],
+            "properties": {"type": {"const": "object"}, "open_properties": {"const": true}}
+          }
+        },
+        {
+          "if": {"required": ["open_properties"]},
+          "then": {"properties": {"type": {"const": "object"}}}
+        },
+        {
           "if": {"properties": {"type": {"const": "array"}}},
           "then": {
             "required": ["items"],
-            "not": {"anyOf": [{"required": ["properties"]}, {"required": ["required"]}, {"required": ["oneOf"]}, {"required": ["allOf"]}]}
+            "not": {"anyOf": [{"required": ["properties"]}, {"required": ["required"]}, {"required": ["oneOf"]}, {"required": ["allOf"]}, {"required": ["open_properties"]}, {"required": ["additional_properties"]}]}
           }
         },
         {
           "if": {"properties": {"type": {"const": "union"}}},
           "then": {
             "required": ["oneOf"],
-            "not": {"anyOf": [{"required": ["properties"]}, {"required": ["required"]}, {"required": ["items"]}, {"required": ["allOf"]}]}
+            "not": {"anyOf": [{"required": ["properties"]}, {"required": ["required"]}, {"required": ["items"]}, {"required": ["allOf"]}, {"required": ["open_properties"]}, {"required": ["additional_properties"]}]}
           }
         },
         {
@@ -244,7 +257,9 @@
                 {"required": ["required"]},
                 {"required": ["items"]},
                 {"required": ["oneOf"]},
-                {"required": ["allOf"]}
+                {"required": ["allOf"]},
+                {"required": ["open_properties"]},
+                {"required": ["additional_properties"]}
               ]
             }
           }

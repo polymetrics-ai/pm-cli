@@ -99,7 +99,7 @@ func Compile(ctx context.Context, input CompilationInput) (CompilationArtifacts,
 	}
 	targetFoundations := input.TargetFoundations
 	if len(targetFoundations) == 0 {
-		targetFoundations = HTTPCompilationTargetFoundations()
+		targetFoundations = ConnectorCompilationTargetFoundations()
 	}
 	if err := CheckRequirements(normalization, resolved, targetFoundations); err != nil {
 		return CompilationArtifacts{}, err

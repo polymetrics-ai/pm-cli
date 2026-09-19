@@ -188,13 +188,14 @@ func validateAmendmentSourceRefs(source *ResolvedSource, references []contract.S
 	if len(references) == 0 {
 		return sourceError(ErrUnsafeAmendment, "", "", "semantic amendment fact is not source-linked")
 	}
+	dialect := source.Captured.Lock.SourceSet.Dialect
 	seen := make(map[string]struct{}, len(references))
 	for _, reference := range references {
 		pointer := strings.TrimPrefix(reference.Pointer, "#")
-		if !validIdentity(reference.SourceID) || !validJSONPointer(pointer) || reference.Pointer == "" {
+		if !validIdentity(reference.SourceID) || !validSourceSelector(dialect, reference.Pointer) || reference.Pointer == "" {
 			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source reference is malformed")
 		}
-		if _, ok := source.RawValue(reference.SourceID, pointer); !ok {
+		if !source.HasFact(reference.SourceID, pointer) {
 			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source pointer is outside the captured closure")
 		}
 		key := reference.SourceID + "\x00" + pointer

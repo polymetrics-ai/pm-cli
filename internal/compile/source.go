@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
@@ -68,6 +70,12 @@ const (
 	DialectOpenAPI30 Dialect = "openapi-3.0"
 	DialectOpenAPI31 Dialect = "openapi-3.1"
 	DialectSwagger20 Dialect = "swagger-2.0"
+	// DialectPostgreSQLDocs16 describes connector behavior through the pinned
+	// official PostgreSQL 16 protocol, SQL and metadata documentation. The
+	// identity names the documented family and its selected supported version,
+	// exactly as openapi-3.0 names a document format and its version; the
+	// connector branch itself stays in the connector root.
+	DialectPostgreSQLDocs16 Dialect = "postgresql-docs-16"
 )
 
 type SourceLock struct {
@@ -121,11 +129,18 @@ type SourceReference struct {
 	TargetPointer  string `json:"target_pointer"`
 }
 
+// SourceOperation is one declared source operation. An interface-description
+// dialect declares request and response variants; a documentation dialect
+// declares the typed PostgreSQL statement facts instead. StatementKind and
+// RelationBinding are pointers so an absent fact stays distinct from an
+// explicitly empty one.
 type SourceOperation struct {
 	SourceOperationID string       `json:"source_operation_id"`
 	SourceRefs        []SourceRef  `json:"source_refs"`
 	RequestVariants   []VariantRef `json:"request_variants"`
 	ResponseVariants  []VariantRef `json:"response_variants"`
+	StatementKind     *contract.PostgreSQLStatementKind `json:"statement_kind,omitempty"`
+	RelationBinding   *string                           `json:"relation_binding,omitempty"`
 }
 
 type SourceRef = contract.SourceRef
@@ -181,9 +196,9 @@ func (lock SourceLock) Validate() error {
 		return sourceError(ErrInvalidSource, "", "/connector_id", "must be a nonempty canonical identity")
 	}
 	switch lock.SourceSet.Dialect {
-	case DialectOpenAPI30, DialectOpenAPI31, DialectSwagger20:
+	case DialectOpenAPI30, DialectOpenAPI31, DialectSwagger20, DialectPostgreSQLDocs16:
 	default:
-		return sourceError(ErrUnsupportedDialect, "", "/source_set/dialect", "dialect is not admitted by the OpenAPI source compiler")
+		return sourceError(ErrUnsupportedDialect, "", "/source_set/dialect", "dialect is not admitted by the source compiler")
 	}
 	if !lock.SourceSet.ReferencesClosed {
 		return sourceError(ErrUnsafeReference, "", "/source_set/references_closed", "reference closure must be explicit and closed")
@@ -198,13 +213,20 @@ func (lock SourceLock) Validate() error {
 	documents := make(map[string]struct{}, len(lock.SourceSet.Documents))
 	for index, document := range lock.SourceSet.Documents {
 		pointer := fmt.Sprintf("/source_set/documents/%d", index)
-		if err := validateSourceDocument(document, pointer); err != nil {
+		if err := validateSourceDocument(document, lock.SourceSet.Dialect, pointer); err != nil {
 			return err
 		}
 		if _, duplicate := documents[document.SourceID]; duplicate {
 			return sourceError(ErrInvalidSource, document.SourceID, pointer+"/source_id", "source identity is duplicated")
 		}
 		documents[document.SourceID] = struct{}{}
+	}
+	if isDocumentationDialect(lock.SourceSet.Dialect) {
+		for index, document := range lock.SourceSet.Documents {
+			if len(document.References) != 0 {
+				return sourceError(ErrUnsafeReference, document.SourceID, fmt.Sprintf("/source_set/documents/%d/references", index), "documentation dialects declare no reference closure; captured pages are self-contained")
+			}
+		}
 	}
 	for index, document := range lock.SourceSet.Documents {
 		seen := make(map[string]struct{}, len(document.References))
@@ -250,9 +272,21 @@ func (lock SourceLock) Validate() error {
 			if _, ok := documents[reference.SourceID]; !ok {
 				return sourceError(ErrInvalidSource, reference.SourceID, fmt.Sprintf("%s/source_refs/%d", pointer, refIndex), "operation source is absent from the captured closure")
 			}
-			if !validJSONPointer(strings.TrimPrefix(reference.Pointer, "#")) || reference.Pointer == "" {
-				return sourceError(ErrInvalidSource, reference.SourceID, reference.Pointer, "operation source pointer is malformed")
+			if !validSourceSelector(lock.SourceSet.Dialect, reference.Pointer) || reference.Pointer == "" {
+				return sourceError(ErrInvalidSource, reference.SourceID, reference.Pointer, "operation source selector is malformed")
 			}
+		}
+		if isDocumentationDialect(lock.SourceSet.Dialect) {
+			if err := validateDocumentationOperation(operation, pointer); err != nil {
+				return err
+			}
+			continue
+		}
+		if operation.StatementKind != nil {
+			return sourceError(ErrInvalidSource, "", pointer+"/statement_kind", "an interface-description operation cannot declare a PostgreSQL statement kind")
+		}
+		if operation.RelationBinding != nil {
+			return sourceError(ErrInvalidSource, "", pointer+"/relation_binding", "an interface-description operation cannot declare a PostgreSQL relation binding")
 		}
 		if len(operation.RequestVariants) == 0 || len(operation.ResponseVariants) == 0 {
 			return sourceError(ErrInvalidSource, "", pointer, "request and response variants must both be explicit")
@@ -267,7 +301,59 @@ func (lock SourceLock) Validate() error {
 	return nil
 }
 
-func validateSourceDocument(document SourceDocument, pointer string) error {
+// validateDocumentationOperation admits one documentation-dialect operation:
+// the typed statement facts this dialect needs, and no interface-description
+// variant inventory. Every member is closed and explicit, and an absent member
+// stays distinct from an explicitly empty one.
+func validateDocumentationOperation(operation SourceOperation, pointer string) error {
+	if operation.StatementKind == nil {
+		return sourceError(ErrInvalidSource, "", pointer+"/statement_kind", "a documentation operation must declare its PostgreSQL statement kind explicitly")
+	}
+	if !validStatementKind(*operation.StatementKind) {
+		return sourceError(ErrInvalidSource, "", pointer+"/statement_kind", "PostgreSQL statement kind is unsupported")
+	}
+	if operation.RelationBinding == nil {
+		return sourceError(ErrInvalidSource, "", pointer+"/relation_binding", "a documentation operation must declare its stable relation binding explicitly")
+	}
+	if !validRelationBinding(*operation.RelationBinding) {
+		return sourceError(ErrInvalidSource, "", pointer+"/relation_binding", "relation binding must be a bounded stable identity")
+	}
+	if operation.RequestVariants == nil || len(operation.RequestVariants) != 0 {
+		return sourceError(ErrInvalidSource, "", pointer+"/request_variants", "a documentation operation declares no request variants; the array must be explicitly empty")
+	}
+	if operation.ResponseVariants == nil || len(operation.ResponseVariants) != 0 {
+		return sourceError(ErrInvalidSource, "", pointer+"/response_variants", "a documentation operation declares no response variants; the array must be explicitly empty")
+	}
+	return nil
+}
+
+// validStatementKind admits the PostgreSQL statement kinds this compiler can
+// lower. It mirrors the transport contract so a lock-admitted statement can
+// never fail contract validation at emission.
+func validStatementKind(kind contract.PostgreSQLStatementKind) bool {
+	switch kind {
+	case contract.PostgreSQLStatementMetadata, contract.PostgreSQLStatementSelect, contract.PostgreSQLStatementMappedUpsert:
+		return true
+	default:
+		return false
+	}
+}
+
+// validRelationBinding mirrors contract's identity rule for the transport's
+// relation binding: one bounded, trimmed, control-free UTF-8 identity.
+func validRelationBinding(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) || len(value) > 512 {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
+func validateSourceDocument(document SourceDocument, dialect Dialect, pointer string) error {
 	if !validIdentity(document.SourceID) {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/source_id", "must be a stable source identity")
 	}
@@ -289,8 +375,8 @@ func validateSourceDocument(document SourceDocument, pointer string) error {
 	if _, err := time.Parse(time.RFC3339, document.CapturedAt); err != nil {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/captured_at", "must be an RFC3339 timestamp")
 	}
-	if document.Pointer != "" && !validJSONPointer(strings.TrimPrefix(document.Pointer, "#")) {
-		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/pointer", "source pointer is malformed")
+	if document.Pointer != "" && !validSourceSelector(dialect, document.Pointer) {
+		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/pointer", "source selector is malformed")
 	}
 	if document.ByteLength < 0 || document.ByteLength > MaxSourceDocumentBytes {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/byte_length", "source byte length is outside the compiler bound")

@@ -1234,13 +1234,48 @@ var canonicalLanes = [...]Lane{
 }
 
 func validSourcePointer(value string) bool {
-	if value == "" || len(value) > 4096 {
+	if value == "" || len(value) > 4096 || !utf8.ValidString(value) {
 		return false
 	}
 	if strings.HasPrefix(value, "#") {
 		value = strings.TrimPrefix(value, "#")
+		// A documentation dialect references one declared anchor of a pinned
+		// page instead of a JSON pointer location. The anchor grammar is the
+		// only other admitted source-reference shape; every JSON pointer keeps
+		// its existing meaning and validation.
+		if value != "" && value[0] != '/' {
+			return ValidDocumentationAnchor(value)
+		}
 	}
 	return validJSONPointer(value)
+}
+
+// ValidDocumentationAnchor admits one documentation anchor name: a bounded,
+// hyphen-separated sequence of ASCII letters and digits that begins with a
+// letter and ends with a letter or digit. A documentation dialect declares
+// source references of the form "#<anchor>", and the captured page must declare
+// exactly that anchor identifier.
+func ValidDocumentationAnchor(anchor string) bool {
+	if anchor == "" || len(anchor) > 128 {
+		return false
+	}
+	for index := range len(anchor) {
+		character := anchor[index]
+		switch {
+		case character >= 'a' && character <= 'z', character >= 'A' && character <= 'Z':
+		case character >= '0' && character <= '9':
+			if index == 0 {
+				return false
+			}
+		case character == '-':
+			if index == 0 || index+1 == len(anchor) || anchor[index-1] == '-' {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateLane validates one canonical execution lane without duplicating the

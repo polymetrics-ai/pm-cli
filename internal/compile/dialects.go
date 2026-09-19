@@ -27,10 +27,15 @@ type LoadedDocument struct {
 	Provenance ConversionProvenance
 }
 
+// LoadedSource is the dialect-loading result. Documents carries the loaded
+// OpenAPI roots of the interface-description dialects; Documentation carries
+// the verified documentation pages of a documentation dialect. Exactly one of
+// the two is populated.
 type LoadedSource struct {
-	Resolved  *ResolvedSource
-	Documents []LoadedDocument
-	byID      map[string]*LoadedDocument
+	Resolved      *ResolvedSource
+	Documents     []LoadedDocument
+	Documentation *DocumentationSource
+	byID          map[string]*LoadedDocument
 }
 
 func LoadDialects(ctx context.Context, source *ResolvedSource) (*LoadedSource, error) {
@@ -39,6 +44,9 @@ func LoadDialects(ctx context.Context, source *ResolvedSource) (*LoadedSource, e
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if isDocumentationDialect(source.Captured.Lock.SourceSet.Dialect) {
+		return loadDocumentationDialect(source)
 	}
 	loaded := &LoadedSource{
 		Resolved: source,

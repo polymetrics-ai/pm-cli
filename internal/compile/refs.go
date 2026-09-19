@@ -39,10 +39,14 @@ type ResolvedDocument struct {
 }
 
 type ResolvedSource struct {
-	Captured  *CapturedSource
-	Documents []ResolvedDocument
-	byID      map[string]*parsedDocument
-	refs      map[referenceKey]ReferenceIdentity
+	Captured *CapturedSource
+	// Documentation is the resolved documentation view. It is non-nil exactly
+	// for documentation dialects, whose captures are pinned HTML pages rather
+	// than interface descriptions.
+	Documentation *DocumentationSource
+	Documents     []ResolvedDocument
+	byID          map[string]*parsedDocument
+	refs          map[referenceKey]ReferenceIdentity
 }
 
 type parsedDocument struct {
@@ -67,6 +71,9 @@ type referenceKey struct {
 func ResolveRefs(source *CapturedSource) (*ResolvedSource, error) {
 	if source == nil {
 		return nil, sourceError(ErrInvalidSource, "", "", "captured source is required")
+	}
+	if isDocumentationDialect(source.Lock.SourceSet.Dialect) {
+		return resolveDocumentationSource(source)
 	}
 	resolved := &ResolvedSource{
 		Captured: source,
@@ -458,8 +465,23 @@ func (source *ResolvedSource) ReferenceAt(sourceID, fromPointer string) (Referen
 	return ReferenceIdentity{}, false
 }
 
-func (source *ResolvedSource) RawValue(sourceID, pointer string) (any, bool) {
+// HasFact reports whether one stripped selector resolves to an exact captured
+// fact: a JSON pointer location for interface-description dialects, or a
+// verified documentation anchor for a documentation dialect.
+func (source *ResolvedSource) HasFact(sourceID, pointer string) bool {
 	if source == nil {
+		return false
+	}
+	if source.Documentation != nil {
+		_, ok := source.Documentation.AnchorSHA256(sourceID, strings.TrimPrefix(pointer, "#"))
+		return ok
+	}
+	_, ok := source.RawValue(sourceID, pointer)
+	return ok
+}
+
+func (source *ResolvedSource) RawValue(sourceID, pointer string) (any, bool) {
+	if source == nil || source.Documentation != nil {
 		return nil, false
 	}
 	document := source.byID[sourceID]
@@ -480,6 +502,14 @@ func (source *ResolvedSource) RawValue(sourceID, pointer string) (any, bool) {
 func (source *ResolvedSource) PointerHash(sourceID, pointer string) (string, bool) {
 	if source == nil {
 		return "", false
+	}
+	if source.Documentation != nil {
+		anchor := strings.TrimPrefix(pointer, "#")
+		digest, ok := source.Documentation.AnchorSHA256(sourceID, anchor)
+		if !ok {
+			return "", false
+		}
+		return "sha256:" + digest, true
 	}
 	document := source.byID[sourceID]
 	if document == nil {

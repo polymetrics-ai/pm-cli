@@ -1088,6 +1088,106 @@ func emittedInput(t *testing.T, operation contract.Operation, fieldID string) co
 	return contract.FieldBinding{}
 }
 
+// pinnedDocumentationConnectorInput loads one committed documentation-dialect
+// connector with the complete admitted target foundation set.
+func pinnedDocumentationConnectorInput(t *testing.T, connector string) CompilationInput {
+	t.Helper()
+	input, _ := pinnedConnectorInput(t, connector)
+	input.TargetFoundations = ConnectorCompilationTargetFoundations()
+	return input
+}
+
+// TestPinnedPostgreSQLConnectorCarriesDeclaredStatementFacts compiles the
+// committed postgres connector and observes the three declared operations: the
+// documentation dialect, the typed statement facts of each operation, the one
+// native typed response, the accepted capability closure and the complete
+// seven-lane inventory the connector's semantics classifies.
+func TestPinnedPostgreSQLConnectorCarriesDeclaredStatementFacts(t *testing.T) {
+	input := pinnedDocumentationConnectorInput(t, "postgres")
+	lock, err := DecodeSourceLock(input.SourceLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lock.ConnectorID != "postgres" || lock.SourceSet.Dialect != DialectPostgreSQLDocs16 {
+		t.Fatalf("pinned postgres source identity = %q %q", lock.ConnectorID, lock.SourceSet.Dialect)
+	}
+	artifacts, err := Compile(context.Background(), input)
+	if err != nil {
+		t.Fatalf("compile pinned postgres connector: %v", err)
+	}
+	var bundle Bundle
+	if err := json.Unmarshal(artifacts.Bundle, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.UnavailableOperations) != 0 || len(bundle.Operations) != len(lock.Operations) {
+		t.Fatalf("pinned postgres inventory = %#v", bundle)
+	}
+	expected := map[string]contract.PostgreSQLStatementKind{}
+	for _, operation := range lock.Operations {
+		if operation.StatementKind == nil || operation.RelationBinding == nil {
+			t.Fatalf("pinned postgres operation %q lost its statement facts", operation.SourceOperationID)
+		}
+		expected[operation.SourceOperationID] = *operation.StatementKind
+	}
+	seen := make(map[contract.PostgreSQLStatementKind]struct{}, len(bundle.Operations))
+	for _, operation := range bundle.Operations {
+		kind, ok := expected[operation.OperationID]
+		if !ok {
+			t.Fatalf("pinned postgres bundle introduced operation %q", operation.OperationID)
+		}
+		if operation.Transport.Kind != contract.TransportKindPostgreSQL || operation.Transport.StatementKind != kind ||
+			operation.Transport.RelationBinding != "postgres.reusable-relation" ||
+			operation.Transport.Method != "" || operation.Transport.Path != "" {
+			t.Fatalf("pinned postgres transport = %#v", operation.Transport)
+		}
+		if operation.Execution != nil || len(operation.Inputs) != 0 || len(operation.RequestVariants) != 0 {
+			t.Fatalf("pinned postgres request/execution shape = %#v", operation)
+		}
+		if len(operation.Responses) != 1 || operation.Responses[0].Status != "success" || operation.Responses[0].NoContent ||
+			operation.Responses[0].Schema == nil || operation.Responses[0].MediaType != documentationResponseMediaType {
+			t.Fatalf("pinned postgres response shape = %#v", operation.Responses)
+		}
+		if len(operation.CapabilityRequirements) != len(postgreSQLRequirementNames) {
+			t.Fatalf("pinned postgres capability closure = %#v", operation.CapabilityRequirements)
+		}
+		for index, requirement := range operation.CapabilityRequirements {
+			if requirement.Capability != postgreSQLRequirementNames[index] {
+				t.Fatalf("pinned postgres capability closure = %#v", operation.CapabilityRequirements)
+			}
+		}
+		if len(operation.LaneEligibility) != len(allLanes) {
+			t.Fatalf("pinned postgres lane inventory = %#v", operation.LaneEligibility)
+		}
+		seen[kind] = struct{}{}
+	}
+	for _, kind := range []contract.PostgreSQLStatementKind{
+		contract.PostgreSQLStatementMetadata, contract.PostgreSQLStatementSelect, contract.PostgreSQLStatementMappedUpsert,
+	} {
+		if _, ok := seen[kind]; !ok {
+			t.Fatalf("pinned postgres connector declares no %q operation", kind)
+		}
+	}
+	if len(bundle.Commands) != len(bundle.Operations) {
+		t.Fatalf("pinned postgres command inventory = %#v", bundle.Commands)
+	}
+	readOnly := false
+	for _, operation := range bundle.Operations {
+		if operation.Transport.StatementKind != contract.PostgreSQLStatementSelect {
+			continue
+		}
+		readOnly = true
+		if status := emittedLaneStatus(t, operation, contract.LaneDirectRead); status != contract.LaneEligible {
+			t.Fatalf("pinned postgres select direct_read lane = %q", status)
+		}
+		if status := emittedLaneStatus(t, operation, contract.LaneBinaryUpload); status == contract.LaneEligible {
+			t.Fatal("pinned postgres select claims a binary upload lane")
+		}
+	}
+	if !readOnly {
+		t.Fatal("pinned postgres connector declares no bounded select operation")
+	}
+}
+
 // pinnedConnectorInput loads one committed connector source lock, capture and
 // semantics document. The checkout that carries the connector roots is resolved
 // from the owned fixture, then a runfiles tree that declares it, then the test
