@@ -155,7 +155,12 @@ func preparePagination(
 	limitField := PaginationLimitField(pagination)
 	if state.EffectiveWireLimit != nil {
 		sentLimit, limitErr := effectiveWireLimit(input, pagination)
-		if limitErr != nil || (sentLimit != nil && *sentLimit != *state.EffectiveWireLimit) {
+		// A continuation restores the page size the provider honoured, which may
+		// be smaller than the size the producing run sent. A caller that repeats
+		// that larger declared size is served at the restored size and never
+		// widens the outbound request; declaring a size smaller than the one the
+		// continuation was granted still conflicts with this read.
+		if limitErr != nil || (sentLimit != nil && *sentLimit < *state.EffectiveWireLimit) {
 			return preparedPagination{}, ErrNavigationConflict
 		}
 	} else if limitField != "" {
@@ -329,7 +334,7 @@ func applyPage(
 	if err != nil {
 		return contract.ActionResult{}, err
 	}
-	providerTotal, nextState, exhausted, err := nextPaginationStateForOperation(
+	providerTotal, nextState, exhausted, declaredLimit, err := nextPaginationStateForOperation(
 		operation,
 		decoded,
 		pagination,
@@ -341,12 +346,26 @@ func applyPage(
 	if err != nil {
 		return contract.ActionResult{}, err
 	}
+	// A provider that clamps the declared page size serves fewer records than
+	// the runtime sent. The size the provider itself declared for the pages it
+	// serves is then the page's effective wire limit, and it is also the size
+	// the continuation restores for the next request. A page carrying more
+	// records than that declared size is navigation that contradicts the page
+	// the provider served, so it is refused instead of reported.
+	effectiveLimit := wireLimit
+	if declaredLimit != nil {
+		if *declaredLimit < uint64(len(records)) {
+			return contract.ActionResult{}, fmt.Errorf(
+				"%w: declared page size is smaller than the page the provider served", ErrNavigationConflict)
+		}
+		effectiveLimit = declaredLimit
+	}
 	emitted, tail, err := applyRecordControls(records, decoded.Result.MediaType, controls, limits.TotalRecordCap)
 	if err != nil {
 		return contract.ActionResult{}, err
 	}
 	nextState.MediaType = decoded.Result.MediaType
-	nextState.EffectiveWireLimit = cloneUint64(wireLimit)
+	nextState.EffectiveWireLimit = cloneUint64(effectiveLimit)
 	nextState.ProviderTotal = cloneExactNumber(providerTotal)
 	nextState.SourceExhausted = exhausted
 	continuedTail := nextState.UnreadTail
@@ -371,7 +390,7 @@ func applyPage(
 		MediaType: decoded.Result.MediaType,
 		Data:      contract.NewArrayValue(emitted),
 		Pagination: &contract.ResultPagination{
-			EffectiveWireLimit: cloneUint64(wireLimit),
+			EffectiveWireLimit: cloneUint64(effectiveLimit),
 			TotalRecordCap:     cloneUint64(limits.TotalRecordCap),
 			Continuation:       continuation,
 			UnreadTail:         clonePresentValues(tail),
@@ -394,7 +413,7 @@ func nextPaginationState(
 	input contract.PresentValue,
 	returned uint64,
 	wireLimit *uint64,
-) (*contract.ExactNumber, ContinuationState, bool, error) {
+) (*contract.ExactNumber, ContinuationState, bool, *uint64, error) {
 	return nextPaginationStateForOperation(
 		contract.Operation{},
 		decoded,
@@ -406,6 +425,12 @@ func nextPaginationState(
 	)
 }
 
+// nextPaginationStateForOperation resolves one page's continuation decision: the
+// provider-declared total, the next request's navigation and exhaustion state,
+// and the page size a provider Link navigation declared for the pages it
+// serves. That declared size is nil unless the provider named a positive size
+// strictly smaller than the one sent, and the caller then reports and restores
+// the declared size instead of the sent one.
 func nextPaginationStateForOperation(
 	operation contract.Operation,
 	decoded DecodedResponse,
@@ -414,22 +439,22 @@ func nextPaginationStateForOperation(
 	returned uint64,
 	wireLimit *uint64,
 	httpContext pageHTTPContext,
-) (*contract.ExactNumber, ContinuationState, bool, error) {
+) (*contract.ExactNumber, ContinuationState, bool, *uint64, error) {
 	state := ContinuationState{UnreadTail: []contract.PresentValue{}, NextInputs: map[string]contract.PresentValue{}}
 	if pagination == nil {
-		return nil, state, true, nil
+		return nil, state, true, nil, nil
 	}
 	switch pagination.Kind {
 	case contract.OperationPaginationCursor:
 		value, present, err := optionalValueAtJSONPointer(decoded.Document, pagination.CursorResponsePointer)
 		if err != nil {
-			return nil, state, false, fmt.Errorf("%w: cursor response is malformed", ErrInvalidProviderValue)
+			return nil, state, false, nil, fmt.Errorf("%w: cursor response is malformed", ErrInvalidProviderValue)
 		}
 		if !present || value.Presence() == contract.PresenceNull {
-			return nil, state, true, nil
+			return nil, state, true, nil, nil
 		}
 		state.NextInputs[pagination.CursorRequestField] = value
-		return nil, state, false, nil
+		return nil, state, false, nil, nil
 	case contract.OperationPaginationOffset:
 		var (
 			total        *contract.ExactNumber
@@ -438,83 +463,83 @@ func nextPaginationStateForOperation(
 		if pagination.TotalResponsePointer != "" {
 			totalValue, present, err := optionalValueAtJSONPointer(decoded.Document, pagination.TotalResponsePointer)
 			if err != nil || !present {
-				return nil, state, false, fmt.Errorf("%w: provider total is absent", ErrInvalidProviderValue)
+				return nil, state, false, nil, fmt.Errorf("%w: provider total is absent", ErrInvalidProviderValue)
 			}
 			exact, ok := totalValue.ExactNumber()
 			if !ok || totalValue.Kind() != contract.ValueKindInteger || strings.HasPrefix(exact.Text, "-") {
-				return nil, state, false, fmt.Errorf("%w: provider total is not an exact nonnegative integer", ErrInvalidProviderValue)
+				return nil, state, false, nil, fmt.Errorf("%w: provider total is not an exact nonnegative integer", ErrInvalidProviderValue)
 			}
 			totalInteger, ok = new(big.Int).SetString(exact.Text, 10)
 			if !ok {
-				return nil, state, false, ErrInvalidProviderValue
+				return nil, state, false, nil, ErrInvalidProviderValue
 			}
 			total = &exact
 		}
 		current, sent, err := navigationUint64(input, pagination.OffsetRequestField)
 		if err != nil {
-			return nil, state, false, err
+			return nil, state, false, nil, err
 		}
 		if !sent {
 			if totalInteger != nil && totalInteger.Sign() == 0 && returned == 0 {
-				return total, state, true, nil
+				return total, state, true, nil, nil
 			}
-			return nil, state, false, fmt.Errorf("%w: offset input is absent and no source default supplied a navigation base", ErrInvalidProviderValue)
+			return nil, state, false, nil, fmt.Errorf("%w: offset input is absent and no source default supplied a navigation base", ErrInvalidProviderValue)
 		}
 		if returned == 0 {
 			if totalInteger != nil && new(big.Int).SetUint64(current).Cmp(totalInteger) < 0 {
-				return nil, state, false, fmt.Errorf("%w: offset pagination made no progress before provider total", ErrInvalidProviderValue)
+				return nil, state, false, nil, fmt.Errorf("%w: offset pagination made no progress before provider total", ErrInvalidProviderValue)
 			}
-			return total, state, true, nil
+			return total, state, true, nil, nil
 		}
 		if ^uint64(0)-current < returned {
-			return nil, state, false, fmt.Errorf("%w: next offset overflows uint64", ErrInvalidProviderValue)
+			return nil, state, false, nil, fmt.Errorf("%w: next offset overflows uint64", ErrInvalidProviderValue)
 		}
 		next := current + returned
 		if totalInteger != nil && new(big.Int).SetUint64(next).Cmp(totalInteger) >= 0 {
-			return total, state, true, nil
+			return total, state, true, nil, nil
 		}
 		if totalInteger == nil && wireLimit != nil && returned < *wireLimit {
-			return nil, state, true, nil
+			return nil, state, true, nil, nil
 		}
 		state.NextInputs[pagination.OffsetRequestField], _ = contract.NewIntegerValue(strconv.FormatUint(next, 10))
-		return total, state, false, nil
+		return total, state, false, nil, nil
 	case contract.OperationPaginationPage:
 		hasLastPageEvidence := pagination.LastPageResponsePointer != ""
 		if hasLastPageEvidence {
 			lastValue, present, err := optionalValueAtJSONPointer(decoded.Document, pagination.LastPageResponsePointer)
 			if err != nil || !present {
-				return nil, state, false, fmt.Errorf("%w: last-page evidence is absent", ErrInvalidProviderValue)
+				return nil, state, false, nil, fmt.Errorf("%w: last-page evidence is absent", ErrInvalidProviderValue)
 			}
 			last, ok := lastValue.Boolean()
 			if !ok {
-				return nil, state, false, fmt.Errorf("%w: last-page evidence is not boolean", ErrInvalidProviderValue)
+				return nil, state, false, nil, fmt.Errorf("%w: last-page evidence is not boolean", ErrInvalidProviderValue)
 			}
 			if last {
-				return nil, state, true, nil
+				return nil, state, true, nil, nil
 			}
 		}
 		page, sent, err := navigationUint64(input, pagination.PageRequestField)
 		if err != nil {
-			return nil, state, false, err
+			return nil, state, false, nil, err
 		}
 		if !sent {
-			return nil, state, false, fmt.Errorf("%w: page input is absent and no source default supplied a navigation base", ErrInvalidProviderValue)
+			return nil, state, false, nil, fmt.Errorf("%w: page input is absent and no source default supplied a navigation base", ErrInvalidProviderValue)
 		}
 		if returned == 0 {
 			if hasLastPageEvidence {
-				return nil, state, false, fmt.Errorf("%w: page pagination made no progress before declared last page", ErrInvalidProviderValue)
+				return nil, state, false, nil, fmt.Errorf("%w: page pagination made no progress before declared last page", ErrInvalidProviderValue)
 			}
-			return nil, state, true, nil
+			return nil, state, true, nil, nil
 		}
 		if page == ^uint64(0) {
-			return nil, state, false, fmt.Errorf("%w: next page overflows uint64", ErrInvalidProviderValue)
+			return nil, state, false, nil, fmt.Errorf("%w: next page overflows uint64", ErrInvalidProviderValue)
 		}
 		state.NextInputs[pagination.PageRequestField], _ = contract.NewIntegerValue(strconv.FormatUint(page+1, 10))
-		return nil, state, false, nil
+		return nil, state, false, nil, nil
 	case contract.OperationPaginationLink:
 		return nextLinkPaginationState(operation, pagination, input, httpContext)
 	default:
-		return nil, state, false, ErrInvalidPaginationFact
+		return nil, state, false, nil, ErrInvalidPaginationFact
 	}
 }
 
@@ -529,18 +554,18 @@ func nextLinkPaginationState(
 	pagination *contract.OperationPagination,
 	input contract.PresentValue,
 	httpContext pageHTTPContext,
-) (*contract.ExactNumber, ContinuationState, bool, error) {
+) (*contract.ExactNumber, ContinuationState, bool, *uint64, error) {
 	state := ContinuationState{UnreadTail: []contract.PresentValue{}, NextInputs: map[string]contract.PresentValue{}}
 	if pagination == nil || httpContext.RequestURL == nil || httpContext.ResponseHeader == nil {
-		return nil, state, false, ErrInvalidPaginationFact
+		return nil, state, false, nil, ErrInvalidPaginationFact
 	}
 	values := httpContext.ResponseHeader.Values(pagination.LinkResponseHeader)
 	if len(values) == 0 {
-		return nil, state, true, nil
+		return nil, state, true, nil, nil
 	}
 	links, err := parseRFC8288Links(values)
 	if err != nil {
-		return nil, state, false, fmt.Errorf("%w: Link response is malformed", ErrNavigationConflict)
+		return nil, state, false, nil, fmt.Errorf("%w: Link response is malformed", ErrNavigationConflict)
 	}
 	var next *rfc8288Link
 	for index := range links {
@@ -548,15 +573,16 @@ func nextLinkPaginationState(
 			continue
 		}
 		if next != nil || links[index].anchor {
-			return nil, state, false, fmt.Errorf("%w: Link next relation is ambiguous", ErrNavigationConflict)
+			return nil, state, false, nil, fmt.Errorf("%w: Link next relation is ambiguous", ErrNavigationConflict)
 		}
 		next = &links[index]
 	}
 	if next == nil {
-		return nil, state, true, nil
+		return nil, state, true, nil, nil
 	}
-	value, err := linkNavigationValue(
+	value, declaredLimit, err := linkNavigationValue(
 		operation,
+		pagination,
 		pagination.LinkRequestField,
 		next.target,
 		input,
@@ -564,65 +590,87 @@ func nextLinkPaginationState(
 		httpContext.Authorization,
 	)
 	if err != nil {
-		return nil, state, false, err
+		return nil, state, false, nil, err
 	}
 	state.NextInputs[pagination.LinkRequestField] = value
-	return nil, state, false, nil
+	return nil, state, false, declaredLimit, nil
 }
 
 func linkNavigationValue(
 	operation contract.Operation,
+	pagination *contract.OperationPagination,
 	fieldID string,
 	rawTarget string,
 	input contract.PresentValue,
 	requestURL *url.URL,
 	authorization *contract.OperationAuthorization,
-) (contract.PresentValue, error) {
+) (contract.PresentValue, *uint64, error) {
 	binding, found := findOperationBinding(operation, fieldID)
 	if !found || binding.Location != contract.FieldLocationQuery ||
 		binding.Sensitivity != contract.SensitivityPublic ||
 		(binding.Schema.Type != contract.SchemaTypeString && binding.Schema.Type != contract.SchemaTypeInteger) {
-		return contract.PresentValue{}, ErrInvalidPaginationFact
+		return contract.PresentValue{}, nil, ErrInvalidPaginationFact
 	}
 	if rawTarget == "" || strings.Contains(rawTarget, "#") {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next target has a fragment or is empty", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target has a fragment or is empty", ErrNavigationConflict)
 	}
 	reference, err := url.Parse(rawTarget)
 	if err != nil || reference.User != nil || reference.Opaque != "" || reference.Fragment != "" {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next target is invalid", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target is invalid", ErrNavigationConflict)
 	}
 	target := requestURL.ResolveReference(reference)
 	if !sameOriginURL(target, requestURL) || target.EscapedPath() != requestURL.EscapedPath() {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next target changes origin or path", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes origin or path", ErrNavigationConflict)
 	}
 	currentQuery, err := url.ParseQuery(requestURL.RawQuery)
 	if err != nil {
-		return contract.PresentValue{}, fmt.Errorf("%w: sent query is malformed", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: sent query is malformed", ErrNavigationConflict)
 	}
 	nextQuery, err := url.ParseQuery(target.RawQuery)
 	if err != nil {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next query is malformed", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next query is malformed", ErrNavigationConflict)
 	}
 	navigation, present := nextQuery[binding.WireName]
 	if !present || len(navigation) != 1 {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next navigation is absent or duplicated", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation is absent or duplicated", ErrNavigationConflict)
 	}
 	if current := currentQuery[binding.WireName]; len(current) > 1 {
-		return contract.PresentValue{}, fmt.Errorf("%w: sent navigation is duplicated", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: sent navigation is duplicated", ErrNavigationConflict)
 	}
 	delete(currentQuery, binding.WireName)
 	delete(nextQuery, binding.WireName)
 	if authorization != nil && authorization.Placement == contract.FieldLocationQuery {
 		if strings.EqualFold(authorization.WireName, binding.WireName) {
-			return contract.PresentValue{}, ErrInvalidPaginationFact
+			return contract.PresentValue{}, nil, ErrInvalidPaginationFact
 		}
 		if _, embedded := nextQuery[authorization.WireName]; embedded {
-			return contract.PresentValue{}, fmt.Errorf("%w: Link next target embeds a credential channel", ErrNavigationConflict)
+			return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target embeds a credential channel", ErrNavigationConflict)
 		}
 		delete(currentQuery, authorization.WireName)
 	}
+	// A provider may clamp the page size it was sent. The target then names a
+	// positive integer strictly smaller than the size actually sent for the
+	// declared page-size field, and that is the only admitted query difference:
+	// the declared field is compared separately here, so every other parameter
+	// still has to match the sent query exactly.
+	var declaredLimit *uint64
+	if limitField := PaginationLimitField(pagination); limitField != "" {
+		limitBinding, declared := findOperationBinding(operation, limitField)
+		if !declared || limitBinding.Location != contract.FieldLocationQuery || limitBinding.WireName == "" {
+			return contract.PresentValue{}, nil, ErrInvalidPaginationFact
+		}
+		declaredLimit, err = declaredPageSize(
+			currentQuery[limitBinding.WireName],
+			nextQuery[limitBinding.WireName],
+		)
+		if err != nil {
+			return contract.PresentValue{}, nil, err
+		}
+		delete(currentQuery, limitBinding.WireName)
+		delete(nextQuery, limitBinding.WireName)
+	}
 	if currentQuery.Encode() != nextQuery.Encode() {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next target changes unrelated query authority", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes unrelated query authority", ErrNavigationConflict)
 	}
 	var value contract.PresentValue
 	switch binding.Schema.Type {
@@ -631,27 +679,76 @@ func linkNavigationValue(
 	case contract.SchemaTypeInteger:
 		value, err = contract.NewIntegerValue(navigation[0])
 		if err != nil {
-			return contract.PresentValue{}, fmt.Errorf("%w: Link next integer is invalid", ErrNavigationConflict)
+			return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next integer is invalid", ErrNavigationConflict)
 		}
 	default:
-		return contract.PresentValue{}, ErrInvalidPaginationFact
+		return contract.PresentValue{}, nil, ErrInvalidPaginationFact
 	}
 	pairs, err := encodeParameter(binding, value)
 	if err != nil || len(pairs) != 1 {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next navigation cannot be encoded as one query value", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation cannot be encoded as one query value", ErrNavigationConflict)
 	}
 	pairs[0].allowReserved = binding.AllowReserved
 	futureQuery, err := url.ParseQuery(encodeQueryPairs(pairs))
 	futureNavigation := futureQuery[binding.WireName]
 	if err != nil || len(futureQuery) != 1 || len(futureNavigation) != 1 ||
 		futureNavigation[0] != navigation[0] {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next navigation changes authority when re-encoded", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation changes authority when re-encoded", ErrNavigationConflict)
 	}
 	fields, _ := input.Fields()
 	if current, supplied := fields[fieldID]; supplied && current.Presence() != contract.PresenceAbsent && current.Equal(value) {
-		return contract.PresentValue{}, fmt.Errorf("%w: Link next navigation makes no progress", ErrNavigationConflict)
+		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation makes no progress", ErrNavigationConflict)
 	}
-	return value, nil
+	return value, declaredLimit, nil
+}
+
+// declaredPageSize compares the sent and the declared values of one page-size
+// query parameter. Both absent, and a declared value that repeats the sent one
+// verbatim, declare no size. A value written differently is admitted only as
+// the provider's clamp: it must parse as a positive integer strictly smaller
+// than the sent one. An increased or rewritten size, a size only one side
+// carries, a duplicate and a value that is no positive integer all conflict
+// with the sent request.
+func declaredPageSize(sent, declared []string) (*uint64, error) {
+	switch {
+	case len(sent) == 0 && len(declared) == 0:
+		return nil, nil
+	case len(sent) == 0:
+		return nil, fmt.Errorf("%w: Link next target declares a page size that was not sent", ErrNavigationConflict)
+	case len(declared) == 0:
+		return nil, fmt.Errorf("%w: Link next target drops the sent page size", ErrNavigationConflict)
+	case len(sent) != 1:
+		return nil, fmt.Errorf("%w: sent page size is duplicated", ErrNavigationConflict)
+	case len(declared) != 1:
+		return nil, fmt.Errorf("%w: Link next page size is duplicated", ErrNavigationConflict)
+	case sent[0] == declared[0]:
+		return nil, nil
+	}
+	sentSize, ok := queryPageSize(sent[0])
+	if !ok {
+		return nil, fmt.Errorf("%w: sent page size is not a positive integer", ErrInvalidPaginationFact)
+	}
+	declaredSize, ok := queryPageSize(declared[0])
+	if !ok {
+		return nil, fmt.Errorf("%w: Link next page size is not a positive integer", ErrNavigationConflict)
+	}
+	switch {
+	case declaredSize > sentSize:
+		return nil, fmt.Errorf("%w: Link next target increases the sent page size", ErrNavigationConflict)
+	case declaredSize == sentSize:
+		return nil, fmt.Errorf("%w: Link next page size is not the sent size", ErrNavigationConflict)
+	default:
+		return &declaredSize, nil
+	}
+}
+
+// queryPageSize parses one page-size query value as a positive integer.
+func queryPageSize(value string) (uint64, bool) {
+	size, err := strconv.ParseUint(value, 10, 64)
+	if err != nil || size == 0 {
+		return 0, false
+	}
+	return size, true
 }
 
 func parseRFC8288Links(values []string) ([]rfc8288Link, error) {

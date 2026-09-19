@@ -54,6 +54,8 @@ CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-stack-fixture ./cmd/pm-stack-fixture
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pmgen ./cmd/pmgen
 sh scripts/generate.sh --check
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/atlas ./atlas
+.cache/bin/atlas --root "$repo_root" --check
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/staticcheck honnef.co/go/tools/cmd/staticcheck
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/govulncheck golang.org/x/vuln/cmd/govulncheck

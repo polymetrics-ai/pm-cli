@@ -243,7 +243,7 @@ func (executor *PMPathExecutor) ExecuteStep(ctx context.Context, request StepReq
 			PMWorkerHash:          executor.hashes.worker,
 			QueryHelperHash:       executor.hashes.queryHelper,
 			HandlerVersions:       map[string]string{"catalog": descriptor.CatalogRevision, "operation": descriptor.OperationRevision},
-			ImplementationClosure: contract.ImplementationClosure{Known: false},
+			ImplementationClosure: request.Identity.ImplementationClosure,
 		},
 		RunID: runID, Command: executor.command(runID, request.Step.Action, descriptor),
 		Request: entry.request, Response: entry.response, Observation: observation,
@@ -260,13 +260,14 @@ func (executor *PMPathExecutor) ExecuteStep(ctx context.Context, request StepReq
 // only the live server can reveal (catalog and operation revisions) without
 // executing a case.
 type DeploymentObservation struct {
-	ConnectorID       string
-	BundleHash        contract.SourceHash
-	ScopeHash         contract.SemanticDigest
-	HandlerVersions   map[string]map[string]string
-	SourceHashes      []contract.SourceHash
-	DeploymentProfile string
-	InstanceID        string
+	ConnectorID           string
+	BundleHash            contract.SourceHash
+	ScopeHash             contract.SemanticDigest
+	HandlerVersions       map[string]map[string]string
+	SourceHashes          []contract.SourceHash
+	DeploymentProfile     string
+	InstanceID            string
+	ImplementationClosure contract.ImplementationClosure
 }
 
 // ObserveDeployment qualifies the declared server, session and catalog once and
@@ -305,12 +306,47 @@ func (executor *PMPathExecutor) ObserveDeployment(ctx context.Context) (Deployme
 			"catalog": descriptor.CatalogRevision, "operation": descriptor.OperationRevision,
 		}
 	}
+	closure, err := executor.implementationClosure()
+	if err != nil {
+		return DeploymentObservation{}, err
+	}
 	return DeploymentObservation{
 		ConnectorID: executor.connectorID, BundleHash: executor.hashes.bundle,
 		ScopeHash: executor.scopeHash(""), HandlerVersions: versions,
 		SourceHashes:      sourceHashes(bundleSourceDigest(executor.bundle)),
 		DeploymentProfile: executor.profile.Name, InstanceID: executor.profile.InstanceID,
+		ImplementationClosure: closure,
 	}, nil
+}
+
+// implementationClosure digests the exact executing implementation the runner
+// can observe: the hashed components, the admitted bundle and the pinned source
+// digests. Evidence stays reusable while this value and the per-case facts are
+// unchanged, and a changed component or bundle invalidates it.
+func (executor *PMPathExecutor) implementationClosure() (contract.ImplementationClosure, error) {
+	document, err := json.Marshal(struct {
+		Schema      string                `json:"schema"`
+		Client      contract.SourceHash   `json:"pm_client_hash"`
+		API         contract.SourceHash   `json:"pm_api_hash"`
+		Worker      contract.SourceHash   `json:"pm_worker_hash"`
+		QueryHelper *contract.SourceHash  `json:"query_helper_hash_if_used"`
+		Bundle      contract.SourceHash   `json:"bundle_hash"`
+		Sources     []contract.SourceHash `json:"source_hashes"`
+		ConnectorID string                `json:"connector_id"`
+	}{
+		Schema: "pm.proof-implementation-closure/v1",
+		Client: executor.hashes.client, API: executor.hashes.api, Worker: executor.hashes.worker,
+		QueryHelper: executor.hashes.queryHelper, Bundle: executor.hashes.bundle,
+		Sources: sourceHashes(bundleSourceDigest(executor.bundle)), ConnectorID: executor.connectorID,
+	})
+	if err != nil {
+		return contract.ImplementationClosure{}, fmt.Errorf("encode implementation closure: %w", err)
+	}
+	digest, err := contract.CanonicalDigest(document)
+	if err != nil {
+		return contract.ImplementationClosure{}, fmt.Errorf("digest implementation closure: %w", err)
+	}
+	return contract.ImplementationClosure{Known: true, Digest: &digest}, nil
 }
 
 func (executor *PMPathExecutor) now() time.Time {

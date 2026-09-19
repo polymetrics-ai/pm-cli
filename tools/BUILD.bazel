@@ -52,7 +52,7 @@ go_test(
         "dependency_policy_test.go",
         "traceability_test.go",
     ],
-    data = ["//tools/atlas:atlas"],
+    data = ["//tools/atlas"],
     embed = [":tools"],
     x_defs = {"atlasRunfile": "$(rlocationpath //tools/atlas:atlas)"},
 )

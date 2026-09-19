@@ -20,10 +20,13 @@ go_test(
         "//:.cache/browser-sdk/api/controls.json",
         "//:.cache/browser-sdk/sdk/browser/client.js",
         "//:go.mod",
-        "//:sdk/browser/tsconfig.json",
         "//:sdk/browser/node_modules/openapi-fetch/dist/index.mjs",
+        "//:sdk/browser/tsconfig.json",
         "//build:toolchains.lock.json",
-    ] + glob(["node_modules/**"], allow_empty = False),
+    ] + glob(
+        ["node_modules/**"],
+        allow_empty = False,
+    ),
     env_inherit = [
         "GOMAXPROCS",
         "GOMEMLIMIT",
@@ -34,7 +37,11 @@ go_test(
         "PM_STORE_TEST_SECRETS_DIR",
         "PM_TOOLS_CACHE",
     ],
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
         "//internal/activities",
         "//internal/api",

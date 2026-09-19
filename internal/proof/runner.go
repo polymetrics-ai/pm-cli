@@ -131,6 +131,18 @@ func RunLane(ctx context.Context, configuration RunnerConfig, inventoryHash cont
 	if err := configuration.Store.PublishReport(ctx, result.Report); err != nil {
 		return result, err
 	}
+	// The published report is only evidence while its receipts are still the
+	// latest for their cases; a concurrent newer failure must not be masked by
+	// the report this run just assembled.
+	published, found, err := configuration.Store.ReadCurrentReport(
+		ctx, result.Report.ConnectorID, result.Report.Lane,
+	)
+	if err != nil {
+		return result, err
+	}
+	if !found || len(published.Cases) != len(result.Report.Cases) {
+		return result, errors.New("published proof report is not readable as current evidence")
+	}
 	return result, nil
 }
 

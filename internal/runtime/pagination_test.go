@@ -173,7 +173,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		if err := cursorPagination.Validate(cursorOperation); err != nil {
 			t.Fatalf("cursor pagination: %v", err)
 		}
-		_, cursorState, exhausted, err := nextPaginationState(DecodedResponse{
+		_, cursorState, exhausted, _, err := nextPaginationState(DecodedResponse{
 			Document: contract.NewObjectValue(map[string]contract.PresentValue{"next": contract.NewStringValue("opaque-next")}),
 		}, cursorPagination, contract.NewObjectValue(nil), 2, nil)
 		cursor, cursorPresent := cursorState.NextInputs["cursor"].TextValue()
@@ -205,7 +205,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		if err := pagePagination.Validate(pageOperation); err != nil {
 			t.Fatalf("page pagination: %v", err)
 		}
-		_, pageState, exhausted, err := nextPaginationState(DecodedResponse{
+		_, pageState, exhausted, _, err := nextPaginationState(DecodedResponse{
 			Document: contract.NewObjectValue(map[string]contract.PresentValue{"last": contract.NewBooleanValue(false)}),
 		}, pagePagination, contract.NewObjectValue(map[string]contract.PresentValue{"page": testInteger(t, "2")}), 2, nil)
 		nextPage, pagePresent := pageState.NextInputs["page"].ExactNumber()
@@ -218,7 +218,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		if err := withoutLast.Validate(pageOperation); err != nil {
 			t.Fatalf("page pagination without last-page pointer: %v", err)
 		}
-		_, _, exhausted, err = nextPaginationState(
+		_, _, exhausted, _, err = nextPaginationState(
 			DecodedResponse{Document: contract.NewObjectValue(nil)},
 			&withoutLast,
 			contract.NewObjectValue(map[string]contract.PresentValue{"page": testInteger(t, "3")}),
@@ -237,7 +237,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 			t.Fatalf("offset pagination without total pointer: %v", err)
 		}
 		limit := uint64(5)
-		_, state, exhausted, err := nextPaginationState(
+		_, state, exhausted, _, err := nextPaginationState(
 			DecodedResponse{Document: contract.NewObjectValue(nil)},
 			&withoutTotal,
 			paginationInput(t, new(uint64(0)), &limit),
@@ -248,7 +248,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		if err != nil || exhausted || !present || next.Text != "5" {
 			t.Fatalf("full offset page state=%#v exhausted=%v error=%v", state, exhausted, err)
 		}
-		_, _, exhausted, err = nextPaginationState(
+		_, _, exhausted, _, err = nextPaginationState(
 			DecodedResponse{Document: contract.NewObjectValue(nil)},
 			&withoutTotal,
 			paginationInput(t, new(uint64(0)), &limit),
@@ -573,8 +573,9 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, err = linkNavigationValue(
+		_, _, err = linkNavigationValue(
 			operation,
+			operation.Execution.Pagination,
 			"page",
 			"/items?state=open&page=2&per_page=2&token=attacker",
 			linkInput(t, "open", new(uint64(1)), new(uint64(2))),
@@ -604,8 +605,9 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 			"page":     contract.NewStringValue("one"),
 			"per-page": testInteger(t, "2"),
 		})
-		_, err = linkNavigationValue(
+		_, _, err = linkNavigationValue(
 			reservedOperation,
+			reservedOperation.Execution.Pagination,
 			"page",
 			"/items?state=open&page=two%26injected%3Dtrue&per_page=2",
 			reservedInput,
