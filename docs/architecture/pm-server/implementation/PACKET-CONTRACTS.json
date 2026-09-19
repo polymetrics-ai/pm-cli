@@ -13626,48 +13626,48 @@
           ],
           "subsequent_wiring_milestones": []
         },
-          {
-            "path": "internal/cli/result_document_test.go",
-            "group_id": "T_V30b",
-            "prior_group_id": "T_V30b",
-            "owner": "cli",
-            "process": "CLI",
-            "milestone": "M5",
-            "action": "CREATE",
-            "kind": "authored",
-            "responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
-            "interfaces": [
-              "TestRunResultRendersExactPublishedDocument"
-            ],
-            "dependencies": [
-              "api",
-              "contract"
-            ],
-            "test_ids": [
-              "V30"
-            ],
-            "generator": null,
-            "go_package": "cli",
-            "assignment_owner": "cli",
-            "group_responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
-            "allowed_internal_dependencies": [
-              "api",
-              "contract"
-            ],
-            "import_activation": [
-              {
-                "package": "api",
-                "earliest_milestone": "M5",
-                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-              },
-              {
-                "package": "contract",
-                "earliest_milestone": "M5",
-                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-              }
-            ],
-            "subsequent_wiring_milestones": []
-          },
+        {
+          "path": "internal/cli/result_document_test.go",
+          "group_id": "T_V30b",
+          "prior_group_id": "T_V30b",
+          "owner": "cli",
+          "process": "CLI",
+          "milestone": "M5",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+          "interfaces": [
+            "TestRunResultRendersExactPublishedDocument"
+          ],
+          "dependencies": [
+            "api",
+            "contract"
+          ],
+          "test_ids": [
+            "V30"
+          ],
+          "generator": null,
+          "go_package": "cli",
+          "assignment_owner": "cli",
+          "group_responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+          "allowed_internal_dependencies": [
+            "api",
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
         {
           "path": "internal/api/events_test.go",
           "group_id": "T_V30",
@@ -18342,8 +18342,7 @@
             }
           ],
           "subsequent_wiring_milestones": []
-        }
-      ,
+        },
         {
           "prior_group_id": null,
           "owner": "app",
@@ -18672,7 +18671,8 @@
           "interfaces": [
             "TestSQLExecutionCompositionWorkerBehavior"
           ]
-        }],
+        }
+      ],
       "acceptance": [
         {
           "id": "pm-postgres-transport-V34",
@@ -18735,29 +18735,29 @@
       "parity_ids": [],
       "state_ownership_ids": [],
       "integration_edits": [
-      {
-        "paths": [
-          "internal/compile/documentation.go"
-        ],
-        "reason": "The accepted PostgreSQL source authority needs a documentation dialect in the compiler; the file is first-owned by the compile package (F16) and declared here as the introducing packet.",
-        "authority": "CREATE in the compiler first owner's package; do not redefine the OpenAPI dialect contracts."
-      },
-      {
-        "paths": [
-          "schemas/bundle.schema.json",
-          "schemas/source.schema.json",
-          "schemas/field-binding.schema.json"
-        ],
-        "reason": "The published schemas must admit the declared documentation anchor and match the Go contract's already-implemented open_properties/additional_properties rules; the committed GitHub bundle already declared those members while the published field-binding schema refused them.",
-        "authority": "UPDATE the published projections only; the Go contract keeps first ownership and no member was added to it."
-      },
-      {
-        "paths": [
-          "scripts/check-boundaries.sh"
-        ],
-        "reason": "ADR475-12 admits the native engine only in the restricted analytical child, so the boundary allow-list gains internal/analytics and cmd/pm-query while every other package, including internal/warehouse, stays native-free.",
-        "authority": "UPDATE the build owner's check with the accepted ADR scope; the refusal stays fail-closed for every other package."
-      },
+        {
+          "paths": [
+            "internal/compile/documentation.go"
+          ],
+          "reason": "The accepted PostgreSQL source authority needs a documentation dialect in the compiler; the file is first-owned by the compile package (F16) and declared here as the introducing packet.",
+          "authority": "CREATE in the compiler first owner's package; do not redefine the OpenAPI dialect contracts."
+        },
+        {
+          "paths": [
+            "schemas/bundle.schema.json",
+            "schemas/source.schema.json",
+            "schemas/field-binding.schema.json"
+          ],
+          "reason": "The published schemas must admit the declared documentation anchor and match the Go contract's already-implemented open_properties/additional_properties rules; the committed GitHub bundle already declared those members while the published field-binding schema refused them.",
+          "authority": "UPDATE the published projections only; the Go contract keeps first ownership and no member was added to it."
+        },
+        {
+          "paths": [
+            "scripts/check-boundaries.sh"
+          ],
+          "reason": "ADR475-12 admits the native engine only in the restricted analytical child, so the boundary allow-list gains internal/analytics and cmd/pm-query while every other package, including internal/warehouse, stays native-free.",
+          "authority": "UPDATE the build owner's check with the accepted ADR scope; the refusal stays fail-closed for every other package."
+        },
         {
           "paths": [
             "internal/runtime/admission_test.go"
@@ -20827,14 +20827,14 @@
       "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
       "integration_edits": [
-      {
-        "paths": [
-          "internal/store/migrations/postgres/0019_warehouse_segments.sql",
-          "internal/store/warehouse_manifest.go"
-        ],
-        "reason": "The warehouse manifest/query path needs its own registered segment ledger, cursor, snapshot and retention tables and their scoped store access; the warehouse store authority stays with its existing R17 first owner.",
-        "authority": "CREATE under the warehouse store authority; do not redefine the shared publication or checkpoint contracts."
-      }
+        {
+          "paths": [
+            "internal/store/migrations/postgres/0019_warehouse_segments.sql",
+            "internal/store/warehouse_manifest.go"
+          ],
+          "reason": "The warehouse manifest/query path needs its own registered segment ledger, cursor, snapshot and retention tables and their scoped store access; the warehouse store authority stays with its existing R17 first owner.",
+          "authority": "CREATE under the warehouse store authority; do not redefine the shared publication or checkpoint contracts."
+        }
       ],
       "non_goals": [
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
@@ -21310,6 +21310,17 @@
           ],
           "reason": "Bind this issue's owned public routes/handlers to the existing composition roots; registered positive/denied request and absent-handler zero-I/O case are mandatory. Client presentation does not establish reachability.",
           "authority": "UPDATE after first owner merged; preserve its contract and serialize any overlapping integration edit."
+        },
+        {
+          "paths": [
+            "internal/httpapi/warehouse.go",
+            "internal/httpapi/schema.go",
+            "internal/httpapi/service.go",
+            "internal/httpapi/service_config.go",
+            "internal/cli/root.go"
+          ],
+          "reason": "The warehouse dataset, typed query and connection schema routes consume the shared warehouse, schema and object seams directly and are registered in the existing authenticated policy table; the packet's declared dependency list for these files named only api/app/auth/contract, so the realised dependency set is recorded here rather than silently widened.",
+          "authority": "UPDATE the shared HTTP and CLI surfaces with the existing authorization path; no new authority, permission string or bypass is introduced."
         }
       ],
       "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
