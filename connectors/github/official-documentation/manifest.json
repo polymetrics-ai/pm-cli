@@ -3,7 +3,7 @@
   "connector_id": "github",
   "capture_id": "github-official-documentation-authentication-and-pagination",
   "created_at_utc": "2026-09-19T12:50:00Z",
-  "purpose": "Supplemental, separately provenanced official provider documentation for typed authentication and pagination facts that the pinned OpenAPI capture does not contain. It exists because missing OpenAPI security metadata is not evidence of anonymous-only operation, and because the pinned OpenAPI document declares no security scheme and no cursor parameter.",
+  "purpose": "Supplemental, separately provenanced official provider documentation for typed authentication, pagination and returned-URL facts that the pinned OpenAPI capture does not contain. It exists because missing OpenAPI security metadata is not evidence of anonymous-only operation, because the pinned OpenAPI document declares no security scheme and no cursor parameter, and because the provider's own guidance on using returned URLs and link headers, and the example-level pairing of a listing request with a continuation target on the canonical repository route, are facts the pinned capture cannot carry.",
   "not_the_openapi_capture": {
     "statement": "These bytes are NOT the OpenAPI capture and do not replace, extend, or reinterpret it. The pinned OpenAPI source set, its closure capture and its source lock are untouched by this directory. OpenAPI facts stay authoritative for everything they declare; the facts here may only add what OpenAPI does not declare.",
     "openapi_capture_orientation_only": {
@@ -120,6 +120,58 @@
               }
             }
           ]
+        },
+        {
+          "document_id": "github-docs-rest-best-practices",
+          "role": "official_provider_documentation",
+          "title": "Best practices for using the REST API",
+          "requested_url": "https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api#do-not-manually-parse-urls",
+          "retained_path": "connectors/github/official-documentation/documents/best-practices-for-using-the-rest-api.html",
+          "retained_byte_length": 330277,
+          "retained_sha256": "209c4b090e2c4edc0490837b5a9368359db3ea1c83a2922c6ddac1cd395338ef",
+          "retrieved_at_utc": "2026-09-19T13:10:20Z",
+          "http_status": 200,
+          "content_type": "text/html; charset=utf-8",
+          "content_length_header": 330277,
+          "date_header": "Sat, 19 Sep 2026 13:10:20 GMT",
+          "etag": null,
+          "last_modified": null,
+          "x_github_request_id": "B2DE:1CB38D:701F3E:A8B857:6AAE89BB",
+          "response_headers_path": "connectors/github/official-documentation/headers/best-practices-for-using-the-rest-api.html.headers",
+          "revision_identity_exposed": null,
+          "revision_identity_note": "No page revision or last-updated identity is exposed in the retained bytes and no ETag or Last-Modified header was returned. The only version-like value the page exposes is the documentation site API version selector, recorded in retained_page_api_version_selector.",
+          "retrieval_evidence": [
+            {
+              "document_id": "github-docs-rest-best-practices",
+              "quote": "HTTP/2 200",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "HTTP status line of the retained response.",
+              "locator": {
+                "file": "headers/best-practices-for-using-the-rest-api.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  0,
+                  10
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-best-practices",
+              "quote": "content-type: text/html; charset=utf-8",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "Content type of the retained response.",
+              "locator": {
+                "file": "headers/best-practices-for-using-the-rest-api.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  1283,
+                  1321
+                ]
+              }
+            }
+          ],
+          "effective_url": "https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api",
+          "url_note": "A URL fragment is not sent to the server; the retained bytes are the whole article served for the effective URL. The fragment #do-not-manually-parse-urls identifies the section inside the retained article that carries the cited pagination guidance."
         },
         {
           "document_id": "github-docs-rest-issues-list-repository-issues",
@@ -470,7 +522,7 @@
           "fact_id": "F2",
           "name": "rest_link_header_pagination",
           "kind": "provider_protocol_fact",
-          "authored_statement": "GitHub's REST API documents pagination through a link response header, present only when a response is paginated, whose URLs address the previous, next, first and last page of results and are annotated with rel=\"prev\", rel=\"next\", rel=\"last\" and rel=\"first\". The published example link header value addresses the listing through https://api.github.com/repositories/1300192/issues with a page query parameter, while the example request published in the same article uses https://api.github.com/repos/octocat/Spoon-Knife/issues. The article states that the query parameters in link URLs may differ between endpoints and that each paginated endpoint uses the page, before/after, or since query parameters.",
+          "authored_statement": "GitHub's REST API documents pagination through a link response header, present only when a response is paginated, whose URLs address the previous, next, first and last page of results and are annotated with rel=\"prev\", rel=\"next\", rel=\"last\" and rel=\"first\". The published example link header value addresses the listing through https://api.github.com/repositories/1300192/issues with a page query parameter, while the example request published earlier in the same section of the same article uses https://api.github.com/repos/octocat/Spoon-Knife/issues. The article states that the query parameters in link URLs may differ between endpoints and that each paginated endpoint uses the page, before/after, or since query parameters. It does not state that the two example routes address the same resource; the pairing is an example-level observation assembled from two examples in one section, not a route-identity statement.",
           "typed": {
             "response_header_name": "link",
             "response_header_name_as_written_in_the_article": "link (lower case)",
@@ -490,7 +542,14 @@
             ],
             "continuation_is_expressed_as": "query parameters on the URLs carried by the link header value",
             "header_omitted_when": "the endpoint does not support pagination, or all results fit on a single page",
-            "documented_meaning_for_pm": "A rel=\"next\" target is a provider-supplied continuation for the next page of the same listing; the document does not state that an arbitrary same-origin URL, or any URL on a different path, is a legal continuation."
+            "documented_meaning_for_pm": "A rel=\"next\" target is a provider-supplied continuation for the next page of the same listing. The article's example pairs a /repos/{owner}/{repo}/issues request with a continuation target on /repositories/{id}/issues, and the best-practices article (F4) instructs clients to use the link headers instead of constructing pagination queries; however no retained document states that a target on another path is a legal continuation, none states that the two routes address the same resource, and none defines PM's navigation policy.",
+            "example_route_pairing": {
+              "request_example_route": "/repos/octocat/Spoon-Knife/issues",
+              "link_header_example_route": "/repositories/1300192/issues",
+              "published_in_one_place": "two examples in the same section of the same article (#using-link-headers), joined by the sentence \"If the response is paginated, the link header will look something like this:\"",
+              "route_identity_stated": false,
+              "reading": "The provider's official example pairs a listing request on the /repos/{owner}/{repo}/issues route with a continuation target on the /repositories/{id}/issues route. The examples are adjacent and presented as a request and the link header such a paginated response would carry; no statement says the numeric id denotes the same repository as the owner/repo pair."
+            }
           },
           "evidence": [
             {
@@ -684,6 +743,49 @@
             },
             {
               "document_id": "github-docs-rest-pagination",
+              "quote": "curl --include --request GET \\ --url \"https://api.github.com/repos/octocat/Spoon-Knife/issues\" \\ --header \"Accept: application/vnd.github+json\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The article's own example request for listing issues: the --url value carries the /repos/octocat/Spoon-Knife/issues route.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "preformatted",
+                "byte_range": [
+                  226699,
+                  226915
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              },
+              "note": "First shell example in the section, published immediately before the link header example."
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "If the response is paginated, the link header will look something like this:",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The pairing sentence: it presents the next example as the link header a paginated response to the preceding request would carry.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "prose",
+                "byte_range": [
+                  226916,
+                  227012
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
               "quote": "link: <https://api.github.com/repositories/1300192/issues?page=2>; rel=\"prev\", <https://api.github.com/repositories/1300192/issues?page=4>; rel=\"next\", <https://api.github.com/repositories/1300192/issues?page=515>; rel=\"last\", <https://api.github.com/repositories/1300192/issues?page=1>; rel=\"first\"",
               "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
               "summary": "The published example link header value: numeric-route URLs with page query parameters and the four rel annotations.",
@@ -702,7 +804,29 @@
                   229338
                 ]
               },
-              "note": "Compare with the example request earlier in the same section, which uses https://api.github.com/repos/octocat/Spoon-Knife/issues. The retained documents do not state that these two routes are equivalent."
+              "note": "Compare with the example request earlier in the same section, which uses https://api.github.com/repos/octocat/Spoon-Knife/issues; the sentence cited next is the pairing sentence between the two examples. The retained documents do not state that the two routes address the same resource."
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "import { Octokit } from \"octokit\"; const octokit = new Octokit({ }); async function getPaginatedData(url) { const nextPattern = /(?<=<)([\\S]*)(?=>; rel=\"next\")/i; let pagesRemaining = true; let data = []; while (pagesRemaining) { const response = await octokit.request(`GET ${url}`, { per_page: 100, headers: { \"X-GitHub-Api-Version\": \"2026-03-10\", }, }); const parsedData = parseData(response.data) data = [...data, ...parsedData]; const linkHeader = response.headers.link; pagesRemaining = linkHeader && linkHeader.includes(`rel=\\\"next\\\"`); if (pagesRemaining) { url = linkHeader.match(nextPattern)[0]; } } return data; } function parseData(data) { // If the data is an array, return that if (Array.isArray(data)) { return data } // Some endpoints respond with 204 No Content instead of empty array // when there is no data. In that case, return an empty array. if (!data) { return [] } // Otherwise, the array of items that we want is in an object // Delete keys that don't include the array of items delete data.incomplete_results; delete data.repository_selection; delete data.total_count; // Pull out the array of items const namespaceKey = Object.keys(data)[0]; data = data[namespaceKey]; return data; } const data = await getPaginatedData(\"/repos/octocat/Spoon-Knife/issues\"); console.log(data);",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The article's worked script example extracts the URL annotated rel=\"next\" from the response link header (nextPattern) and re-requests it in a loop; it is the article's example of following a returned next-page URL.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#example-creating-a-pagination-method",
+                "heading_text": "Example: Creating a pagination method",
+                "element": "preformatted",
+                "byte_range": [
+                  239723,
+                  243825
+                ],
+                "section_byte_range": [
+                  235892,
+                  247537
+                ]
+              },
+              "note": "Visible copy of the script; an identical hidden data-clipboard copy exists earlier in the same section and renders to the same text."
             },
             {
               "document_id": "github-docs-rest-pagination",
@@ -791,9 +915,9 @@
             }
           ],
           "must_not_be_read_as": [
-            "It does not state that a link target on a different path is an equivalent canonical route for the same resource; the article only publishes example values on a different route than its own example request. See unverified_items.",
+            "It does not state that a link target on a different path is an equivalent canonical route for the same resource: the article pairs an example request on /repos/octocat/Spoon-Knife/issues with an example link header on /repositories/1300192/issues, but it never states that the two routes address the same resource. The pairing is recorded as shown by example in unverified_items; route identity stays unstated and is not admitted by this capture.",
             "It does not state that the issues endpoints use an after cursor: the article names the families page, before/after and since without assigning one to any endpoint.",
-            "It does not authorise replaying a provider-supplied URL verbatim, and it does not relax PM's navigation rule that a continuation must stay on the declared operation identity.",
+            "It does not authorise replaying a provider-supplied URL verbatim, and it does not relax PM's navigation rule that a continuation must stay on the declared operation identity (the example pairing on a different route does not by itself satisfy that rule).",
             "It does not state that every paginated endpoint always sends the header for every request."
           ]
         },
@@ -1628,6 +1752,143 @@
             "The status table lists no 401 or 403 for this operation; nothing here defines PM's refusal classes.",
             "It does not state that the operation returns only issues (pull requests are included) nor that a 404 means the resource is absent rather than inaccessible; only the quoted sentences are admitted."
           ]
+        },
+        {
+          "fact_id": "F4",
+          "name": "rest_best_practices_use_returned_urls_and_link_headers",
+          "kind": "provider_protocol_fact",
+          "authored_statement": "GitHub's REST API best-practices documentation instructs clients not to parse URL values or predict URL structure because GitHub may change it, and not to manually construct pagination queries: instead a client should use the link headers to determine what pages of results it can request. The same document's only instruction about following a URL that a response returns concerns HTTP redirection: a request may be redirected, a redirection is not an error, and the client should follow the redirect; a 301 is permanent and the returned location URL should be adopted for future requests, while a 302 or 307 is temporary and should not be.",
+          "typed": {
+            "applies_to": "github_rest_api",
+            "url_handling": [
+              "do_not_parse_or_predict_url_structure",
+              "use_field_values_not_url_values"
+            ],
+            "pagination_query_handling": [
+              "do_not_manually_construct_pagination_queries",
+              "use_link_headers_to_determine_available_pages"
+            ],
+            "redirection_handling": [
+              "follow_the_redirect",
+              "301_is_permanent_and_the_returned_url_should_be_adopted",
+              "302_307_are_temporary_and_the_returned_url_should_not_be_adopted"
+            ],
+            "documented_meaning_for_pm": "Provider guidance addressed to API clients: use the URLs the API returns in the link header instead of constructing pagination queries yourself. It is guidance, not a route-identity statement, and it neither defines nor modifies PM's navigation policy."
+          },
+          "evidence": [
+            {
+              "document_id": "github-docs-rest-best-practices",
+              "quote": "Many API endpoints return URL values for fields in the response body. You should not try to parse these URLs or to predict the structure of future URLs. This can cause your integration to break if GitHub changes the structure of the URL in the future. Instead, you should look for a field that contains the information that you need. For example, the endpoint to create an issue returns an html_url field with a value like https://github.com/octocat/Hello-World/issues/1347 and a number field with a value like 1347. If you need to know the number of the issue, use the number field instead of parsing the html_url field.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Clients must not parse URL-valued fields or predict URL structure; the information belongs in a field, not in a URL.",
+              "locator": {
+                "file": "documents/best-practices-for-using-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api",
+                "anchor": "#do-not-manually-parse-urls",
+                "heading_text": "Do not manually parse URLs",
+                "element": "prose",
+                "byte_range": [
+                  233750,
+                  234456
+                ],
+                "section_byte_range": [
+                  233545,
+                  234764
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-best-practices",
+              "quote": "Similarly, you should not try to manually construct pagination queries. Instead, you should use the link headers to determine what pages of results you can request. For more information, see Using pagination in the REST API.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Clients must not manually construct pagination queries; they should use the link headers to determine what pages of results they can request.",
+              "locator": {
+                "file": "documents/best-practices-for-using-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api",
+                "anchor": "#do-not-manually-parse-urls",
+                "heading_text": "Do not manually parse URLs",
+                "element": "prose",
+                "byte_range": [
+                  234457,
+                  234763
+                ],
+                "section_byte_range": [
+                  233545,
+                  234764
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-best-practices",
+              "quote": "The GitHub REST API uses HTTP redirection where appropriate. You should assume that any request may result in a redirection. Receiving an HTTP redirection is not an error, and you should follow the redirect.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The document's only instruction to follow a URL that a response returns: HTTP redirection is not an error and the redirect should be followed. This concerns redirect responses, not pagination continuations.",
+              "locator": {
+                "file": "documents/best-practices-for-using-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api",
+                "anchor": "#follow-redirects",
+                "heading_text": "Follow redirects",
+                "element": "prose",
+                "byte_range": [
+                  232743,
+                  232957
+                ],
+                "section_byte_range": [
+                  232568,
+                  233545
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-best-practices",
+              "quote": "A 301 status code indicates permanent redirection. You should repeat your request to the URL specified by the location header. Additionally, you should update your code to use this URL for future requests.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Redirection permanence rule: a 301 is permanent and the returned location URL should be adopted for future requests, which bounds how far the redirection guidance goes.",
+              "locator": {
+                "file": "documents/best-practices-for-using-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api",
+                "anchor": "#follow-redirects",
+                "heading_text": "Follow redirects",
+                "element": "prose",
+                "byte_range": [
+                  232958,
+                  233196
+                ],
+                "section_byte_range": [
+                  232568,
+                  233545
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-best-practices",
+              "quote": "A 302 or 307 status code indicates temporary redirection. You should repeat your request to the URL specified by the location header. However, you should not update your code to use this URL for future requests.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Temporary redirection rule: a 302 or 307 means the returned location URL should be used for this request only, not adopted.",
+              "locator": {
+                "file": "documents/best-practices-for-using-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/best-practices-for-using-the-rest-api",
+                "anchor": "#follow-redirects",
+                "heading_text": "Follow redirects",
+                "element": "prose",
+                "byte_range": [
+                  233197,
+                  233454
+                ],
+                "section_byte_range": [
+                  232568,
+                  233545
+                ]
+              }
+            }
+          ],
+          "must_not_be_read_as": [
+            "It does not state that a returned link target may address the resource through a different route than the request used: the words canonical, equivalent, same resource, different route, route and repositories/ do not occur in the retained bytes (see A5).",
+            "It does not state that a client should follow a next-page URL: the words next page, next-page, next=, rel=\"next\", follow the link and follow the next do not occur in the retained bytes (see A4); it says only to use the link headers to determine what pages can be requested.",
+            "It does not name any pagination parameter: after=, before=, cursor, per_page and page= do not occur in the retained bytes (see A7), so it does not document an after cursor for this or any operation.",
+            "Its redirection guidance concerns HTTP 3xx responses and the location header; it is not a statement about link-header continuations and it does not authorise following a continuation target on another route.",
+            "It does not define PM's navigation policy and does not relax PM's rule that a continuation must stay on the declared operation identity: provider guidance is not a PM policy record, and nothing in this fact admits a runtime behaviour change."
+          ]
         }
       ],
       "documented_absences": [
@@ -1672,7 +1933,7 @@
         },
         {
           "absence_id": "A3",
-          "authored_statement": "The three retained article responses carried no ETag and no Last-Modified header. The only version-like identity they expose is the documentation site's API version selector 2026-03-10 (latest).",
+          "authored_statement": "The four retained article responses carried no ETag and no Last-Modified header. The only version-like identity they expose is the documentation site's API version selector 2026-03-10 (latest).",
           "check": {
             "kind": "header_absence",
             "documents": [
@@ -1687,6 +1948,10 @@
               {
                 "document_id": "github-docs-rest-issues-list-repository-issues",
                 "file": "headers/list-repository-issues.html.headers"
+              },
+              {
+                "document_id": "github-docs-rest-best-practices",
+                "file": "headers/best-practices-for-using-the-rest-api.html.headers"
               }
             ],
             "header_names": [
@@ -1705,21 +1970,140 @@
               "github-docs-rest-issues-list-repository-issues": {
                 "etag": 0,
                 "last-modified": 0
+              },
+              "github-docs-rest-best-practices": {
+                "etag": 0,
+                "last-modified": 0
               }
             }
           }
+        },
+        {
+          "absence_id": "A4",
+          "authored_statement": "The best-practices article states that a client should use the link headers to determine what pages of results it can request, but it contains no statement about following a returned next-page URL: the words next page, next-page, next=, rel=\"next\", follow the link and follow the next do not occur in the retained bytes.",
+          "check": {
+            "kind": "occurrence_count_in_retained_bytes",
+            "document_id": "github-docs-rest-best-practices",
+            "file": "documents/best-practices-for-using-the-rest-api.html",
+            "needles": [
+              "next page",
+              "next-page",
+              "next=",
+              "rel=\"next\"",
+              "follow the link",
+              "follow the next"
+            ],
+            "case_insensitive": true,
+            "occurrences": {
+              "next page": 0,
+              "next-page": 0,
+              "next=": 0,
+              "rel=\"next\"": 0,
+              "follow the link": 0,
+              "follow the next": 0
+            }
+          },
+          "consequence": "The only follow-a-returned-URL instruction in this document concerns HTTP redirection (see F4). The article that shows a client following a rel=\"next\" URL is the retained pagination article (F2), not this document.",
+          "note": "Counted over the whole retained file, decoded and lowercased, which is the strongest form of the claim."
+        },
+        {
+          "absence_id": "A5",
+          "authored_statement": "The best-practices article contains no statement that a URL returned by the provider may address the resource through a different route than the request used: the words canonical, equivalent, same resource, different route, route and repositories/ do not occur in the retained bytes.",
+          "check": {
+            "kind": "occurrence_count_in_retained_bytes",
+            "document_id": "github-docs-rest-best-practices",
+            "file": "documents/best-practices-for-using-the-rest-api.html",
+            "needles": [
+              "canonical",
+              "equivalent",
+              "same resource",
+              "different route",
+              "route",
+              "repositories/"
+            ],
+            "case_insensitive": true,
+            "occurrences": {
+              "canonical": 0,
+              "equivalent": 0,
+              "same resource": 0,
+              "different route": 0,
+              "route": 0,
+              "repositories/": 0
+            }
+          },
+          "consequence": "The provider's example-level route pairing is recorded from the pagination article (F2), and the guidance to use returned URLs is recorded in F4; neither states that the canonical numeric route and the declared owner/repo route address the same resource.",
+          "note": "Counted over the whole retained file, decoded and lowercased, which is the strongest form of the claim."
+        },
+        {
+          "absence_id": "A6",
+          "authored_statement": "The pagination article itself contains no statement of route identity or equivalence for its two example routes: the words canonical, equivalent, same resource, same repository, different route and route do not occur in the retained bytes.",
+          "check": {
+            "kind": "occurrence_count_in_retained_bytes",
+            "document_id": "github-docs-rest-pagination",
+            "file": "documents/using-pagination-in-the-rest-api.html",
+            "needles": [
+              "canonical",
+              "equivalent",
+              "same resource",
+              "same repository",
+              "different route",
+              "route"
+            ],
+            "case_insensitive": true,
+            "occurrences": {
+              "canonical": 0,
+              "equivalent": 0,
+              "same resource": 0,
+              "same repository": 0,
+              "different route": 0,
+              "route": 0
+            }
+          },
+          "consequence": "The pairing of /repos/octocat/Spoon-Knife/issues with /repositories/1300192/issues is therefore shown by two adjacent examples and the sentence between them, not documented as an identity.",
+          "note": "Counted over the whole retained file, decoded and lowercased, which is the strongest form of the claim."
+        },
+        {
+          "absence_id": "A7",
+          "authored_statement": "The best-practices article names no pagination parameter at all: the strings after=, before=, cursor, per_page and page= do not occur in the retained bytes, so it does not document an after cursor for this or any operation.",
+          "check": {
+            "kind": "occurrence_count_in_retained_bytes",
+            "document_id": "github-docs-rest-best-practices",
+            "file": "documents/best-practices-for-using-the-rest-api.html",
+            "needles": [
+              "after=",
+              "before=",
+              "cursor",
+              "per_page",
+              "page="
+            ],
+            "case_insensitive": true,
+            "occurrences": {
+              "after=": 0,
+              "before=": 0,
+              "cursor": 0,
+              "per_page": 0,
+              "page=": 0
+            }
+          },
+          "consequence": "The after-cursor question stays open exactly as unverified_items records it.",
+          "note": "The needle is the parameter spelling so that prose use of the words cannot mask a documented parameter."
         }
       ],
       "unverified_items": [
         {
-          "item": "Route equivalence between a requested path and a link header target",
-          "status": "not stated by the retained documents",
-          "detail": "F2 records that the pagination article's example link header addresses the listing through https://api.github.com/repositories/1300192/issues while the article's own example request uses https://api.github.com/repos/octocat/Spoon-Knife/issues. None of the retained documents states that these routes are equivalent, that the numeric route is canonical for the same resource, or that a link target on a different path may be treated as the same resource. Any such reading is an inference from an example and is NOT admitted by this capture."
+          "item": "Identity of the canonical /repositories/{id} continuation route with the declared operation's resource",
+          "status": "shown by the official example; not stated as an identity",
+          "detail": "F2 records that the pagination article's own example request lists issues on https://api.github.com/repos/octocat/Spoon-Knife/issues, that the sentence \"If the response is paginated, the link header will look something like this:\" introduces the next example, and that the example link header addresses https://api.github.com/repositories/1300192/issues. The official example therefore pairs a listing request on the /repos/{owner}/{repo}/issues route with a continuation target on the canonical numeric route, and F4 records the provider's instruction to use the link headers rather than construct pagination queries. However, no retained document states that /repositories/{id} is the canonical route for the same repository as /repos/{owner}/{repo}, that 1300192 is the id of octocat/Spoon-Knife, or that the two routes address the same resource. The pairing is admitted as an example-level observation only; route identity remains an inference and is NOT admitted by this capture."
         },
         {
           "item": "Use of an after cursor by GET /repos/{owner}/{repo}/issues",
           "status": "not stated by the retained documents",
-          "detail": "The pagination article states that a paginated endpoint uses the page, before/after, or since query parameters but does not say which family any endpoint uses; the operation page documents page and per_page only and contains no cursor, before= or after= occurrence. No retained document states that this operation accepts an after cursor."
+          "detail": "The pagination article states that a paginated endpoint uses the page, before/after, or since query parameters but does not say which family any endpoint uses; the operation page documents page and per_page only and contains no cursor, before= or after= occurrence; the best-practices article names no pagination parameter at all (A7). No retained document states that this operation accepts an after cursor."
+        },
+        {
+          "item": "PM's navigation policy",
+          "status": "not stated by any retained document; it is a PM policy",
+          "detail": "The retained provider documentation records what the provider may send (link header values, including the example target on the canonical route) and recommends that clients use the link headers instead of constructing pagination queries. It does not state, and cannot state, which continuation targets PM may issue: PM's rule that a continuation must remain on the declared operation identity (same origin, same escaped path, unchanged unrelated query parameters) is a PM policy recorded in its own decision record. These documents neither establish, weaken, authorise nor relax it, and nothing in this capture admits a runtime behaviour change."
         },
         {
           "item": "Token-required or anonymous-only readings of the operation",
@@ -1739,7 +2123,7 @@
         {
           "item": "Per-endpoint pagination contract",
           "status": "not stated by the retained documents",
-          "detail": "The pagination article is written about the REST API generally and does not publish a per-endpoint pagination contract; it does not state that every paginated endpoint responds with a link header to every request, nor which parameter family a given endpoint uses."
+          "detail": "The pagination article is written about the REST API generally and does not publish a per-endpoint pagination contract; it does not state that every paginated endpoint responds with a link header to every request, nor which parameter family a given endpoint uses. The best-practices article repeats the generic instruction to use the link headers and likewise names no parameter family (A7)."
         },
         {
           "item": "Order and completeness of the link header relations",
@@ -1761,7 +2145,7 @@
     "never_widen": "A supplemental fact must not widen origins (the server URL declared by the source), credentials (it may not create or enlarge a credential channel beyond what the operation declares), or capabilities (it may not add operations, parameters, media types, statuses or response headers beyond the declared operation).",
     "protocol_versus_policy": "These facts are provider protocol facts. Connection policy, namely that this private connection requires a credential, is a PM connection declaration and is neither established nor weakened by them.",
     "scope": "The admitted facts cover the single declared operation issues/list-for-repo (GET /repos/{owner}/{repo}/issues) only.",
-    "observation_is_not_authority": "A link header value published as an example is an observation about what the provider may send. It never authorises replaying a provider-supplied URL, and it does not change PM's navigation rule that a continuation must remain on the declared operation identity."
+    "observation_is_not_authority": "A link header value published as an example is an observation about what the provider may send, and best-practices text is guidance addressed to API clients. Neither authorises replaying a provider-supplied URL or following a target on a different route, and neither changes PM's navigation rule that a continuation must remain on the declared operation identity; that rule is a PM policy which no retained document states or governs."
   },
   "license_and_attribution": {
     "position": "GitHub Docs content is published by GitHub under a dual license: Creative Commons Attribution 4.0 for documentation and content, and MIT for code. The retained LICENSE file is the Creative Commons Attribution 4.0 International license text; the retained README states the split.",
@@ -1907,6 +2291,20 @@
         "byte_range": [
           21441,
           21460
+        ]
+      }
+    },
+    {
+      "document_id": "github-docs-rest-best-practices",
+      "quote": "2026-03-10 (latest)",
+      "quote_basis": "byte-exact substring of the retained file",
+      "summary": "Documentation site API version selector exposed in the retained page.",
+      "locator": {
+        "file": "documents/best-practices-for-using-the-rest-api.html",
+        "element": "exact_bytes",
+        "byte_range": [
+          21775,
+          21794
         ]
       }
     }

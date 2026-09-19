@@ -1,8 +1,8 @@
 {
   "schema_version": "pm.bundle/v1",
   "connector_id": "github",
-  "source_digest": "sha256:06795527ee448f84a979d8925331dfb3eb8ea601d7fa1a3bed4f80f708633ece",
-  "semantics_revision": "sha256:c08e79455d3ca0bf410d1f4dcf790240ec70c0ecc9249b784c8c8f83b05f1ff8",
+  "source_digest": "sha256:2523e86196299cc22ea96d57a9dea0e9a759886fc5219f8b3c10b4e67be7844f",
+  "semantics_revision": "sha256:5a9ba1fc3c9ac1b00284a307fa9588421557b63f152d1649125b16f3f49852ab",
   "operations": [
     {
       "schema_version": "pm.operation/v1",
@@ -19,6 +19,21 @@
         "path": "/repos/{owner}/{repo}/issues"
       },
       "inputs": [
+        {
+          "field_id": "auth.bearer",
+          "wire_name": "Authorization",
+          "location": "header",
+          "json_pointer": "",
+          "required": false,
+          "nullable": false,
+          "style": "simple",
+          "explode": false,
+          "allow_reserved": false,
+          "sensitivity": "secret",
+          "schema": {
+            "type": "string"
+          }
+        },
         {
           "field_id": "path.owner",
           "wire_name": "owner",
@@ -3011,6 +3026,13 @@
       ],
       "capability_requirements": [
         {
+          "capability": "credentials.resolve",
+          "foundation": {
+            "id": "FND-05",
+            "version": "2.0.0"
+          }
+        },
+        {
           "capability": "effect.authorize",
           "foundation": {
             "id": "FND-05",
@@ -3088,12 +3110,28 @@
           "origins": [
             "https://api.github.com"
           ],
+          "authorization": {
+            "required": false,
+            "audience": "https://api.github.com",
+            "placement": "header",
+            "wire_name": "Authorization",
+            "prefix": "Bearer ",
+            "field_id": "auth.bearer"
+          },
           "witness": {
-            "proof_id": "github-list-for-repo-http-origin",
+            "proof_id": "github-official-documentation-rest-bearer-authorization",
             "source_refs": [
               {
-                "source_id": "github-rest-api-description",
-                "pointer": "#/servers/0"
+                "source_id": "github-docs-rest-authentication",
+                "pointer": "#bytes:226676-226922"
+              },
+              {
+                "source_id": "github-docs-rest-authentication",
+                "pointer": "#bytes:227630-227854"
+              },
+              {
+                "source_id": "github-docs-rest-authentication",
+                "pointer": "#bytes:226923-227157"
               }
             ]
           }
@@ -3103,6 +3141,10 @@
           "limit_request_field": "query.per-page",
           "link_request_field": "query.page",
           "link_response_header": "Link",
+          "link_routes": [
+            "/repositories/{repository_id}/issues"
+          ],
+          "link_record_identity_pointer": "/repository_url",
           "witness": {
             "proof_id": "github-list-for-repo-link-continuation",
             "source_refs": [
@@ -3113,6 +3155,30 @@
               {
                 "source_id": "github-rest-api-description",
                 "pointer": "#/components/headers/link"
+              },
+              {
+                "source_id": "github-docs-rest-pagination",
+                "pointer": "#bytes:226699-226915"
+              },
+              {
+                "source_id": "github-docs-rest-pagination",
+                "pointer": "#bytes:226916-227012"
+              },
+              {
+                "source_id": "github-docs-rest-pagination",
+                "pointer": "#bytes:227013-227502"
+              },
+              {
+                "source_id": "github-docs-rest-pagination",
+                "pointer": "#bytes:227707-227791"
+              },
+              {
+                "source_id": "github-docs-rest-best-practices",
+                "pointer": "#bytes:233750-234456"
+              },
+              {
+                "source_id": "github-docs-rest-best-practices",
+                "pointer": "#bytes:234457-234763"
               }
             ]
           }

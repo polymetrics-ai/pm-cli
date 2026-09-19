@@ -633,16 +633,17 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, _, err = linkNavigationValue(
+		_, _, _, err = sealLinkContinuationTarget(
 			operation,
 			operation.Execution.Pagination,
-			"page",
-			"/items?state=open&page=2&per_page=2&token=attacker",
 			linkInput(t, "open", new(uint64(1)), new(uint64(2))),
-			requestURL,
-			&contract.OperationAuthorization{
-				Required: true, Audience: "https://provider.test", Placement: contract.FieldLocationQuery,
-				WireName: "token", FieldID: "token",
+			"/items?state=open&page=2&per_page=2&token=attacker",
+			pageHTTPContext{
+				RequestURL: requestURL,
+				Authorization: &contract.OperationAuthorization{
+					Required: true, Audience: "https://provider.test", Placement: contract.FieldLocationQuery,
+					WireName: "token", FieldID: "token",
+				},
 			},
 		)
 		if !errors.Is(err, ErrNavigationConflict) {
@@ -665,14 +666,12 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 			"page":     contract.NewStringValue("one"),
 			"per-page": testInteger(t, "2"),
 		})
-		_, _, err = linkNavigationValue(
+		_, _, _, err = sealLinkContinuationTarget(
 			reservedOperation,
 			reservedOperation.Execution.Pagination,
-			"page",
-			"/items?state=open&page=two%26injected%3Dtrue&per_page=2",
 			reservedInput,
-			reservedRequestURL,
-			nil,
+			"/items?state=open&page=two%26injected%3Dtrue&per_page=2",
+			pageHTTPContext{RequestURL: reservedRequestURL},
 		)
 		if !errors.Is(err, ErrNavigationConflict) {
 			t.Fatalf("re-encoding Link navigation error = %v", err)
@@ -806,7 +805,7 @@ func TestLinkProviderNavigationBoundary(t *testing.T) {
 		}
 	})
 
-	t.Run("canonical route with declared navigation keeps failing", func(t *testing.T) {
+	t.Run("canonical route without a declared route policy keeps failing", func(t *testing.T) {
 		var requests atomic.Int64
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			requests.Add(1)
@@ -838,7 +837,7 @@ func TestLinkProviderNavigationBoundary(t *testing.T) {
 		}
 	})
 
-	t.Run("canonical route cursor target keeps failing", func(t *testing.T) {
+	t.Run("canonical route cursor target without a declared route policy keeps failing", func(t *testing.T) {
 		var requests atomic.Int64
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 			requests.Add(1)
@@ -866,32 +865,94 @@ func TestLinkProviderNavigationBoundary(t *testing.T) {
 		}
 	})
 
-	t.Run("undeclared cursor on the declared route keeps failing", func(t *testing.T) {
-		var requests atomic.Int64
+	t.Run("provider cursor on the declared route is sealed and replayed verbatim", func(t *testing.T) {
+		const cursor = `after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D`
+		var (
+			mu      sync.Mutex
+			queries []string
+		)
 		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-			requests.Add(1)
+			mu.Lock()
+			queries = append(queries, request.URL.RawQuery)
+			mu.Unlock()
 			writer.Header().Set("Content-Type", "application/json")
-			writer.Header().Set("Link",
-				`<`+providerTargetScheme(request)+`://`+request.Host+`/items?state=open&page=2&per_page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D>; rel="next"`)
-			_, _ = io.WriteString(writer, `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`)
+			switch request.URL.Query().Get("page") {
+			case "1":
+				writer.Header().Set("Link",
+					`<`+providerTargetScheme(request)+`://`+request.Host+`/items?state=open&page=2&per_page=2&`+cursor+`>; rel="next"`)
+				_, _ = io.WriteString(writer, `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`)
+			case "2":
+				_, _ = io.WriteString(writer, `[{"id":3,"open":true,"title":"three"}]`)
+			default:
+				t.Errorf("unexpected cursor page %q", request.URL.RawQuery)
+				writer.WriteHeader(http.StatusBadRequest)
+			}
 		}))
 		defer server.Close()
-		operation := testLinkOperation("link-undeclared-cursor")
+		operation := testLinkOperation("link-provider-cursor")
 		origin := serverOrigin(t, server.URL)
+		codec := newMemoryContinuationCodec()
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: server.Listener.Addr().String()}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+		dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:      admitter,
-			Continuations: newMemoryContinuationCodec(),
+			Continuations: codec,
 			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:        dialer,
-		}, testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
-		if !errors.Is(err, ErrNavigationConflict) || !execution.PhysicalSend {
-			t.Fatalf("undeclared cursor execution=%#v error=%v", execution, err)
 		}
-		if requests.Load() != 1 || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
-			t.Fatalf("undeclared cursor requests=%d admits=%d dials=%d",
-				requests.Load(), admitter.calls.Load(), dialer.calls.Load())
+		first, err := ExecuteHTTP(context.Background(), dependencies,
+			testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if err != nil {
+			t.Fatalf("provider cursor first page: %v (cause %v)", err, errors.Unwrap(err))
+		}
+		page := first.Result.Pagination
+		if page == nil || page.SourceExhausted || page.Continuation.Presence() != contract.PresenceValue {
+			t.Fatalf("provider cursor pagination = %#v", page)
+		}
+		state := codec.mustState(t, linkTestBinding(operation.OperationID), page.Continuation)
+		if state.NextTarget == nil || state.NextTarget.Origin != origin ||
+			state.NextTarget.EscapedPath != "/items" ||
+			state.NextTarget.RawQuery != "state=open&page=2&per_page=2&"+cursor {
+			t.Fatalf("sealed provider target = %#v", state.NextTarget)
+		}
+		next, present := state.NextInputs["page"].ExactNumber()
+		if !present || next.Text != "2" {
+			t.Fatalf("sealed navigation = %#v", state.NextInputs)
+		}
+		// The provider cursor is server-owned state: a caller that names it as a
+		// typed input is refused before any provider IO.
+		conflicting := testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", nil, nil))
+		conflicting.Continuation = page.Continuation
+		conflicting.Input = contract.NewObjectValue(map[string]contract.PresentValue{
+			"state": contract.NewStringValue("open"),
+			"after": contract.NewStringValue("caller-supplied-cursor"),
+		})
+		if _, err := ExecuteHTTP(context.Background(), dependencies, conflicting); !errors.Is(err, ErrInvalidHTTPInput) {
+			t.Fatalf("caller cursor injection error = %v", err)
+		}
+		if admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+			t.Fatalf("caller cursor injection performed IO: admits=%d dials=%d", admitter.calls.Load(), dialer.calls.Load())
+		}
+
+		continued := testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", nil, nil))
+		continued.Continuation = page.Continuation
+		followed, err := ExecuteHTTP(context.Background(), dependencies, continued)
+		if err != nil {
+			t.Fatalf("provider cursor continuation: %v (cause %v)", err, errors.Unwrap(err))
+		}
+		if followed.Result.Pagination == nil || !followed.Result.Pagination.SourceExhausted ||
+			followed.Result.Pagination.Continuation.Presence() != contract.PresenceAbsent {
+			t.Fatalf("provider cursor final pagination = %#v", followed.Result.Pagination)
+		}
+		mu.Lock()
+		gotQueries := strings.Join(queries, "|")
+		mu.Unlock()
+		want := "state=open&page=1&per_page=2|state=open&page=2&per_page=2&" + cursor
+		if gotQueries != want {
+			t.Fatalf("provider cursor queries = %q; want %q", gotQueries, want)
+		}
+		if admitter.calls.Load() != 2 || dialer.calls.Load() != 2 {
+			t.Fatalf("provider cursor admits=%d dials=%d", admitter.calls.Load(), dialer.calls.Load())
 		}
 	})
 
@@ -959,6 +1020,317 @@ func TestLinkProviderNavigationBoundary(t *testing.T) {
 		}
 	})
 }
+
+// recordedGitHubCanonicalNextTarget is the provider navigation recorded from a
+// credential-free read of
+// https://api.github.com/repos/golang/go/issues?per_page=2&page=1 observed on
+// 2026-09-19: HTTP 200 with a Link rel="next" naming the canonical
+// repository-id route, an `after` cursor and the page that cursor addresses.
+const recordedGitHubCanonicalNextTarget = `/repositories/23096959/issues?per_page=2&page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D`
+
+// canonicalRouteNextTarget is the same recorded provider navigation with the
+// accepted filter echoed the way the provider echoes it, so it exercises the
+// declared-route admission path of one read that sent `state=open`.
+const canonicalRouteNextTarget = `/repositories/23096959/issues?state=open&per_page=2&page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D`
+
+// TestLinkCanonicalRouteContinuation pins the owner-approved continuation
+// policy for the link kind: a provider-issued next target on a declared route
+// is sealed with its cursor and followed, while every undeclared route, changed
+// accepted parameter, tampered sealed target and foreign resource identity is
+// still refused.
+func TestLinkCanonicalRouteContinuation(t *testing.T) {
+	t.Run("declared route admits the provider target and preserves the cursor verbatim", func(t *testing.T) {
+		const cursor = `after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D`
+		var (
+			mu       sync.Mutex
+			requests []string
+		)
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			mu.Lock()
+			requests = append(requests, request.URL.EscapedPath()+"?"+request.URL.RawQuery)
+			mu.Unlock()
+			writer.Header().Set("Content-Type", "application/json")
+			switch request.URL.Query().Get("page") {
+			case "1":
+				writer.Header().Set("Link",
+					`<`+providerTargetScheme(request)+`://`+request.Host+canonicalRouteNextTarget+`>; rel="next"`)
+				_, _ = io.WriteString(writer,
+					`[{"id":1,"open":true,"title":"one","repo":"golang/go"},{"id":2,"open":true,"title":"two","repo":"golang/go"}]`)
+			case "2":
+				_, _ = io.WriteString(writer, `[{"id":3,"open":true,"title":"three","repo":"golang/go"}]`)
+			default:
+				t.Errorf("unexpected canonical page %q", request.URL.RawQuery)
+				writer.WriteHeader(http.StatusBadRequest)
+			}
+		}))
+		defer server.Close()
+		operation := testLinkRouteOperation("link-canonical-route")
+		if err := operation.Execution.Pagination.Validate(operation); err != nil {
+			t.Fatalf("Link route pagination fact: %v", err)
+		}
+		origin := serverOrigin(t, server.URL)
+		codec := newMemoryContinuationCodec()
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      admitter,
+			Continuations: codec,
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}
+		first, err := ExecuteHTTP(context.Background(), dependencies,
+			testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if err != nil {
+			t.Fatalf("canonical route first page: %v (cause %v)", err, errors.Unwrap(err))
+		}
+		page := first.Result.Pagination
+		if page == nil || page.SourceExhausted || page.Continuation.Presence() != contract.PresenceValue {
+			t.Fatalf("canonical route pagination = %#v", page)
+		}
+		state := codec.mustState(t, linkTestBinding(operation.OperationID), page.Continuation)
+		if state.NextTarget == nil || state.NextTarget.Origin != origin ||
+			state.NextTarget.EscapedPath != "/repositories/23096959/issues" ||
+			state.NextTarget.RawQuery != "state=open&per_page=2&page=2&"+cursor {
+			t.Fatalf("sealed canonical target = %#v", state.NextTarget)
+		}
+		identity, ok := state.RecordIdentity.TextValue()
+		if !ok || identity != "golang/go" {
+			t.Fatalf("sealed record identity = %#v", state.RecordIdentity)
+		}
+
+		continued := testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", nil, nil))
+		continued.Continuation = page.Continuation
+		followed, err := ExecuteHTTP(context.Background(), dependencies, continued)
+		if err != nil {
+			t.Fatalf("canonical route continuation: %v (cause %v)", err, errors.Unwrap(err))
+		}
+		if followed.Result.Pagination == nil || !followed.Result.Pagination.SourceExhausted ||
+			followed.Result.Pagination.Continuation.Presence() != contract.PresenceAbsent ||
+			followed.Result.Pagination.FetchedCount != 1 {
+			t.Fatalf("canonical route final pagination = %#v", followed.Result.Pagination)
+		}
+		mu.Lock()
+		got := strings.Join(requests, "|")
+		mu.Unlock()
+		want := "/items?state=open&page=1&per_page=2|/repositories/23096959/issues?state=open&page=2&per_page=2&" + cursor
+		if got != want {
+			t.Fatalf("canonical route requests = %q; want %q", got, want)
+		}
+		if admitter.calls.Load() != 2 || dialer.calls.Load() != 2 {
+			t.Fatalf("canonical route admits=%d dials=%d", admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+
+	t.Run("continuation response that identifies another resource is refused", func(t *testing.T) {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			if request.URL.Query().Get("page") == "1" {
+				writer.Header().Set("Link",
+					`<`+providerTargetScheme(request)+`://`+request.Host+canonicalRouteNextTarget+`>; rel="next"`)
+				_, _ = io.WriteString(writer,
+					`[{"id":1,"open":true,"title":"one","repo":"golang/go"},{"id":2,"open":true,"title":"two","repo":"golang/go"}]`)
+				return
+			}
+			// The provider answered the sealed target with records that identify
+			// a different resource, so the continuation must be refused.
+			_, _ = io.WriteString(writer, `[{"id":3,"open":true,"title":"three","repo":"evil/other"}]`)
+		}))
+		defer server.Close()
+		operation := testLinkRouteOperation("link-canonical-foreign-resource")
+		origin := serverOrigin(t, server.URL)
+		codec := newMemoryContinuationCodec()
+		dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      &testAdmitter{},
+			Continuations: codec,
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        &mappedDialer{address: server.Listener.Addr().String()},
+		}
+		first, err := ExecuteHTTP(context.Background(), dependencies,
+			testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if err != nil {
+			t.Fatalf("foreign resource first page: %v", err)
+		}
+		continued := testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", nil, nil))
+		continued.Continuation = first.Result.Pagination.Continuation
+		execution, err := ExecuteHTTP(context.Background(), dependencies, continued)
+		if !errors.Is(err, ErrNavigationConflict) || !execution.PhysicalSend {
+			t.Fatalf("foreign resource execution=%#v error=%v", execution, err)
+		}
+		if requests.Load() != 2 {
+			t.Fatalf("foreign resource requests = %d; want the one followed target", requests.Load())
+		}
+	})
+
+	t.Run("tampered sealed targets are refused before provider IO", func(t *testing.T) {
+		for _, testCase := range []struct {
+			name   string
+			mutate func(*ContinuationState)
+		}{
+			{name: "undeclared path", mutate: func(state *ContinuationState) {
+				state.NextTarget.EscapedPath = "/repositories/23096959/other"
+			}},
+			{name: "changed accepted query", mutate: func(state *ContinuationState) {
+				state.NextTarget.RawQuery = strings.Replace(state.NextTarget.RawQuery, "per_page=2", "per_page=50", 1)
+			}},
+			{name: "changed declared filter", mutate: func(state *ContinuationState) {
+				state.NextTarget.RawQuery = strings.Replace(state.NextTarget.RawQuery, "page=2", "state=closed", 1)
+			}},
+			{name: "foreign origin", mutate: func(state *ContinuationState) {
+				state.NextTarget.Origin = "https://evil.test"
+			}},
+			{name: "dropped record identity", mutate: func(state *ContinuationState) {
+				state.RecordIdentity = nil
+			}},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				var requests atomic.Int64
+				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					requests.Add(1)
+					writer.Header().Set("Content-Type", "application/json")
+					writer.Header().Set("Link",
+						`<`+providerTargetScheme(request)+`://`+request.Host+canonicalRouteNextTarget+`>; rel="next"`)
+					_, _ = io.WriteString(writer,
+						`[{"id":1,"open":true,"title":"one","repo":"golang/go"},{"id":2,"open":true,"title":"two","repo":"golang/go"}]`)
+				}))
+				defer server.Close()
+				operation := testLinkRouteOperation("link-tampered-target")
+				origin := serverOrigin(t, server.URL)
+				codec := &mutatingContinuationCodec{
+					memoryContinuationCodec: newMemoryContinuationCodec(),
+					mutate:                  testCase.mutate,
+				}
+				admitter := &testAdmitter{}
+				dialer := &mappedDialer{address: server.Listener.Addr().String()}
+				dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
+					Admitter:      admitter,
+					Continuations: codec,
+					Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+					Dialer:        dialer,
+				}
+				first, err := ExecuteHTTP(context.Background(), dependencies,
+					testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+				if err != nil {
+					t.Fatalf("tampered target first page: %v", err)
+				}
+				continued := testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", nil, nil))
+				continued.Continuation = first.Result.Pagination.Continuation
+				execution, err := ExecuteHTTP(context.Background(), dependencies, continued)
+				if !errors.Is(err, ErrNavigationConflict) || execution.PhysicalSend {
+					t.Fatalf("tampered target execution=%#v error=%v", execution, err)
+				}
+				if requests.Load() != 1 || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+					t.Fatalf("tampered target requests=%d admits=%d dials=%d",
+						requests.Load(), admitter.calls.Load(), dialer.calls.Load())
+				}
+			})
+		}
+	})
+
+	t.Run("tampered sealed target that embeds the credential channel is refused", func(t *testing.T) {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			writer.Header().Set("Link",
+				`<`+providerTargetScheme(request)+`://`+request.Host+canonicalRouteNextTarget+`>; rel="next"`)
+			_, _ = io.WriteString(writer,
+				`[{"id":1,"open":true,"title":"one","repo":"golang/go"},{"id":2,"open":true,"title":"two","repo":"golang/go"}]`)
+		}))
+		defer server.Close()
+		operation := testLinkRouteOperation("link-tampered-credential")
+		origin := serverOrigin(t, server.URL)
+		operation.Inputs = append(operation.Inputs, contract.FieldBinding{
+			FieldID: "auth.token", WireName: "token", Location: contract.FieldLocationQuery,
+			JSONPointer: "/query/token", Required: false, Nullable: false,
+			Style: "form", Explode: true, Sensitivity: contract.SensitivitySecret,
+			Schema: contract.Schema{Type: contract.SchemaTypeString},
+		})
+		operation.Execution.HTTP = &contract.OperationHTTP{
+			Origins: []string{origin},
+			Authorization: &contract.OperationAuthorization{
+				Required: false, Audience: origin, Placement: contract.FieldLocationQuery,
+				WireName: "token", Prefix: "", FieldID: "auth.token",
+			},
+			Witness: testExecutionWitness(),
+		}
+		codec := &mutatingContinuationCodec{
+			memoryContinuationCodec: newMemoryContinuationCodec(),
+			mutate: func(state *ContinuationState) {
+				state.NextTarget.RawQuery += "&token=attacker"
+			},
+		}
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      admitter,
+			Continuations: codec,
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}
+		first, err := ExecuteHTTP(context.Background(), dependencies,
+			testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if err != nil {
+			t.Fatalf("credential target first page: %v (cause %v)", err, errors.Unwrap(err))
+		}
+		continued := testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", nil, nil))
+		continued.Continuation = first.Result.Pagination.Continuation
+		execution, err := ExecuteHTTP(context.Background(), dependencies, continued)
+		if !errors.Is(err, ErrNavigationConflict) || execution.PhysicalSend {
+			t.Fatalf("credential target execution=%#v error=%v", execution, err)
+		}
+		if requests.Load() != 1 || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+			t.Fatalf("credential target requests=%d admits=%d dials=%d",
+				requests.Load(), admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+
+	t.Run("hostile canonical-route targets are refused before any resend", func(t *testing.T) {
+		for _, testCase := range []struct {
+			name string
+			link string
+		}{
+			{name: "cross origin route", link: `<https://evil.test/repositories/23096959/issues?per_page=2&page=2>; rel="next"`},
+			{name: "undeclared path", link: `</repositories/23096959/comments?per_page=2&page=2>; rel="next"`},
+			{name: "encoded path separator", link: `</repositories/23096959%2F..%2Fother/issues?per_page=2&page=2>; rel="next"`},
+			{name: "changed accepted filter", link: `</repositories/23096959/issues?per_page=2&page=2&state=closed>; rel="next"`},
+			{name: "dropped page size", link: `</repositories/23096959/issues?page=2>; rel="next"`},
+			{name: "ambiguous next", link: `</repositories/23096959/issues?per_page=2&page=2>; rel="next", </repositories/23096959/issues?per_page=2&page=3>; rel="next"`},
+			{name: "no progress", link: `</repositories/23096959/issues?per_page=2&page=1>; rel="next"`},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				var requests atomic.Int64
+				server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+					requests.Add(1)
+					writer.Header().Set("Content-Type", "application/json")
+					writer.Header().Set("Link", testCase.link)
+					_, _ = io.WriteString(writer,
+						`[{"id":1,"open":true,"title":"one","repo":"golang/go"},{"id":2,"open":true,"title":"two","repo":"golang/go"}]`)
+				}))
+				defer server.Close()
+				operation := testLinkRouteOperation("link-hostile-route")
+				origin := serverOrigin(t, server.URL)
+				admitter := &testAdmitter{}
+				dialer := &mappedDialer{address: server.Listener.Addr().String()}
+				execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+					Admitter:      admitter,
+					Continuations: newMemoryContinuationCodec(),
+					Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+					Dialer:        dialer,
+				}, testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+				if !errors.Is(err, ErrNavigationConflict) || !execution.PhysicalSend {
+					t.Fatalf("hostile route execution=%#v error=%v", execution, err)
+				}
+				if requests.Load() != 1 || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+					t.Fatalf("hostile route requests=%d admits=%d dials=%d",
+						requests.Load(), admitter.calls.Load(), dialer.calls.Load())
+				}
+			})
+		}
+	})
+}
+
 func testOffsetOperation() contract.Operation {
 	record := contract.Schema{
 		Type:     contract.SchemaTypeObject,
@@ -1008,6 +1380,47 @@ func testLinkOperation(id string) contract.Operation {
 		Witness:            testExecutionWitness(),
 	}}
 	return operation
+}
+
+// testLinkRouteOperation declares the owner-approved link continuation policy:
+// the provider's canonical repository route is admitted for the same resource
+// and the declared record field `repo` identifies that resource.
+func testLinkRouteOperation(id string) contract.Operation {
+	operation := testLinkOperation(id)
+	schema := *operation.Responses[0].Schema
+	record := *schema.Items
+	record.Required = append(append([]string(nil), record.Required...), "repo")
+	properties := make(map[string]contract.Schema, len(record.Properties)+1)
+	for name, property := range record.Properties {
+		properties[name] = property
+	}
+	properties["repo"] = contract.Schema{Type: contract.SchemaTypeString}
+	record.Properties = properties
+	schema.Items = &record
+	operation.Responses[0].Schema = &schema
+	operation.Execution.Pagination.LinkRoutes = []string{"/repositories/{repository_id}/issues"}
+	operation.Execution.Pagination.LinkRecordIdentityPointer = "/repo"
+	return operation
+}
+
+// mutatingContinuationCodec opens the sealed state and then tampers with it,
+// which is the closest a test can come to mutating the sealed envelope bytes.
+type mutatingContinuationCodec struct {
+	*memoryContinuationCodec
+	mutate func(*ContinuationState)
+}
+
+func (codec *mutatingContinuationCodec) OpenContinuation(
+	ctx context.Context,
+	binding ContinuationBinding,
+	token contract.PresentValue,
+) (ContinuationState, error) {
+	state, err := codec.memoryContinuationCodec.OpenContinuation(ctx, binding, token)
+	if err != nil {
+		return state, err
+	}
+	codec.mutate(&state)
+	return state, nil
 }
 
 func linkInput(t *testing.T, state string, page, limit *uint64) contract.PresentValue {

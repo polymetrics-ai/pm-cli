@@ -217,17 +217,19 @@ type RecordExtraction struct {
 }
 
 type Pagination struct {
-	Kind                    string  `json:"kind"`
-	CursorRequestField      string  `json:"cursor_request_field,omitempty"`
-	CursorResponsePointer   string  `json:"cursor_response_pointer,omitempty"`
-	OffsetRequestField      string  `json:"offset_request_field,omitempty"`
-	LimitRequestField       string  `json:"limit_request_field,omitempty"`
-	TotalResponsePointer    string  `json:"total_response_pointer,omitempty"`
-	PageRequestField        string  `json:"page_request_field,omitempty"`
-	LastPageResponsePointer string  `json:"last_page_response_pointer,omitempty"`
-	LinkRequestField        string  `json:"link_request_field,omitempty"`
-	LinkResponseHeader      string  `json:"link_response_header,omitempty"`
-	Witness                 Witness `json:"witness"`
+	Kind                      string   `json:"kind"`
+	CursorRequestField        string   `json:"cursor_request_field,omitempty"`
+	CursorResponsePointer     string   `json:"cursor_response_pointer,omitempty"`
+	OffsetRequestField        string   `json:"offset_request_field,omitempty"`
+	LimitRequestField         string   `json:"limit_request_field,omitempty"`
+	TotalResponsePointer      string   `json:"total_response_pointer,omitempty"`
+	PageRequestField          string   `json:"page_request_field,omitempty"`
+	LastPageResponsePointer   string   `json:"last_page_response_pointer,omitempty"`
+	LinkRequestField          string   `json:"link_request_field,omitempty"`
+	LinkResponseHeader        string   `json:"link_response_header,omitempty"`
+	LinkRoutes                []string `json:"link_routes,omitempty"`
+	LinkRecordIdentityPointer string   `json:"link_record_identity_pointer,omitempty"`
+	Witness                   Witness  `json:"witness"`
 }
 
 func (pagination *Pagination) UnmarshalJSON(data []byte) error {
@@ -262,8 +264,16 @@ func (pagination *Pagination) UnmarshalJSON(data []byte) error {
 		allowed["link_request_field"] = struct{}{}
 		allowed["link_response_header"] = struct{}{}
 		allowed["limit_request_field"] = struct{}{}
+		allowed["link_routes"] = struct{}{}
+		allowed["link_record_identity_pointer"] = struct{}{}
 		if raw, present := fields["limit_request_field"]; present && strings.TrimSpace(string(raw)) == `""` {
 			return fmt.Errorf("link pagination cannot declare an empty limit request field")
+		}
+		if raw, present := fields["link_routes"]; present && strings.TrimSpace(string(raw)) == `[]` {
+			return fmt.Errorf("link pagination cannot declare an explicit empty route policy")
+		}
+		if raw, present := fields["link_record_identity_pointer"]; present && strings.TrimSpace(string(raw)) == `""` {
+			return fmt.Errorf("link pagination cannot declare an explicit empty record identity pointer")
 		}
 	default:
 		allowed["cursor_request_field"] = struct{}{}
@@ -275,6 +285,8 @@ func (pagination *Pagination) UnmarshalJSON(data []byte) error {
 		allowed["last_page_response_pointer"] = struct{}{}
 		allowed["link_request_field"] = struct{}{}
 		allowed["link_response_header"] = struct{}{}
+		allowed["link_routes"] = struct{}{}
+		allowed["link_record_identity_pointer"] = struct{}{}
 	}
 	for name := range fields {
 		if _, ok := allowed[name]; !ok {
@@ -343,6 +355,7 @@ func (semantics OperationSemantics) clone() OperationSemantics {
 	}
 	if semantics.Pagination != nil {
 		pagination := *semantics.Pagination
+		pagination.LinkRoutes = slices.Clone(semantics.Pagination.LinkRoutes)
 		pagination.Witness = semantics.Pagination.Witness.clone()
 		cloned.Pagination = &pagination
 	}
@@ -522,7 +535,8 @@ func (pagination Pagination) validate(pointer string) error {
 			len(pagination.CursorResponsePointer) > 4096 || !validJSONPointer(pagination.CursorResponsePointer) ||
 			pagination.OffsetRequestField != "" || pagination.LimitRequestField != "" || pagination.TotalResponsePointer != "" ||
 			pagination.PageRequestField != "" || pagination.LastPageResponsePointer != "" ||
-			pagination.LinkRequestField != "" || pagination.LinkResponseHeader != "" {
+			pagination.LinkRequestField != "" || pagination.LinkResponseHeader != "" ||
+			len(pagination.LinkRoutes) != 0 || pagination.LinkRecordIdentityPointer != "" {
 			return sourceError(ErrUnsafeAmendment, "", pointer, "cursor pagination fields are incomplete or contradictory")
 		}
 	case string(contract.OperationPaginationOffset):
@@ -531,7 +545,8 @@ func (pagination Pagination) validate(pointer string) error {
 			(pagination.TotalResponsePointer != "" && (len(pagination.TotalResponsePointer) > 4096 || !validJSONPointer(pagination.TotalResponsePointer))) ||
 			pagination.CursorRequestField != "" || pagination.CursorResponsePointer != "" ||
 			pagination.PageRequestField != "" || pagination.LastPageResponsePointer != "" ||
-			pagination.LinkRequestField != "" || pagination.LinkResponseHeader != "" {
+			pagination.LinkRequestField != "" || pagination.LinkResponseHeader != "" ||
+			len(pagination.LinkRoutes) != 0 || pagination.LinkRecordIdentityPointer != "" {
 			return sourceError(ErrUnsafeAmendment, "", pointer, "offset pagination fields are incomplete or contradictory")
 		}
 	case string(contract.OperationPaginationPage):
@@ -539,7 +554,8 @@ func (pagination Pagination) validate(pointer string) error {
 			(pagination.LastPageResponsePointer != "" && (len(pagination.LastPageResponsePointer) > 4096 || !validJSONPointer(pagination.LastPageResponsePointer))) ||
 			pagination.CursorRequestField != "" || pagination.CursorResponsePointer != "" ||
 			pagination.OffsetRequestField != "" || pagination.LimitRequestField != "" || pagination.TotalResponsePointer != "" ||
-			pagination.LinkRequestField != "" || pagination.LinkResponseHeader != "" {
+			pagination.LinkRequestField != "" || pagination.LinkResponseHeader != "" ||
+			len(pagination.LinkRoutes) != 0 || pagination.LinkRecordIdentityPointer != "" {
 			return sourceError(ErrUnsafeAmendment, "", pointer, "page pagination fields are incomplete or contradictory")
 		}
 	case string(contract.OperationPaginationLink):
@@ -550,6 +566,28 @@ func (pagination Pagination) validate(pointer string) error {
 			(pagination.LimitRequestField != "" && (!validIdentity(pagination.LimitRequestField) ||
 				pagination.LimitRequestField == pagination.LinkRequestField)) {
 			return sourceError(ErrUnsafeAmendment, "", pointer, "link pagination fields are incomplete or contradictory")
+		}
+		if len(pagination.LinkRoutes) > contract.MaxLinkRoutes {
+			return sourceError(ErrUnsafeAmendment, "", pointer+"/link_routes", "link pagination declares too many route templates")
+		}
+		seenRoutes := make(map[string]struct{}, len(pagination.LinkRoutes))
+		for index, route := range pagination.LinkRoutes {
+			if err := contract.ValidateLinkRoute(route); err != nil {
+				return sourceError(ErrUnsafeAmendment, "", fmt.Sprintf("%s/link_routes/%d", pointer, index), err.Error())
+			}
+			if _, duplicate := seenRoutes[route]; duplicate {
+				return sourceError(ErrUnsafeAmendment, "", fmt.Sprintf("%s/link_routes/%d", pointer, index), "link route template is duplicated")
+			}
+			seenRoutes[route] = struct{}{}
+		}
+		if pagination.LinkRecordIdentityPointer != "" {
+			if len(pagination.LinkRecordIdentityPointer) > 4096 || !validJSONPointer(pagination.LinkRecordIdentityPointer) ||
+				pagination.LinkRecordIdentityPointer == "/" {
+				return sourceError(ErrUnsafeAmendment, "", pointer+"/link_record_identity_pointer", "link record identity pointer is malformed")
+			}
+		} else if len(pagination.LinkRoutes) != 0 {
+			return sourceError(ErrUnsafeAmendment, "", pointer+"/link_record_identity_pointer",
+				"an additional route template requires a declared record identity pointer")
 		}
 	default:
 		return sourceError(ErrUnsafeAmendment, "", pointer+"/kind", "pagination kind is unsupported")

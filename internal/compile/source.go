@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -68,6 +69,11 @@ const (
 	DialectOpenAPI30 Dialect = "openapi-3.0"
 	DialectOpenAPI31 Dialect = "openapi-3.1"
 	DialectSwagger20 Dialect = "swagger-2.0"
+	// DialectOfficialDocumentation identifies a supplemental capture of a
+	// provider's own published documentation. A documentation capture is not an
+	// OpenAPI description: it is never parsed as YAML or JSON, it never supplies
+	// an operation, and it is addressable only by an exact byte range.
+	DialectOfficialDocumentation Dialect = "official-documentation"
 )
 
 type SourceLock struct {
@@ -85,8 +91,13 @@ type SourceSet struct {
 }
 
 type SourceDocument struct {
-	SourceID    string `json:"source_id"`
-	OfficialURL string `json:"official_url"`
+	SourceID string `json:"source_id"`
+	// Dialect is the exact dialect of this document. An OpenAPI document
+	// declares the source set dialect (it is the one description that supplies
+	// operations); every other admitted document declares
+	// DialectOfficialDocumentation.
+	Dialect     Dialect `json:"dialect"`
+	OfficialURL string  `json:"official_url"`
 	Repository  string `json:"repository,omitempty"`
 	Revision    string `json:"revision,omitempty"`
 	Path        string `json:"path"`
@@ -196,16 +207,19 @@ func (lock SourceLock) Validate() error {
 	}
 
 	documents := make(map[string]struct{}, len(lock.SourceSet.Documents))
+	dialects := make(map[string]Dialect, len(lock.SourceSet.Documents))
 	for index, document := range lock.SourceSet.Documents {
 		pointer := fmt.Sprintf("/source_set/documents/%d", index)
-		if err := validateSourceDocument(document, pointer); err != nil {
+		if err := validateSourceDocument(document, lock.SourceSet.Dialect, pointer); err != nil {
 			return err
 		}
 		if _, duplicate := documents[document.SourceID]; duplicate {
 			return sourceError(ErrInvalidSource, document.SourceID, pointer+"/source_id", "source identity is duplicated")
 		}
 		documents[document.SourceID] = struct{}{}
+		dialects[document.SourceID] = document.Dialect
 	}
+	closureTargets := make(map[string]struct{}, len(lock.SourceSet.Documents))
 	for index, document := range lock.SourceSet.Documents {
 		seen := make(map[string]struct{}, len(document.References))
 		for refIndex, reference := range document.References {
@@ -219,6 +233,9 @@ func (lock SourceLock) Validate() error {
 			if _, ok := documents[reference.TargetSourceID]; !ok {
 				return sourceError(ErrUnsafeReference, document.SourceID, reference.FromPointer, "target source is absent from the captured closure")
 			}
+			if dialects[reference.TargetSourceID] == DialectOfficialDocumentation {
+				return sourceError(ErrUnsafeReference, document.SourceID, reference.FromPointer, "a supplemental documentation capture cannot be a reference target of the OpenAPI closure")
+			}
 			if !validJSONPointer(reference.TargetPointer) {
 				return sourceError(ErrInvalidSource, document.SourceID, pointer+"/target_pointer", "target pointer is malformed")
 			}
@@ -227,8 +244,31 @@ func (lock SourceLock) Validate() error {
 				return sourceError(ErrInvalidSource, document.SourceID, reference.FromPointer, "reference declaration is duplicated")
 			}
 			seen[key] = struct{}{}
+			if reference.TargetSourceID != document.SourceID {
+				closureTargets[reference.TargetSourceID] = struct{}{}
+			}
 		}
 	}
+	// Exactly one admitted document is the OpenAPI description that supplies the
+	// operations of this source set. Every other document is either a declared
+	// fragment of that description's reference closure (a declared reference
+	// target, which cannot supply an operation on its own) or a supplemental
+	// official-documentation capture, which is refused above as a closure target.
+	roots := make([]string, 0, 1)
+	for _, document := range lock.SourceSet.Documents {
+		if document.Dialect != lock.SourceSet.Dialect {
+			continue
+		}
+		if _, closureFragment := closureTargets[document.SourceID]; closureFragment {
+			continue
+		}
+		roots = append(roots, document.SourceID)
+	}
+	if len(roots) != 1 {
+		slices.Sort(roots)
+		return sourceError(ErrInvalidSource, "", "/source_set/documents", "source set must declare exactly one OpenAPI document that supplies operations; the documents outside a declared reference closure are: "+strings.Join(roots, ", "))
+	}
+	openAPIDocument := roots[0]
 
 	if len(lock.Operations) == 0 {
 		return sourceError(ErrInvalidSource, "", "/operations", "at least one source operation is required")
@@ -250,6 +290,9 @@ func (lock SourceLock) Validate() error {
 			if _, ok := documents[reference.SourceID]; !ok {
 				return sourceError(ErrInvalidSource, reference.SourceID, fmt.Sprintf("%s/source_refs/%d", pointer, refIndex), "operation source is absent from the captured closure")
 			}
+			if reference.SourceID != openAPIDocument {
+				return sourceError(ErrInvalidSource, reference.SourceID, fmt.Sprintf("%s/source_refs/%d", pointer, refIndex), "only the OpenAPI document that supplies operations can source an operation")
+			}
 			if !validJSONPointer(strings.TrimPrefix(reference.Pointer, "#")) || reference.Pointer == "" {
 				return sourceError(ErrInvalidSource, reference.SourceID, reference.Pointer, "operation source pointer is malformed")
 			}
@@ -267,9 +310,23 @@ func (lock SourceLock) Validate() error {
 	return nil
 }
 
-func validateSourceDocument(document SourceDocument, pointer string) error {
+func validateSourceDocument(document SourceDocument, setDialect Dialect, pointer string) error {
 	if !validIdentity(document.SourceID) {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/source_id", "must be a stable source identity")
+	}
+	switch document.Dialect {
+	case setDialect:
+	case DialectOfficialDocumentation:
+		// A documentation capture is retained verbatim: it has no closure and no
+		// operation pointer, so nothing in it can be mistaken for OpenAPI data.
+		if document.Pointer != "" {
+			return sourceError(ErrInvalidSource, document.SourceID, pointer+"/pointer", "a documentation capture declares no OpenAPI closure pointer")
+		}
+		if len(document.References) != 0 {
+			return sourceError(ErrInvalidSource, document.SourceID, pointer+"/references", "a documentation capture declares no reference closure")
+		}
+	default:
+		return sourceError(ErrUnsupportedDialect, document.SourceID, pointer+"/dialect", "document dialect must be the source set dialect or official-documentation")
 	}
 	if !validHTTPSURL(document.OfficialURL) {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/official_url", "must be an absolute HTTPS source URL")

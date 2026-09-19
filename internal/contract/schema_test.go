@@ -1037,6 +1037,44 @@ func TestPublishedSourceSchemas(t *testing.T) {
 			"lanes": []any{},
 		}},
 	})
+	check("semantics", compiled["semantics"], map[string]any{
+		"schema_version": "pm.semantics/v1",
+		"connector_id":   "github",
+		"source_digest":  "sha256:" + strings.Repeat("1", 64),
+		"revision":       "sha256:" + strings.Repeat("2", 64),
+		"operations": []map[string]any{{
+			"operation_id": "issues/list-for-repo",
+			"source_refs":  semanticsWitness["source_refs"],
+			"pagination": map[string]any{
+				"kind":                         "link",
+				"link_request_field":           "query.page",
+				"link_response_header":         "Link",
+				"limit_request_field":          "query.per-page",
+				"link_routes":                  []string{"/repositories/{repository_id}/issues"},
+				"link_record_identity_pointer": "/repository_url",
+				"witness":                      semanticsWitness,
+			},
+			"lanes": []any{},
+		}},
+	})
+	checkInvalid("semantics", compiled["semantics"], map[string]any{
+		"schema_version": "pm.semantics/v1",
+		"connector_id":   "github",
+		"source_digest":  "sha256:" + strings.Repeat("1", 64),
+		"revision":       "sha256:" + strings.Repeat("2", 64),
+		"operations": []map[string]any{{
+			"operation_id": "issues/list-for-repo",
+			"source_refs":  semanticsWitness["source_refs"],
+			"pagination": map[string]any{
+				"kind":                 "link",
+				"link_request_field":   "query.page",
+				"link_response_header": "Link",
+				"link_routes":          []string{"/repositories/{repository_id}/issues?state=open"},
+				"witness":              semanticsWitness,
+			},
+			"lanes": []any{},
+		}},
+	})
 	operation := decodeOperationForTest(t, validOperationDocumentForTest())
 	for _, binding := range operation.Inputs {
 		check("field-binding", compiled["field-binding"], binding)

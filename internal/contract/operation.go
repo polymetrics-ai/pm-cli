@@ -2,8 +2,10 @@ package contract
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -263,7 +265,16 @@ type OperationPagination struct {
 	LastPageResponsePointer string                  `json:"last_page_response_pointer,omitempty"`
 	LinkRequestField        string                  `json:"link_request_field,omitempty"`
 	LinkResponseHeader      string                  `json:"link_response_header,omitempty"`
-	Witness                 ExecutionWitness        `json:"witness"`
+	// LinkRoutes names additional route templates a provider-issued
+	// continuation target may use for the same resource, beyond the operation's
+	// own transport path. A target that matches no declared route is refused.
+	LinkRoutes []string `json:"link_routes,omitempty"`
+	// LinkRecordIdentityPointer addresses, relative to every fetched record,
+	// the declared response field that identifies the resource a continuation
+	// belongs to. The first page seals the observed identity and every
+	// continuation response must repeat it.
+	LinkRecordIdentityPointer string           `json:"link_record_identity_pointer,omitempty"`
+	Witness                   ExecutionWitness `json:"witness"`
 }
 
 func (p *OperationPagination) UnmarshalJSON(data []byte) error {
@@ -298,8 +309,16 @@ func (p *OperationPagination) UnmarshalJSON(data []byte) error {
 		allowed["link_request_field"] = struct{}{}
 		allowed["link_response_header"] = struct{}{}
 		allowed["limit_request_field"] = struct{}{}
+		allowed["link_routes"] = struct{}{}
+		allowed["link_record_identity_pointer"] = struct{}{}
 		if raw, present := fields["limit_request_field"]; present && strings.TrimSpace(string(raw)) == `""` {
 			return contractError(ErrInvalidContract, "execution.pagination.limit_request_field", "explicit empty field cannot stand in for an absent limit fact")
+		}
+		if raw, present := fields["link_routes"]; present && strings.TrimSpace(string(raw)) == `[]` {
+			return contractError(ErrInvalidContract, "execution.pagination.link_routes", "explicit empty routes cannot stand in for an absent route policy")
+		}
+		if raw, present := fields["link_record_identity_pointer"]; present && strings.TrimSpace(string(raw)) == `""` {
+			return contractError(ErrInvalidContract, "execution.pagination.link_record_identity_pointer", "explicit empty pointer cannot stand in for an absent identity fact")
 		}
 	default:
 		allowed["cursor_request_field"] = struct{}{}
@@ -311,6 +330,8 @@ func (p *OperationPagination) UnmarshalJSON(data []byte) error {
 		allowed["last_page_response_pointer"] = struct{}{}
 		allowed["link_request_field"] = struct{}{}
 		allowed["link_response_header"] = struct{}{}
+		allowed["link_routes"] = struct{}{}
+		allowed["link_record_identity_pointer"] = struct{}{}
 	}
 	for name := range fields {
 		if _, ok := allowed[name]; !ok {
@@ -590,7 +611,8 @@ func (p OperationPagination) Validate(operation Operation) error {
 			len(p.CursorResponsePointer) > 4096 || !validJSONPointer(p.CursorResponsePointer) ||
 			p.OffsetRequestField != "" || p.LimitRequestField != "" || p.TotalResponsePointer != "" ||
 			p.PageRequestField != "" || p.LastPageResponsePointer != "" ||
-			p.LinkRequestField != "" || p.LinkResponseHeader != "" {
+			p.LinkRequestField != "" || p.LinkResponseHeader != "" ||
+			len(p.LinkRoutes) != 0 || p.LinkRecordIdentityPointer != "" {
 			return contractError(ErrInvalidContract, "execution.pagination", "cursor fields are incomplete or contradictory")
 		}
 		cursor, ok := paginationCursorBinding(operation, p.CursorRequestField)
@@ -606,7 +628,8 @@ func (p OperationPagination) Validate(operation Operation) error {
 			(p.TotalResponsePointer != "" && (len(p.TotalResponsePointer) > 4096 || !validJSONPointer(p.TotalResponsePointer))) ||
 			p.CursorRequestField != "" || p.CursorResponsePointer != "" ||
 			p.PageRequestField != "" || p.LastPageResponsePointer != "" ||
-			p.LinkRequestField != "" || p.LinkResponseHeader != "" {
+			p.LinkRequestField != "" || p.LinkResponseHeader != "" ||
+			len(p.LinkRoutes) != 0 || p.LinkRecordIdentityPointer != "" {
 			return contractError(ErrInvalidContract, "execution.pagination", "offset fields are incomplete or contradictory")
 		}
 		if !paginationQueryBindingHasType(operation, p.OffsetRequestField, SchemaTypeInteger) ||
@@ -621,7 +644,8 @@ func (p OperationPagination) Validate(operation Operation) error {
 			(p.LastPageResponsePointer != "" && (len(p.LastPageResponsePointer) > 4096 || !validJSONPointer(p.LastPageResponsePointer))) ||
 			p.CursorRequestField != "" || p.CursorResponsePointer != "" ||
 			p.OffsetRequestField != "" || p.LimitRequestField != "" || p.TotalResponsePointer != "" ||
-			p.LinkRequestField != "" || p.LinkResponseHeader != "" {
+			p.LinkRequestField != "" || p.LinkResponseHeader != "" ||
+			len(p.LinkRoutes) != 0 || p.LinkRecordIdentityPointer != "" {
 			return contractError(ErrInvalidContract, "execution.pagination", "page fields are incomplete or contradictory")
 		}
 		if !paginationQueryBindingHasType(operation, p.PageRequestField, SchemaTypeInteger) {
@@ -646,6 +670,38 @@ func (p OperationPagination) Validate(operation Operation) error {
 				!paginationQueryBindingHasType(operation, p.LimitRequestField, SchemaTypeInteger) {
 				return contractError(ErrInvalidContract, "execution.pagination.limit_request_field", "must identify a distinct integer query binding")
 			}
+		}
+		if len(p.LinkRoutes) > MaxLinkRoutes {
+			return contractError(ErrInvalidContract, "execution.pagination.link_routes",
+				"must declare at most "+strconv.Itoa(MaxLinkRoutes)+" route templates")
+		}
+		seenRoutes := make(map[string]struct{}, len(p.LinkRoutes))
+		for index, route := range p.LinkRoutes {
+			path := "execution.pagination.link_routes[" + strconv.Itoa(index) + "]"
+			if err := ValidateLinkRoute(route); err != nil {
+				return contractError(ErrInvalidContract, path, err.Error())
+			}
+			if route == operation.Transport.Path {
+				return contractError(ErrInvalidContract, path, "repeats the operation transport path instead of widening it")
+			}
+			if _, duplicate := seenRoutes[route]; duplicate {
+				return contractError(ErrDuplicateField, path, "route template is duplicated")
+			}
+			seenRoutes[route] = struct{}{}
+		}
+		if p.LinkRecordIdentityPointer != "" {
+			if len(p.LinkRecordIdentityPointer) > 4096 || !validJSONPointer(p.LinkRecordIdentityPointer) ||
+				p.LinkRecordIdentityPointer == "/" || decodeJSONPointerParts(p.LinkRecordIdentityPointer) == nil {
+				return contractError(ErrInvalidContract, "execution.pagination.link_record_identity_pointer", "must be a non-root JSON pointer into a fetched record")
+			}
+			if !recordPointerHasType(operation, p.LinkRecordIdentityPointer, SchemaTypeString) &&
+				!recordPointerHasType(operation, p.LinkRecordIdentityPointer, SchemaTypeInteger) {
+				return contractError(ErrInvalidContract, "execution.pagination.link_record_identity_pointer",
+					"must identify a string or integer field of the declared record schema")
+			}
+		} else if len(p.LinkRoutes) != 0 {
+			return contractError(ErrInvalidContract, "execution.pagination.link_record_identity_pointer",
+				"an additional route template requires a declared record identity pointer")
 		}
 	default:
 		return contractError(ErrInvalidContract, "execution.pagination.kind", "pagination kind is unsupported")
@@ -746,6 +802,145 @@ func responsePointerHasType(operation Operation, pointer string, schemaType Sche
 func operationHasPaginatedRecords(operation Operation) bool {
 	for _, response := range operation.Responses {
 		if response.CarriesPaginatedRecords() {
+			return true
+		}
+	}
+	return false
+}
+
+const (
+	// MaxLinkRoutes bounds the number of additional route templates one link
+	// pagination fact may declare.
+	MaxLinkRoutes        = 8
+	maxLinkRouteBytes    = 1024
+	maxLinkRouteSegments = 64
+)
+
+// ValidateLinkRoute validates one declared route template a provider-issued
+// continuation target may use for the same resource. A route template is an
+// absolute path of literal segments and whole-segment placeholders written as
+// {name}; it never carries a query, fragment, userinfo or percent-encoded
+// literal, so a provider path can only match it literally or through one
+// bounded placeholder segment.
+func ValidateLinkRoute(route string) error {
+	if route == "" || len(route) > maxLinkRouteBytes || !utf8.ValidString(route) || route[0] != '/' {
+		return errors.New("route template must be a bounded absolute path")
+	}
+	if strings.ContainsAny(route, "?#\\ \t\r\n") || strings.Contains(route, "//") {
+		return errors.New("route template must be one clean absolute path without a query, fragment or escape")
+	}
+	segments := strings.Split(strings.TrimPrefix(route, "/"), "/")
+	if len(segments) == 0 || len(segments) > maxLinkRouteSegments {
+		return errors.New("route template must declare a bounded number of nonempty segments")
+	}
+	for _, segment := range segments {
+		switch {
+		case segment == "", segment == ".", segment == "..":
+			return errors.New("route template segments must be nonempty and never relative")
+		case segment[0] == '{' && segment[len(segment)-1] == '}':
+			name := segment[1 : len(segment)-1]
+			if !validLinkRoutePlaceholder(name) {
+				return errors.New("route template placeholder must be a bounded {name} segment")
+			}
+		default:
+			for index := range len(segment) {
+				character := segment[index]
+				if character <= 0x20 || character >= 0x7f ||
+					character == '{' || character == '}' || character == '%' {
+					return errors.New("route template literal segments must be unescaped printable ASCII")
+				}
+			}
+		}
+	}
+	return nil
+}
+
+func validLinkRoutePlaceholder(name string) bool {
+	if name == "" || len(name) > 128 {
+		return false
+	}
+	for index := range len(name) {
+		character := name[index]
+		switch {
+		case character >= 'a' && character <= 'z',
+			character >= 'A' && character <= 'Z',
+			character >= '0' && character <= '9',
+			character == '_', character == '-', character == '.':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+// LinkRouteMatches reports whether one escaped provider-issued path matches a
+// declared route template. A placeholder segment matches exactly one nonempty
+// segment and refuses a percent-encoded path separator, so an encoded slash can
+// never widen the route a provider target is admitted through.
+func LinkRouteMatches(escapedPath, template string) bool {
+	if ValidateLinkRoute(template) != nil || escapedPath == "" || escapedPath[0] != '/' ||
+		strings.ContainsAny(escapedPath, "?#\\") {
+		return false
+	}
+	templateSegments := strings.Split(strings.TrimPrefix(template, "/"), "/")
+	pathSegments := strings.Split(strings.TrimPrefix(escapedPath, "/"), "/")
+	if len(templateSegments) != len(pathSegments) {
+		return false
+	}
+	for index := range templateSegments {
+		segment := templateSegments[index]
+		value := pathSegments[index]
+		if segment[0] == '{' && segment[len(segment)-1] == '}' {
+			if !validLinkRoutePlaceholderValue(value) {
+				return false
+			}
+			continue
+		}
+		if segment != value {
+			return false
+		}
+	}
+	return true
+}
+
+func validLinkRoutePlaceholderValue(value string) bool {
+	if value == "" || strings.ContainsAny(value, "{}") {
+		return false
+	}
+	lowered := strings.ToLower(value)
+	for index := range len(value) {
+		if value[index] <= 0x20 || value[index] >= 0x7f {
+			return false
+		}
+	}
+	return !strings.Contains(lowered, "%2f") && !strings.Contains(lowered, "%5c") &&
+		!strings.Contains(lowered, "%00")
+}
+
+// recordPointerHasType reports whether one declared response record field
+// resolves, relative to every fetched record, to the requested schema type.
+func recordPointerHasType(operation Operation, pointer string, schemaType SchemaType) bool {
+	parts := decodeJSONPointerParts(pointer)
+	if len(parts) == 0 {
+		return false
+	}
+	for _, response := range operation.Responses {
+		if !response.CarriesPaginatedRecords() {
+			continue
+		}
+		records := *response.Schema
+		if response.RecordPointer != nil {
+			resolved, ok := requestSchemaAtPointer(*response.Schema, decodeJSONPointerParts(*response.RecordPointer))
+			if !ok {
+				continue
+			}
+			records = resolved
+		}
+		if records.Items == nil {
+			continue
+		}
+		schema, ok := requestSchemaAtPointer(*records.Items, parts)
+		if ok && schema.Type == schemaType {
 			return true
 		}
 	}
@@ -1239,14 +1434,67 @@ var canonicalLanes = [...]Lane{
 	LaneSyncTransport,
 }
 
+// validSourcePointer admits the two exact ways one source reference may address
+// an admitted capture: a JSON pointer into a structured source document, and an
+// exact byte range ("bytes:<start>-<end>") into a retained documentation
+// capture. Both forms are bounded and neither can be read as the other, so a
+// structured fact can never be satisfied by documentation bytes and the
+// reverse. Which form a document admits is decided by the document's own
+// declared dialect, never by the pointer text alone.
 func validSourcePointer(value string) bool {
 	if value == "" || len(value) > 4096 {
 		return false
 	}
-	if strings.HasPrefix(value, "#") {
-		value = strings.TrimPrefix(value, "#")
+	if _, ok := ParseSourceByteRange(value); ok {
+		return true
 	}
-	return validJSONPointer(value)
+	return validJSONPointer(strings.TrimPrefix(value, "#"))
+}
+
+// SourceByteRange is one exact, half-open byte range of a retained
+// documentation capture: the bytes at [Start, End).
+type SourceByteRange struct {
+	Start int
+	End   int
+}
+
+// ParseSourceByteRange parses the documentation byte-range addressing form
+// "bytes:<start>-<end>", with the leading "#" of a source reference optional.
+// Both bounds are canonical decimal (no sign, no leading zero) and the range
+// must be nonempty; one grammar owns the form, so the contract and the compiler
+// can never disagree about it.
+func ParseSourceByteRange(pointer string) (SourceByteRange, bool) {
+	value := strings.TrimPrefix(pointer, "#")
+	value, ok := strings.CutPrefix(value, "bytes:")
+	if !ok {
+		return SourceByteRange{}, false
+	}
+	startText, endText, ok := strings.Cut(value, "-")
+	if !ok {
+		return SourceByteRange{}, false
+	}
+	start, startOK := canonicalDecimalCount(startText)
+	end, endOK := canonicalDecimalCount(endText)
+	if !startOK || !endOK || end <= start {
+		return SourceByteRange{}, false
+	}
+	return SourceByteRange{Start: start, End: end}, true
+}
+
+func canonicalDecimalCount(value string) (int, bool) {
+	if value == "" || (len(value) > 1 && value[0] == '0') {
+		return 0, false
+	}
+	for index := 0; index < len(value); index++ {
+		if value[index] < '0' || value[index] > '9' {
+			return 0, false
+		}
+	}
+	number, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, false
+	}
+	return number, true
 }
 
 // ValidateLane validates one canonical execution lane without duplicating the

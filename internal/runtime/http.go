@@ -250,6 +250,24 @@ func ExecuteHTTP(ctx context.Context, dependencies HTTPDependencies, request HTT
 	if err != nil {
 		return HTTPExecution{}, err
 	}
+	// A sealed provider continuation target is re-validated against the admitted
+	// destination and the request PM is about to send before the credential
+	// channel is validated, so the credential can never be appended to a query
+	// the provider target changed and the target can never widen what the
+	// accepted request authorizes.
+	if prepared.state != nil {
+		if err := applyContinuationTarget(
+			&encoded,
+			request.Operation,
+			activePagination,
+			*prepared.state,
+			origin,
+			request.Egress.RequireTLS,
+			httpFacts.Authorization,
+		); err != nil {
+			return HTTPExecution{}, err
+		}
+	}
 	if httpFacts.Authorization != nil {
 		if err := validateAuthorizationChannel(&encoded, *httpFacts.Authorization); err != nil {
 			return HTTPExecution{}, err
@@ -475,6 +493,9 @@ func ExecuteHTTP(ctx context.Context, dependencies HTTPDependencies, request HTT
 				RequestURL:     target,
 				ResponseHeader: response.Header,
 				Authorization:  httpFacts.Authorization,
+				BasePath:       origin.EscapedPath(),
+				RequireTLS:     request.Egress.RequireTLS,
+				RecordIdentity: continuationRecordIdentity(prepared.state),
 			},
 		)
 		if pageErr != nil {

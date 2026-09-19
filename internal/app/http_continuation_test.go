@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -362,6 +364,155 @@ func TestDurableHTTPContinuationAcrossWorkerRestart(t *testing.T) {
 	})
 }
 
+// TestDurableLinkContinuationFollowsTheSealedProviderTarget proves the
+// owner-approved link continuation policy through the durable envelope: the
+// provider-issued canonical-route target and its cursor survive a worker
+// restart inside the server-owned continuation, the next request is issued
+// against the provider's path with the cursor preserved verbatim, and the
+// records of every page must identify the same resource.
+func TestDurableLinkContinuationFollowsTheSealedProviderTarget(t *testing.T) {
+	temporal := newPermitTemporalHarness(t)
+	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
+	consumer := testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway)
+	var (
+		mu       sync.Mutex
+		requests []string
+	)
+	origin, tlsConfig, dialer := newHTTPDirectReadTLSPeer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		mu.Lock()
+		requests = append(requests, request.URL.EscapedPath()+"?"+request.URL.RawQuery)
+		mu.Unlock()
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("page") == "1" {
+			writer.Header().Set("Link",
+				`</repositories/23096959/issues?project=chain&per_page=2&page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D>; rel="next"`)
+			_, _ = io.WriteString(writer,
+				`{"records":[{"id":1,"repo":"golang/go"},{"id":2,"repo":"golang/go"}]}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"records":[{"id":3,"repo":"golang/go"}]}`)
+	}))
+	authority := &durableContinuationAuthority{
+		selection: durableLinkContinuationSelection("fixture.http.link-continuation", origin),
+		policy:    httpDirectReadPolicy(origin),
+	}
+	dependencies := app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
+		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
+	}
+	fixture, producerPublisher := newDurableContinuationFixture(
+		t, authority, dependencies, producer, consumer, producer.Limits,
+	)
+	producerService := workerResultService(
+		t, fixture, temporal, producerPublisher, durableContinuationObjectBytes,
+	)
+
+	cap := uint64(2)
+	first := admitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope,
+		fixture.Connection.ConnectionID, "durable-link-continuation-first",
+		durableLinkContinuationInput(t, "chain", 1, 2), contract.ResultControls{TotalRecordCap: &cap},
+	)
+	firstRun := preparePermitWorkerRun(t, fixture, producerService, temporal, fixture.Scope, fixture.Actor, first)
+	firstUnit, err := executePermitWorkerUnit(t, producerService, firstRun)
+	if err != nil || firstUnit.State != contract.RunStateSucceeded {
+		t.Fatalf("link continuation first unit = %#v error=%v", firstUnit, err)
+	}
+	firstResult := loadDurableContinuationResult(t, fixture, first.RunRef)
+	assertDurableContinuationIDs(t, firstResult, 1, 2)
+	firstToken := requireDurableContinuationToken(t, firstResult)
+
+	consumerRegistry, consumerPublisher := newDurableContinuationWorker(
+		t, fixture, dependencies, consumer, producer.Limits,
+	)
+	fixture.WorkerRegistry = consumerRegistry
+	consumerService := workerResultService(
+		t, fixture, temporal, consumerPublisher, durableContinuationObjectBytes,
+	)
+	second := admitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope,
+		fixture.Connection.ConnectionID, "durable-link-continuation-second",
+		contract.NewObjectValue(map[string]contract.PresentValue{}), continuationControls(firstToken),
+	)
+	secondRun := preparePermitWorkerRun(t, fixture, consumerService, temporal, fixture.Scope, fixture.Actor, second)
+	secondUnit, err := executePermitWorkerUnit(t, consumerService, secondRun)
+	if err != nil || secondUnit.State != contract.RunStateSucceeded {
+		t.Fatalf("link continuation resumed unit = %#v error=%v", secondUnit, err)
+	}
+	secondResult := loadDurableContinuationResult(t, fixture, second.RunRef)
+	assertDurableContinuationIDs(t, secondResult, 3)
+	if secondResult.Pagination == nil || !secondResult.Pagination.SourceExhausted ||
+		secondResult.Pagination.Continuation.Presence() != contract.PresenceAbsent {
+		t.Fatalf("link continuation final pagination = %#v", secondResult.Pagination)
+	}
+	mu.Lock()
+	got := strings.Join(requests, "|")
+	mu.Unlock()
+	want := "/fixture?project=chain&page=1&per_page=2|" +
+		"/repositories/23096959/issues?project=chain&page=2&per_page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D"
+	if got != want {
+		t.Fatalf("link continuation requests = %q; want %q", got, want)
+	}
+}
+
+// TestDurableLinkContinuationCannotResumeUnderAnotherSelectedOrigin proves the
+// durable binding of a sealed provider target: the same continuation cannot be
+// resumed once the durable authority selects another origin, so a sealed target
+// is only ever re-authorized against the origin the producing run was admitted
+// to. The runtime re-checks the sealed origin itself before every request.
+func TestDurableLinkContinuationCannotResumeUnderAnotherSelectedOrigin(t *testing.T) {
+	temporal := newPermitTemporalHarness(t)
+	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
+	consumer := testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway)
+	var providerCalls atomic.Int32
+	origin, tlsConfig, dialer := newHTTPDirectReadTLSPeer(t, http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		providerCalls.Add(1)
+		writer.Header().Set("Content-Type", "application/json")
+		if request.URL.Query().Get("page") == "1" {
+			writer.Header().Set("Link",
+				`</repositories/23096959/issues?project=chain&per_page=2&page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D>; rel="next"`)
+			_, _ = io.WriteString(writer,
+				`{"records":[{"id":1,"repo":"golang/go"},{"id":2,"repo":"golang/go"}]}`)
+			return
+		}
+		_, _ = io.WriteString(writer, `{"records":[{"id":3,"repo":"golang/go"}]}`)
+	}))
+	authority := &durableContinuationAuthority{
+		selection: durableLinkContinuationSelection("fixture.http.link-continuation-origin", origin),
+		policy:    httpDirectReadPolicy(origin),
+	}
+	dependencies := app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
+		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
+	}
+	fixture, publisher := newDurableContinuationFixture(
+		t, authority, dependencies, producer, consumer, producer.Limits,
+	)
+	service := workerResultService(t, fixture, temporal, publisher, durableContinuationObjectBytes)
+	cap := uint64(2)
+	first := admitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope,
+		fixture.Connection.ConnectionID, "durable-link-origin-first",
+		durableLinkContinuationInput(t, "chain", 1, 2), contract.ResultControls{TotalRecordCap: &cap},
+	)
+	firstRun := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, first)
+	if _, err := executePermitWorkerUnit(t, service, firstRun); err != nil {
+		t.Fatal(err)
+	}
+	token := requireDurableContinuationToken(t, loadDurableContinuationResult(t, fixture, first.RunRef))
+	before := providerCalls.Load()
+	originalPolicy := authority.policy
+	authority.policy.SelectedOrigin = "https://alternate.provider.test"
+	response := submitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope,
+		fixture.Connection.ConnectionID, "durable-link-origin-second",
+		contract.NewObjectValue(map[string]contract.PresentValue{}), continuationControls(token),
+	)
+	requireInitialProblem(t, response, http.StatusBadRequest, "invalid_request")
+	if providerCalls.Load() != before {
+		t.Fatalf("another selected origin reached provider: calls=%d want=%d", providerCalls.Load(), before)
+	}
+	authority.policy = originalPolicy
+}
+
 func TestDurableHTTPContinuationCapacityRefusalPrecedesProviderIO(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
 	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
@@ -550,6 +701,87 @@ func durableHTTPContinuationSelection(operationID, origin string) app.OperationS
 		},
 		SchemaRefs: []string{"http-durable-continuation-schema-v1"},
 	}
+}
+
+// durableLinkContinuationSelection declares the owner-approved link
+// continuation policy: the provider's canonical repository route is admitted
+// for the same resource, a declared record field identifies that resource, and
+// the provider cursor namespace stays undeclared so it can only be sealed from
+// a provider response.
+func durableLinkContinuationSelection(operationID, origin string) app.OperationSelection {
+	operationSource := []contract.SourceRef{{SourceID: "http-direct-read-fixture", Pointer: "#/operations/link-read"}}
+	responseSource := []contract.SourceRef{{SourceID: "http-direct-read-fixture", Pointer: "#/operations/link-read/responses"}}
+	record := contract.Schema{
+		Type: contract.SchemaTypeObject, Required: []string{"id", "repo"},
+		Properties: map[string]contract.Schema{
+			"id":   {Type: contract.SchemaTypeInteger},
+			"repo": {Type: contract.SchemaTypeString},
+		},
+	}
+	responseSchema := contract.Schema{
+		Type: contract.SchemaTypeObject, Required: []string{"records"},
+		Properties: map[string]contract.Schema{
+			"records": {Type: contract.SchemaTypeArray, Items: &record},
+		},
+	}
+	recordPointer := "/records"
+	capabilities := httpDirectReadBaseCapabilities()
+	for _, capability := range contract.HTTPExecutionCapabilities() {
+		if capability.Capability == "http.paginate" {
+			capabilities = append(capabilities, capability)
+		}
+	}
+	query := func(fieldID, wireName string, required bool, schema contract.Schema) contract.FieldBinding {
+		return contract.FieldBinding{
+			FieldID: fieldID, WireName: wireName, Location: contract.FieldLocationQuery,
+			JSONPointer: "/query/" + wireName, Required: required, Nullable: false,
+			Style: "form", Explode: true, Sensitivity: contract.SensitivityPublic, Schema: schema,
+		}
+	}
+	return app.OperationSelection{
+		Operation: contract.Operation{
+			SchemaVersion: contract.OperationSchemaVersion, OperationID: operationID,
+			SourceRefs: operationSource,
+			Transport:  contract.Transport{Kind: contract.TransportKindHTTP, Method: http.MethodGet, Path: "/fixture"},
+			Inputs: []contract.FieldBinding{
+				query("project", "project", true, contract.Schema{Type: contract.SchemaTypeString}),
+				query("page", "page", false, contract.Schema{Type: contract.SchemaTypeInteger}),
+				query("per-page", "per_page", false, contract.Schema{Type: contract.SchemaTypeInteger}),
+			},
+			RequestVariants: []contract.RequestVariant{},
+			Responses: []contract.Response{{
+				Status: "200", MediaType: "application/json", Schema: &responseSchema,
+				SourceRefs: responseSource, RecordPointer: &recordPointer,
+			}},
+			CapabilityRequirements: capabilities,
+			LaneEligibility:        httpDirectReadLaneEligibility(),
+			Execution: &contract.OperationExecution{
+				HTTP: &contract.OperationHTTP{
+					Origins: []string{origin, "https://alternate.provider.test"},
+					Witness: contract.ExecutionWitness{ProofID: "durable-link-http", SourceRefs: operationSource},
+				},
+				Pagination: &contract.OperationPagination{
+					Kind:                      contract.OperationPaginationLink,
+					LinkRequestField:          "page",
+					LinkResponseHeader:        "Link",
+					LimitRequestField:         "per-page",
+					LinkRoutes:                []string{"/repositories/{repository_id}/issues"},
+					LinkRecordIdentityPointer: "/repo",
+					Witness:                   contract.ExecutionWitness{ProofID: "durable-link-pagination", SourceRefs: responseSource},
+				},
+			},
+		},
+		SchemaRefs: []string{"http-durable-continuation-schema-v1"},
+	}
+}
+
+func durableLinkContinuationInput(t *testing.T, project string, page, perPage uint64) contract.PresentValue {
+	t.Helper()
+	return contract.NewObjectValue(map[string]contract.PresentValue{
+		"project":  contract.NewStringValue(project),
+		"page":     durableContinuationInteger(t, page),
+		"per-page": durableContinuationInteger(t, perPage),
+	})
 }
 
 func durableContinuationInput(t *testing.T, project string, page uint64) contract.PresentValue {
