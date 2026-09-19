@@ -333,6 +333,12 @@ func (request Request) validate() error {
 		if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory || strings.ContainsAny(directory, "\x00\n\r") {
 			return failure(CodeUnadmittedPath, "an admitted directory must be one absolute, cleaned local path")
 		}
+		// The declaration is this child's own authorization anchor, so it must
+		// be one real directory: a declared symbolic link would resolve outside
+		// every component check that follows.
+		if err := validateRegularDirectory(directory, "the declared admitted directory"); err != nil {
+			return classify(err)
+		}
 	}
 	if (request.Select == nil) == (request.Encode == nil) {
 		return failure(CodeProtocol, "exactly one of the typed select and encode operations must be present")
@@ -589,14 +595,26 @@ func (engine *engine) execute(ctx context.Context, request Request) (Result, err
 			return result, classify(err)
 		}
 		if descriptor.Bytes > request.Bounds.Bytes {
-			_ = os.Remove(descriptor.Path)
-			return result, failure(CodeBoundExceeded, "the materialized segment exceeds the declared byte bound")
+			return result, refuseOverBoundSegment(descriptor)
 		}
 		result.Columns = append([]Column(nil), request.Encode.Columns...)
 		result.Output = &descriptor
 		return result, nil
 	}
 	return engine.selectRows(ctx, request)
+}
+
+// refuseOverBoundSegment removes one materialized segment that exceeded the
+// declared byte bound and reports the removal failure instead of discarding it:
+// an over-bound file left at an admitted output path is itself a refusal of
+// every later attempt at that path, so the caller must not receive a bound
+// refusal that hides it.
+func refuseOverBoundSegment(descriptor OutputDescriptor) error {
+	if err := os.Remove(descriptor.Path); err != nil {
+		return failure(CodeOutputFailed,
+			"the materialized segment exceeds the declared byte bound and could not be removed: %v", err)
+	}
+	return failure(CodeBoundExceeded, "the materialized segment exceeds the declared byte bound")
 }
 
 // selectRows executes the typed projection over the materialized relations.
@@ -705,8 +723,7 @@ func (engine *engine) writeSegment(ctx context.Context, request Request, stateme
 		return result, classify(err)
 	}
 	if descriptor.Bytes > request.Bounds.Bytes {
-		_ = os.Remove(descriptor.Path)
-		return result, failure(CodeBoundExceeded, "the materialized segment exceeds the declared byte bound")
+		return result, refuseOverBoundSegment(descriptor)
 	}
 	result.Columns = declared
 	result.Output = &descriptor

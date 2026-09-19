@@ -7,14 +7,18 @@
 # no network, and no writable shared database file: the supervising worker
 # supplies a private per-attempt directory through TMPDIR and HOME.
 #
-# Base images are supplied as digest-pinned build arguments. This repository
-# admits images only through build/toolchains.lock.json, which
-# scripts/ci/check-image-pins.py verifies against the registry, so no digest is
-# invented here: a missing or tag-only argument fails the build instead.
+# The two base images are supplied as build arguments and must be digest
+# references: the builder stage refuses an absent, tag-only, or otherwise
+# non-digest argument before it builds anything, and the runtime stage is never
+# resolved from a mutable tag. Their pinned identities are still deferred --
+# neither argument is admitted by build/toolchains.lock.json yet, and
+# scripts/ci/check-image-pins.py reads that lock only, so this Dockerfile
+# verifies the *form* of each reference and claims no verified registry
+# identity. Supply the digests once the toolchain lock admits these images.
 #
 #   docker build \
 #     --build-arg GO_BUILD_IMAGE=golang@sha256:<pinned index digest> \
-#     --build-arg RUNTIME_IMAGE=<pinned runtime base with libstdc++> \
+#     --build-arg RUNTIME_IMAGE=<pinned runtime base with libstdc++>@sha256:<pinned index digest> \
 #     -f packaging/Dockerfile.query -t pm-query:<tag> .
 #
 # The runtime base must provide the C++ runtime the pinned DuckDB static
@@ -25,6 +29,47 @@ ARG GO_BUILD_IMAGE
 ARG RUNTIME_IMAGE
 
 FROM ${GO_BUILD_IMAGE} AS builder
+
+ARG GO_BUILD_IMAGE
+ARG RUNTIME_IMAGE
+
+# A tag, a bare name, or an absent argument is not a pinned base image. This is
+# the builder stage's first step, so a non-digest RUNTIME_IMAGE fails the build
+# before that base is resolved; the builder base itself is already resolved by
+# the FROM above, which is why it is checked here rather than before it.
+RUN set -eu; \
+    guard_digest_reference() { \
+        name="$1"; \
+        reference="$2"; \
+        case "$reference" in \
+            *@sha256:*) \
+                repository="${reference%@sha256:*}"; \
+                digest="${reference##*@sha256:}"; \
+                ;; \
+            *) \
+                echo "$name must be a digest reference, found '${reference:-<absent>}'" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+        case "$repository" in \
+            ""|*[!A-Za-z0-9._:/-]*) \
+                echo "$name must name a repository before its digest" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+        case "$digest" in \
+            ""|*[!0-9a-f]*) \
+                echo "$name must be pinned by a lowercase sha256 digest" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+        if [ "${#digest}" -ne 64 ]; then \
+            echo "$name must be pinned by a 64-character sha256 digest" >&2; \
+            exit 1; \
+        fi; \
+    }; \
+    guard_digest_reference GO_BUILD_IMAGE "$GO_BUILD_IMAGE"; \
+    guard_digest_reference RUNTIME_IMAGE "$RUNTIME_IMAGE"
 
 # The pinned module graph is authoritative: the build never resolves a new
 # dependency and never rewrites go.mod or go.sum.

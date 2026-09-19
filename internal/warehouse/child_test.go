@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math/rand/v2"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -34,6 +35,10 @@ const (
 	isolationBulkRows              = 40000
 	isolationRootStatePermission   = 0o500
 	isolationSourceRelation        = "orders"
+	// isolationChildRefusalStatus is the exit status the restricted child uses
+	// for one typed refusal document, so the supervisor's own report of an
+	// observed status can be compared with the child's declared contract.
+	isolationChildRefusalStatus = 1
 )
 
 // TestQueryProcessIsolation is the R18 acceptance case. It exercises the real
@@ -113,6 +118,88 @@ func TestQueryProcessIsolation(t *testing.T) {
 		if !fixture.rows[0][10].IsNull() {
 			t.Fatal("fixture no longer carries an explicit null cell")
 		}
+	})
+
+	t.Run("declared_entry_point_executes_one_attempt", func(t *testing.T) {
+		// The declared seam constructs the supervisor from its configuration and
+		// executes one request: a caller that holds a configuration rather than a
+		// constructed supervisor uses it.
+		request := fixture.sourceRequest()
+		request.Select.Limit = 2
+		response, err := ExecuteQueryChild(t.Context(), ChildConfig{
+			BinaryPath:    fixture.childPath,
+			ScratchRoot:   fixture.scratchRoot,
+			AdmittedRoots: []string{fixture.admitted, fixture.probes},
+			Limits:        fixture.defaultLimits(),
+		}, request)
+		if err != nil {
+			t.Fatalf("execute one attempt through the declared entry point: %v", err)
+		}
+		expected := fixture.rowsAscendingByID()[:2]
+		if !reflect.DeepEqual(response.Rows, expected) {
+			t.Fatalf("the declared entry point returned %s, want %s", describeRows(response.Rows), describeRows(expected))
+		}
+		fixture.observeChildReport(t, response)
+		fixture.expectScratchEmpty(t)
+	})
+
+	t.Run("unhonourable_supervisor_document_caps_are_refused", func(t *testing.T) {
+		// One number both admits and decodes: a cap above the protocol document
+		// capability would admit an attempt whose typed document the codec
+		// refuses, after the child had already run and materialized an immutable
+		// segment at the admitted output path.
+		unhonourable := map[string]func(limits *ChildLimits){
+			"response_cap": func(limits *ChildLimits) { limits.MaxResponseBytes = maximumResponseCap + 1 },
+			"request_cap":  func(limits *ChildLimits) { limits.MaxRequestBytes = MaxQueryDocumentBytes + 1 },
+		}
+		for name, mutate := range unhonourable {
+			t.Run("supervisor_refuses_"+name, func(t *testing.T) {
+				limits := fixture.maximumLimits()
+				mutate(&limits)
+				child, err := NewQueryChild(ChildConfig{
+					BinaryPath:    fixture.childPath,
+					ScratchRoot:   fixture.scratchRoot,
+					AdmittedRoots: []string{fixture.admitted, fixture.probes},
+					Limits:        limits,
+				})
+				if err == nil {
+					t.Fatalf("the supervisor accepted a %s the protocol document codec cannot carry", name)
+				}
+				if refusal := requireRefusal(t, err); refusal.Code != RefusalBoundExceeded {
+					t.Fatalf("%s refusal code = %q, want %q: %s", name, refusal.Code, RefusalBoundExceeded, refusal.Reason)
+				}
+				if child != nil {
+					t.Fatalf("an unhonourable %s produced a usable supervisor", name)
+				}
+			})
+		}
+
+		// The largest honourable configuration is accepted, executes, and admits
+		// the largest declared byte bound the codec can carry; one byte more is
+		// refused by admission before any child exists.
+		child := fixture.newChild(t, fixture.maximumLimits())
+		largest := fixture.sourceRequest()
+		largest.Select.Limit = 1
+		largest.Bounds.Bytes = isolationByteBound
+		if _, err := child.Execute(t.Context(), largest); err != nil {
+			t.Fatalf("the largest honourable configuration refused an admitted request: %v", err)
+		}
+		oversized := fixture.sourceRequest()
+		oversized.Select.Limit = 1
+		oversized.Bounds.Bytes = isolationByteBound + 1
+		response, err := child.Execute(t.Context(), oversized)
+		if err == nil {
+			t.Fatalf("the supervisor admitted a byte bound beyond its honourable response cap and returned %d rows", len(response.Rows))
+		}
+		refusal := requireRefusal(t, err)
+		if refusal.Code != RefusalBoundExceeded {
+			t.Fatalf("byte-bound refusal code = %q, want %q: %s", refusal.Code, RefusalBoundExceeded, refusal.Reason)
+		}
+		if refusal.Child != nil {
+			t.Fatal("an over-cap byte bound reached a child process instead of being refused before execution")
+		}
+		fixture.expectScratchEmpty(t)
+		fixture.expectDurableStateUnchanged(t)
 	})
 
 	t.Run("prohibited_requests_are_refused_before_execution", func(t *testing.T) {
@@ -233,6 +320,9 @@ func TestQueryProcessIsolation(t *testing.T) {
 				if refusal.Child != nil {
 					t.Fatal("supervisor refusal reported a child that should never have started")
 				}
+				if refusal.ExitCode != -1 {
+					t.Fatalf("a refusal taken before a child exists reported exit status %d, want -1", refusal.ExitCode)
+				}
 				if len(response.Rows) != 0 {
 					t.Fatalf("refused request invented %d rows", len(response.Rows))
 				}
@@ -333,6 +423,125 @@ func TestQueryProcessIsolation(t *testing.T) {
 		fixture.expectDurableStateUnchanged(t)
 	})
 
+	t.Run("symlinked_components_inside_admitted_roots_are_refused", func(t *testing.T) {
+		layout := fixture.escapingExports(t)
+		child := fixture.newChild(t, fixture.defaultLimits())
+
+		// A relation whose directory component is a pre-existing symlink inside
+		// an admitted root. The bytes behind the link exist and carry the admitted
+		// identity, so the traversed link is the only reason to refuse it: had the
+		// engine opened it, it would have read outside the admitted roots.
+		escaped := fixture.sourceRequest()
+		escaped.AdmittedDirectories = []string{fixture.probes}
+		escaped.Relations[0].Path = layout.relation
+		escaped.Select.Limit = 1
+		response, err := child.Execute(t.Context(), escaped)
+		if err == nil {
+			t.Fatalf("the supervisor admitted a relation that resolves outside its admitted roots and returned %d rows", len(response.Rows))
+		}
+		refusal := requireRefusal(t, err)
+		if refusal.Code != RefusalUnadmittedPath {
+			t.Fatalf("escaped relation refusal code = %q, want %q: %s", refusal.Code, RefusalUnadmittedPath, refusal.Reason)
+		}
+		if refusal.Origin != RefusalOriginSupervisor {
+			t.Fatalf("escaped relation refusal origin = %q, want the supervisor", refusal.Origin)
+		}
+		if refusal.Child != nil {
+			t.Fatal("a relation that resolves outside the admitted roots reached a child process")
+		}
+		if len(response.Rows) != 0 {
+			t.Fatalf("refused escaped relation returned %d rows", len(response.Rows))
+		}
+		fixture.expectScratchEmpty(t)
+
+		// The child refuses the same class on its own, without the supervisor.
+		document := fixture.childDocument(t, func(request *QueryRequest) {
+			request.AdmittedDirectories = []string{fixture.probes}
+			request.Relations[0].Path = layout.relation
+			request.Select.Limit = 1
+		})
+		run := fixture.runChildDocument(t, string(document), fixture.defaultLimits())
+		if run.exitCode == 0 {
+			t.Fatalf("the child read a relation that resolves outside its admitted directories: %s", run.stdout)
+		}
+		childRefusal := run.refusal(t)
+		if childRefusal.Code != RefusalUnadmittedPath || childRefusal.Origin != RefusalOriginChild {
+			t.Fatalf("child-origin escaped relation refusal = %q/%q, want %q/child: %s",
+				childRefusal.Code, childRefusal.Origin, RefusalUnadmittedPath, childRefusal.Reason)
+		}
+
+		// A declared admitted directory that is itself a symlink is refused by
+		// the child's own anchor check, before any component below it is used.
+		symlinked := fixture.childDocument(t, func(request *QueryRequest) {
+			request.AdmittedDirectories = []string{layout.link}
+			request.Relations[0].Path = layout.relation
+			request.Select.Limit = 1
+		})
+		run = fixture.runChildDocument(t, string(symlinked), fixture.defaultLimits())
+		if run.exitCode == 0 {
+			t.Fatalf("the child admitted a declared admitted directory that is a symlink: %s", run.stdout)
+		}
+		if code := run.refusal(t).Code; code != RefusalUnadmittedPath {
+			t.Fatalf("symlinked admitted directory refusal code = %q, want %q", code, RefusalUnadmittedPath)
+		}
+
+		// An output path whose grandparent is a symlink: refused, and nothing is
+		// written outside the admitted roots.
+		written := fixture.sourceRequest()
+		written.AdmittedDirectories = []string{fixture.probes}
+		written.Relations[0].Path = layout.nested
+		written.Select.Output = &QueryOutput{Path: layout.output}
+		written.Select.Limit = 1
+		response, err = child.Execute(t.Context(), written)
+		if err == nil {
+			t.Fatalf("the supervisor admitted an output that resolves outside its admitted roots and returned %d rows", len(response.Rows))
+		}
+		refusal = requireRefusal(t, err)
+		if refusal.Code != RefusalUnadmittedPath || refusal.Origin != RefusalOriginSupervisor || refusal.Child != nil {
+			t.Fatalf("escaped output refusal = %q/%q child=%v, want %q/supervisor and no child: %s",
+				refusal.Code, refusal.Origin, refusal.Child, RefusalUnadmittedPath, refusal.Reason)
+		}
+		if _, statErr := os.Lstat(layout.output); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("the refused attempt left a segment outside the admitted roots at %s", layout.output)
+		}
+		fixture.expectScratchEmpty(t)
+		fixture.expectDurableStateUnchanged(t)
+
+		// The child refuses that output on its own and materializes nothing.
+		childOutput := fixture.childDocument(t, func(request *QueryRequest) {
+			request.AdmittedDirectories = []string{fixture.probes}
+			request.Relations[0].Path = layout.nested
+			request.Select.Output = &QueryOutput{Path: layout.output}
+			request.Select.Limit = 1
+		})
+		run = fixture.runChildDocument(t, string(childOutput), fixture.defaultLimits())
+		if run.exitCode == 0 {
+			t.Fatalf("the child materialized a segment outside its admitted directories: %s", run.stdout)
+		}
+		if code := run.refusal(t).Code; code != RefusalUnadmittedPath {
+			t.Fatalf("child-origin escaped output refusal code = %q, want %q", code, RefusalUnadmittedPath)
+		}
+		if _, statErr := os.Lstat(layout.output); !errors.Is(statErr, os.ErrNotExist) {
+			t.Fatalf("the child left a segment outside its admitted directories at %s", layout.output)
+		}
+
+		// An ordinary nested directory inside the admitted root is still accepted
+		// end to end, so the component walk refuses only what leaves the roots.
+		nested := fixture.sourceRequest()
+		nested.AdmittedDirectories = []string{fixture.probes}
+		nested.Relations[0].Path = layout.nested
+		response, err = child.Execute(t.Context(), nested)
+		if err != nil {
+			t.Fatalf("an ordinary nested directory inside the admitted root was refused: %v", err)
+		}
+		expected := fixture.rowsAscendingByID()
+		if !reflect.DeepEqual(response.Rows, expected) {
+			t.Fatalf("nested-directory relation returned %s, want %s", describeRows(response.Rows), describeRows(expected))
+		}
+		fixture.expectScratchEmpty(t)
+		fixture.expectDurableStateUnchanged(t)
+	})
+
 	t.Run("declared_bounds_beyond_child_capability_are_refused", func(t *testing.T) {
 		limits := fixture.defaultLimits()
 		limits.MemoryBytes = 32 << 20
@@ -408,6 +617,99 @@ func TestQueryProcessIsolation(t *testing.T) {
 		fixture.expectDurableStateUnchanged(t)
 	})
 
+	t.Run("wrapped_wall_time_bounds_are_refused_before_conversion", func(t *testing.T) {
+		// The wire form carries milliseconds, so a decoded value is range-checked
+		// before the nanosecond multiplication wraps it into the accepted range.
+		documents := map[string]string{
+			"wrapped_multiple": fmt.Sprintf(boundsProbeDocument, isolationWrappedWallMillis),
+			"wrapped_minimum":  fmt.Sprintf(boundsProbeDocument, "-9223372036854775808"),
+			"over_capability":  fmt.Sprintf(boundsProbeDocument, "300001"),
+		}
+		reasons := map[string]string{}
+		for name, document := range documents {
+			t.Run("codec_refuses_"+name, func(t *testing.T) {
+				_, err := DecodeQueryRequest([]byte(document))
+				if err == nil {
+					t.Fatalf("the parent codec accepted a %s wall-time bound: %s", name, document)
+				}
+				reasons[name] = requireRefusal(t, err).Reason
+			})
+		}
+		// The wrapped bound is refused as the documented capability refusal, not
+		// as a wrap-induced report about a non-positive value.
+		if reasons["wrapped_multiple"] == "" || reasons["wrapped_multiple"] != reasons["over_capability"] {
+			t.Fatalf("a wrapped wall-time bound was refused as %q while a value above the capability was refused as %q",
+				reasons["wrapped_multiple"], reasons["over_capability"])
+		}
+		t.Run("child_refuses_wrapped_multiple", func(t *testing.T) {
+			run := fixture.runChildDocument(t, documents["wrapped_multiple"], fixture.defaultLimits())
+			if run.exitCode == 0 {
+				t.Fatalf("the child executed a request whose wrapped wall-time bound decoded to exactly one second: %s", run.stdout)
+			}
+			refusal := run.refusal(t)
+			if refusal.Code != RefusalBoundExceeded || refusal.Origin != RefusalOriginChild {
+				t.Fatalf("child refusal for a wrapped wall-time bound = %q/%q, want %q/child: %s",
+					refusal.Code, refusal.Origin, RefusalBoundExceeded, refusal.Reason)
+			}
+		})
+	})
+
+	t.Run("over_bound_segment_removal_failure_is_surfaced", func(t *testing.T) {
+		// Removing an over-bound segment fails while the directory that holds it
+		// refuses writes: the child creates the segment first, and the case closes
+		// the admitted directory's write permission as soon as the segment exists,
+		// while the child still holds that file open for writing and before it
+		// removes it. The refusal must then report the removal failure instead of a
+		// bound refusal that hides a file left at the admitted output path.
+		output := filepath.Join(fixture.admitted, "over-bound.parquet")
+		restore := func() {
+			_ = os.Chmod(fixture.admitted, 0o700)
+			_ = os.Remove(output)
+		}
+		t.Cleanup(restore)
+		if _, err := os.Lstat(output); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("the over-bound output path already exists: %v", err)
+		}
+		request := fixture.overBoundEncodeRequest(output)
+		if int64(len(request.Encode.Rows))*isolationOverBoundValueBytes <= request.Bounds.Bytes {
+			t.Fatal("the over-bound fixture declares a byte bound its own payload cannot exceed")
+		}
+		child := fixture.newChild(t, fixture.defaultLimits())
+		type outcome struct {
+			response QueryResponse
+			err      error
+		}
+		results := make(chan outcome, 1)
+		go func() {
+			response, err := child.Execute(t.Context(), request)
+			results <- outcome{response: response, err: err}
+		}()
+		awaitRegularFile(t, output, 60*time.Second)
+		if err := os.Chmod(fixture.admitted, 0o500); err != nil {
+			t.Fatalf("close the admitted directory's write permission: %v", err)
+		}
+		var result outcome
+		select {
+		case result = <-results:
+		case <-time.After(60 * time.Second):
+			t.Fatal("the supervisor did not return after the over-bound removal failed")
+		}
+		if result.err == nil {
+			t.Fatalf("an over-bound segment whose removal failed returned %d rows instead of a refusal", len(result.response.Rows))
+		}
+		refusal := requireRefusal(t, result.err)
+		if refusal.Code != RefusalOutputFailed {
+			t.Fatalf("refusal code for an unremovable over-bound segment = %q, want %q: %s",
+				refusal.Code, RefusalOutputFailed, refusal.Reason)
+		}
+		if _, err := os.Lstat(output); err != nil {
+			t.Fatalf("the fixture did not leave the over-bound segment at the admitted output path: %v", err)
+		}
+		restore()
+		fixture.expectScratchEmpty(t)
+		fixture.expectDurableStateUnchanged(t)
+	})
+
 	t.Run("killed_child_preserves_source_manifest_and_effect_state", func(t *testing.T) {
 		t.Run("supervisor_wall_time_kill", func(t *testing.T) {
 			limits := fixture.defaultLimits()
@@ -453,6 +755,9 @@ func TestQueryProcessIsolation(t *testing.T) {
 			if refusal.Code != RefusalBoundExceeded {
 				t.Fatalf("declared wall-time refusal code = %q, want %q: %s", refusal.Code, RefusalBoundExceeded, refusal.Reason)
 			}
+			if refusal.ExitCode != isolationChildRefusalStatus {
+				t.Fatalf("an explicit child refusal reported exit status %d, want %d", refusal.ExitCode, isolationChildRefusalStatus)
+			}
 			if len(response.Rows) != 0 {
 				t.Fatalf("deadline refusal reported %d invented rows", len(response.Rows))
 			}
@@ -484,6 +789,11 @@ func TestQueryProcessIsolation(t *testing.T) {
 				refusal := requireRefusal(t, result.err)
 				if refusal.Code != RefusalChildKilled && refusal.Code != RefusalChildExit {
 					t.Fatalf("killed child refusal code = %q, want %q or %q: %s", refusal.Code, RefusalChildKilled, RefusalChildExit, refusal.Reason)
+				}
+				// A process killed by a signal has no exit status, and the refusal
+				// reports the kill through its code instead of inventing one.
+				if refusal.ExitCode != -1 {
+					t.Fatalf("a killed child reported exit status %d, want -1", refusal.ExitCode)
 				}
 				if len(result.response.Rows) != 0 {
 					t.Fatalf("externally killed child reported %d invented rows", len(result.response.Rows))
@@ -524,6 +834,74 @@ func TestQueryProcessIsolation(t *testing.T) {
 			fixture.expectScratchEmpty(t)
 			fixture.expectDurableStateUnchanged(t)
 		})
+	})
+
+	t.Run("scratch_removal_failure_is_reported", func(t *testing.T) {
+		// An attempt whose per-attempt scratch directory cannot be removed is
+		// never reported as a clean outcome: that directory still holds the
+		// child's engine spill, so the supervisor reports the removal failure.
+		child := fixture.newChild(t, fixture.defaultLimits())
+		type outcome struct {
+			response QueryResponse
+			err      error
+		}
+		results := make(chan outcome, 1)
+		go func() {
+			response, err := child.Execute(t.Context(), fixture.sourceRequest())
+			results <- outcome{response: response, err: err}
+		}()
+		scratch := fixture.awaitScratchEngine(t, 60*time.Second)
+		displaced := fixture.displaceScratchRoot(t)
+		var result outcome
+		select {
+		case result = <-results:
+		case <-time.After(60 * time.Second):
+			t.Fatal("the supervisor did not return while its scratch root was displaced")
+		}
+		remaining := filepath.Join(displaced, filepath.Base(scratch))
+		if _, err := os.Lstat(remaining); err != nil {
+			t.Fatalf("the case did not leave a per-attempt scratch directory on disk: %v", err)
+		}
+		if result.err == nil {
+			t.Fatalf("an attempt whose scratch could not be removed returned %d rows as a clean outcome", len(result.response.Rows))
+		}
+		refusal := requireRefusal(t, result.err)
+		if refusal.Code != RefusalEnvironment || refusal.Origin != RefusalOriginSupervisor {
+			t.Fatalf("scratch removal refusal = %q/%q, want %q/supervisor: %s",
+				refusal.Code, refusal.Origin, RefusalEnvironment, refusal.Reason)
+		}
+		if len(result.response.Rows) != 0 {
+			t.Fatalf("an undisposable attempt reported %d invented rows", len(result.response.Rows))
+		}
+	})
+
+	t.Run("child_exit_status_is_reported", func(t *testing.T) {
+		// A child stand-in that exits without a response document is the
+		// supervisor's own observation: the refusal reports the status it saw, so
+		// a caller can tell a startup failure from a refusal from a kill.
+		for _, status := range []int{2, 7} {
+			t.Run(fmt.Sprintf("exit_status_%d", status), func(t *testing.T) {
+				child := fixture.newChildWithBinary(t, fixture.writeStubChild(t, status), fixture.defaultLimits())
+				request := fixture.sourceRequest()
+				request.Select.Limit = 1
+				response, err := child.Execute(t.Context(), request)
+				if err == nil {
+					t.Fatalf("a child stand-in that exited %d returned %d rows", status, len(response.Rows))
+				}
+				refusal := requireRefusal(t, err)
+				if refusal.Code != RefusalChildExit || refusal.Origin != RefusalOriginSupervisor {
+					t.Fatalf("child stand-in refusal = %q/%q, want %q/supervisor: %s",
+						refusal.Code, refusal.Origin, RefusalChildExit, refusal.Reason)
+				}
+				if refusal.ExitCode != status {
+					t.Fatalf("child stand-in exit status reported as %d, want %d", refusal.ExitCode, status)
+				}
+				if refusal.Child == nil || refusal.Child.PID <= 0 {
+					t.Fatalf("child stand-in refusal did not name the process that exited: %+v", refusal.Child)
+				}
+				fixture.expectScratchEmpty(t)
+			})
+		}
 	})
 
 	t.Run("child_environment_and_descriptors_are_cleared", func(t *testing.T) {
@@ -713,7 +1091,7 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 			Relations:   2,
 			Columns:     32,
 			Rows:        int64(len(fixture.rows)),
-			Bytes:       8 << 20,
+			Bytes:       isolationByteBound,
 			TempBytes:   64 << 20,
 			MemoryBytes: 128 << 20,
 			WallTime:    time.Minute,
@@ -747,7 +1125,7 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 			Relations:   2,
 			Columns:     32,
 			Rows:        isolationBulkRows,
-			Bytes:       64 << 20,
+			Bytes:       isolationByteBound,
 			TempBytes:   64 << 20,
 			MemoryBytes: 128 << 20,
 			WallTime:    2 * time.Minute,
@@ -772,10 +1150,88 @@ func newQueryIsolationFixture(t *testing.T) *queryIsolationFixture {
 	return fixture
 }
 
+// isolationByteBound is the largest declared byte bound the fixture's
+// supervisor admits: the supervisor reads a declared bound plus the document
+// envelope, both bounded by the protocol codec's own document capability.
+const isolationByteBound = maximumResponseCap - responseEnvelopeSlack
+
+// isolationOverBoundRows and isolationOverBoundValueBytes size one encoded
+// payload the wire form can still carry as a single request document: the
+// payload is incompressible, so the materialized segment keeps the encoded size
+// and the writer holds the admitted output file open while the case observes
+// it.
+const (
+	isolationOverBoundRows       = 5
+	isolationOverBoundValueBytes = 1 << 20
+	isolationOverBoundByteBound  = 1 << 20
+)
+
+// isolationWrappedWallMillis wraps to exactly one second when it is multiplied
+// into a duration: 2^58 + 1000 milliseconds is 2^58 * 10^6 nanoseconds plus one
+// second, and 2^58 * 10^6 is a whole multiple of 2^64 nanoseconds.
+const isolationWrappedWallMillis = "288230376151712744"
+
+// boundsProbeDocument is one complete request document whose only varied member
+// is the declared wall-time bound in milliseconds. It is rendered as text so a
+// case can present a value the typed request cannot express; its declared
+// directory is one real directory on every platform so nothing but the bound
+// can refuse the document.
+const boundsProbeDocument = `{"protocol":"pm.query/1","request_id":"wall-time-probe",` +
+	`"admitted_directories":["/usr"],` +
+	`"bounds":{"relations":"1","columns":"1","rows":"1","bytes":"1","temp_bytes":"1","memory_bytes":"1","wall_millis":"%s"},` +
+	`"relations":[],"select":{"from":"orders","project":[{"column":"id"}],"limit":"1"}}`
+
+func (fixture *queryIsolationFixture) overBoundEncodeRequest(output string) QueryRequest {
+	// The payload is drawn from a fixed generator rather than a repeating
+	// pattern: a compressible payload would materialize a segment that fits the
+	// declared bound and never exercise the over-bound removal.
+	random := rand.New(rand.NewPCG(1, 2))
+	rows := make([][]QueryValue, isolationOverBoundRows)
+	for index := range rows {
+		payload := make([]byte, isolationOverBoundValueBytes)
+		for position := range payload {
+			payload[position] = byte(random.Uint32())
+		}
+		rows[index] = []QueryValue{BytesQueryValue(payload)}
+	}
+	return QueryRequest{
+		RequestID:           "isolation-over-bound",
+		AdmittedDirectories: []string{fixture.admitted},
+		Bounds: QueryBounds{
+			Relations:   1,
+			Columns:     4,
+			Rows:        isolationOverBoundRows,
+			Bytes:       isolationOverBoundByteBound,
+			TempBytes:   64 << 20,
+			MemoryBytes: 128 << 20,
+			WallTime:    time.Minute,
+		},
+		Encode: &QueryEncode{
+			Columns: []QueryColumn{{Name: "payload", Kind: QueryKindBytea, Nullable: false}},
+			Rows:    rows,
+			Output:  QueryOutput{Path: output},
+		},
+	}
+}
+
+// awaitRegularFile waits until one regular file exists at path, so a case can
+// act while the child still holds that file open.
+func awaitRegularFile(t *testing.T, path string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if info, err := os.Lstat(path); err == nil && info.Mode().IsRegular() {
+			return
+		}
+		time.Sleep(50 * time.Microsecond)
+	}
+	t.Fatalf("no writer presented a regular file at %s within %s", path, timeout)
+}
+
 func (fixture *queryIsolationFixture) defaultLimits() ChildLimits {
 	return ChildLimits{
-		MaxRequestBytes:     16 << 20,
-		MaxResponseBytes:    64 << 20,
+		MaxRequestBytes:     MaxQueryDocumentBytes,
+		MaxResponseBytes:    maximumResponseCap,
 		MaxDiagnosticsBytes: 64 << 10,
 		MemoryBytes:         128 << 20,
 		TempBytes:           64 << 20,
@@ -787,8 +1243,6 @@ func (fixture *queryIsolationFixture) defaultLimits() ChildLimits {
 func (fixture *queryIsolationFixture) maximumLimits() ChildLimits {
 	limits := fixture.defaultLimits()
 	limits.WallTime = 2 * time.Minute
-	limits.MaxRequestBytes = 64 << 20
-	limits.MaxResponseBytes = 128 << 20
 	limits.MemoryBytes = 256 << 20
 	return limits
 }
@@ -828,6 +1282,155 @@ func (fixture *queryIsolationFixture) outsidePath() string {
 	return filepath.Join(fixture.outside, "foreign.parquet")
 }
 
+// isolationExports is one pre-existing symbolic link inside an admitted root
+// with real directories outside every admitted root behind it, plus an
+// ordinary nested directory beside it. A declared path that is lexically inside
+// the admitted root therefore resolves outside it, while the same component
+// walk must still accept the ordinary nested directory.
+type isolationExports struct {
+	link     string
+	nested   string
+	target   string
+	relation string
+	output   string
+}
+
+func (fixture *queryIsolationFixture) escapingExports(t *testing.T) isolationExports {
+	t.Helper()
+	exports := filepath.Join(fixture.probes, "exports")
+	for _, directory := range []string{exports, filepath.Join(exports, "nested"), filepath.Join(fixture.outside, "sub")} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatalf("create the fixture directory %s: %v", directory, err)
+		}
+	}
+	link := filepath.Join(exports, "link")
+	switch info, err := os.Lstat(link); {
+	case errors.Is(err, os.ErrNotExist):
+		if err := os.Symlink(fixture.outside, link); err != nil {
+			t.Fatalf("create the escaping symlink inside the admitted root: %v", err)
+		}
+	case err != nil:
+		t.Fatalf("inspect the escaping symlink: %v", err)
+	case info.Mode()&os.ModeSymlink == 0:
+		t.Fatalf("the escaping fixture path %s is not a symlink", link)
+	}
+	layout := isolationExports{
+		link:     link,
+		nested:   filepath.Join(exports, "nested", "source.parquet"),
+		target:   filepath.Join(fixture.outside, "sub", "source.parquet"),
+		relation: filepath.Join(link, "sub", "source.parquet"),
+		output:   filepath.Join(link, "sub", "written.parquet"),
+	}
+	source, err := os.ReadFile(fixture.source)
+	if err != nil {
+		t.Fatalf("read the admitted source segment: %v", err)
+	}
+	for _, destination := range []string{layout.nested, layout.target} {
+		if err := os.WriteFile(destination, source, 0o600); err != nil {
+			t.Fatalf("place the admitted bytes at %s: %v", destination, err)
+		}
+	}
+	// The escaping relation names bytes that really exist behind the link and
+	// carry the admitted identity, so the only reason to refuse it is the
+	// traversed link itself.
+	for _, path := range []string{layout.relation, layout.nested} {
+		info, err := os.Lstat(path)
+		if err != nil || !info.Mode().IsRegular() {
+			t.Fatalf("the escaping fixture is not a readable regular file at %s: %v", path, err)
+		}
+		if digest := digestFileString(t, path); digest != fixture.sourceDigest {
+			t.Fatalf("the escaping fixture at %s does not carry the admitted digest", path)
+		}
+	}
+	if _, err := os.Lstat(layout.output); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("the escaping output fixture already exists at %s: %v", layout.output, err)
+	}
+	return layout
+}
+
+// awaitScratchEngine waits until the supervisor's per-attempt scratch directory
+// exists and the child's private engine directories are inside it, so a case can
+// change the scratch root while a live attempt still holds it and no later
+// child step still has to create anything below it.
+func (fixture *queryIsolationFixture) awaitScratchEngine(t *testing.T, timeout time.Duration) string {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		entries, err := os.ReadDir(fixture.scratchRoot)
+		if err != nil {
+			t.Fatalf("read the supervisor scratch root: %v", err)
+		}
+		for _, entry := range entries {
+			if !strings.HasPrefix(entry.Name(), "pm-query-") {
+				continue
+			}
+			scratch := filepath.Join(fixture.scratchRoot, entry.Name())
+			present := true
+			for _, name := range []string{"duckdb-temp", "duckdb-secrets"} {
+				if info, err := os.Lstat(filepath.Join(scratch, name)); err != nil || !info.IsDir() {
+					present = false
+				}
+			}
+			if present {
+				return scratch
+			}
+		}
+		time.Sleep(200 * time.Microsecond)
+	}
+	t.Fatalf("the supervisor never presented a live per-attempt scratch directory under %s", fixture.scratchRoot)
+	return ""
+}
+
+// displaceScratchRoot replaces the supervisor's scratch root with one regular
+// file, so removing the per-attempt scratch directory below it fails with a
+// real filesystem error instead of succeeding.
+func (fixture *queryIsolationFixture) displaceScratchRoot(t *testing.T) string {
+	t.Helper()
+	displaced := fixture.scratchRoot + ".displaced"
+	if err := os.Rename(fixture.scratchRoot, displaced); err != nil {
+		t.Fatalf("displace the supervisor scratch root: %v", err)
+	}
+	if err := os.WriteFile(fixture.scratchRoot, []byte("displaced\n"), 0o600); err != nil {
+		t.Fatalf("place a regular file at the scratch root: %v", err)
+	}
+	t.Cleanup(func() {
+		_ = os.Remove(fixture.scratchRoot)
+		_ = os.RemoveAll(displaced)
+		_ = os.Mkdir(fixture.scratchRoot, 0o700)
+	})
+	return displaced
+}
+
+// writeStubChild places one executable child stand-in that exits with the given
+// status without writing a response document, so the supervisor's own reporting
+// of an observed exit status is observable.
+func (fixture *queryIsolationFixture) writeStubChild(t *testing.T, status int) string {
+	t.Helper()
+	path := filepath.Join(fixture.root, fmt.Sprintf("pm-query-stub-%d", status))
+	script := fmt.Sprintf("#!/bin/sh\nexit %d\n", status)
+	if err := os.WriteFile(path, []byte(script), 0o700); err != nil {
+		t.Fatalf("write the child stand-in: %v", err)
+	}
+	if info, err := os.Lstat(path); err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o100 == 0 {
+		t.Fatalf("the child stand-in is not an executable regular file: %v", err)
+	}
+	return path
+}
+
+func (fixture *queryIsolationFixture) newChildWithBinary(t *testing.T, binary string, limits ChildLimits) *QueryChild {
+	t.Helper()
+	child, err := NewQueryChild(ChildConfig{
+		BinaryPath:    binary,
+		ScratchRoot:   fixture.scratchRoot,
+		AdmittedRoots: []string{fixture.admitted, fixture.probes},
+		Limits:        limits,
+	})
+	if err != nil {
+		t.Fatalf("construct a supervisor for the child stand-in: %v", err)
+	}
+	return child
+}
+
 // columnCopy hands out the declared schema without sharing its backing array:
 // a negative subtest mutates the request it sends, and that must never corrupt
 // the fixture for later subtests.
@@ -857,7 +1460,7 @@ func (fixture *queryIsolationFixture) sourceRequest() QueryRequest {
 			Relations:   2,
 			Columns:     32,
 			Rows:        int64(len(fixture.rows)),
-			Bytes:       8 << 20,
+			Bytes:       isolationByteBound,
 			TempBytes:   32 << 20,
 			MemoryBytes: 128 << 20,
 			WallTime:    30 * time.Second,
@@ -880,7 +1483,7 @@ func (fixture *queryIsolationFixture) bulkRequest() QueryRequest {
 			Relations:   1,
 			Columns:     4,
 			Rows:        isolationBulkRows,
-			Bytes:       32 << 20,
+			Bytes:       isolationByteBound,
 			TempBytes:   32 << 20,
 			MemoryBytes: 128 << 20,
 			WallTime:    time.Minute,

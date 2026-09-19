@@ -46,6 +46,11 @@ const (
 	// readyAnnouncement is emitted before the request is read so the supervisor
 	// can confirm the restricted startup and observe the live process.
 	readyAnnouncement = "pm-query ready pid="
+	// maximumWallMillis is the child's own wall-time capability in the wire
+	// form's unit. A decoded millisecond value is range-checked against it
+	// before it is converted into a duration, because the nanosecond
+	// multiplication wraps.
+	maximumWallMillis = int64(analytics.MaximumWallTime / time.Millisecond)
 )
 
 const (
@@ -559,6 +564,16 @@ func decodeBounds(wire boundsDocument) (analytics.BoundAnalytics, error) {
 	if err != nil {
 		return bounds, err
 	}
+	// The declared bound is range-checked before the conversion: the nanosecond
+	// multiplication wraps for a value beyond the capability, and a wrapped
+	// value lands inside the accepted range where the documented refusal can
+	// never fire.
+	switch {
+	case wallMillis > maximumWallMillis:
+		return bounds, boundFailure("the wall-time bound exceeds the child capability of %s", analytics.MaximumWallTime)
+	case wallMillis < -maximumWallMillis:
+		return bounds, boundFailure("the wall-time bound is beyond the child capability of %s", analytics.MaximumWallTime)
+	}
 	bounds = analytics.BoundAnalytics{
 		Relations:   int(relations),
 		Columns:     int(columns),
@@ -569,6 +584,11 @@ func decodeBounds(wire boundsDocument) (analytics.BoundAnalytics, error) {
 		WallTime:    time.Duration(wallMillis) * time.Millisecond,
 	}
 	return bounds, nil
+}
+
+// boundFailure reports one declared bound the child capability cannot honour.
+func boundFailure(format string, arguments ...any) error {
+	return &analytics.Failure{Code: analytics.CodeBoundExceeded, Reason: fmt.Sprintf(format, arguments...)}
 }
 
 // decodeIntegral reads one integral member. A JSON number, a zero-padded value,

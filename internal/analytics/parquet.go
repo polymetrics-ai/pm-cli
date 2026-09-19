@@ -179,6 +179,9 @@ func (relation Relation) validateAdmission(admittedDirectories []string) error {
 	if !WithinAdmittedDirectories(relation.Path, admittedDirectories) {
 		return fmt.Errorf("%w: relation %q is outside the admitted directories", ErrUnadmittedPath, relation.Name)
 	}
+	if err := validateContainedPath(relation.Path, fmt.Sprintf("relation %q", relation.Name), admittedDirectories); err != nil {
+		return err
+	}
 	return validateRegularFile(relation.Path, fmt.Sprintf("relation %q", relation.Name))
 }
 
@@ -224,8 +227,7 @@ func (output Output) validateAdmission(admittedDirectories []string) error {
 	if !WithinAdmittedDirectories(output.Path, admittedDirectories) {
 		return fmt.Errorf("%w: the output path is outside the admitted directories", ErrUnadmittedPath)
 	}
-	directory := filepath.Dir(output.Path)
-	if err := validateRegularDirectory(directory, "the output directory"); err != nil {
+	if err := validateContainedPath(output.Path, "the output path", admittedDirectories); err != nil {
 		return err
 	}
 	info, err := os.Lstat(output.Path)
@@ -259,20 +261,53 @@ func (output OutputDescriptor) Validate() error {
 // WithinAdmittedDirectories reports whether path is inside one of the declared
 // admitted directories.
 func WithinAdmittedDirectories(path string, admittedDirectories []string) bool {
+	_, inside := containingAdmittedDirectory(path, admittedDirectories)
+	return inside
+}
+
+// containingAdmittedDirectory reports which declared admitted directory
+// contains path. A path equal to a declared directory is not inside it: an
+// admitted relation or output always names a leaf below the declared
+// directory.
+func containingAdmittedDirectory(path string, admittedDirectories []string) (string, bool) {
 	for _, directory := range admittedDirectories {
 		if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
 			continue
 		}
 		relative, err := filepath.Rel(directory, path)
-		if err != nil {
+		if err != nil || relative == "." || strings.HasPrefix(relative, "..") {
 			continue
 		}
-		if relative == "." || strings.HasPrefix(relative, "..") {
-			continue
-		}
-		return true
+		return directory, true
 	}
-	return false
+	return "", false
+}
+
+// validateContainedPath requires every component of path at or below the
+// declared admitted directory that contains it to stay inside that directory by
+// identity, not only by spelling: the declared directory and every ancestor
+// between it and the leaf must be real directories, so a symbolic link created
+// inside an admitted directory can never redirect a relation or an output
+// outside it. The leaf's own type is checked by the caller's leaf inspection,
+// so an output path that does not exist yet is still observable here.
+func validateContainedPath(path, description string, admittedDirectories []string) error {
+	root, admitted := containingAdmittedDirectory(path, admittedDirectories)
+	if !admitted {
+		return fmt.Errorf("%w: %s is outside the admitted directories", ErrUnadmittedPath, description)
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return fmt.Errorf("%w: %s is outside the admitted directories", ErrUnadmittedPath, description)
+	}
+	components := strings.Split(relative, string(filepath.Separator))
+	current := root
+	for _, component := range components[:len(components)-1] {
+		current = filepath.Join(current, component)
+		if err := validateRegularDirectory(current, description); err != nil {
+			return err
+		}
+	}
+	return validateRegularDirectory(root, description)
 }
 
 // validateRegularFile refuses a symlink, a FIFO, a device, a directory, or a
@@ -291,6 +326,9 @@ func validateRegularFile(path, description string) error {
 	return nil
 }
 
+// validateRegularDirectory refuses a symlink or a non-directory at one
+// position of an admitted path. It never follows a link it finds, so one
+// checked position cannot be redirected somewhere else.
 func validateRegularDirectory(path, description string) error {
 	info, err := os.Lstat(path)
 	if err != nil {

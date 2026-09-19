@@ -68,6 +68,10 @@ func (limits ChildLimits) Validate() error {
 		return refusal(RefusalBoundExceeded, "the child memory cap exceeds the protocol capability")
 	case limits.TempBytes > MaximumQueryTempBytes:
 		return refusal(RefusalBoundExceeded, "the child temporary cap exceeds the protocol capability")
+	case limits.MaxRequestBytes > MaxQueryDocumentBytes:
+		return refusal(RefusalBoundExceeded, "the child request byte cap exceeds the protocol document capability of %d bytes", MaxQueryDocumentBytes)
+	case limits.MaxResponseBytes > maximumResponseCap:
+		return refusal(RefusalBoundExceeded, "the child response byte cap exceeds the protocol document capability of %d bytes", MaxQueryDocumentBytes)
 	}
 	return nil
 }
@@ -143,6 +147,20 @@ func NewQueryChild(config ChildConfig) (*QueryChild, error) {
 	}}, nil
 }
 
+// ExecuteQueryChild is the supervised analytical child entry point: it
+// constructs one supervisor from the validated configuration and executes
+// exactly one request. A caller that holds a supervisor configuration rather
+// than a constructed instance uses this seam; (*QueryChild).Execute is the
+// underlying attempt.
+func ExecuteQueryChild(ctx context.Context, config ChildConfig, request QueryRequest) (QueryResponse, error) {
+	var response QueryResponse
+	child, err := NewQueryChild(config)
+	if err != nil {
+		return response, err
+	}
+	return child.Execute(ctx, request)
+}
+
 // Execute runs exactly one supervised attempt. A refusal is returned as a typed
 // *Refusal error and never as rows: an unavailable answer stays unavailable.
 // The supervisor never writes an admitted file, a source manifest, or an effect
@@ -166,13 +184,33 @@ func (child *QueryChild) Execute(ctx context.Context, request QueryRequest) (Que
 	if err != nil {
 		return response, refusal(RefusalEnvironment, "create the per-attempt scratch directory: %v", err)
 	}
-	defer func() { _ = scratch.Close() }()
 	attempt, err := startChildAttempt(ctx, child.config, scratch, document)
 	if err != nil {
-		return response, err
+		return response, disposeScratch(scratch, err)
 	}
 	defer attempt.terminate()
-	return attempt.await(ctx, request, child.config.Limits)
+	response, attemptErr := attempt.await(ctx, request, child.config.Limits)
+	if err := disposeScratch(scratch, attemptErr); err != nil {
+		return QueryResponse{}, err
+	}
+	return response, nil
+}
+
+// disposeScratch removes the per-attempt scratch directory and reports a
+// removal failure instead of discarding it: a scratch that stays on disk still
+// holds the child's engine spill, so the attempt is never reported as a clean
+// outcome while that state remains. When the attempt itself already failed,
+// both failures are reported and neither is hidden.
+func disposeScratch(scratch *BoundScratch, attemptErr error) error {
+	closeErr := scratch.Close()
+	if closeErr == nil {
+		return attemptErr
+	}
+	failure := refusal(RefusalEnvironment, "remove the per-attempt scratch directory: %v", closeErr)
+	if attemptErr == nil {
+		return failure
+	}
+	return errors.Join(attemptErr, failure)
 }
 
 // admit refuses a request the supervisor itself can reject: an unadmitted path,
@@ -183,19 +221,23 @@ func (child *QueryChild) admit(request QueryRequest) error {
 		return err
 	}
 	for _, directory := range request.AdmittedDirectories {
-		if !withinAdmittedRoots(directory, child.config.AdmittedRoots) {
-			return refusal(RefusalUnadmittedPath, "the request declares an admitted directory outside the supervised roots")
+		if err := inspectAdmittedComponents(directory, "a declared admitted directory", child.config.AdmittedRoots); err != nil {
+			return err
 		}
 		if err := inspectAdmittedDirectory(directory); err != nil {
 			return err
 		}
 	}
 	for _, relation := range request.Relations {
+		description := "relation " + strconv.Quote(relation.Name)
 		if !withinAdmittedRoots(relation.Path, child.config.AdmittedRoots) ||
 			!withinAdmittedRoots(relation.Path, request.AdmittedDirectories) {
 			return refusal(RefusalUnadmittedPath, "relation %q is outside the admitted directories", relation.Name)
 		}
-		if err := inspectAdmittedFile(relation.Path, "relation "+strconv.Quote(relation.Name)); err != nil {
+		if err := inspectAdmittedComponents(relation.Path, description, child.config.AdmittedRoots); err != nil {
+			return err
+		}
+		if err := inspectAdmittedFile(relation.Path, description); err != nil {
 			return err
 		}
 	}
@@ -203,6 +245,9 @@ func (child *QueryChild) admit(request QueryRequest) error {
 		if !withinAdmittedRoots(request.Select.Output.Path, child.config.AdmittedRoots) ||
 			!withinAdmittedRoots(request.Select.Output.Path, request.AdmittedDirectories) {
 			return refusal(RefusalUnadmittedPath, "the output path is outside the admitted directories")
+		}
+		if err := inspectAdmittedComponents(request.Select.Output.Path, "the output path", child.config.AdmittedRoots); err != nil {
+			return err
 		}
 		if err := inspectAdmittedOutput(request.Select.Output.Path); err != nil {
 			return err
@@ -212,6 +257,9 @@ func (child *QueryChild) admit(request QueryRequest) error {
 		if !withinAdmittedRoots(request.Encode.Output.Path, child.config.AdmittedRoots) ||
 			!withinAdmittedRoots(request.Encode.Output.Path, request.AdmittedDirectories) {
 			return refusal(RefusalUnadmittedPath, "the output path is outside the admitted directories")
+		}
+		if err := inspectAdmittedComponents(request.Encode.Output.Path, "the output path", child.config.AdmittedRoots); err != nil {
+			return err
 		}
 		if err := inspectAdmittedOutput(request.Encode.Output.Path); err != nil {
 			return err
@@ -235,6 +283,12 @@ func (child *QueryChild) admit(request QueryRequest) error {
 // withinAdmittedRoots reports whether path is inside one of the authorized
 // roots.
 func withinAdmittedRoots(path string, roots []string) bool {
+	_, inside := containingAdmittedRoot(path, roots)
+	return inside
+}
+
+// containingAdmittedRoot reports which authorized root contains path.
+func containingAdmittedRoot(path string, roots []string) (string, bool) {
 	for _, root := range roots {
 		relative, err := filepath.Rel(root, path)
 		if err != nil {
@@ -244,11 +298,58 @@ func withinAdmittedRoots(path string, roots []string) bool {
 		if strings.HasPrefix(relative, "..") {
 			continue
 		}
-		return true
+		return root, true
 	}
-	return false
+	return "", false
 }
 
+// inspectAdmittedComponents requires every component of one admitted path at or
+// below the authorized root that contains it to stay inside that root by
+// identity, not only by spelling: the root itself and every ancestor between it
+// and the leaf must be real directories, so a symbolic link created inside an
+// admitted root can never redirect a relation, an output, or a declared
+// admitted directory outside it. The leaf's own type is checked by the caller's
+// leaf inspection, so an output path that does not exist yet is still
+// observable here.
+func inspectAdmittedComponents(path, description string, roots []string) error {
+	root, admitted := containingAdmittedRoot(path, roots)
+	if !admitted {
+		return refusal(RefusalUnadmittedPath, "%s is outside the supervised roots", description)
+	}
+	relative, err := filepath.Rel(root, path)
+	if err != nil {
+		return refusal(RefusalUnadmittedPath, "%s is outside the supervised roots", description)
+	}
+	components := strings.Split(relative, string(filepath.Separator))
+	current := root
+	for _, component := range components[:len(components)-1] {
+		current = filepath.Join(current, component)
+		info, err := os.Lstat(current)
+		if err != nil {
+			return refusal(RefusalUnadmittedPath, "%s is not readable: %v", description, err)
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return refusal(RefusalUnadmittedPath, "%s traverses a symbolic link", description)
+		}
+		if !info.IsDir() {
+			return refusal(RefusalUnadmittedPath, "%s traverses a component that is not a directory", description)
+		}
+	}
+	info, err := os.Lstat(root)
+	if err != nil {
+		return refusal(RefusalUnadmittedPath, "%s is not readable: %v", description, err)
+	}
+	if info.Mode()&os.ModeSymlink != 0 {
+		return refusal(RefusalUnadmittedPath, "%s is authorized under a root that is now a symbolic link", description)
+	}
+	if !info.IsDir() {
+		return refusal(RefusalUnadmittedPath, "%s is authorized under a root that is no longer a directory", description)
+	}
+	return nil
+}
+
+// inspectAdmittedDirectory refuses an admitted directory that is not one real
+// directory. The components above it are checked by inspectAdmittedComponents.
 func inspectAdmittedDirectory(path string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -264,7 +365,8 @@ func inspectAdmittedDirectory(path string) error {
 }
 
 // inspectAdmittedFile refuses a path the child must never open: a symlink, a
-// FIFO, a device, a directory, or a missing file.
+// FIFO, a device, a directory, or a missing file. The components above the leaf
+// are checked by inspectAdmittedComponents.
 func inspectAdmittedFile(path, description string) error {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -279,6 +381,11 @@ func inspectAdmittedFile(path, description string) error {
 	return nil
 }
 
+// inspectAdmittedOutput refuses an output leaf that already exists: an
+// immutable segment is never overwritten, and a symlink leaf is refused for the
+// same reason. The directory that holds the leaf must be one real directory, so
+// a caller that admits an output without a component walk of its own still
+// refuses a redirected parent.
 func inspectAdmittedOutput(path string) error {
 	info, err := os.Lstat(path)
 	switch {
@@ -302,6 +409,11 @@ type childAttempt struct {
 	scratch     *BoundScratch
 	exit        chan error
 	closeOnce   sync.Once
+	// exitErr and reaped record the child status this supervisor observed.
+	// reaped is false until the process has been waited for, so a refusal that
+	// never saw a status reports -1 rather than a weightless zero.
+	exitErr error
+	reaped  bool
 }
 
 type attemptOutput struct {
@@ -538,10 +650,12 @@ func (attempt *childAttempt) await(ctx context.Context, request QueryRequest, li
 			case <-time.After(abortReapTimeout):
 			}
 		}
+		attempt.recordExit(exitErr, exited)
 		return response, attempt.reportExit(code, format, arguments...)
 	}
 	for {
 		if output != nil && exited {
+			attempt.recordExit(exitErr, exited)
 			return attempt.decode(request, output.document, output.err, exitErr, responseLimit)
 		}
 		var readChannel <-chan attemptOutput
@@ -586,6 +700,14 @@ const abortReapTimeout = 5 * time.Second
 // payload byte bound.
 const responseEnvelopeSlack = 1 << 16
 
+// maximumResponseCap is the largest response byte cap the supervisor can
+// honour: it reads MaxResponseBytes plus the envelope slack, and every document
+// it accepts on that reading is handed to the protocol codec, which refuses a
+// document above MaxQueryDocumentBytes. A larger cap would therefore admit an
+// attempt whose typed document the codec refuses as a protocol violation after
+// the child has already run and materialized an immutable segment.
+const maximumResponseCap = MaxQueryDocumentBytes - responseEnvelopeSlack
+
 // attemptResponseLimit is the supervisor's own response cap. It never depends
 // on a value the child chose.
 func attemptResponseLimit(limits ChildLimits) int64 {
@@ -621,7 +743,7 @@ func (attempt *childAttempt) decode(request QueryRequest, document []byte, readE
 	if err != nil {
 		var childRefusal *Refusal
 		if errors.As(err, &childRefusal) {
-			childRefusal.ExitCode = exitCodeOf(exitErr)
+			childRefusal.ExitCode = attempt.observedExitCode()
 			return response, childRefusal
 		}
 		return response, attempt.reportExit(RefusalChildExit, "the child response is not a valid document: %v", err)
@@ -741,6 +863,22 @@ func (attempt *childAttempt) exitRefusal(exitErr error, format string, arguments
 	return attempt.reportExit(RefusalChildExit, "%s", reason)
 }
 
+// recordExit retains the child status this supervisor observed, so every later
+// refusal can report the value instead of a placeholder.
+func (attempt *childAttempt) recordExit(exitErr error, reaped bool) {
+	attempt.exitErr = exitErr
+	attempt.reaped = reaped
+}
+
+// observedExitCode reports the child exit status this supervisor observed. It
+// is -1 only when no status exists because the process was never waited for.
+func (attempt *childAttempt) observedExitCode() int {
+	if !attempt.reaped {
+		return -1
+	}
+	return exitCodeOf(attempt.exitErr)
+}
+
 // reportExit includes the bounded diagnostic tail, never a payload.
 func (attempt *childAttempt) reportExit(code RefusalCode, format string, arguments ...any) error {
 	reason := fmt.Sprintf(format, arguments...)
@@ -751,7 +889,7 @@ func (attempt *childAttempt) reportExit(code RefusalCode, format string, argumen
 		Code:     code,
 		Origin:   RefusalOriginSupervisor,
 		Reason:   sanitizeReason(reason),
-		ExitCode: -1,
+		ExitCode: attempt.observedExitCode(),
 		Child:    attempt.report(),
 	}
 }

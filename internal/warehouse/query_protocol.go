@@ -39,6 +39,10 @@ const (
 	MaximumQueryWallTime            = 5 * time.Minute
 	MaximumQueryValueBytes          = 1 << 20
 	MaximumQueryDecimalDigits       = 38
+	// maximumQueryWallMillis is the wall-time capability in the wire form's own
+	// unit. A decoded value is range-checked against it before it is converted
+	// into a duration, because the nanosecond multiplication wraps.
+	maximumQueryWallMillis = int64(MaximumQueryWallTime / time.Millisecond)
 )
 
 // QueryKind is the closed analytical value vocabulary. A value never changes
@@ -384,9 +388,12 @@ const (
 // Refusal is the explicit, typed outcome of a refused request. It never carries
 // rows: an unavailable answer is refused rather than invented.
 type Refusal struct {
-	Code     RefusalCode
-	Origin   RefusalOrigin
-	Reason   string
+	Code   RefusalCode
+	Origin RefusalOrigin
+	Reason string
+	// ExitCode is the child exit status the refusing side observed: 0 for a
+	// child that exited zero, the real status for any other exit, and -1 when no
+	// exit status exists because the child never ran or was never reaped.
 	ExitCode int
 	Child    *ChildReport
 }
@@ -1526,6 +1533,16 @@ func (document queryBoundsDocument) bounds() (QueryBounds, error) {
 	wallMillis, err := canonicalIntegerText(document.WallMillis)
 	if err != nil {
 		return bounds, err
+	}
+	// The declared bound is range-checked before the conversion: the nanosecond
+	// multiplication wraps for a value beyond the capability, and a wrapped
+	// value lands inside the accepted range where the documented refusal can
+	// never fire.
+	switch {
+	case wallMillis > maximumQueryWallMillis:
+		return bounds, refusal(RefusalBoundExceeded, "the wall-time bound exceeds the protocol capability of %s", MaximumQueryWallTime)
+	case wallMillis < -maximumQueryWallMillis:
+		return bounds, refusal(RefusalBoundExceeded, "the wall-time bound is beyond the protocol capability of %s", MaximumQueryWallTime)
 	}
 	return QueryBounds{
 		Relations:   int(relations),
