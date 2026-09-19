@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -714,6 +715,11 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 			t.Fatalf("reserve public migration fixture: %v", err)
 		}
 		pool.Close()
+		for version := ControlSchemaVersion; version > 18; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained fixture to the v18 shape: %v", err)
+			}
+		}
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
 			t.Fatalf("return public reservation to v17 retry shape: %v", err)
 		}
@@ -760,6 +766,11 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 			t.Fatalf("reserve private migration fixture: %v", err)
 		}
 		pool.Close()
+		for version := ControlSchemaVersion; version > 18; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained fixture to the v18 shape: %v", err)
+			}
+		}
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
 			t.Fatalf("return private reservation to v17 retry shape: %v", err)
 		}
@@ -814,6 +825,11 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 			t.Fatalf("release migration permit = %#v, %v", released, err)
 		}
 		pool.Close()
+		for version := ControlSchemaVersion; version > 18; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained fixture to the v18 shape: %v", err)
+			}
+		}
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
 			t.Fatalf("return released permit to v17 retry shape: %v", err)
 		}
@@ -865,6 +881,11 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 		registerRunViewFixture(t, pool, scope, absentRequest)
 		pool.Close()
 
+		for version := ControlSchemaVersion; version > 18; version-- {
+			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained fixture to the v18 shape: %v", err)
+			}
+		}
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 18); err != nil {
 			t.Fatalf("return continuation controls to v17 retry shape: %v", err)
 		}
@@ -918,6 +939,11 @@ func TestWorkerRetryMigrationRetainedData(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		fixture.pool.Close()
+		for version := ControlSchemaVersion; version > 18; version-- {
+			if err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained retry fixture to the v18 shape: %v", err)
+			}
+		}
 		if err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, 18); err != nil {
 			t.Fatalf("return retry schema to legacy v17 shape: %v", err)
 		}
@@ -955,10 +981,18 @@ func TestWorkerRetryMigrationRetainedData(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		fixture.pool.Close()
+		for version := ControlSchemaVersion; version > 18; version-- {
+			if err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, version); err != nil {
+				t.Fatalf("return retained retry fixture to the v18 shape: %v", err)
+			}
+		}
 		err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, 18)
 		var databaseError *pgconn.PgError
 		if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
 			t.Fatalf("retained retry downgrade = %v; want transactional refusal", err)
+		}
+		if err := Migrate(ctx, fixture.credentials.migratorDSN); err != nil {
+			t.Fatalf("restore the current schema after refused retry lineage downgrade: %v", err)
 		}
 		reopened := openPermitTestPool(t, fixture.credentials, 3)
 		defer reopened.Close()
@@ -1206,4 +1240,188 @@ func updateArtifactPurposeForMigrationTest(
 		}
 		return nil
 	})
+}
+
+// TestWarehouseSegmentMigrationRetainedData covers the warehouse segment
+// migration: registered dataset membership survives a refused downgrade, and a
+// downgrade that would erase it is refused transactionally.
+func TestWarehouseSegmentMigrationRetainedData(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 3)
+	fixture := registerPermitTestFixture(t, credentials, pool, permitFixtureOptions{Capacity: 2})
+	t.Cleanup(func() {
+		restoreEventWatermarkMigrationFixture(t, credentials, fixture.alpha, fixture.beta)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	scope := fixture.alpha
+	connectionID := fixture.alphaConnections[0]
+	datasetID := "wh1.fixture-connector.connection-primary.orders"
+	artifactID := "warehouse-segment-" + fixture.suffix
+	reservationID := "warehouse-segment-" + fixture.suffix
+	objectAttemptKey := "pm/v1/warehouse-attempt/" + fixture.suffix
+	snapshotID := "warehouse-snapshot-" + fixture.suffix
+	const digest = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const fingerprint = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	schemaDocument := []byte(`{"columns":[{"name":"id","kind":"int64","precision":0,"scale":0,"nullable":false}]}`)
+	ref := contract.ObjectRef{
+		OrgID: scope.OrgID, WorkspaceID: scope.WorkspaceID, ArtifactID: artifactID,
+		ObjectAttemptKey: objectAttemptKey, SHA256: digest, ByteLength: 2048,
+		MediaType: "application/vnd.apache.parquet", BackendGeneration: "generation-one",
+	}
+	verified, err := NewPreverifiedObjectRef(ref, ObjectVerification{
+		ObservedSHA256: digest, ObservedByteLength: ref.ByteLength, ObservedBackendGeneration: ref.BackendGeneration,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	limits := ObjectCapacityLimits{
+		OrganizationBytes: 1 << 20, WorkspaceBytes: 1 << 20,
+		OrganizationAttempts: 4, WorkspaceAttempts: 4,
+	}
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		if _, err := RegisterWarehouseDataset(ctx, tx, WarehouseDataset{
+			Scope: scope, DatasetID: datasetID, ConnectorID: "fixture-connector", ConnectionID: connectionID,
+		}); err != nil {
+			return err
+		}
+		if _, err := ReserveObjectCapacity(ctx, tx, ObjectReservationRequest{
+			ReservationID: reservationID, ConnectionID: connectionID, ArtifactID: artifactID,
+			Purpose: ArtifactPurposePublic, MaximumBytes: uint64(ref.ByteLength),
+		}, limits); err != nil {
+			return err
+		}
+		if _, err := BindObjectAttempt(ctx, tx, reservationID, ObjectAttemptBinding{
+			Scope: scope, ArtifactID: artifactID, ObjectAttemptKey: objectAttemptKey,
+			SHA256: digest, ByteLength: ref.ByteLength, MediaType: ref.MediaType,
+		}); err != nil {
+			return err
+		}
+		if _, err := CommitObjectPublication(ctx, tx, reservationID, verified); err != nil {
+			return err
+		}
+		if _, err := CommitManifestCAS(ctx, tx, ManifestCAS{
+			ConnectionID: connectionID, ResourceID: datasetID, Object: verified,
+		}); err != nil {
+			return err
+		}
+		if _, err := RegisterWarehouseSegment(ctx, tx, datasetID, 2, fingerprint, schemaDocument); err != nil {
+			return err
+		}
+		if _, err := AdvanceWarehouseCursor(ctx, tx, datasetID, 0, 1); err != nil {
+			return err
+		}
+		if _, err := CreateWarehouseSnapshot(ctx, tx, WarehouseSnapshot{
+			Scope: scope, SnapshotID: snapshotID, DatasetID: datasetID, ManifestRevision: 1,
+		}); err != nil {
+			return err
+		}
+		_, err := RetainWarehouseSegment(ctx, tx, WarehouseRetention{
+			Scope: scope, DatasetID: datasetID, Ordinal: 1,
+			Kind: WarehouseRetentionBackup, HolderID: "backup-" + fixture.suffix,
+		})
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	pool.Close()
+
+	// A downgrade that would erase registered membership is refused, and the
+	// refused migration leaves the retained rows exactly as they were.
+	for version := ControlSchemaVersion; version > 19; version-- {
+		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
+			t.Fatalf("return retained warehouse fixture to v19: %v", err)
+		}
+	}
+	err = migrateOneStoreVersionDown(ctx, credentials.migratorDSN, 19)
+	var databaseError *pgconn.PgError
+	if !errors.As(err, &databaseError) || databaseError.Code != "P0001" {
+		t.Fatalf("retained warehouse downgrade = %v; want transactional refusal", err)
+	}
+	if err := Migrate(ctx, credentials.migratorDSN); err != nil {
+		t.Fatalf("restore schema after warehouse downgrade refusal: %v", err)
+	}
+
+	reopened := openPermitTestPool(t, credentials, 3)
+	defer reopened.Close()
+	if err := WithinScope(ctx, reopened, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		dataset, err := LoadWarehouseDataset(ctx, tx, datasetID)
+		if err != nil {
+			return err
+		}
+		if dataset.ConnectionID != connectionID || dataset.ConnectorID != "fixture-connector" {
+			return fmt.Errorf("retained dataset identity changed: %#v", dataset)
+		}
+		manifest, err := LoadManifest(ctx, tx, datasetID)
+		if err != nil {
+			return err
+		}
+		if manifest.Revision != 1 || manifest.Object != ref {
+			return fmt.Errorf("retained manifest changed: %#v", manifest)
+		}
+		segments, err := LoadWarehouseSegments(ctx, tx, datasetID)
+		if err != nil {
+			return err
+		}
+		if len(segments) != 1 {
+			return fmt.Errorf("retained segment ledger holds %d rows", len(segments))
+		}
+		segment := segments[0]
+		if segment.Ordinal != 1 || segment.ManifestRevision != 1 ||
+			segment.State != WarehouseSegmentLive || segment.RowCount != 2 ||
+			segment.ColumnFingerprint != fingerprint || segment.Object != ref {
+			return fmt.Errorf("retained segment changed: %#v", segment)
+		}
+		var stored struct {
+			Columns []struct {
+				Name string `json:"name"`
+				Kind string `json:"kind"`
+			} `json:"columns"`
+		}
+		if err := json.Unmarshal(segment.Schema, &stored); err != nil {
+			return fmt.Errorf("retained segment schema is unreadable: %w", err)
+		}
+		if len(stored.Columns) != 1 || stored.Columns[0].Name != "id" || stored.Columns[0].Kind != "int64" {
+			return fmt.Errorf("retained segment schema changed: %#v", stored)
+		}
+		cursor, err := LoadWarehouseCursor(ctx, tx, datasetID)
+		if err != nil {
+			return err
+		}
+		if cursor.Ordinal != 1 || cursor.ManifestRevision != 1 {
+			return fmt.Errorf("retained cursor changed: %#v", cursor)
+		}
+		snapshot, err := LoadWarehouseSnapshot(ctx, tx, snapshotID)
+		if err != nil {
+			return err
+		}
+		if snapshot.DatasetID != datasetID || snapshot.ManifestRevision != 1 ||
+			len(snapshot.Segments) != 1 || snapshot.Segments[0] != 1 {
+			return fmt.Errorf("retained snapshot changed: %#v", snapshot)
+		}
+		retention, err := LoadWarehouseRetention(ctx, tx, datasetID, 1)
+		if err != nil {
+			return err
+		}
+		if len(retention) != 2 {
+			return fmt.Errorf("retained holders changed: %#v", retention)
+		}
+		for _, holder := range retention {
+			switch holder.Kind {
+			case WarehouseRetentionSnapshot:
+				if holder.HolderID != snapshotID {
+					return fmt.Errorf("retained snapshot holder changed: %#v", holder)
+				}
+			case WarehouseRetentionBackup:
+				if holder.HolderID != "backup-"+fixture.suffix {
+					return fmt.Errorf("retained backup holder changed: %#v", holder)
+				}
+			default:
+				return fmt.Errorf("unexpected retained holder kind: %#v", holder)
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
