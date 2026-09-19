@@ -81,6 +81,87 @@ func TestRegisteredHandlerReachability(t *testing.T) {
 		}
 	})
 
+	t.Run("sql_reachability_and_removal", func(t *testing.T) {
+		var registry app.HandlerRegistry
+		executeCalls := 0
+		reconcileCalls := 0
+		expectedDeadline := time.Date(2026, time.September, 17, 12, 0, 0, 0, time.UTC)
+		registration := sqlRegistrationForTest(
+			func(ctx context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+				executeCalls++
+				if ctx == nil || request.Scope.OrgID != "org-a" || request.Scope.WorkspaceID != "workspace-a" || request.Deadline != expectedDeadline {
+					t.Fatalf("SQL execution request = %#v; want exact in-process scope and deadline", request)
+				}
+				return observationForRegistryTest("applied"), nil
+			},
+			func(ctx context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+				reconcileCalls++
+				if ctx == nil || request.Scope.WorkspaceID != "workspace-a" {
+					t.Fatalf("SQL reconciliation request = %#v; want exact in-process request", request)
+				}
+				return observationForRegistryTest("reconciled"), nil
+			},
+		)
+		if err := registry.RegisterSQL(registration); err != nil {
+			t.Fatalf("RegisterSQL: %v", err)
+		}
+		operation := operationForRegistryTest(contract.TransportKindPostgreSQL, contract.LaneDirectRead, slices.Clone(registration.Capabilities))
+		resolved, err := registry.Resolve(operation, contract.LaneDirectRead)
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if resolved.Kind != app.HandlerSQL || resolved.Lane != contract.LaneDirectRead || !resolved.ReconciliationAvailable {
+			t.Fatalf("resolved SQL handler = %#v; want reachable SQL execution and reconciliation", resolved)
+		}
+		request := app.ExecutionRequest{
+			Scope:    contract.Scope{OrgID: "org-a", WorkspaceID: "workspace-a"},
+			Input:    contract.NewObjectValue(map[string]contract.PresentValue{"field-a": contract.NewStringValue("value-a")}),
+			Deadline: expectedDeadline,
+		}
+		executed, err := resolved.Execute(context.Background(), request)
+		if err != nil {
+			t.Fatalf("SQL Execute: %v", err)
+		}
+		if text, ok := observationTextForRegistryTest(executed); !ok || text != "applied" {
+			t.Fatalf("SQL execution observation = %#v; want registered callback result", executed)
+		}
+		reconciled, err := resolved.Reconcile(context.Background(), request)
+		if err != nil {
+			t.Fatalf("SQL Reconcile: %v", err)
+		}
+		if text, ok := observationTextForRegistryTest(reconciled); !ok || text != "reconciled" {
+			t.Fatalf("SQL reconciliation observation = %#v; want registered callback result", reconciled)
+		}
+		if executeCalls != 1 || reconcileCalls != 1 {
+			t.Fatalf("SQL callback calls = execute %d, reconcile %d; want one each", executeCalls, reconcileCalls)
+		}
+
+		// Removing the SQL registration leaves the published descriptor unable to
+		// authorize a SQL dispatch, so no SQL send is reachable at all.
+		var withoutSQL app.HandlerRegistry
+		if manifest := app.BuildHandlerManifest(&withoutSQL); manifest.Handlers == nil || len(manifest.Handlers) != 0 {
+			t.Fatalf("manifest without registration = %#v; want explicit empty handler list", manifest)
+		}
+		if _, err := withoutSQL.Resolve(operation, contract.LaneDirectRead); !errors.Is(err, app.ErrHandlerUnavailable) {
+			t.Fatalf("SQL Resolve without registration error = %v; want handler unavailable", err)
+		} else {
+			var failure *app.HandlerError
+			if !errors.As(err, &failure) || failure.Lane != contract.LaneDirectRead || failure.Handler != "" {
+				t.Fatalf("SQL Resolve without registration error = %#v; want typed direct-read HandlerError naming no registered handler", err)
+			}
+		}
+
+		// The same published descriptor cannot authorize an HTTP dispatch while
+		// only the SQL handler is registered, and no provider call is reachable.
+		httpOperation := operationForRegistryTest(contract.TransportKindHTTP, contract.LaneDirectRead, slices.Clone(registration.Capabilities))
+		if _, err := registry.Resolve(httpOperation, contract.LaneDirectRead); !errors.Is(err, app.ErrHandlerUnavailable) {
+			t.Fatalf("HTTP Resolve with only SQL registered error = %v; want handler unavailable", err)
+		}
+		if executeCalls != 1 || reconcileCalls != 1 {
+			t.Fatalf("removed or foreign handler dispatch reached a callback: execute %d, reconcile %d", executeCalls, reconcileCalls)
+		}
+	})
+
 	t.Run("missing_registration_and_reconciliation", func(t *testing.T) {
 		registration := httpRegistrationForTest(controlledCallbackForRegistryTest("executed"), nil)
 		operation := operationForRegistryTest("http", contract.LaneDirectRead, slices.Clone(registration.Capabilities))
