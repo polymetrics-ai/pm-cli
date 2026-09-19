@@ -12,8 +12,8 @@ type routeService interface {
 	StrictServerInterface
 	StreamRunEvents(*gin.Context)
 	UploadArtifactUnavailable(*gin.Context)
-	InspectArtifactUnavailable(*gin.Context)
-	DownloadArtifactUnavailable(*gin.Context)
+	InspectArtifact(*gin.Context)
+	DownloadArtifact(*gin.Context)
 }
 
 // RegisterRoutes composes process transport protection with the generated
@@ -43,7 +43,7 @@ func RegisterRoutes(router *gin.Engine, configuration TransportPolicy, service r
 	}
 	streams.GET("/v1/workspaces/:workspace_id/runs/:run_id/events", service.StreamRunEvents)
 	streams.POST("/v1/workspaces/:workspace_id/artifacts", service.UploadArtifactUnavailable)
-	streams.GET("/v1/workspaces/:workspace_id/artifacts/:artifact_id", service.InspectArtifactUnavailable)
-	streams.GET("/v1/workspaces/:workspace_id/artifacts/:artifact_id/content", service.DownloadArtifactUnavailable)
+	streams.GET("/v1/workspaces/:workspace_id/artifacts/:artifact_id", service.InspectArtifact)
+	streams.GET("/v1/workspaces/:workspace_id/artifacts/:artifact_id/content", service.DownloadArtifact)
 	return nil
 }

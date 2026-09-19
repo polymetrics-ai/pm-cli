@@ -893,6 +893,16 @@ def validate_generated_environment(
         expected["artifacts"]["endpoint"] = expected["public_origin"]
         expected["artifacts"]["bucket"] = project + "-artifacts"
         expected["artifacts"]["credential_ref"] = "secret://operator/artifacts"
+        expected["artifacts"]["execution"] = {
+            "region": "us-east-1",
+            "max_object_bytes": 16777216,
+            "max_in_flight": 4,
+            "request_timeout": "30s",
+            "organization_reserved_bytes": 1073741824,
+            "workspace_reserved_bytes": 268435456,
+            "organization_reserved_attempts": 4096,
+            "workspace_reserved_attempts": 1024,
+        }
     except (KeyError, TypeError) as exc:
         raise FixtureError("server configuration template shape changed") from exc
     if configuration != expected:

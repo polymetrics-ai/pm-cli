@@ -14,12 +14,13 @@ import (
 // RunBudgetPolicy is the complete finite policy applied to one admission. Every
 // field is resolved by typed server configuration before admission begins.
 type RunBudgetPolicy struct {
-	Pending              AdmissionLimits `json:"pending"`
-	RunLifetime          time.Duration   `json:"run_lifetime"`
-	InputMaxBytes        uint64          `json:"input_max_bytes"`
-	WorkspaceActiveRuns  uint64          `json:"workspace_active_runs"`
-	WorkflowPayloadBytes uint64          `json:"workflow_payload_bytes"`
-	WorkflowFanout       uint64          `json:"workflow_fanout"`
+	Pending              AdmissionLimits               `json:"pending"`
+	RunLifetime          time.Duration                 `json:"run_lifetime"`
+	InputMaxBytes        uint64                        `json:"input_max_bytes"`
+	WorkspaceActiveRuns  uint64                        `json:"workspace_active_runs"`
+	WorkflowPayloadBytes uint64                        `json:"workflow_payload_bytes"`
+	WorkflowFanout       uint64                        `json:"workflow_fanout"`
+	HTTP                 *contract.HTTPExecutionPolicy `json:"http,omitempty"`
 }
 
 func (policy RunBudgetPolicy) Validate() error {
@@ -38,6 +39,11 @@ func (policy RunBudgetPolicy) Validate() error {
 	for _, limit := range limits {
 		if limit == 0 || limit > maxStoreFence {
 			return errors.New("run budget bounds must be positive signed 64-bit values")
+		}
+	}
+	if policy.HTTP != nil {
+		if err := policy.HTTP.Validate(); err != nil {
+			return fmt.Errorf("validate HTTP execution policy: %w", err)
 		}
 	}
 	return nil
@@ -61,12 +67,17 @@ func NewRunBudgetSnapshot(
 	budgetRef string,
 	policy RunBudgetPolicy,
 ) (RunBudgetSnapshot, error) {
+	ownedPolicy := policy
+	if policy.HTTP != nil {
+		httpPolicy := *policy.HTTP
+		ownedPolicy.HTTP = &httpPolicy
+	}
 	snapshot := RunBudgetSnapshot{
 		Scope:     scope,
 		RunID:     runID,
 		BudgetRef: budgetRef,
 		Revision:  1,
-		Policy:    policy,
+		Policy:    ownedPolicy,
 	}
 	digest, err := runBudgetDigest(snapshot)
 	if err != nil {

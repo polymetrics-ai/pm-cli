@@ -583,6 +583,103 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "path": "build/nativeprobe/main.go",
+          "group_id": "F01",
+          "prior_group_id": "F01",
+          "owner": "build",
+          "process": "Build/operator",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Run the bounded locked DuckDB/native identity and exact-value Parquet qualification without representing application analytics or release certification.",
+          "interfaces": [],
+          "dependencies": [],
+          "test_ids": [
+            "V56"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "build",
+          "group_responsibility": "Application module plus isolated generator/tool module; exact Go/C/native/tool/build image pins and dependency notices. PM code MIT is settled; preserve third-party notices.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "build/nativeprobe/native_test.go",
+          "group_id": "F01",
+          "prior_group_id": "F01",
+          "owner": "build",
+          "process": "Build/operator",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise the bounded native probe, exact module identities, DuckDB versions, owner-only scratch and exact-value Parquet round trip; one host result is not cross-platform certification.",
+          "interfaces": [
+            "TestNativeProbe"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V56"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "build",
+          "group_responsibility": "Application module plus isolated generator/tool module; exact Go/C/native/tool/build image pins and dependency notices. PM code MIT is settled; preserve third-party notices.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "tools/dependency_policy.go",
+          "group_id": "F01",
+          "prior_group_id": "F01",
+          "owner": "build",
+          "process": "Build/operator",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Resolve and validate both module graphs plus locked toolchains and supplied SBOM evidence; refuse forbidden or mismatched dependencies without treating a pass as application proof.",
+          "interfaces": [
+            "CheckDependencies",
+            "CheckOptions"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V56"
+          ],
+          "generator": null,
+          "go_package": "tools",
+          "assignment_owner": "build",
+          "group_responsibility": "Application module plus isolated generator/tool module; exact Go/C/native/tool/build image pins and dependency notices. PM code MIT is settled; preserve third-party notices.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "tools/cmd/pm-dependency-check/main.go",
+          "group_id": "F01",
+          "prior_group_id": "F01",
+          "owner": "build",
+          "process": "Build/operator",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Expose the bounded dependency-policy checker and machine-readable result over required lock and SBOM inputs.",
+          "interfaces": [],
+          "dependencies": [],
+          "test_ids": [
+            "V56"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "build",
+          "group_responsibility": "Application module plus isolated generator/tool module; exact Go/C/native/tool/build image pins and dependency notices. PM code MIT is settled; preserve third-party notices.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "tools/dependency_policy_test.go",
           "group_id": "T_V56",
           "prior_group_id": "T_V56",
@@ -875,6 +972,76 @@
           "group_responsibility": "Unknown keys, duplicate keys, unowned dependency lifecycle or absent secret refs fail before service launch; valid bundled and managed endpoint configs select identical architecture.",
           "allowed_internal_dependencies": [],
           "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/config/worker.go",
+          "group_id": "R01",
+          "prior_group_id": null,
+          "owner": "config",
+          "process": "Operator, API and worker",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Strict typed worker configuration remains owned by the one deployment configuration contract.",
+          "interfaces": [
+            "WorkerConfiguration"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R01"
+          ],
+          "generator": null,
+          "go_package": "config",
+          "assignment_owner": "config",
+          "group_responsibility": "One strict config for every deployment; dependency ownership, endpoints, references and resource limits.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M0",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/config/worker_test.go",
+          "group_id": "T_R01",
+          "prior_group_id": null,
+          "owner": "config",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Worker configuration absence, exact finite controls and relational validation cases.",
+          "interfaces": [
+            "TestTypedWorkerConfiguration"
+          ],
+          "dependencies": [
+            "config"
+          ],
+          "test_ids": [
+            "R01"
+          ],
+          "generator": null,
+          "go_package": "config",
+          "assignment_owner": "config",
+          "group_responsibility": "Unknown keys, duplicate keys, unowned dependency lifecycle or absent secret refs fail before service launch; valid bundled and managed endpoint configs select identical architecture.",
+          "allowed_internal_dependencies": [
+            "config"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M0",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
           "subsequent_wiring_milestones": []
         }
       ],
@@ -1235,6 +1402,157 @@
           "group_responsibility": "Seaweed postgres2 nested listing under bounded pool saturates without deadlock; two gateways, multipart interruption, checksum mismatch and cross-worker read pass exact S3 contract. Failure blocks selected service qualification.",
           "allowed_internal_dependencies": [],
           "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "cmd/pm-stack/main.go",
+          "group_id": "R02",
+          "prior_group_id": null,
+          "owner": "build",
+          "process": "Build/operator",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Stable operator entry point for explicit stack check/up/migrate/drain.",
+          "interfaces": [
+            "main"
+          ],
+          "dependencies": [
+            "stack"
+          ],
+          "test_ids": [
+            "R01",
+            "R02"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "build",
+          "group_responsibility": "Explicit operator provisioning and readiness; PostgreSQL16.15, Temporal1.31.2, Seaweed4.46 and Caddy2.11.4 pinned images.",
+          "allowed_internal_dependencies": [
+            "stack"
+          ],
+          "import_activation": [
+            {
+              "package": "stack",
+              "earliest_milestone": "M0",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/stack/identity_test.go",
+          "group_id": "T_R02",
+          "prior_group_id": null,
+          "owner": "stack",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Rootful/rootless container identity selection regression for the operator stack.",
+          "interfaces": [
+            "TestContainerIdentity"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "R02"
+          ],
+          "generator": null,
+          "go_package": "stack",
+          "assignment_owner": "stack",
+          "group_responsibility": "Seaweed postgres2 nested listing under bounded pool saturates without deadlock; two gateways, multipart interruption, checksum mismatch and cross-worker read pass exact S3 contract. Failure blocks selected service qualification.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "tools/cmd/pm-stack-fixture/main.go",
+          "group_id": "T_R02",
+          "prior_group_id": null,
+          "owner": "build",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Create one absent private synthetic same-stack fixture root with bounded source reads, reserved loopback ports and generated TLS identities; no production credential authority.",
+          "interfaces": [],
+          "dependencies": [],
+          "test_ids": [
+            "R02"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "build",
+          "group_responsibility": "Seaweed postgres2 nested listing under bounded pool saturates without deadlock; two gateways, multipart interruption, checksum mismatch and cross-worker read pass exact S3 contract. Failure blocks selected service qualification.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "tools/cmd/pm-stack-fixture/main_test.go",
+          "group_id": "T_R02",
+          "prior_group_id": null,
+          "owner": "build",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exercise fixture-root confinement, nonregular input refusal, auxiliary Temporal rollover ownership and protocol TLS identities.",
+          "interfaces": [
+            "TestRunRefusesExistingOrSymlinkedRootsWithoutClobbering",
+            "TestGeneratedTemporalRolloverProfileIsAuxiliaryAndOwned",
+            "TestRepositoryReaderRefusesSymlinksAndFIFOsWithoutBlocking",
+            "TestGeneratedCertificateBundlesVerifyProtocolIdentities"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "R02"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "build",
+          "group_responsibility": "Seaweed postgres2 nested listing under bounded pool saturates without deadlock; two gateways, multipart interruption, checksum mismatch and cross-worker read pass exact S3 contract. Failure blocks selected service qualification.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/stack/stack.go",
+          "group_id": "R02",
+          "prior_group_id": null,
+          "owner": "stack",
+          "process": "Build/operator",
+          "milestone": "M0",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Explicit operator check/up/migrate/drain and dependency readiness implementation.",
+          "interfaces": [
+            "CheckStack",
+            "UpStack",
+            "MigrateStack",
+            "DrainStack"
+          ],
+          "dependencies": [
+            "config"
+          ],
+          "test_ids": [
+            "R01",
+            "R02"
+          ],
+          "generator": null,
+          "go_package": "stack",
+          "assignment_owner": "stack",
+          "group_responsibility": "Explicit operator provisioning and readiness; PostgreSQL16.15, Temporal1.31.2, Seaweed4.46 and Caddy2.11.4 pinned images.",
+          "allowed_internal_dependencies": [
+            "config"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M0",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
           "subsequent_wiring_milestones": []
         }
       ],
@@ -1811,6 +2129,65 @@
           "go_package": null,
           "assignment_owner": "contract",
           "group_responsibility": "Typed versions, invariants, exact field locations and effect identity domains",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/contract/operation_input_test.go",
+          "group_id": "T_V02",
+          "prior_group_id": "T_V02",
+          "owner": "contract",
+          "process": "All processes, pure values",
+          "milestone": "M1",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Causal presence, precision, nested-shape and request-variant contract tests.",
+          "interfaces": [
+            "TestValidateOperationInputPresencePrecisionAndLogicalIDs",
+            "TestValidateOperationInputNestedShapes",
+            "TestValidateOperationInputComposition",
+            "TestResolveOperationRequestVariants",
+            "TestResolveOperationRequestRejectsOverlappingBodyAssignments",
+            "TestValidateOperationInputEnumAndExactBounds"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V02"
+          ],
+          "generator": null,
+          "go_package": "contract",
+          "assignment_owner": "contract",
+          "group_responsibility": "Absent, null, false, zero, large integers and fixed decimals remain distinct through encoding; incompatible media is refused.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/contract/operation_input.go",
+          "group_id": "F05",
+          "prior_group_id": "F05",
+          "owner": "contract",
+          "process": "All processes, pure values",
+          "milestone": "M1",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Typed logical input validation and source-declared request assembly.",
+          "interfaces": [
+            "ValidateOperationInput",
+            "ResolveOperationRequest",
+            "ResolvedRequest"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V01",
+            "V02",
+            "V03"
+          ],
+          "generator": null,
+          "go_package": "contract",
+          "assignment_owner": "contract",
+          "group_responsibility": "Private domain contracts; absent/null/value and exact type representation",
           "allowed_internal_dependencies": [],
           "import_activation": [],
           "subsequent_wiring_milestones": []
@@ -2580,6 +2957,59 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "path": "tools/api_generation.go",
+          "group_id": "F04",
+          "prior_group_id": "F04",
+          "owner": "contract",
+          "process": "All processes, pure values",
+          "milestone": "M1",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Deterministically validate accepted API and control sources and generate or compare the owned Go and JSON projections; no runtime capability or evidence authority.",
+          "interfaces": [
+            "GenerateAPI",
+            "APIGenerationOptions"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V01",
+            "V02",
+            "V03"
+          ],
+          "generator": null,
+          "go_package": "tools",
+          "assignment_owner": "contract",
+          "group_responsibility": "Canonical wire and authoring JSON schemas",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "tools/cmd/pm-api-generate/main.go",
+          "group_id": "F04",
+          "prior_group_id": "F04",
+          "owner": "contract",
+          "process": "All processes, pure values",
+          "milestone": "M1",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Expose the bounded deterministic API generator/check entrypoint over accepted sources and the selected owned output root.",
+          "interfaces": [],
+          "dependencies": [],
+          "test_ids": [
+            "V01",
+            "V02",
+            "V03"
+          ],
+          "generator": null,
+          "go_package": "main",
+          "assignment_owner": "contract",
+          "group_responsibility": "Canonical wire and authoring JSON schemas",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "internal/api/types.gen.go",
           "group_id": "F07",
           "prior_group_id": "F07",
@@ -2819,6 +3249,43 @@
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/api/protocol.go",
+          "group_id": "F07",
+          "prior_group_id": "F07",
+          "owner": "api",
+          "process": "CLI and public SDK",
+          "milestone": "M1",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Generated-wire companion protocol validation and safe envelope projection.",
+          "interfaces": [
+            "DecodeServerInfo",
+            "DecodeProblem",
+            "DecodeAdmissionResponse",
+            "DecodeMutationReplayResponse",
+            "DecodeServiceAccountCreationResponse",
+            "ValidateIncomingJSON",
+            "ValidateHTTPRequest",
+            "ValidateServerObjectJSON",
+            "NewProtocolProblem",
+            "NewInternalProblem",
+            "DecodedServerInfo",
+            "DecodedProblem"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V01",
+            "V05"
+          ],
+          "generator": null,
+          "go_package": "api",
+          "assignment_owner": "api",
+          "group_responsibility": "Generated safe wire surface; no serverprivate vault schema",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
           "subsequent_wiring_milestones": []
         }
       ],
@@ -3630,6 +4097,41 @@
           "go_package": "store",
           "assignment_owner": "store",
           "group_responsibility": "Durable intent and independently attributable outcomes; extend 0001 before release, no second state file",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M2",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/store_test.go",
+          "group_id": "F08",
+          "prior_group_id": "F08",
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M2",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Shared physical control-store pool, scope, identity and cleanup fixture support.",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V06",
+            "V07",
+            "V08"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "PG pool, ordered migrations, scoped transaction boundaries and registered artifact metadata; no filesystem atomicity authority.",
           "allowed_internal_dependencies": [
             "contract"
           ],
@@ -4947,60 +5449,30 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/server/secrets.go",
+          "path": "internal/credentials/operator_secrets.go",
           "group_id": "F11",
           "prior_group_id": "F11",
-          "owner": "server",
+          "owner": "credentials",
           "process": "API composition",
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Read bounded regular-file operator secrets through a descriptor-confined root for startup composition; no pathname escape or public projection.",
+          "responsibility": "Clean cutover of the descriptor-confined OperatorSecrets composition originally declared by F11; no new credential-vault authority.",
           "interfaces": [
-            "OperatorSecrets"
+            "OperatorSecrets",
+            "OpenOperatorSecrets"
           ],
-          "dependencies": [
-            "config",
-            "httpapi",
-            "app",
-            "temporal"
-          ],
+          "dependencies": [],
           "test_ids": [
             "V12",
             "V13"
           ],
           "generator": null,
-          "go_package": "server",
-          "assignment_owner": "server",
+          "go_package": "credentials",
+          "assignment_owner": "credentials",
           "group_responsibility": "Independent API process and application-service composition, descriptor-bound operator secret loading, embedded minimal browser assets, graceful drain and dependency readiness; never starts PostgreSQL or Temporal and never substitutes for unavailable durable dispatch.",
-          "allowed_internal_dependencies": [
-            "config",
-            "httpapi",
-            "app",
-            "temporal"
-          ],
-          "import_activation": [
-            {
-              "package": "config",
-              "earliest_milestone": "M3",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            },
-            {
-              "package": "httpapi",
-              "earliest_milestone": "M3",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            },
-            {
-              "package": "app",
-              "earliest_milestone": "M3",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            },
-            {
-              "package": "temporal",
-              "earliest_milestone": "M4",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            }
-          ],
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
           "subsequent_wiring_milestones": []
         },
         {
@@ -5085,59 +5557,28 @@
           "subsequent_wiring_milestones": []
         },
         {
-          "path": "internal/server/secrets_test.go",
+          "path": "internal/credentials/operator_secrets_test.go",
           "group_id": "T_V13",
           "prior_group_id": "T_V13",
-          "owner": "config",
+          "owner": "credentials",
           "process": "Operator, API and worker",
           "milestone": "M3",
           "action": "CREATE",
           "kind": "authored",
-          "responsibility": "Exercise descriptor-confined operator-secret startup reads, exact binary bytes, nonregular refusal and pathname-replacement confinement.",
+          "responsibility": "Moved causal test for the descriptor-confined startup secret reader originally declared by the API lifecycle owner.",
           "interfaces": [
             "TestOperatorSecretStartupBoundary"
           ],
-          "dependencies": [
-            "config",
-            "httpapi",
-            "app",
-            "temporal"
-          ],
+          "dependencies": [],
           "test_ids": [
             "V13"
           ],
           "generator": null,
-          "go_package": "server",
-          "assignment_owner": "config",
+          "go_package": "credentials",
+          "assignment_owner": "credentials",
           "group_responsibility": "Strict typed startup, descriptor-bound operator secret reads, bounded listener/drain behavior and truthful admission/dispatch readiness; closing the API does not redefine or cancel durable accepted-run state. Staging: contract introduction does not complete later admission or Temporal integration.",
-          "allowed_internal_dependencies": [
-            "config",
-            "httpapi",
-            "app",
-            "temporal"
-          ],
-          "import_activation": [
-            {
-              "package": "config",
-              "earliest_milestone": "M3",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            },
-            {
-              "package": "httpapi",
-              "earliest_milestone": "M3",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            },
-            {
-              "package": "app",
-              "earliest_milestone": "M3",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            },
-            {
-              "package": "temporal",
-              "earliest_milestone": "M4",
-              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-            }
-          ],
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
           "subsequent_wiring_milestones": []
         }
       ],
@@ -8962,6 +9403,539 @@
             "M10",
             "M11"
           ]
+        },
+        {
+          "path": "internal/testfixture/fixture.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "testfixture",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Shared real PostgreSQL/Gin admission and interruption fixture first introduced for the durable admission composition.",
+          "interfaces": [
+            "NewAdmitting",
+            "NewExecuting",
+            "Restart",
+            "ServeProcessAPI",
+            "Fixture"
+          ],
+          "dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract",
+            "httpapi",
+            "store"
+          ],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "testfixture",
+          "assignment_owner": "testfixture",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [
+            "api",
+            "app",
+            "auth",
+            "contract",
+            "httpapi",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_inputs_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Atomic immutable accepted-input snapshot and presence-fidelity coverage.",
+          "interfaces": [
+            "TestAdmissionRunInputSnapshotAtomicity",
+            "TestRunInputSnapshotAtomicPersistence",
+            "TestRunInputSnapshotBindingsAndImmutability",
+            "TestRunInputSnapshotValidationAndByteBound",
+            "TestRunInputSnapshotApprovalPresenceRoundTrip"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_inputs.go",
+          "group_id": "F21",
+          "prior_group_id": "F21",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Immutable logical invocation input persisted with accepted intent.",
+          "interfaces": [
+            "PutRunInputSnapshot",
+            "LoadRunInputSnapshot",
+            "RunInputSnapshot"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V09",
+            "V10",
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Immutable accepted intent, budget reservations, outbox and durable cancellation commands. Temporal alone coordinates execution.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_views_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Accepted identity and persisted outcome truth in scoped run/task views.",
+          "interfaces": [
+            "TestRunViewsUseAcceptedIdentityAndStoredOutcomeTruth"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/transaction_outcome_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Physical lost-COMMIT-reply control preserving unknown transaction outcome.",
+          "interfaces": [
+            "TestControlTransactionCommitOutcome"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/admission_internal_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Committed-before-response visibility, reopen/replay and rollback admission cases.",
+          "interfaces": [
+            "TestAdmissionCommitVisibility",
+            "TestStoreAdmissionCommit"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_budgets_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exact immutable accepted run-budget snapshot coverage.",
+          "interfaces": [
+            "TestAdmissionPersistsExactRunBudgetSnapshot",
+            "TestRunBudgetBindingAndImmutability"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/admission_limits_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Workspace/deployment pending count, age, replay, rollback and concurrency coverage.",
+          "interfaces": [
+            "TestPendingAdmissionCapacity",
+            "TestPendingAdmissionReplayAndRollback",
+            "TestPendingAdmissionLastSlotAcrossPools",
+            "TestPendingAdmissionAgePrecedence",
+            "TestPendingAdmissionAgeBoundary"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/admission.go",
+          "group_id": "F21",
+          "prior_group_id": "F21",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "PostgreSQL-owned finite pending-admission capacity and age enforcement.",
+          "interfaces": [
+            "AdmissionLimits"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V09",
+            "V10",
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Immutable accepted intent, budget reservations, outbox and durable cancellation commands. Temporal alone coordinates execution.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_views.go",
+          "group_id": "F21",
+          "prior_group_id": "F21",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Store-owned scoped run/task view projection for accepted intent and outcome truth.",
+          "interfaces": [
+            "LoadRunView",
+            "ListRunViews",
+            "LoadTaskView",
+            "ListTaskViews",
+            "RunViewRecord",
+            "MemberOutcomeView",
+            "TaskViewRecord"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V09",
+            "V10",
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Immutable accepted intent, budget reservations, outbox and durable cancellation commands. Temporal alone coordinates execution.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_budgets.go",
+          "group_id": "F21",
+          "prior_group_id": "F21",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Immutable applied run-budget policy snapshot bound to accepted RunSpec.",
+          "interfaces": [
+            "RunBudgetPolicy",
+            "RunBudgetSnapshot",
+            "NewRunBudgetSnapshot",
+            "PutRunBudgetSnapshot",
+            "LoadRunBudgetSnapshot"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V09",
+            "V10",
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Immutable accepted intent, budget reservations, outbox and durable cancellation commands. Temporal alone coordinates execution.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/testfixture/fixture_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "testfixture",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Authenticated fixture restart and scoped actor isolation regression.",
+          "interfaces": [
+            "TestAuthenticatedFixtureRestart"
+          ],
+          "dependencies": [
+            "testfixture"
+          ],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "testfixture",
+          "assignment_owner": "testfixture",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [
+            "testfixture"
+          ],
+          "import_activation": [
+            {
+              "package": "testfixture",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/admission_receipts_test.go",
+          "group_id": "T_V12",
+          "prior_group_id": "T_V12",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Admission response receipt retention, compaction, expiry and race coverage.",
+          "interfaces": [
+            "TestAdmissionReceiptRetention"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Two remote clients submit/watch; closing either, logout or login-session expiry preserves accepted work. API/worker death resumes through PG outbox and Temporal; explicit run-grant revocation separately stops new effects.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/admission_receipts.go",
+          "group_id": "F21",
+          "prior_group_id": "F21",
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Durable safe acceptance response and bounded terminal receipt compaction.",
+          "interfaces": [
+            "CompactAdmissionReceipt",
+            "AdmissionReceiptExpiredError",
+            "ErrAdmissionReceiptExpired"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V09",
+            "V10",
+            "V12"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Immutable accepted intent, budget reservations, outbox and durable cancellation commands. Temporal alone coordinates execution.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
         }
       ],
       "acceptance": [
@@ -9481,6 +10455,159 @@
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
           ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/temporal/continuation.go",
+          "group_id": "R08",
+          "prior_group_id": null,
+          "owner": "temporal",
+          "process": "API and worker handoff",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Trusted Temporal Describe/history observation for exact Continue-As-New binding evidence.",
+          "interfaces": [
+            "NewWorkflowContinuationObserver"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R11",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "temporal",
+          "assignment_owner": "temporal",
+          "group_responsibility": "Stable workflow handoff and projection repair; no atomic two-system fiction and no scheduler authority.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/temporal/physical_test.go",
+          "group_id": "R08",
+          "prior_group_id": null,
+          "owner": "temporal",
+          "process": "API and worker handoff",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Shared physical Temporal/PostgreSQL handoff and projection fixture helpers.",
+          "interfaces": [],
+          "dependencies": [
+            "api",
+            "config",
+            "contract",
+            "store",
+            "testfixture"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R11",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "temporal",
+          "assignment_owner": "temporal",
+          "group_responsibility": "Stable workflow handoff and projection repair; no atomic two-system fiction and no scheduler authority.",
+          "allowed_internal_dependencies": [
+            "api",
+            "config",
+            "contract",
+            "store",
+            "testfixture"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "config",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "testfixture",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/workflow_roles_test.go",
+          "group_id": "T_R09",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Physical workflow-route role and security-definer authority boundary used by handoff recovery.",
+          "interfaces": [
+            "TestWorkflowRouteRoleBoundary"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "R09"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Crash after PG commit/before start and after Temporal accept/before outbox ack; stable identity produces one logical execution; changed idempotent payload conflicts and202 never precedes commit.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/server/relay_lifecycle_test.go",
+          "group_id": "T_R09",
+          "prior_group_id": null,
+          "owner": "server",
+          "process": "Developer/test runner against same stack",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Relay cancellation/join order and exact configured control-queue selection.",
+          "interfaces": [
+            "TestApplicationCloseStopsRelayBeforeReturning",
+            "TestConfiguredControlTaskQueueSelectsNamedMember"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "R09"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "server",
+          "group_responsibility": "Crash after PG commit/before start and after Temporal accept/before outbox ack; stable identity produces one logical execution; changed idempotent payload conflicts and202 never precedes commit.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
           "subsequent_wiring_milestones": []
         }
       ],
@@ -10233,6 +11360,404 @@
             }
           ],
           "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/app/worker.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Authenticated application worker boundary consumed by the actual registered activity service.",
+          "interfaces": [
+            "NewWorkerService",
+            "WorkerService",
+            "AdmitScheduledRun",
+            "LoadWorkflow",
+            "ExecuteUnit",
+            "ApplyCommand",
+            "FinalizeRunProjection"
+          ],
+          "dependencies": [
+            "auth",
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "app",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "auth",
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "auth",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/activities/service.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "activities",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Actual Temporal activity registration and worker-service adapter.",
+          "interfaces": [
+            "RegisterActivities",
+            "Service"
+          ],
+          "dependencies": [
+            "app",
+            "contract"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "activities",
+          "assignment_owner": "activities",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "app",
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "app",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/app/worker_runtime.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Standalone worker dependency composition feeding the actual activity service.",
+          "interfaces": [
+            "OpenWorkerRuntime",
+            "WorkerRuntime",
+            "WorkerRuntimeConfig"
+          ],
+          "dependencies": [
+            "auth",
+            "config",
+            "contract",
+            "credentials",
+            "store"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "app",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "auth",
+            "config",
+            "contract",
+            "credentials",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "auth",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "config",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/testfixture/workflow.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "testfixture",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Owned real Temporal workflow-chain and namespace fixture consumed by worker/activity qualification.",
+          "interfaces": [
+            "OpenTemporal",
+            "CleanupWorkflowChain",
+            "RolloverNamespace",
+            "TemporalOptions"
+          ],
+          "dependencies": [
+            "config",
+            "credentials"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "testfixture",
+          "assignment_owner": "testfixture",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "config",
+            "credentials"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/temporal/worker_client.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "temporal",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Standalone worker Temporal client with admitted safe-reference payload/failure conversion.",
+          "interfaces": [
+            "DialWorkerClient",
+            "InterceptClient"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "temporal",
+          "assignment_owner": "temporal",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/workers.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Store-side scoped worker route, task, dispatch, command and projection primitives used by registered activities.",
+          "interfaces": [
+            "WithinWorkerScope",
+            "ObserveWorkerContinuation",
+            "LoadWorkerRunForUpdate",
+            "StartWorkerRun",
+            "StartWorkerTask",
+            "ApplyWorkerCommand",
+            "InsertWorkerProjectionReceipt",
+            "WorkerRoute",
+            "WorkerCommandReceipt",
+            "WorkerProjectionReceipt"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/testfixture/worker.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "testfixture",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Controlled production WorkerService composition and sealed plan fixture.",
+          "interfaces": [
+            "NewWorkerService",
+            "SealWorkerPlan",
+            "SealedWorkerPlan"
+          ],
+          "dependencies": [
+            "app",
+            "auth",
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "testfixture",
+          "assignment_owner": "testfixture",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "app",
+            "auth",
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "app",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/testfixture/worker_config.go",
+          "group_id": "R07",
+          "prior_group_id": null,
+          "owner": "testfixture",
+          "process": "Temporal activity worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Exact fixture-owned standalone-worker configuration artifact used by activity/runtime qualification.",
+          "interfaces": [
+            "NewWorkerConfiguration",
+            "WorkerConfigurationArtifact"
+          ],
+          "dependencies": [
+            "config"
+          ],
+          "test_ids": [
+            "R09",
+            "R10",
+            "R13"
+          ],
+          "generator": null,
+          "go_package": "testfixture",
+          "assignment_owner": "testfixture",
+          "group_responsibility": "Actual registered activities resolve scoped PM state and invoke shared foundations.",
+          "allowed_internal_dependencies": [
+            "config"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
         }
       ],
       "acceptance": [
@@ -10421,11 +11946,212 @@
         },
         {
           "path": "internal/app/account_permits_test.go",
-          "kind": "authored",
-          "responsibility": "Issue-local causal negative/healthy controls",
+          "group_id": "R14a",
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M4",
           "action": "CREATE",
-          "group_id": "ISSUE_ACCEPTANCE_ADDITION",
-          "milestone": "M4"
+          "kind": "authored",
+          "responsibility": "Issue-local causal controls for initial execution-grant revocation and shared account-permit admission, including healthy current-grant behavior.",
+          "interfaces": [
+            "TestInitialGrantRevocation",
+            "TestSharedAccountAdmission"
+          ],
+          "dependencies": [
+            "api",
+            "app",
+            "contract",
+            "store",
+            "temporal",
+            "testfixture"
+          ],
+          "test_ids": [
+            "R22",
+            "R23"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "app",
+          "group_responsibility": "PG resource permits and current grants, schedule admission and revoked-run control; no custom timer loop.",
+          "allowed_internal_dependencies": [
+            "api",
+            "app",
+            "contract",
+            "store",
+            "temporal",
+            "testfixture"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "temporal",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "testfixture",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [
+            "M9"
+          ]
+        },
+        {
+          "path": "internal/server/run_grants_test.go",
+          "group_id": "R14b",
+          "prior_group_id": null,
+          "owner": "server",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Current-authority and durable-grant recheck integration across login expiry, revocation and automation actors.",
+          "interfaces": [
+            "TestRunGrantCheckUsesStoredGrantAfterLoginExpiry",
+            "TestRunGrantCheckRejectsDurableRevocationAndCurrentAuthorityChange",
+            "TestRunGrantCheckUsesCurrentAutomationAuthority",
+            "TestRunGrantCheckHidesAllWrongActorGrantStates"
+          ],
+          "dependencies": [
+            "app",
+            "auth",
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "R22",
+            "R23"
+          ],
+          "generator": null,
+          "go_package": "server",
+          "assignment_owner": "server",
+          "group_responsibility": "PG resource permits and current grants, schedule admission and revoked-run control; no custom timer loop.",
+          "allowed_internal_dependencies": [
+            "app",
+            "auth",
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "app",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_grants_test.go",
+          "group_id": "R14b",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Atomic immutable execution grant, replay, scope, expiry and revocation coverage.",
+          "interfaces": [
+            "TestAcceptedExecutionGrant"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R22",
+            "R23"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "PG resource permits and current grants, schedule admission and revoked-run control; no custom timer loop.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/run_grants.go",
+          "group_id": "R14b",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Immutable accepted execution grant plus separately fenced revocation.",
+          "interfaces": [
+            "LoadRunExecutionGrant",
+            "RevokeRunExecutionGrant",
+            "RunExecutionGrant",
+            "ErrRunGrantUnavailable"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "R22",
+            "R23"
+          ],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "PG resource permits and current grants, schedule admission and revoked-run control; no custom timer loop.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
         }
       ],
       "acceptance": [
@@ -10594,6 +12320,208 @@
             },
             {
               "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/app/artifacts.go",
+          "group_id": "F23",
+          "prior_group_id": "F23",
+          "owner": "app",
+          "process": "API",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Current scoped artifact authorization for the explicitly unavailable byte backend.",
+          "interfaces": [
+            "AuthorizeArtifactRead",
+            "AuthorizeArtifactWrite"
+          ],
+          "dependencies": [
+            "auth",
+            "contract",
+            "store"
+          ],
+          "test_ids": [
+            "V11",
+            "V30",
+            "V31"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "app",
+          "group_responsibility": "Durable scoped SSE and bounded artifact streams; API replicas read PG history and shared bytes.",
+          "allowed_internal_dependencies": [
+            "auth",
+            "contract",
+            "store"
+          ],
+          "import_activation": [
+            {
+              "package": "auth",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/write_timeout_listener.go",
+          "group_id": "F23",
+          "prior_group_id": "F23",
+          "owner": "httpapi",
+          "process": "API",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Raw transport closure for bounded durable event-stream write timeouts.",
+          "interfaces": [
+            "CloseOnWriteTimeout"
+          ],
+          "dependencies": [],
+          "test_ids": [
+            "V11",
+            "V30",
+            "V31"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Durable scoped SSE and bounded artifact streams; API replicas read PG history and shared bytes.",
+          "allowed_internal_dependencies": [],
+          "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/events_test.go",
+          "group_id": "F23",
+          "prior_group_id": "F23",
+          "owner": "httpapi",
+          "process": "API",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Physical scoped SSE replay, cursor, authorization and resource-release coverage.",
+          "interfaces": [
+            "TestScopedDurableEventRoutes"
+          ],
+          "dependencies": [
+            "api",
+            "contract",
+            "httpapi",
+            "store",
+            "testfixture"
+          ],
+          "test_ids": [
+            "V11",
+            "V30",
+            "V31"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Durable scoped SSE and bounded artifact streams; API replicas read PG history and shared bytes.",
+          "allowed_internal_dependencies": [
+            "api",
+            "contract",
+            "httpapi",
+            "store",
+            "testfixture"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "testfixture",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/artifacts_test.go",
+          "group_id": "F23",
+          "prior_group_id": "F23",
+          "owner": "httpapi",
+          "process": "API",
+          "milestone": "M4",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Scoped unavailable-artifact route and non-fabrication coverage.",
+          "interfaces": [
+            "TestScopedUnavailableArtifactRoutes"
+          ],
+          "dependencies": [
+            "api",
+            "contract",
+            "store",
+            "testfixture"
+          ],
+          "test_ids": [
+            "V11",
+            "V30",
+            "V31"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Durable scoped SSE and bounded artifact streams; API replicas read PG history and shared bytes.",
+          "allowed_internal_dependencies": [
+            "api",
+            "contract",
+            "store",
+            "testfixture"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M4",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "testfixture",
               "earliest_milestone": "M4",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
@@ -11480,6 +13408,42 @@
             }
           ],
           "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/cli/connections_test.go",
+          "group_id": "R10",
+          "prior_group_id": null,
+          "owner": "cli",
+          "process": "CLI",
+          "milestone": "M5",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Connection mutation command recovery under explicit workspace selection; current untracked implementation input.",
+          "interfaces": [
+            "TestMutationControlAllocatesAndRecoversSelectedRequest"
+          ],
+          "dependencies": [
+            "api"
+          ],
+          "test_ids": [
+            "R14",
+            "R15"
+          ],
+          "generator": null,
+          "go_package": "cli",
+          "assignment_owner": "cli",
+          "group_responsibility": "Explicit workspace selectors and server-only execution projections; no mutable global workspace.",
+          "allowed_internal_dependencies": [
+            "api"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
         }
       ],
       "acceptance": [
@@ -11662,6 +13626,48 @@
           ],
           "subsequent_wiring_milestones": []
         },
+          {
+            "path": "internal/cli/result_document_test.go",
+            "group_id": "T_V30b",
+            "prior_group_id": "T_V30b",
+            "owner": "cli",
+            "process": "CLI",
+            "milestone": "M5",
+            "action": "CREATE",
+            "kind": "authored",
+            "responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+            "interfaces": [
+              "TestRunResultRendersExactPublishedDocument"
+            ],
+            "dependencies": [
+              "api",
+              "contract"
+            ],
+            "test_ids": [
+              "V30"
+            ],
+            "generator": null,
+            "go_package": "cli",
+            "assignment_owner": "cli",
+            "group_responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+            "allowed_internal_dependencies": [
+              "api",
+              "contract"
+            ],
+            "import_activation": [
+              {
+                "package": "api",
+                "earliest_milestone": "M5",
+                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+              },
+              {
+                "package": "contract",
+                "earliest_milestone": "M5",
+                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+              }
+            ],
+            "subsequent_wiring_milestones": []
+          },
         {
           "path": "internal/api/events_test.go",
           "group_id": "T_V30",
@@ -11962,6 +13968,67 @@
           "group_responsibility": "Generated browser types plus public fetch wrapper, same OpenAPI as Go SDK; parity harness uses same API use cases.",
           "allowed_internal_dependencies": [],
           "import_activation": [],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "tests/client-parity/fixture_test.go",
+          "group_id": "R09",
+          "prior_group_id": null,
+          "owner": "api",
+          "process": "CLI and public SDK",
+          "milestone": "M5",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Provide the owned TLS/API/CLI child and browser fixture used by TestCLIAndBrowserEquivalentUseCases; it does not replace request, admission or provider semantics.",
+          "interfaces": [],
+          "dependencies": [
+            "api",
+            "auth",
+            "cli",
+            "store",
+            "testfixture"
+          ],
+          "test_ids": [
+            "R14"
+          ],
+          "generator": null,
+          "go_package": "clientparity",
+          "assignment_owner": "api",
+          "group_responsibility": "Generated browser types plus public fetch wrapper, same OpenAPI as Go SDK; parity harness uses same API use cases.",
+          "allowed_internal_dependencies": [
+            "api",
+            "auth",
+            "cli",
+            "store",
+            "testfixture"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "auth",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "cli",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "testfixture",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
           "subsequent_wiring_milestones": []
         },
         {
@@ -13266,6 +15333,123 @@
             }
           ],
           "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/app/catalog_test.go",
+          "group_id": "F18c",
+          "prior_group_id": "F18c",
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M6",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Issue #23 explicitly first-owns TestRegisteredCatalogBoundary in this path with no new validation ID; it exercises the scoped installed-revision projection.",
+          "interfaces": [
+            "TestRegisteredCatalogBoundary"
+          ],
+          "dependencies": [
+            "api",
+            "app",
+            "connectors",
+            "contract",
+            "httpapi",
+            "testfixture"
+          ],
+          "test_ids": [
+            "V14",
+            "V24"
+          ],
+          "generator": null,
+          "go_package": "app",
+          "assignment_owner": "app",
+          "group_responsibility": "Scoped public projection of installed revision",
+          "allowed_internal_dependencies": [
+            "api",
+            "app",
+            "connectors",
+            "contract",
+            "httpapi",
+            "testfixture"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "connectors",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "httpapi",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "testfixture",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/httpapi/catalog.go",
+          "group_id": "F18c",
+          "prior_group_id": "F18c",
+          "owner": "httpapi",
+          "process": "API and worker",
+          "milestone": "M6",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "HTTP projection of the scoped installed catalog revision; current untracked issue #23 integration input.",
+          "interfaces": [
+            "ListCatalogConnectors",
+            "GetCatalogConnector",
+            "ListCatalogCommands",
+            "GetCatalogCommand"
+          ],
+          "dependencies": [
+            "api",
+            "app"
+          ],
+          "test_ids": [
+            "V14",
+            "V24"
+          ],
+          "generator": null,
+          "go_package": "httpapi",
+          "assignment_owner": "httpapi",
+          "group_responsibility": "Scoped public projection of installed revision",
+          "allowed_internal_dependencies": [
+            "api",
+            "app"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "app",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
         }
       ],
       "acceptance": [
@@ -13536,7 +15720,8 @@
         "T_V28",
         "T_V29",
         "T_V67",
-        "T_V74"
+        "T_V74",
+        "N14"
       ],
       "files": [
         {
@@ -14198,6 +16383,44 @@
             },
             {
               "package": "credentials",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/worker_retries.go",
+          "group_id": "N14",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M6",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own worker retries behavior within store; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "interfaces": [
+            "CloseUnattemptedWorkerRetries",
+            "WorkerRetry",
+            "WorkerRetryBasis",
+            "WorkerRetryInputDigest",
+            "WorkerRetryPlan",
+            "WorkerRetrySettlementSummary"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
               "earliest_milestone": "M6",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
@@ -16725,7 +18948,8 @@
         "R17",
         "T_V83",
         "T_R16",
-        "T_R17"
+        "T_R17",
+        "N17"
       ],
       "files": [
         {
@@ -17081,6 +19305,84 @@
           "go_package": "store",
           "assignment_owner": "store",
           "group_responsibility": "Dataset/object manifest/checkpoint and schema snapshot PG tables; same commit boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/artifact_publication.go",
+          "group_id": "N17",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own artifact publication behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+          "interfaces": [
+            "ArtifactPublicationReceipt",
+            "BindObjectAttempt",
+            "CancelObjectReservation",
+            "CommitObjectPublication",
+            "LoadArtifactPublication",
+            "LoadObjectReservation",
+            "ObjectAttemptBinding",
+            "ObjectCapacityLimits",
+            "ObjectReservation",
+            "ObjectReservationRequest",
+            "ObjectReservationState",
+            "ReserveObjectCapacity"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/worker_result_artifacts.go",
+          "group_id": "N17",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own worker result artifacts behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+          "interfaces": [
+            "LoadWorkerContinuationOrigin",
+            "WorkerContinuationOrigin"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
           "allowed_internal_dependencies": [
             "contract"
           ],

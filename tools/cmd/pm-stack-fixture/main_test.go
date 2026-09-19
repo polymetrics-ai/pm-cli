@@ -167,6 +167,50 @@ func TestGeneratedTemporalRolloverProfileIsAuxiliaryAndOwned(t *testing.T) {
 	}
 }
 
+func TestGeneratedArtifactExecutionConfigurationIsExplicitAndBounded(t *testing.T) {
+	repositoryRoot := realTemporaryDirectory(t)
+	writeExampleConfiguration(t, repositoryRoot)
+	example, err := os.ReadFile(filepath.Join(repositoryRoot, "deploy", "server.example.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	configuration, err := selectConfiguration(example, "pm-fixture-test", map[string]string{
+		"PUBLIC":   "8443",
+		"TEMPORAL": "7233",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var selected struct {
+		Artifacts struct {
+			Execution struct {
+				Region                       string `json:"region"`
+				MaxObjectBytes               uint64 `json:"max_object_bytes"`
+				MaxInFlight                  uint64 `json:"max_in_flight"`
+				RequestTimeout               string `json:"request_timeout"`
+				OrganizationReservedBytes    uint64 `json:"organization_reserved_bytes"`
+				WorkspaceReservedBytes       uint64 `json:"workspace_reserved_bytes"`
+				OrganizationReservedAttempts uint64 `json:"organization_reserved_attempts"`
+				WorkspaceReservedAttempts    uint64 `json:"workspace_reserved_attempts"`
+			} `json:"execution"`
+		} `json:"artifacts"`
+	}
+	if err := json.Unmarshal(configuration, &selected); err != nil {
+		t.Fatal(err)
+	}
+	execution := selected.Artifacts.Execution
+	if execution.Region != "us-east-1" ||
+		execution.MaxObjectBytes != 16777216 ||
+		execution.MaxInFlight != 4 ||
+		execution.RequestTimeout != "30s" ||
+		execution.OrganizationReservedBytes != 1073741824 ||
+		execution.WorkspaceReservedBytes != 268435456 ||
+		execution.OrganizationReservedAttempts != 4096 ||
+		execution.WorkspaceReservedAttempts != 1024 {
+		t.Fatalf("generated artifact execution configuration = %#v", execution)
+	}
+}
+
 func TestRepositoryReaderRefusesSymlinksAndFIFOsWithoutBlocking(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("FIFO and symlink controls are POSIX-only")

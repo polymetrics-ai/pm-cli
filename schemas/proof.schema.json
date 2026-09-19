@@ -90,7 +90,13 @@
     "status": {"enum": ["unproven", "blocked", "failed", "passed_fake", "passed_live"]},
     "started_at": {"$ref": "#/$defs/nullableInstant"},
     "finished_at": {"$ref": "#/$defs/nullableInstant"},
-    "provenance": {"$ref": "#/$defs/provenance"}
+    "provenance": {"$ref": "#/$defs/provenance"},
+    "implementation_closure": {"$ref": "#/$defs/implementationClosure"},
+    "cleanup_diagnostics": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"$ref": "#/$defs/cleanupDiagnostic"}
+    }
   },
   "allOf": [
     {
@@ -266,6 +272,37 @@
         "original_run_id": {"$ref": "#/$defs/nullableIdentity"},
         "reused": {
           "type": ["boolean", "null"]
+        }
+      }
+    },
+    "implementationClosure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["known", "digest"],
+      "properties": {
+        "known": {"type": "boolean"},
+        "digest": {"$ref": "#/$defs/nullableHash"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"known": {"const": true}}},
+          "then": {"properties": {"digest": {"$ref": "#/$defs/hash"}}}
+        },
+        {
+          "if": {"properties": {"known": {"const": false}}},
+          "then": {"properties": {"digest": {"type": "null"}}}
+        }
+      ]
+    },
+    "cleanupDiagnostic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["step_id", "code"],
+      "properties": {
+        "step_id": {"$ref": "#/$defs/identity"},
+        "code": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_.-]{0,127}$"
         }
       }
     },

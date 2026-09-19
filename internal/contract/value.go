@@ -648,54 +648,7 @@ func localTimestampLayout(value string) string {
 }
 
 func valueMatchesSchema(value PresentValue, schema Schema) bool {
-	if value.presence == PresenceAbsent {
-		return true
-	}
-	if value.presence == PresenceNull {
-		return schema.Nullable
-	}
-	if schema.Type == SchemaTypeUnion {
-		if value.kind != ValueKindUnion || value.member == nil {
-			return false
-		}
-		matches := 0
-		for _, variant := range schema.OneOf {
-			if valueMatchesSchema(*value.member, variant) {
-				matches++
-			}
-		}
-		return matches == 1
-	}
-	if !kindMatchesSchema(value.kind, schema.Type) {
-		return false
-	}
-	for _, component := range schema.AllOf {
-		if !valueMatchesSchema(value, component) {
-			return false
-		}
-	}
-	if schema.Type == SchemaTypeArray {
-		for _, element := range value.elements {
-			if !valueMatchesSchema(element, *schema.Items) {
-				return false
-			}
-		}
-	}
-	if schema.Type == SchemaTypeObject {
-		for _, required := range schema.Required {
-			field, ok := value.fields[required]
-			if !ok || field.presence == PresenceAbsent {
-				return false
-			}
-		}
-		for name, property := range schema.Properties {
-			field, present := value.fields[name]
-			if present && !valueMatchesSchema(field, property) {
-				return false
-			}
-		}
-	}
-	return true
+	return operationInputMatchesSchema(value, schema, true)
 }
 
 func kindMatchesSchema(kind ValueKind, schemaType SchemaType) bool {
@@ -703,7 +656,8 @@ func kindMatchesSchema(kind ValueKind, schemaType SchemaType) bool {
 }
 
 type ResultPagination struct {
-	EffectiveWireLimit uint64         `json:"effective_wire_limit"`
+	// EffectiveWireLimit is nil when no provider page-size field was sent.
+	EffectiveWireLimit *uint64        `json:"effective_wire_limit"`
 	TotalRecordCap     *uint64        `json:"total_record_cap,omitempty"`
 	Continuation       PresentValue   `json:"continuation"`
 	UnreadTail         []PresentValue `json:"unread_tail"`
@@ -716,8 +670,8 @@ type ResultPagination struct {
 }
 
 func (p ResultPagination) Validate() error {
-	if p.EffectiveWireLimit == 0 {
-		return contractError(ErrInvalidValue, "pagination.effective_wire_limit", "must report a positive actual wire limit")
+	if p.EffectiveWireLimit != nil && *p.EffectiveWireLimit == 0 {
+		return contractError(ErrInvalidValue, "pagination.effective_wire_limit", "must be positive when present")
 	}
 	if p.TotalRecordCap != nil && *p.TotalRecordCap == 0 {
 		return contractError(ErrInvalidValue, "pagination.total_record_cap", "must be positive when present")
@@ -757,6 +711,9 @@ func (p ResultPagination) Validate() error {
 func (p ResultPagination) clone() ResultPagination {
 	copy := p
 	copy.UnreadTail = slices.Clone(p.UnreadTail)
+	if p.EffectiveWireLimit != nil {
+		copy.EffectiveWireLimit = new(*p.EffectiveWireLimit)
+	}
 	if p.TotalRecordCap != nil {
 		copy.TotalRecordCap = new(*p.TotalRecordCap)
 	}
@@ -767,7 +724,7 @@ func (p ResultPagination) clone() ResultPagination {
 }
 
 type ActionResult struct {
-	MediaType  string            `json:"media_type"`
+	MediaType  string            `json:"media_type,omitempty"`
 	Data       PresentValue      `json:"data"`
 	Pagination *ResultPagination `json:"pagination,omitempty"`
 }
@@ -792,16 +749,29 @@ type RecordFilter struct {
 	Value    *PresentValue  `json:"value,omitempty"`
 }
 
+const maxResultContinuationBytes = 4096
+
 type ResultControls struct {
-	Selection *FieldSelection `json:"selection,omitempty"`
-	Filter    *RecordFilter   `json:"filter,omitempty"`
+	Selection      *FieldSelection `json:"selection,omitempty"`
+	Filter         *RecordFilter   `json:"filter,omitempty"`
+	TotalRecordCap *uint64         `json:"total_record_cap,omitempty"`
+	Continuation   *PresentValue   `json:"continuation,omitempty"`
 }
 
 func (r ActionResult) Validate() error {
-	if err := validateMediaType(r.MediaType); err != nil {
+	if err := r.Data.Validate(); err != nil {
 		return err
 	}
-	if err := r.Data.Validate(); err != nil {
+	if r.Data.Presence() == PresenceAbsent {
+		if r.MediaType != "" {
+			return contractError(ErrIncompatibleMedia, "action_result.media_type", "must be omitted when action data is absent")
+		}
+		if r.Pagination != nil {
+			return contractError(ErrInvalidValue, "action_result.pagination", "must be omitted when action data is absent")
+		}
+		return nil
+	}
+	if err := validateMediaType(r.MediaType); err != nil {
 		return err
 	}
 	if r.Data.Presence() == PresenceValue && r.Data.Kind() == ValueKindBinaryRef {
@@ -823,6 +793,21 @@ func cloneResultPagination(value *ResultPagination) *ResultPagination {
 		return nil
 	}
 	return new(value.clone())
+}
+
+// HasContinuation reports whether the caller supplied a present continuation
+// value. Validate must still be called before the continuation is consumed.
+func (c ResultControls) HasContinuation() bool {
+	return c.ContinuationValue().Presence() == PresenceValue
+}
+
+// ContinuationValue returns explicit typed continuation state and maps an
+// omitted continuation control to the shared absent value.
+func (c ResultControls) ContinuationValue() PresentValue {
+	if c.Continuation == nil {
+		return AbsentValue()
+	}
+	return *c.Continuation
 }
 
 func (c ResultControls) Validate() error {
@@ -859,6 +844,25 @@ func (c ResultControls) Validate() error {
 			}
 		default:
 			return contractError(ErrInvalidControls, "filter.operator", "operator is unsupported")
+		}
+	}
+	if c.TotalRecordCap != nil && *c.TotalRecordCap == 0 {
+		return contractError(ErrInvalidControls, "total_record_cap", "must be positive when supplied")
+	}
+	if c.Continuation != nil {
+		continuation := c.ContinuationValue()
+		if err := continuation.Validate(); err != nil {
+			return contractError(ErrInvalidControls, "continuation", "must be absent or a bounded nonempty opaque string")
+		}
+		switch continuation.Presence() {
+		case PresenceAbsent:
+		case PresenceValue:
+			text, ok := continuation.TextValue()
+			if !ok || text == "" || len(text) > maxResultContinuationBytes {
+				return contractError(ErrInvalidControls, "continuation", "must be absent or a bounded nonempty opaque string")
+			}
+		default:
+			return contractError(ErrInvalidControls, "continuation", "must be absent or a bounded nonempty opaque string")
 		}
 	}
 	return nil

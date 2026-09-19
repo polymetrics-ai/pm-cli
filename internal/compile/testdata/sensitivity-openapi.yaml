@@ -1,0 +1,100 @@
+openapi: 3.0.3
+info:
+  title: Synthetic sensitivity boundary
+  version: 1.0.0
+servers:
+  - url: https://sensitivity.example.test/v1
+components:
+  securitySchemes:
+    ApiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+    OAuth:
+      type: http
+      scheme: bearer
+paths:
+  /business:
+    get:
+      operationId: listBusinessRecords
+      security:
+        - OAuth: []
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [active, archived]
+      responses:
+        "200":
+          description: records
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [id]
+                properties:
+                  id:
+                    type: string
+  /keyed:
+    get:
+      operationId: getKeyedRecord
+      parameters:
+        - name: X-API-Key
+          in: header
+          required: true
+          schema:
+            type: string
+        - name: id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: no content
+  /tokens:
+    post:
+      operationId: createToken
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+                  format: password
+                  x-pm-sensitivity: public
+      responses:
+        "201":
+          description: token
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                required: [access_token]
+                properties:
+                  access_token:
+                    type: string
+  /unknown:
+    get:
+      operationId: unknownClassification
+      parameters:
+        - name: opaque
+          in: query
+          required: false
+          x-pm-sensitivity: unclassified
+          schema:
+            type: string
+      responses:
+        "204":
+          description: no content

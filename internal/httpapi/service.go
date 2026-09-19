@@ -42,10 +42,12 @@ type Service struct {
 	auth                  *auth.Service
 	identity              *app.IdentityService
 	credentials           *app.CredentialIngress
+	catalog               *app.CatalogService
 	instanceID            string
 	oidcHTTPClient        *http.Client
 	admission             *app.AdmissionService
 	runs                  *app.RunService
+	artifacts             *app.ArtifactService
 	resolveEventCursorKey func(context.Context) ([]byte, error)
 	eventBufferSize       uint64
 	eventWriteTimeout     time.Duration
@@ -97,16 +99,22 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 	if !validHTTPIdentifier(configuration.InstanceID, 512) {
 		return nil, errors.New("HTTP service instance identity is invalid")
 	}
+	artifacts, err := app.NewArtifactService(configuration.Identity, configuration.Artifacts)
+	if err != nil {
+		return nil, fmt.Errorf("construct HTTP artifact service: %w", err)
+	}
 	client := *configuration.OIDCHTTPClient
 	service := &Service{
 		publicOrigin:          configuration.PublicOrigin,
 		auth:                  configuration.Auth,
 		identity:              configuration.Identity,
 		credentials:           configuration.Credentials,
+		catalog:               configuration.Catalog,
 		instanceID:            configuration.InstanceID,
 		oidcHTTPClient:        &client,
 		admission:             configuration.Admission,
 		runs:                  configuration.Runs,
+		artifacts:             artifacts,
 		resolveEventCursorKey: configuration.ResolveEventCursorKey,
 		eventBufferSize:       configuration.EventBufferSize,
 		eventWriteTimeout:     configuration.EventWriteTimeout,
@@ -241,6 +249,10 @@ func policyForRequest(method, path string) (requestPolicy, bool) {
 		"GET /v1/workspaces/:workspace_id/connections", "POST /v1/workspaces/:workspace_id/connections",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id", "PATCH /v1/workspaces/:workspace_id/connections/:connection_id",
 		"DELETE /v1/workspaces/:workspace_id/connections/:connection_id",
+		"GET /v1/workspaces/:workspace_id/connectors",
+		"GET /v1/workspaces/:workspace_id/connectors/:connector_id",
+		"GET /v1/workspaces/:workspace_id/commands",
+		"GET /v1/workspaces/:workspace_id/commands/:operation_id",
 		"GET /v1/workspaces/:workspace_id/delegations", "POST /v1/workspaces/:workspace_id/delegations",
 		"POST /v1/workspaces/:workspace_id/delegations/:id/revoke",
 		"POST /v1/workspaces/:workspace_id/invocations",
@@ -582,6 +594,8 @@ func newProblem(status int, code, retryAction string, outcome *api.SafeOutcomeRe
 		title, detail = "Request state expired", "The prior request state is no longer available."
 	case http.StatusPreconditionFailed, http.StatusPreconditionRequired:
 		title, detail = "Revision precondition failed", "Refresh the control revision before continuing."
+	case http.StatusRequestedRangeNotSatisfiable:
+		title, detail = "Range not satisfiable", "Correct the requested byte range and try again."
 	case http.StatusTooManyRequests:
 		title, detail = "Request limited", "The applicable request limit is currently reached."
 	case http.StatusServiceUnavailable:

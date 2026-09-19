@@ -1,358 +1,192 @@
-package store
+package store_test
 
 import (
 	"context"
 	"errors"
+	"io"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/objects"
+	"github.com/polymetrics-ai/pm-cli/internal/store"
+	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
 )
 
+// TestArtifactCrashWindows joins actual selected shared bytes with PostgreSQL
+// publication and manifest transactions. The old metadata-only cases remain
+// separately named in artifact_metadata_test.go and are not physical proof.
 func TestArtifactCrashWindows(t *testing.T) {
-	// These are PostgreSQL metadata crash windows, not object-upload proof.
-	credentials, pool := prepareTestStore(t, 3)
-	scope := newTestScope(t)
-	t.Cleanup(func() { cleanupTestScope(t, credentials, scope) })
-	priorRef := testObjectRef(scope, "artifact-prior", "attempt-prior", "a")
-	priorVerified, err := NewPreverifiedObjectRef(priorRef, ObjectVerification{
-		ObservedSHA256:            priorRef.SHA256,
-		ObservedByteLength:        priorRef.ByteLength,
-		ObservedBackendGeneration: priorRef.BackendGeneration,
-	})
+	if os.Getenv("PM_STACK_TEST_CONFIG") == "" && os.Getenv("PM_STORE_TEST_SECRETS_DIR") == "" {
+		// docs/development/testing.md and setup.md require missing fixture
+		// inputs to fail this case rather than skip it.
+		t.Fatal("this physical case requires the explicitly selected owned stack fixture; missing inputs fail rather than skip")
+	}
+	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
+	consumer := testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway)
+	fixture := testfixture.New(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	publisher, err := objects.NewPublisher(fixture.Pool, producer.Backend, producer.Limits)
 	if err != nil {
 		t.Fatal(err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	connectionID := registerArtifactTestConnections(t, ctx, pool, scope, "primary")[0]
-	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-			ConnectionID: connectionID, ResourceID: "result", ExpectedRevision: 0, Object: priorVerified,
-		})
-		return err
-	}); err != nil {
-		t.Fatalf("commit prior manifest: %v", err)
+	reader, err := objects.NewPublisher(fixture.Pool, consumer.Backend, consumer.Limits)
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	t.Run("registered_object_can_remain_unpublished_after_manifest_failure", func(t *testing.T) {
-		orphanRef := testObjectRef(scope, "artifact-orphan", "attempt-orphan", "e")
-		orphan, err := NewPreverifiedObjectRef(orphanRef, ObjectVerification{
-			ObservedSHA256:            orphanRef.SHA256,
-			ObservedByteLength:        orphanRef.ByteLength,
-			ObservedBackendGeneration: orphanRef.BackendGeneration,
+	prepare := func(t *testing.T, artifactID, reservationID, payload string) (objects.PreparedPublication, contract.ObjectRef, store.PreverifiedObjectRef) {
+		t.Helper()
+		request := store.ObjectReservationRequest{ReservationID: reservationID, ConnectionID: fixture.Connection.ConnectionID, ArtifactID: artifactID, MaximumBytes: 64 << 10, Purpose: store.ArtifactPurposePublic}
+		if _, err := publisher.Reserve(ctx, fixture.Actor, fixture.Scope, request); err != nil {
+			t.Fatal(err)
+		}
+		attempt, err := objects.NewAttempt(fixture.Scope, artifactID, "application/octet-stream", []byte(payload), int64(request.MaximumBytes))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer attempt.Close()
+		publication, err := publisher.Upload(ctx, fixture.Actor, fixture.Scope, reservationID, attempt)
+		if err != nil {
+			t.Fatalf("prepare actual shared bytes: %v", err)
+		}
+		ref, err := publication.Reference()
+		if err != nil {
+			t.Fatal(err)
+		}
+		// These observations originate in the real adapter's completed readback,
+		// unlike the synthetic references used by metadata-only store tests.
+		verified, err := store.NewPreverifiedObjectRef(ref, store.ObjectVerification{
+			ObservedSHA256: ref.SHA256, ObservedByteLength: ref.ByteLength, ObservedBackendGeneration: ref.BackendGeneration,
 		})
 		if err != nil {
 			t.Fatal(err)
 		}
-		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			return RegisterArtifact(ctx, tx, connectionID, orphan)
-		}); err != nil {
-			t.Fatalf("register controlled orphan metadata: %v", err)
-		}
-		err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-				ConnectionID: connectionID, ResourceID: "result", ExpectedRevision: 0, Object: orphan,
+		return publication, ref, verified
+	}
+	commit := func(pool *store.Pool, publication objects.PreparedPublication, verified store.PreverifiedObjectRef, resourceID string, prior store.Manifest, beforeCommit func() error) (store.Manifest, error) {
+		var manifest store.Manifest
+		err := store.WithinScope(ctx, pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+			if _, err := publication.Commit(ctx, tx); err != nil {
+				return err
+			}
+			var err error
+			manifest, err = store.CommitManifestCAS(ctx, tx, store.ManifestCAS{
+				ConnectionID: fixture.Connection.ConnectionID, ResourceID: resourceID, ExpectedRevision: prior.Revision, Object: verified,
 			})
-			return err
-		})
-		if !errors.Is(err, ErrCASConflict) {
-			t.Fatalf("registered orphan publication failure = %v; want ErrCASConflict", err)
-		}
-		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			stored, err := LoadArtifact(ctx, tx, orphanRef.ArtifactID)
 			if err != nil {
 				return err
 			}
-			if stored != orphanRef {
-				t.Fatalf("registered immutable reference = %#v; want %#v", stored, orphanRef)
-			}
-			manifest, err := LoadManifest(ctx, tx, "result")
-			if err != nil {
-				return err
-			}
-			if manifest.Object.ArtifactID != priorRef.ArtifactID {
-				t.Fatalf("unpublished object replaced manifest: %#v", manifest)
+			if beforeCommit != nil {
+				return beforeCommit()
 			}
 			return nil
+		})
+		return manifest, err
+	}
+	loadManifest := func(t *testing.T, resourceID string) store.Manifest {
+		t.Helper()
+		var manifest store.Manifest
+		if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+			var err error
+			manifest, err = store.LoadManifest(ctx, tx, resourceID)
+			return err
 		}); err != nil {
 			t.Fatal(err)
 		}
-	})
-}
-
-func TestStoreManifestCommit(t *testing.T) {
-	// This proves PostgreSQL metadata atomicity only. It performs no object upload,
-	// readback, provider request, or shared-object durability claim.
-	credentials, pool := prepareTestStore(t, 3)
-	scope := newTestScope(t)
-	foreignScope := newTestScope(t)
-	t.Cleanup(func() {
-		cleanupTestScope(t, credentials, scope)
-		cleanupTestScope(t, credentials, foreignScope)
-	})
-
-	priorRef := testObjectRef(scope, "artifact-prior", "attempt-prior", "a")
-	priorVerified, err := NewPreverifiedObjectRef(priorRef, ObjectVerification{
-		ObservedSHA256:            priorRef.SHA256,
-		ObservedByteLength:        priorRef.ByteLength,
-		ObservedBackendGeneration: priorRef.BackendGeneration,
-	})
-	if err != nil {
-		t.Fatalf("construct prior preverified reference: %v", err)
+		return manifest
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	connectionID := registerArtifactTestConnections(t, ctx, pool, scope, "primary")[0]
-	registerArtifactTestConnections(t, ctx, pool, foreignScope, "foreign")
-	var prior Manifest
-	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		var err error
-		prior, err = CommitManifestCAS(ctx, tx, ManifestCAS{
-			ConnectionID: connectionID, ResourceID: "result", ExpectedRevision: 0, Object: priorVerified,
-		})
-		return err
-	}); err != nil {
-		t.Fatalf("commit prior manifest: %v", err)
-	}
-	if prior.Revision != 1 || prior.Object.ArtifactID != priorRef.ArtifactID {
-		t.Fatalf("prior manifest = %#v", prior)
-	}
-
-	t.Run("unverified_or_foreign_reference_is_refused", func(t *testing.T) {
-		candidate := testObjectRef(scope, "artifact-unverified", "attempt-unverified", "b")
-		_, err := NewPreverifiedObjectRef(candidate, ObjectVerification{
-			ObservedSHA256:            testObjectRef(scope, "other", "other-attempt", "different").SHA256,
-			ObservedByteLength:        candidate.ByteLength,
-			ObservedBackendGeneration: candidate.BackendGeneration,
-		})
-		if !errors.Is(err, ErrObjectNotVerified) {
-			t.Fatalf("mismatched verification error = %v; want ErrObjectNotVerified", err)
+	assertBytes := func(t *testing.T, ref contract.ObjectRef, want string) {
+		t.Helper()
+		body, err := consumer.Backend.OpenVerified(ctx, ref, objects.ByteRange{Length: ref.ByteLength})
+		if err != nil {
+			t.Fatalf("read actual retained object: %v", err)
 		}
+		defer body.Close()
+		payload, err := io.ReadAll(io.LimitReader(body, 64<<10+1))
+		if err != nil || string(payload) != want {
+			t.Fatalf("retained object bytes changed or became unavailable: %v", err)
+		}
+	}
 
-		foreign := testObjectRef(foreignScope, "artifact-foreign", "attempt-foreign", "c")
-		foreignVerified, err := NewPreverifiedObjectRef(foreign, ObjectVerification{
-			ObservedSHA256:            foreign.SHA256,
-			ObservedByteLength:        foreign.ByteLength,
-			ObservedBackendGeneration: foreign.BackendGeneration,
-		})
+	priorPublication, priorRef, priorVerified := prepare(t, "artifact-prior", "reservation-prior", "prior exact bytes")
+
+	t.Run("rollback_after_registration_and_manifest_write_keeps_prior", func(t *testing.T) {
+		const resourceID = "real-crash-rollback"
+		prior, err := commit(fixture.Pool, priorPublication, priorVerified, resourceID, store.Manifest{}, nil)
+		if err != nil {
+			t.Fatalf("publish initial actual manifest: %v", err)
+		}
+		publication, ref, verified := prepare(t, "artifact-rollback", "reservation-rollback", "uploaded but not published")
+		interrupted := errors.New("owned interruption before PostgreSQL commit")
+		_, err = commit(fixture.Pool, publication, verified, resourceID, prior, func() error { return interrupted })
+		if !errors.Is(err, interrupted) {
+			t.Fatalf("publication interruption: %v", err)
+		}
+		retained := loadManifest(t, resourceID)
+		if retained.Revision != prior.Revision || retained.Object != priorRef {
+			t.Fatal("uncommitted candidate advanced the public manifest")
+		}
+		if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+			_, err := store.LoadArtifact(ctx, tx, ref.ArtifactID)
+			return err
+		}); !errors.Is(err, store.ErrNotFound) {
+			t.Fatalf("rolled-back registration became visible: %v", err)
+		}
+		if _, err := reader.Recover(ctx, fixture.Actor, fixture.Scope, "reservation-rollback"); err == nil {
+			t.Fatal("orphan existence stood in for an immutable publication receipt")
+		}
+		assertBytes(t, priorRef, "prior exact bytes")
+		assertBytes(t, ref, "uploaded but not published")
+	})
+
+	t.Run("lost_physical_commit_reply_recovers_exact_occurrence", func(t *testing.T) {
+		const resourceID = "real-crash-lost-reply"
+		prior, err := commit(fixture.Pool, priorPublication, priorVerified, resourceID, store.Manifest{}, nil)
+		if err != nil {
+			t.Fatalf("publish independent initial manifest: %v", err)
+		}
+		publication, ref, verified := prepare(t, "artifact-committed", "reservation-committed", "committed exact bytes")
+		faultPool, fault, err := store.NewCommitReplyFaultPoolForTest(ctx, fixture.Pool)
 		if err != nil {
 			t.Fatal(err)
 		}
-		err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-				ConnectionID: connectionID, ResourceID: "result",
-				ExpectedRevision: prior.Revision, Object: foreignVerified,
+		defer faultPool.Close()
+		var observed store.ArtifactPublicationReceipt
+		observeCommitted := func() error {
+			observationContext, stop := context.WithTimeout(ctx, 3*time.Second)
+			defer stop()
+			return store.WithinScope(observationContext, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+				var err error
+				observed, err = store.LoadArtifactPublication(ctx, tx, "reservation-committed")
+				if err != nil {
+					return err
+				}
+				manifest, err := store.LoadManifest(ctx, tx, resourceID)
+				if err != nil {
+					return err
+				}
+				if observed.Object != ref || manifest.Object != ref || manifest.Revision != prior.Revision+1 {
+					return errors.New("independent PostgreSQL observer did not see atomic publication and manifest")
+				}
+				return nil
 			})
-			return err
-		})
-		if !errors.Is(err, ErrScopeMismatch) {
-			t.Fatalf("foreign ObjectRef error = %v; want ErrScopeMismatch", err)
 		}
+		_, err = commit(faultPool, publication, verified, resourceID, prior, func() error { return fault.Arm(observeCommitted) })
+		if !fault.Completed() || !errors.Is(err, store.ErrCommitOutcomeUnknown) {
+			t.Fatalf("actual committed reply was not withheld as an unknown outcome: completed=%v error=%v", fault.Completed(), err)
+		}
+		recovered, err := reader.Recover(ctx, fixture.Actor, fixture.Scope, "reservation-committed")
+		if err != nil || recovered.Object != ref || !recovered.PublishedAt.Equal(observed.PublishedAt) {
+			t.Fatalf("recovery did not retain the original independently observed occurrence: %v", err)
+		}
+		retained := loadManifest(t, resourceID)
+		if retained.Revision != prior.Revision+1 || retained.Object != ref {
+			t.Fatal("recovery advanced or replaced the committed manifest")
+		}
+		assertBytes(t, priorRef, "prior exact bytes")
+		assertBytes(t, ref, "committed exact bytes")
 	})
-
-	candidateRef := testObjectRef(scope, "artifact-candidate", "attempt-candidate", "d")
-	candidateVerified, err := NewPreverifiedObjectRef(candidateRef, ObjectVerification{
-		ObservedSHA256:            candidateRef.SHA256,
-		ObservedByteLength:        candidateRef.ByteLength,
-		ObservedBackendGeneration: candidateRef.BackendGeneration,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	t.Run("cas_loss_preserves_prior_manifest", func(t *testing.T) {
-		err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-				ConnectionID: connectionID, ResourceID: "result",
-				ExpectedRevision: 0, Object: candidateVerified,
-			})
-			return err
-		})
-		if !errors.Is(err, ErrCASConflict) {
-			t.Fatalf("lost manifest CAS error = %v; want ErrCASConflict", err)
-		}
-		assertManifestRef(t, pool, scope, "result", priorRef.ArtifactID, prior.Revision)
-	})
-
-	t.Run("rollback_after_candidate_write_preserves_prior_and_orphan_metadata", func(t *testing.T) {
-		injected := errors.New("injected manifest commit loss")
-		err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			if _, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-				ConnectionID: connectionID, ResourceID: "result",
-				ExpectedRevision: prior.Revision, Object: candidateVerified,
-			}); err != nil {
-				return err
-			}
-			return injected
-		})
-		if !errors.Is(err, injected) {
-			t.Fatalf("manifest rollback error = %v; want injected failure", err)
-		}
-		assertManifestRef(t, pool, scope, "result", priorRef.ArtifactID, prior.Revision)
-
-		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := LoadArtifact(ctx, tx, candidateRef.ArtifactID)
-			return err
-		}); !errors.Is(err, ErrNotFound) {
-			t.Fatalf("rolled-back candidate registration error = %v; want ErrNotFound", err)
-		}
-	})
-	t.Run("current_cas_publishes_only_the_preverified_reference", func(t *testing.T) {
-		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			_, err := CommitManifestCAS(ctx, tx, ManifestCAS{
-				ConnectionID: connectionID, ResourceID: "result",
-				ExpectedRevision: prior.Revision, Object: candidateVerified,
-			})
-			return err
-		}); err != nil {
-			t.Fatalf("publish verified replacement: %v", err)
-		}
-		if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-			published, err := LoadManifest(ctx, tx, "result")
-			if err != nil {
-				return err
-			}
-			if published.Revision != prior.Revision+1 || published.Object != candidateRef {
-				t.Fatalf("manifest did not publish the exact verified object at the next revision: %#v", published)
-			}
-			return nil
-		}); err != nil {
-			t.Fatal(err)
-		}
-	})
-}
-
-func TestArtifactAuthorityBindingIsImmutable(t *testing.T) {
-	credentials, pool := prepareTestStore(t, 3)
-	scope := newTestScope(t)
-	t.Cleanup(func() { cleanupTestScope(t, credentials, scope) })
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-	connectionIDs := registerArtifactTestConnections(t, ctx, pool, scope, "primary", "other")
-	ref := testObjectRef(scope, "artifact-authority", "attempt-authority", "authority")
-	verified, err := NewPreverifiedObjectRef(ref, ObjectVerification{
-		ObservedSHA256:            ref.SHA256,
-		ObservedByteLength:        ref.ByteLength,
-		ObservedBackendGeneration: ref.BackendGeneration,
-	})
-	if err != nil {
-		t.Fatalf("construct preverified authority fixture: %v", err)
-	}
-
-	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		if err := RegisterArtifact(ctx, tx, connectionIDs[0], verified); err != nil {
-			return err
-		}
-		if err := RegisterArtifact(ctx, tx, connectionIDs[0], verified); err != nil {
-			return err
-		}
-		connectionID, err := LoadArtifactConnectionID(ctx, tx, ref.ArtifactID)
-		if err != nil {
-			return err
-		}
-		if connectionID != connectionIDs[0] {
-			t.Fatalf("artifact authority = %q; want %q", connectionID, connectionIDs[0])
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("register and replay exact artifact authority: %v", err)
-	}
-
-	err = WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		return RegisterArtifact(ctx, tx, connectionIDs[1], verified)
-	})
-	if !errors.Is(err, ErrImmutableConflict) {
-		t.Fatalf("conflicting artifact authority = %v; want ErrImmutableConflict", err)
-	}
-	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		connectionID, err := LoadArtifactConnectionID(ctx, tx, ref.ArtifactID)
-		if err != nil {
-			return err
-		}
-		if connectionID != connectionIDs[0] {
-			t.Fatalf("conflicting replay changed artifact authority to %q; want %q", connectionID, connectionIDs[0])
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("load retained artifact authority: %v", err)
-	}
-}
-
-func registerArtifactTestConnections(
-	t *testing.T,
-	ctx context.Context,
-	pool *Pool,
-	scope contract.Scope,
-	labels ...string,
-) []string {
-	t.Helper()
-	connectionIDs := make([]string, len(labels))
-	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		if err := RegisterWorkspace(ctx, tx, WorkspaceIdentity{
-			Scope: scope,
-			Name:  "artifact-workspace",
-		}); err != nil {
-			return err
-		}
-		account := ProviderAccount{
-			OrgID:          scope.OrgID,
-			AccountID:      "artifact-account",
-			Provider:       "artifact-provider",
-			AccountWitness: "artifact-account-witness",
-			Capacity:       8,
-			Revision:       1,
-		}
-		if err := RegisterProviderAccount(ctx, tx, account); err != nil {
-			return err
-		}
-		for index, label := range labels {
-			connectionIDs[index] = "artifact-connection-" + label
-			if err := RegisterConnection(ctx, tx, Connection{
-				Scope:             scope,
-				ConnectionID:      connectionIDs[index],
-				ConnectorID:       "artifact-connector",
-				ProviderAccountID: account.AccountID,
-				Revision:          1,
-			}); err != nil {
-				return err
-			}
-		}
-		return nil
-	}); err != nil {
-		t.Fatalf("register artifact test connections: %v", err)
-	}
-	return connectionIDs
-}
-
-func testObjectRef(scope contract.Scope, artifactID, attemptKey, seed string) contract.ObjectRef {
-	digest := testDigest("object-" + seed)
-	return contract.ObjectRef{
-		OrgID:             scope.OrgID,
-		WorkspaceID:       scope.WorkspaceID,
-		ArtifactID:        artifactID,
-		ObjectAttemptKey:  attemptKey,
-		SHA256:            string(digest)[len("sha256:"):],
-		ByteLength:        int64(len(seed)),
-		MediaType:         "application/octet-stream",
-		BackendGeneration: "generation-" + seed,
-	}
-}
-
-func assertManifestRef(t *testing.T, pool *Pool, scope contract.Scope, resourceID, artifactID string, revision uint64) {
-	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		manifest, err := LoadManifest(ctx, tx, resourceID)
-		if err != nil {
-			return err
-		}
-		if manifest.Object.ArtifactID != artifactID || manifest.Revision != revision {
-			t.Fatalf("manifest = %#v; want artifact %q revision %d", manifest, artifactID, revision)
-		}
-		return nil
-	}); err != nil {
-		t.Fatal(err)
-	}
 }

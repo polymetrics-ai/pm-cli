@@ -57,6 +57,33 @@
       "executable": "bazelisk"
     },
     {
+      "id": "chromium",
+      "version": "153.0.8010.12",
+      "platform": "darwin-arm64",
+      "url": "https://cdn.playwright.dev/builds/cft/153.0.8010.12/mac-arm64/chrome-headless-shell-mac-arm64.zip",
+      "sha256": "89d80a6d26ccd0ccfd51e22d9e1297283862af2b0cd91dce07459b35ca0059f2",
+      "kind": "zip",
+      "executable": "chrome-headless-shell-mac-arm64/chrome-headless-shell"
+    },
+    {
+      "id": "chromium",
+      "version": "153.0.8010.12",
+      "platform": "linux-amd64",
+      "url": "https://cdn.playwright.dev/builds/cft/153.0.8010.12/linux64/chrome-headless-shell-linux64.zip",
+      "sha256": "a9da028861a0cf789ff25c2fed45f5f1aaf969ed9247835b6a7821a4f7af9d1d",
+      "kind": "zip",
+      "executable": "chrome-headless-shell-linux64/chrome-headless-shell"
+    },
+    {
+      "id": "chromium",
+      "version": "153.0.8010.12",
+      "platform": "linux-arm64",
+      "url": "https://cdn.playwright.dev/builds/cft/153.0.8010.12/linux-arm64/chrome-headless-shell-linux-arm64.zip",
+      "sha256": "d433c45172c7836e38124fe545f767b02210bfb43a6262f08a297473a8e91c99",
+      "kind": "zip",
+      "executable": "chrome-headless-shell-linux-arm64/chrome-headless-shell"
+    },
+    {
       "id": "clang",
       "version": "21.1.8",
       "platform": "darwin-arm64",
@@ -148,6 +175,33 @@
       "sha256": "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
       "kind": "tar.gz",
       "executable": "go/bin/go"
+    },
+    {
+      "id": "node",
+      "version": "24.21.0",
+      "platform": "darwin-arm64",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-darwin-arm64.tar.xz",
+      "sha256": "6239d4cf92d864487ec8cd3615038f7b67e7f58b77b21cd2f09ea9fbd68065fe",
+      "kind": "tar.xz",
+      "executable": "node-v24.21.0-darwin-arm64/bin/node"
+    },
+    {
+      "id": "node",
+      "version": "24.21.0",
+      "platform": "linux-amd64",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-x64.tar.xz",
+      "sha256": "fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6",
+      "kind": "tar.xz",
+      "executable": "node-v24.21.0-linux-x64/bin/node"
+    },
+    {
+      "id": "node",
+      "version": "24.21.0",
+      "platform": "linux-arm64",
+      "url": "https://nodejs.org/dist/v24.21.0/node-v24.21.0-linux-arm64.tar.xz",
+      "sha256": "6ad1325edbdb5649c379b75a237147a666c95d4f9ae8d340fef2d1575d289ad2",
+      "kind": "tar.xz",
+      "executable": "node-v24.21.0-linux-arm64/bin/node"
     },
     {
       "id": "syft",

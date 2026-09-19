@@ -11,6 +11,131 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
+func TestSharedAccountCooldowns(t *testing.T) {
+	credentials, replicaA := prepareTestStore(t, 4)
+	replicaB := openPermitTestPool(t, credentials, 4)
+	record := func(ctx context.Context, pool *Pool, scope contract.Scope, permit AccountPermit, until time.Time) error {
+		return WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+			return RecordAccountCooldown(ctx, tx, permit, until)
+		})
+	}
+	reserve := func(t *testing.T, ctx context.Context, pool *Pool, scope contract.Scope, request AccountPermitRequest) AccountPermit {
+		t.Helper()
+		permit, err := reservePermitForTest(ctx, pool, scope, request)
+		if err != nil {
+			t.Fatalf("reserve cooldown fixture permit: %v", err)
+		}
+		return permit
+	}
+	dispatch := func(t *testing.T, ctx context.Context, permit AccountPermit) AccountPermit {
+		t.Helper()
+		dispatched, err := authorizePermitForTest(ctx, replicaA, permit)
+		if err != nil {
+			t.Fatalf("authorize cooldown fixture permit: %v", err)
+		}
+		return dispatched
+	}
+	assertCooldown := func(t *testing.T, err error, until time.Time) {
+		t.Helper()
+		var cooldown *AccountCooldownError
+		if !errors.Is(err, ErrAccountCooldown) || !errors.As(err, &cooldown) || !cooldown.NotBefore.Equal(until) {
+			t.Fatalf("account admission = %v; want cooldown until %s", err, until)
+		}
+	}
+
+	t.Run("aliases and replicas retain one monotonic deadline without new capacity", func(t *testing.T) {
+		fixture := registerPermitTestFixture(t, credentials, replicaA, permitFixtureOptions{Capacity: 4})
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		source := dispatch(t, ctx, reserve(t, ctx, replicaA, fixture.alpha, AccountPermitRequest{
+			PermitID: "cooldown-source-" + fixture.suffix, ConnectionID: fixture.alphaConnections[0],
+			OwnerID: "source-worker", Units: 1, TTL: time.Minute,
+		}))
+		waitingRequest := AccountPermitRequest{
+			PermitID: "cooldown-waiting-" + fixture.suffix, ConnectionID: fixture.betaConnection,
+			OwnerID: "waiting-worker", Units: 1, TTL: time.Minute,
+		}
+		waiting := reserve(t, ctx, replicaB, fixture.beta, waitingRequest)
+		until := source.ReservedAt.Add(time.Hour)
+		forged := source
+		forged.Fence++
+		if err := record(ctx, replicaA, fixture.alpha, forged, until); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("forged cooldown observer = %v; want stale permit", err)
+		}
+		if err := record(ctx, replicaB, fixture.beta, source, until); !errors.Is(err, ErrScopeMismatch) {
+			t.Fatalf("cross-workspace cooldown observer = %v; want scope mismatch", err)
+		}
+		if err := record(ctx, replicaB, fixture.beta, waiting, until); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("unsent cooldown observer = %v; want stale permit", err)
+		}
+		if err := WithinScope(ctx, replicaA, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+			return CheckAccountCooldown(ctx, tx, source)
+		}); err != nil {
+			t.Fatalf("rejected observations created a cooldown: %v", err)
+		}
+		if err := record(ctx, replicaA, fixture.alpha, source, until.Add(time.Nanosecond)); err != nil {
+			t.Fatalf("record provider cooldown: %v", err)
+		}
+		// Storage must round upward, not shorten a non-microsecond observation.
+		until = until.Add(time.Microsecond)
+		if err := record(ctx, replicaB, fixture.alpha, source, until.Add(-time.Minute)); err != nil {
+			t.Fatalf("retain a shorter provider observation: %v", err)
+		}
+		replayed := reserve(t, ctx, replicaB, fixture.beta, waitingRequest)
+		if !samePermitCAS(replayed, waiting) || !replayed.ExpiresAt.Equal(waiting.ExpiresAt) {
+			t.Fatal("reservation replay changed the existing permit authority")
+		}
+		_, err := authorizePermitForTest(ctx, replicaB, waiting)
+		assertCooldown(t, err, until)
+		err = WithinScope(ctx, replicaA, fixture.alpha, testActor(fixture.alpha), func(ctx context.Context, tx *Transaction) error {
+			return CheckAccountCooldown(ctx, tx, source)
+		})
+		assertCooldown(t, err, until)
+		fresh := AccountPermitRequest{
+			PermitID: "cooldown-new-" + fixture.suffix, ConnectionID: fixture.alphaConnections[1],
+			OwnerID: "new-worker", Units: 1, TTL: time.Minute,
+		}
+		_, err = reservePermitForTest(ctx, replicaB, fixture.alpha, fresh)
+		assertCooldown(t, err, until)
+		if countAccountPermits(t, replicaA, fixture.alpha, fresh.PermitID) != 0 ||
+			readReservedUnits(t, replicaB, fixture.beta, fixture.account.AccountID) != 2 {
+			t.Fatal("cooldown refusal published a permit or consumed extra shared capacity")
+		}
+		retained, err := loadPermitForTest(ctx, replicaB, fixture.beta, waiting.PermitID)
+		if err != nil || retained.State != AccountPermitReserved {
+			t.Fatalf("cooldown denial changed an unsent permit: state=%s error=%v", retained.State, err)
+		}
+		// A colliding account name in another organization is independent.
+		other := registerPermitTestFixture(t, credentials, replicaA, permitFixtureOptions{
+			AccountID: fixture.account.AccountID, AccountWitness: fixture.account.AccountWitness, Capacity: 1,
+		})
+		dispatch(t, ctx, reserve(t, ctx, replicaB, other.alpha, AccountPermitRequest{
+			PermitID: "other-account-" + other.suffix, ConnectionID: other.alphaConnections[0],
+			OwnerID: "other-worker", Units: 1, TTL: time.Minute,
+		}))
+	})
+
+	t.Run("an already elapsed provider date permits fresh database-time admission", func(t *testing.T) {
+		fixture := registerPermitTestFixture(t, credentials, replicaA, permitFixtureOptions{Capacity: 2})
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		source := dispatch(t, ctx, reserve(t, ctx, replicaA, fixture.alpha, AccountPermitRequest{
+			PermitID: "elapsed-source-" + fixture.suffix, ConnectionID: fixture.alphaConnections[0],
+			OwnerID: "source-worker", Units: 1, TTL: time.Minute,
+		}))
+		if err := record(ctx, replicaA, fixture.alpha, source, source.ReservedAt.Add(-24*time.Hour)); err != nil {
+			t.Fatalf("record elapsed provider date: %v", err)
+		}
+		fresh := reserve(t, ctx, replicaB, fixture.beta, AccountPermitRequest{
+			PermitID: "elapsed-new-" + fixture.suffix, ConnectionID: fixture.betaConnection,
+			OwnerID: "new-worker", Units: 1, TTL: time.Minute,
+		})
+		if _, err := authorizePermitForTest(ctx, replicaB, fresh); err != nil {
+			t.Fatalf("elapsed shared cooldown blocked a fresh send: %v", err)
+		}
+	})
+}
+
 func TestSharedAccountPermits(t *testing.T) {
 	credentials, replicaA := prepareTestStore(t, 6)
 	replicaB := openPermitTestPool(t, credentials, 6)
@@ -172,6 +297,156 @@ func TestSharedAccountPermits(t *testing.T) {
 		}
 		if expired.State != AccountPermitExpired || replayedExpiry.State != AccountPermitExpired || readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 0 {
 			t.Fatalf("unused expiry did not release exactly once")
+		}
+	})
+
+	t.Run("unused release is terminal and races dispatch by exact CAS", func(t *testing.T) {
+		fixture := registerPermitTestFixture(
+			t,
+			credentials,
+			replicaA,
+			permitFixtureOptions{Capacity: 2},
+		)
+		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+		defer cancel()
+		reserve := func(label string) AccountPermit {
+			t.Helper()
+			permit, err := reservePermitForTest(
+				ctx,
+				replicaA,
+				fixture.alpha,
+				AccountPermitRequest{
+					PermitID:     "permit-release-" + label + "-" + fixture.suffix,
+					ConnectionID: fixture.alphaConnections[0],
+					OwnerID:      "release-worker-" + label,
+					Units:        1,
+					TTL:          time.Hour,
+				},
+			)
+			if err != nil {
+				t.Fatalf("reserve %s release fixture: %v", label, err)
+			}
+			return permit
+		}
+
+		unused := reserve("unused")
+		forgedOwner := unused
+		forgedOwner.OwnerID = "different-release-owner"
+		if _, err := releaseUnusedPermitForTest(ctx, replicaA, forgedOwner); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("forged owner release = %v; want ErrAccountPermitStale", err)
+		}
+		forgedScope := unused
+		forgedScope.Scope = fixture.beta
+		if _, err := releaseUnusedPermitForTest(ctx, replicaB, forgedScope); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("cross-workspace release = %v; want ErrAccountPermitStale", err)
+		}
+		if got := readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID); got != 1 {
+			t.Fatalf("refused permit releases changed reserved units to %d; want 1", got)
+		}
+		released, err := releaseUnusedPermitForTest(ctx, replicaA, unused)
+		if err != nil {
+			t.Fatalf("release verified unused permit: %v", err)
+		}
+		replayed, err := releaseUnusedPermitForTest(ctx, replicaB, unused)
+		if err != nil {
+			t.Fatalf("replay unused permit release: %v", err)
+		}
+		if released.State != AccountPermitReleased ||
+			released.ResolvedAt == nil ||
+			!released.ExpiresAt.After(*released.ResolvedAt) ||
+			!samePermitCAS(released, unused) ||
+			replayed.State != AccountPermitReleased ||
+			replayed.ResolvedAt == nil ||
+			!replayed.ResolvedAt.Equal(*released.ResolvedAt) ||
+			readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 0 {
+			t.Fatalf("unused release did not preserve authority and release capacity exactly once: %#v %#v", released, replayed)
+		}
+		if _, err := authorizePermitForTest(ctx, replicaA, unused); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("released permit authorization = %v; want ErrAccountPermitStale", err)
+		}
+
+		toDispatch := reserve("dispatched")
+		dispatched, err := authorizePermitForTest(ctx, replicaA, toDispatch)
+		if err != nil {
+			t.Fatalf("authorize dispatch control permit: %v", err)
+		}
+		if _, err := releaseUnusedPermitForTest(ctx, replicaB, toDispatch); !errors.Is(err, ErrAccountPermitStale) {
+			t.Fatalf("release after dispatch = %v; want ErrAccountPermitStale", err)
+		}
+		if retained, err := loadPermitForTest(ctx, replicaA, fixture.alpha, toDispatch.PermitID); err != nil ||
+			retained.State != AccountPermitDispatched ||
+			readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 1 {
+			t.Fatalf("release conflict changed dispatched authority: permit=%#v error=%v", retained, err)
+		}
+		if _, err := resolvePermitForTest(ctx, replicaA, dispatched); err != nil {
+			t.Fatalf("resolve dispatch control permit: %v", err)
+		}
+
+		racing := reserve("race")
+		type transitionResult struct {
+			operation string
+			err       error
+		}
+		start := make(chan struct{})
+		results := make(chan transitionResult, 2)
+		var workers sync.WaitGroup
+		workers.Add(2)
+		go func() {
+			defer workers.Done()
+			<-start
+			_, err := authorizePermitForTest(ctx, replicaA, racing)
+			results <- transitionResult{operation: "dispatch", err: err}
+		}()
+		go func() {
+			defer workers.Done()
+			<-start
+			_, err := releaseUnusedPermitForTest(ctx, replicaB, racing)
+			results <- transitionResult{operation: "release", err: err}
+		}()
+		close(start)
+		workers.Wait()
+		close(results)
+		successes := 0
+		stale := 0
+		winner := ""
+		for result := range results {
+			if result.err == nil {
+				successes++
+				winner = result.operation
+				continue
+			}
+			if errors.Is(result.err, ErrAccountPermitStale) {
+				stale++
+				continue
+			}
+			t.Fatalf("%s side of permit transition race: %v", result.operation, result.err)
+		}
+		if successes != 1 || stale != 1 {
+			t.Fatalf("permit transition race successes/stale = %d/%d; want 1/1", successes, stale)
+		}
+		retained, err := loadPermitForTest(ctx, replicaA, fixture.alpha, racing.PermitID)
+		if err != nil {
+			t.Fatalf("load raced permit: %v", err)
+		}
+		switch winner {
+		case "release":
+			if retained.State != AccountPermitReleased ||
+				readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 0 {
+				t.Fatalf("release race winner = %#v; want released with free capacity", retained)
+			}
+		case "dispatch":
+			if retained.State != AccountPermitDispatched ||
+				readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID) != 1 {
+				t.Fatalf("dispatch race winner = %#v; want dispatched with retained capacity", retained)
+			}
+			if _, err := resolvePermitForTest(ctx, replicaA, retained); err != nil {
+				t.Fatalf("resolve raced dispatch winner: %v", err)
+			}
+		default:
+			t.Fatalf("unexpected permit transition winner %q", winner)
+		}
+		if got := readReservedUnits(t, replicaA, fixture.alpha, fixture.account.AccountID); got != 0 {
+			t.Fatalf("completed permit transition race retained %d units; want 0", got)
 		}
 	})
 
@@ -588,6 +863,16 @@ func reclaimPermitForTest(ctx context.Context, pool *Pool, permit AccountPermit,
 	err := WithinScope(ctx, pool, permit.Scope, testActor(permit.Scope), func(ctx context.Context, tx *Transaction) error {
 		var err error
 		updated, err = ReclaimAccountPermit(ctx, tx, permit, ownerID, ttl)
+		return err
+	})
+	return updated, err
+}
+
+func releaseUnusedPermitForTest(ctx context.Context, pool *Pool, permit AccountPermit) (AccountPermit, error) {
+	var updated AccountPermit
+	err := WithinScope(ctx, pool, permit.Scope, testActor(permit.Scope), func(ctx context.Context, tx *Transaction) error {
+		var err error
+		updated, err = ReleaseUnusedAccountPermit(ctx, tx, permit)
 		return err
 	})
 	return updated, err

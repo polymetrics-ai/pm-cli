@@ -75,6 +75,82 @@
         }
       }
     },
+    "provider_http": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional complete server-owned HTTP execution policy. Absence grants no provider HTTP authority. Every destination is selected only by its exact organization, workspace, and connection binding; Go validation rejects duplicate bindings and validates each HTTPS source-style base URL. The optional tls_trust_root_ref names the operator secret bundle holding the provider egress trust root ca.pem; Go loads it at process startup and refuses a missing, empty, oversized, or unparsable root. Absence keeps the process system root store.",
+      "required": [
+        "max_request_bytes",
+        "max_response_bytes",
+        "max_dns_answers",
+        "max_attempts",
+        "max_retry_delay",
+        "destinations"
+      ],
+      "properties": {
+        "max_request_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775806
+        },
+        "max_response_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9223372036854775806
+        },
+        "max_dns_answers": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "max_attempts": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 4294967295
+        },
+        "max_retry_delay": {
+          "$ref": "#/$defs/positiveDuration"
+        },
+        "destinations": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["org_id", "workspace_id", "connection_id", "origin"],
+            "properties": {
+              "org_id": {"$ref": "#/$defs/contractIdentity"},
+              "workspace_id": {"$ref": "#/$defs/contractIdentity"},
+              "connection_id": {"$ref": "#/$defs/contractIdentity"},
+              "origin": {"$ref": "#/$defs/httpsBaseURL"}
+            }
+          }
+        },
+        "tls_trust_root_ref": {
+          "$ref": "#/$defs/secretReference"
+        }
+      }
+    },
+    "connectors": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "Optional declaration of the generated execution bundles this deployment admits. The object is complete or absent; absence and an empty array both install no connector and therefore claim no bundled capability. Every path is absolute, canonical, unique, and read as a bounded regular file at process startup; an unreadable, oversized, undecodable, or duplicate-connector bundle fails composition instead of degrading to a smaller catalog.",
+      "required": ["bundles"],
+      "properties": {
+        "bundles": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 4096,
+            "pattern": "^/[^\\x00-\\x1f]*$"
+          }
+        }
+      }
+    },
     "schema_version": {
       "const": "1"
     },
@@ -176,6 +252,53 @@
         },
         "attempt_key_policy": {
           "const": "unique_immutable"
+        },
+        "execution": {
+          "type": "object",
+          "additionalProperties": false,
+          "description": "Optional complete artifact-byte execution policy. Absence leaves byte publication and reads unavailable. Go validation enforces the byte and retained-attempt hierarchies, the signed product bound, and the five-minute request-timeout ceiling.",
+          "required": [
+            "region",
+            "max_object_bytes",
+            "max_in_flight",
+            "request_timeout",
+            "organization_reserved_bytes",
+            "workspace_reserved_bytes",
+            "organization_reserved_attempts",
+            "workspace_reserved_attempts"
+          ],
+          "properties": {
+            "region": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[a-z0-9-]+$"
+            },
+            "max_object_bytes": {
+              "$ref": "#/$defs/positiveInteger",
+              "maximum": 9223372036854775806
+            },
+            "max_in_flight": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 65536
+            },
+            "request_timeout": {
+              "$ref": "#/$defs/duration"
+            },
+            "organization_reserved_bytes": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "workspace_reserved_bytes": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "organization_reserved_attempts": {
+              "$ref": "#/$defs/positiveInteger"
+            },
+            "workspace_reserved_attempts": {
+              "$ref": "#/$defs/positiveInteger"
+            }
+          }
         }
       }
     },
@@ -299,6 +422,12 @@
       "maxLength": 255,
       "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
     },
+    "contractIdentity": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 512,
+      "pattern": "^(?:\\S|\\S.*\\S)$"
+    },
     "secretReference": {
       "type": "string",
       "minLength": 10,
@@ -319,11 +448,24 @@
       "format": "uri",
       "pattern": "^https://[^/?#@]+(?:/[^?#]*)?$"
     },
+    "httpsBaseURL": {
+      "type": "string",
+      "minLength": 9,
+      "maxLength": 4096,
+      "format": "uri",
+      "pattern": "^https://[^/?#@{}\\s]+(?:/[^?#{}\\s]*)?$"
+    },
     "duration": {
       "type": "string",
       "minLength": 2,
       "maxLength": 64,
       "pattern": "^(?:[0-9]+(?:\\.[0-9]+)?(?:ns|us|µs|ms|s|m|h))+$"
+    },
+    "positiveDuration": {
+      "allOf": [
+        {"$ref": "#/$defs/duration"},
+        {"not": {"pattern": "^(?:0+(?:\\.0+)?(?:ns|us|µs|ms|s|m|h))+$"}}
+      ]
     },
     "positiveInteger": {
       "type": "integer",

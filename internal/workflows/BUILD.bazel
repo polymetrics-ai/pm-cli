@@ -24,8 +24,8 @@ go_test(
     srcs = [
         "continue_test.go",
         "payload_test.go",
+        "retry_test.go",
     ],
-    embed = [":workflows"],
     env_inherit = [
         "GOMAXPROCS",
         "GOMEMLIMIT",
@@ -35,8 +35,13 @@ go_test(
         "PM_STACK_TEST_ROLLOVER_NAMESPACE",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
+        ":workflows",
         "//internal/activities",
         "//internal/api",
         "//internal/app",
@@ -53,6 +58,7 @@ go_test(
         "@io_temporal_go_sdk//client",
         "@io_temporal_go_sdk//converter",
         "@io_temporal_go_sdk//temporal",
+        "@io_temporal_go_sdk//testsuite",
         "@io_temporal_go_sdk//worker",
         "@io_temporal_go_sdk//workflow",
         "@org_golang_google_protobuf//proto",

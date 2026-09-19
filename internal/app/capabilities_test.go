@@ -140,7 +140,7 @@ func TestRegisteredHandlerReachability(t *testing.T) {
 			t.Fatalf("foundation mismatch error = %v; want handler and foundation incompatibility", err)
 		}
 
-		capabilityMismatch := operationForRegistryTest("http", contract.LaneDirectRead, slices.Clone(registration.Capabilities))
+		capabilityMismatch := operationForRegistryTest(contract.TransportKindHTTP, contract.LaneDirectRead, slices.Clone(registration.Capabilities))
 		capabilityMismatch.CapabilityRequirements = append(capabilityMismatch.CapabilityRequirements, contract.CapabilityRequirement{
 			Capability: "pagination",
 			Foundation: contract.FoundationRef{ID: "FND-6", Version: "1.0.0"},
@@ -149,19 +149,26 @@ func TestRegisteredHandlerReachability(t *testing.T) {
 			t.Fatalf("capability mismatch error = %v; want handler incompatible", err)
 		}
 
-		ineligibleLane := operationForRegistryTest("http", contract.LaneDirectRead, slices.Clone(registration.Capabilities))
-		ineligibleLane.LaneEligibility[0] = contract.LaneEligibility{
-			Lane: contract.LaneDirectRead, Eligible: false, Reason: "not-supported",
-		}
-		if _, err := registry.Resolve(ineligibleLane, contract.LaneDirectRead); !errors.Is(err, app.ErrHandlerUnavailable) {
-			t.Fatalf("ineligible lane error = %v; want handler unavailable", err)
+		for _, status := range []contract.LaneStatus{
+			contract.LaneUnsupported,
+			contract.LaneNotApplicable,
+			contract.LaneBlocked,
+			contract.LaneUnproven,
+		} {
+			ineligibleLane := operationForRegistryTest(contract.TransportKindHTTP, contract.LaneDirectRead, slices.Clone(registration.Capabilities))
+			ineligibleLane.LaneEligibility[0] = contract.LaneEligibility{
+				Lane: contract.LaneDirectRead, Status: status, Reason: "not-executable",
+			}
+			if _, err := registry.Resolve(ineligibleLane, contract.LaneDirectRead); !errors.Is(err, app.ErrHandlerUnavailable) {
+				t.Fatalf("lane status %q error = %v; want handler unavailable", status, err)
+			}
 		}
 
-		if _, err := registry.Resolve(operationForRegistryTest("http", contract.LaneDirectRead, slices.Clone(registration.Capabilities)), contract.LaneETL); !errors.Is(err, app.ErrHandlerUnavailable) {
+		if _, err := registry.Resolve(operationForRegistryTest(contract.TransportKindHTTP, contract.LaneDirectRead, slices.Clone(registration.Capabilities)), contract.LaneETL); !errors.Is(err, app.ErrHandlerUnavailable) {
 			t.Fatalf("undeclared lane error = %v; want handler unavailable", err)
 		}
 
-		postgresOperation := operationForRegistryTest("postgres", contract.LaneDirectRead, slices.Clone(registration.Capabilities))
+		postgresOperation := operationForRegistryTest(contract.TransportKindPostgreSQL, contract.LaneDirectRead, slices.Clone(registration.Capabilities))
 		if _, err := registry.Resolve(postgresOperation, contract.LaneDirectRead); !errors.Is(err, app.ErrHandlerUnavailable) {
 			t.Fatalf("transport-specific handler mismatch error = %v; want handler unavailable", err)
 		}
@@ -1181,26 +1188,61 @@ func operationForRegistryTest(
 	lane contract.Lane,
 	capabilities []contract.CapabilityRequirement,
 ) contract.Operation {
-	transport := contract.Transport{Kind: "http", Method: "GET", Path: "/fixture"}
+	transport := contract.Transport{Kind: contract.TransportKindHTTP, Method: "GET", Path: "/fixture"}
 	status := "200"
-	if transportKind == "postgres" {
-		transport = contract.Transport{Kind: "postgres", Operation: "select-fixture"}
+	if transportKind == contract.TransportKindPostgreSQL {
+		transport = contract.Transport{
+			Kind:            contract.TransportKindPostgreSQL,
+			StatementKind:   contract.PostgreSQLStatementSelect,
+			RelationBinding: "fixture-relation",
+		}
 		status = "success"
 	}
+	sourceRefs := []contract.SourceRef{
+		{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
+	}
 	return contract.Operation{
-		SchemaVersion: contract.OperationSchemaVersion,
-		OperationID:   "fixture.operation",
-		SourceRefs: []contract.SourceRef{
-			{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
-		},
-		Transport: transport,
-		Inputs:    []contract.FieldBinding{},
+		SchemaVersion:   contract.OperationSchemaVersion,
+		OperationID:     "fixture.operation",
+		SourceRefs:      sourceRefs,
+		Transport:       transport,
+		Inputs:          []contract.FieldBinding{},
+		RequestVariants: []contract.RequestVariant{},
 		Responses: []contract.Response{
-			{Status: status, MediaType: "application/json", Schema: contract.Schema{Type: contract.SchemaTypeString}},
+			{
+				Status:     status,
+				NoContent:  false,
+				MediaType:  "application/json",
+				Schema:     &contract.Schema{Type: contract.SchemaTypeString},
+				SourceRefs: slices.Clone(sourceRefs),
+			},
 		},
 		CapabilityRequirements: capabilities,
-		LaneEligibility:        []contract.LaneEligibility{{Lane: lane, Eligible: true}},
+		LaneEligibility:        operationLaneEligibilityForTest(lane),
 	}
+}
+
+func operationLaneEligibilityForTest(eligible contract.Lane) []contract.LaneEligibility {
+	lanes := []contract.Lane{
+		contract.LaneDirectRead,
+		contract.LaneDirectWrite,
+		contract.LaneETL,
+		contract.LaneReverseETL,
+		contract.LaneBinaryDownload,
+		contract.LaneBinaryUpload,
+		contract.LaneSyncTransport,
+	}
+	eligibility := make([]contract.LaneEligibility, 0, len(lanes))
+	for _, lane := range lanes {
+		status := contract.LaneUnsupported
+		reason := "fixture-lane-unsupported"
+		if lane == eligible {
+			status = contract.LaneEligible
+			reason = "fixture-handler-registered"
+		}
+		eligibility = append(eligibility, contract.LaneEligibility{Lane: lane, Status: status, Reason: reason})
+	}
+	return eligibility
 }
 
 func controlledCallbackForRegistryTest(value string) app.ExecutionCallback {

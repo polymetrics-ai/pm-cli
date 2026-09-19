@@ -1,0 +1,29 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+# The committed generated execution bundle is a declared runfile of the tests
+# that execute its facts; the generating tool writes it into this package.
+exports_files(
+    ["data/github.bundle.json"],
+    visibility = ["//:__subpackages__"],
+)
+
+go_library(
+    name = "connectors",
+    srcs = [
+        "bundle.go",
+        "catalog.go",
+        "registry.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/connectors",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/contract"],
+)
+
+go_test(
+    name = "connectors_test",
+    srcs = ["revision_test.go"],
+    deps = [
+        ":connectors",
+        "//internal/contract",
+    ],
+)

@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -13,10 +14,15 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/credentials"
+	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
-const workerStorePoolSize int32 = 16
+const (
+	workerStorePoolSize               int32 = 16
+	workerCredentialWrappingKeyMember       = "wrapping-key"
+	workerCredentialWrappingKeyBytes        = 32
+)
 
 type WorkerRuntimeConfig struct {
 	Configuration        config.Configuration
@@ -40,6 +46,8 @@ type WorkerRuntime struct {
 	closed               bool
 	pool                 *store.Pool
 	secrets              *credentials.OperatorSecrets
+	artifacts            *ArtifactResources
+	continuations        *ContinuationService
 	closeOnce            sync.Once
 	closeErr             error
 }
@@ -60,27 +68,30 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 	if err != nil {
 		return nil, errors.New("worker secrets are unavailable")
 	}
-	closeSecrets := true
-	defer func() {
-		if closeSecrets {
-			_ = secrets.Close()
-		}
-	}()
+	var pool *store.Pool
+	var artifacts *ArtifactResources
+	fail := func(cause error) (*WorkerRuntime, error) {
+		return nil, errors.Join(cause, closeWorkerRuntimeResources(artifacts, pool, secrets))
+	}
 
 	postgres := configuration.Configuration.Postgres()
 	postgresEndpoint, err := secrets.Text(postgres.EndpointRef, "pm-app-endpoint")
 	if err != nil {
-		return nil, errors.New("worker PostgreSQL endpoint is unavailable")
+		return fail(errors.New("worker PostgreSQL endpoint is unavailable"))
 	}
 	temporalConfiguration := configuration.Configuration.Temporal()
 	temporalTLS, err := loadWorkerTemporalTLS(secrets, temporalConfiguration)
 	if err != nil {
-		return nil, err
+		return fail(err)
+	}
+	providerHTTPTLS, err := LoadProviderHTTPTLS(secrets, configuration.Configuration.ProviderHTTP())
+	if err != nil {
+		return fail(err)
 	}
 
 	startupContext, cancel := context.WithTimeout(ctx, workerConfiguration.DialTimeout)
 	defer cancel()
-	pool, err := store.OpenPool(startupContext, store.PoolConfig{
+	pool, err = store.OpenPool(startupContext, store.PoolConfig{
 		ConnectionString:  postgresEndpoint,
 		MaxConns:          workerStorePoolSize,
 		MinConns:          0,
@@ -89,44 +100,94 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 		HealthCheckPeriod: time.Minute,
 	})
 	if err != nil {
-		return nil, errors.New("worker PostgreSQL connection is unavailable")
+		return fail(errors.New("worker PostgreSQL connection is unavailable"))
 	}
-	closePool := true
-	defer func() {
-		if closePool {
-			pool.Close()
+
+	artifactConfiguration := configuration.Configuration.Artifacts()
+	artifacts, err = OpenArtifactResources(artifactConfiguration, secrets)
+	if err != nil {
+		return fail(errors.Join(errors.New("worker artifact resources are unavailable"), err))
+	}
+	composition, err := OpenConnectorComposition(ConnectorCompositionConfig{
+		BundlePaths: configuration.Configuration.Connectors().BundlePaths(),
+	})
+	if err != nil {
+		return fail(fmt.Errorf("declared connector bundles are unavailable: %w", err))
+	}
+	var artifactPublisher *objects.Publisher
+	var continuationService *ContinuationService
+	if artifacts != nil {
+		artifactPublisher, err = objects.NewPublisher(pool, artifacts.Backend, artifacts.Limits)
+		if err != nil {
+			return fail(errors.Join(errors.New("worker artifact publisher is unavailable"), err))
 		}
-	}()
+		continuationService, err = NewContinuationService(
+			pool,
+			artifactPublisher,
+			artifacts.Backend,
+			int64(artifactConfiguration.Execution.MaxObjectBytes),
+		)
+		if err != nil {
+			return fail(errors.Join(errors.New("worker continuation service is unavailable"), err))
+		}
+	}
 
 	registry := configuration.Registry
 	if registry == nil {
 		registry = &HandlerRegistry{}
 	}
+	if err := composition.RegisterDirectRead(registry, HTTPDirectReadDependencies{
+		TLSConfig:     providerHTTPTLS,
+		Continuations: continuationService,
+	}); err != nil {
+		return fail(errors.Join(errors.New("worker connector direct-read registration failed"), err))
+	}
 	resolver := configuration.ResolveOperation
 	if resolver == nil {
 		resolver = unavailableWorkerOperation
+		if composition.Configured() {
+			resolver = composition.Resolver()
+		}
 	}
 	authorization := configuration.Authorization
 	if authorization == nil {
 		authorization = auth.NewResourceAuthorizer()
 	}
+	wrappingKeyRef := configuration.Configuration.Encryption().WrappingKeyRef
+	loadCredentialWrappingKey := func(ctx context.Context, reference string) ([]byte, error) {
+		if ctx == nil || ctx.Err() != nil || reference != wrappingKeyRef {
+			return nil, errors.New("worker credential wrapping key is unavailable")
+		}
+		key, readErr := secrets.Read(reference, workerCredentialWrappingKeyMember)
+		if readErr != nil {
+			return nil, errors.New("worker credential wrapping key is unavailable")
+		}
+		if len(key) != workerCredentialWrappingKeyBytes {
+			clear(key)
+			return nil, errors.New("worker credential wrapping key must contain exactly 32 raw bytes")
+		}
+		return key, nil
+	}
 	serviceConfiguration := WorkerServiceConfig{
-		Pool:                 pool,
-		DeploymentID:         configuration.Configuration.DeploymentID(),
-		Registry:             registry,
-		ResolveOperation:     resolver,
-		Authorization:        authorization,
-		ActivityTimeouts:     workerConfiguration.ActivityTimeouts,
-		ScheduledRunAdmitter: configuration.ScheduledRunAdmitter,
+		Pool:                      pool,
+		DeploymentID:              configuration.Configuration.DeploymentID(),
+		Registry:                  registry,
+		ResolveOperation:          resolver,
+		Authorization:             authorization,
+		ActivityTimeouts:          workerConfiguration.ActivityTimeouts,
+		ScheduledRunAdmitter:      configuration.ScheduledRunAdmitter,
+		LoadCredentialWrappingKey: loadCredentialWrappingKey,
+		ArtifactPublisher:         artifactPublisher,
+		MaximumResultBytes:        int64(artifactConfiguration.Execution.MaxObjectBytes),
 	}
 
-	closePool = false
-	closeSecrets = false
 	return &WorkerRuntime{
 		TemporalTLS:          temporalTLS,
 		serviceConfiguration: serviceConfiguration,
 		pool:                 pool,
 		secrets:              secrets,
+		artifacts:            artifacts,
+		continuations:        continuationService,
 	}, nil
 }
 
@@ -152,6 +213,24 @@ func (runtime *WorkerRuntime) NewService(
 	}
 	runtime.service = service
 	return service, nil
+}
+
+// ContinuationService returns the concrete server-owned codec for handler
+// registration before NewService starts polling. No codec exists when artifact
+// execution is intentionally unconfigured.
+func (runtime *WorkerRuntime) ContinuationService() (*ContinuationService, error) {
+	if runtime == nil {
+		return nil, errors.New("worker runtime is unavailable")
+	}
+	runtime.serviceMu.Lock()
+	defer runtime.serviceMu.Unlock()
+	if runtime.closed {
+		return nil, errors.New("worker runtime is closed")
+	}
+	if runtime.continuations == nil {
+		return nil, errors.New("worker continuation service is unconfigured")
+	}
+	return runtime.continuations, nil
 }
 
 func unavailableWorkerOperation(
@@ -211,12 +290,24 @@ func (runtime *WorkerRuntime) Close() error {
 		runtime.serviceMu.Lock()
 		runtime.closed = true
 		runtime.serviceMu.Unlock()
-		if runtime.pool != nil {
-			runtime.pool.Close()
-		}
-		if runtime.secrets != nil {
-			runtime.closeErr = runtime.secrets.Close()
-		}
+		runtime.closeErr = closeWorkerRuntimeResources(runtime.artifacts, runtime.pool, runtime.secrets)
 	})
 	return runtime.closeErr
+}
+
+func closeWorkerRuntimeResources(
+	artifacts *ArtifactResources,
+	pool *store.Pool,
+	secrets *credentials.OperatorSecrets,
+) error {
+	artifactErr := artifacts.Close()
+	if pool != nil {
+		pool.Close()
+	}
+	if secrets != nil {
+		if err := secrets.Close(); err != nil {
+			return errors.Join(artifactErr, errors.New("worker operator secret bundle cleanup failed"))
+		}
+	}
+	return artifactErr
 }

@@ -1,0 +1,43 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "compile",
+    srcs = [
+        "amendment.go",
+        "commands.go",
+        "compatibility.go",
+        "dialects.go",
+        "emit.go",
+        "fidelity.go",
+        "normalize.go",
+        "refs.go",
+        "requirements.go",
+        "semantics.go",
+        "sensitivity.go",
+        "source.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/compile",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/contract",
+        "@com_github_getkin_kin_openapi//openapi2",
+        "@com_github_getkin_kin_openapi//openapi2conv",
+        "@com_github_getkin_kin_openapi//openapi3",
+        "@in_yaml_go_yaml_v3//:yaml",
+    ],
+)
+
+go_test(
+    name = "compile_test",
+    srcs = [
+        "amendment_test.go",
+        "bundle_test.go",
+        "closure_test.go",
+        "dialect_test.go",
+        "fidelity_test.go",
+        "sensitivity_test.go",
+    ],
+    data = glob(["testdata/**"]),
+    embed = [":compile"],
+    deps = ["//internal/contract"],
+)

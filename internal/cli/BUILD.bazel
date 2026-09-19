@@ -1,0 +1,69 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "cli",
+    srcs = [
+        "access.go",
+        "artifacts.go",
+        "config.go",
+        "connections.go",
+        "dynamic.go",
+        "help.go",
+        "render.go",
+        "root.go",
+        "runs.go",
+        "selectors.go",
+        "sessions.go",
+        "tasks.go",
+        "workspaces.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/cli",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/api",
+        "//internal/contract",
+        "@com_github_oapi_codegen_nullable//:nullable",
+        "@com_github_spf13_cobra//:cobra",
+    ],
+)
+
+go_test(
+    name = "cli_test",
+    size = "large",
+    srcs = [
+        "artifacts_test.go",
+        "boundary_test.go",
+        "config_test.go",
+        "connections_test.go",
+        "dynamic_test.go",
+        "result_document_test.go",
+        "tree_test.go",
+        "workspaces_test.go",
+    ],
+    embed = [":cli"],
+    env_inherit = [
+        "GOMAXPROCS",
+        "GOMEMLIMIT",
+        "HOME",
+        "GOCACHE",
+        "GOMODCACHE",
+        "GOPATH",
+        "PM_STACK_ROOT",
+        "PM_STACK_SECRETS_DIR",
+        "PM_STACK_TEST_CONFIG",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
+    deps = [
+        "//internal/api",
+        "//internal/contract",
+        "//internal/testfixture",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_oapi_codegen_nullable//:nullable",
+        "@com_github_spf13_cobra//:cobra",
+    ],
+)

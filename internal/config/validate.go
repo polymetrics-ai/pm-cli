@@ -3,12 +3,25 @@ package config
 import (
 	"net"
 	"net/url"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 const maxConfigInteger uint64 = 1<<63 - 1
+
+const (
+	// maxConnectorBundles bounds how many generated execution bundles one
+	// deployment may declare, so startup work stays finite and inspectable.
+	maxConnectorBundles = 32
+	// maxConnectorBundlePathBytes bounds one declared bundle path. Operators
+	// declare absolute, canonical paths; the configuration never searched or
+	// resolved a relative or unclean path.
+	maxConnectorBundlePathBytes = 4096
+)
 
 func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if !document.loaded {
@@ -69,6 +82,9 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if data.artifacts.AttemptKeyPolicy != "unique_immutable" {
 		return Configuration{}, diagnostic("artifacts.attempt_key_policy", DiagnosticValue)
 	}
+	if err := validateArtifactExecution(data.artifacts.Execution); err != nil {
+		return Configuration{}, err
+	}
 	if err := validateHTTPSURL(data.identity.Issuer, "identity.issuer", false); err != nil {
 		return Configuration{}, err
 	}
@@ -98,6 +114,14 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if err := validateWorker(data.worker, data.temporal, data.limits); err != nil {
 		return Configuration{}, err
 	}
+	providerHTTP, err := resolveProviderHTTP(data.providerHTTP)
+	if err != nil {
+		return Configuration{}, err
+	}
+	connectors, err := resolveConnectors(data.connectors)
+	if err != nil {
+		return Configuration{}, err
+	}
 	if err := validateLifecycle(data, prelaunch); err != nil {
 		return Configuration{}, err
 	}
@@ -122,6 +146,8 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 		limits:             data.limits,
 		server:             server,
 		worker:             data.worker,
+		providerHTTP:       providerHTTP,
+		connectors:         connectors,
 	}, nil
 }
 
@@ -367,6 +393,46 @@ func validateResourceLimits(limits ResourceLimits) error {
 	}
 	if limits.MetadataDeadline <= 0 {
 		return diagnostic("limits.metadata_deadline", DiagnosticValue)
+	}
+	return nil
+}
+
+// resolveConnectors validates declared generated execution bundle paths. It
+// performs no filesystem access: an unreadable or undecodable declared bundle
+// fails process composition, never configuration parsing.
+func resolveConnectors(configuration ConnectorsConfiguration) (ConnectorsConfiguration, error) {
+	if len(configuration.bundlePaths) == 0 {
+		return ConnectorsConfiguration{}, nil
+	}
+	if len(configuration.bundlePaths) > maxConnectorBundles {
+		return ConnectorsConfiguration{}, diagnostic("connectors.bundles", DiagnosticBounds)
+	}
+	paths := make([]string, 0, len(configuration.bundlePaths))
+	seen := make(map[string]struct{}, len(configuration.bundlePaths))
+	for index, path := range configuration.bundlePaths {
+		field := "connectors.bundles[" + strconv.Itoa(index) + "]"
+		if err := validateConnectorBundlePath(path, field); err != nil {
+			return ConnectorsConfiguration{}, err
+		}
+		if _, duplicate := seen[path]; duplicate {
+			return ConnectorsConfiguration{}, diagnostic(field, DiagnosticDuplicate)
+		}
+		seen[path] = struct{}{}
+		paths = append(paths, path)
+	}
+	return ConnectorsConfiguration{bundlePaths: paths}, nil
+}
+
+func validateConnectorBundlePath(value, field string) error {
+	if value == "" || len(value) > maxConnectorBundlePathBytes ||
+		value != strings.TrimSpace(value) || !utf8.ValidString(value) ||
+		!filepath.IsAbs(value) || filepath.Clean(value) != value {
+		return diagnostic(field, DiagnosticValue)
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return diagnostic(field, DiagnosticValue)
+		}
 	}
 	return nil
 }

@@ -4,11 +4,11 @@ This checkout contains the accepted PM Server documentation baseline, the combin
 
 ## What is available now
 
-The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, authenticated `pm-server` entry point and minimal same-origin browser surface, standalone `pm-worker`, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
+The repository contains a digest-pinned bootstrap, application and tools Go modules, native DuckDB probe, dependency-policy CLI, authenticated `pm-server` entry point and minimal same-origin browser surface, standalone `pm-worker`, thin `pm` client, `pmgen` source compiler, and Make and Bazel targets. Use them from the repository root; do not replace them with whichever compiler or build tool happens to be on the ambient `PATH`.
 
 ### Resolve and run pinned tools
 
-`tools/bootstrap.py` is the public entry point for the locked Go, LLVM/Clang, Bazelisk/Bazel, Syft, and Docker Compose assets in `build/toolchains.lock.json`:
+`tools/bootstrap.py` is the public entry point for the locked Go, LLVM/Clang, Bazelisk/Bazel, Syft, Docker Compose, Node and Chromium assets in `build/toolchains.lock.json`. npm comes from the same verified Node archive:
 
 ```sh
 python3 tools/bootstrap.py print-env
@@ -16,6 +16,10 @@ python3 tools/bootstrap.py exec go -- version
 python3 tools/bootstrap.py exec clang -- --version
 python3 tools/bootstrap.py exec bazelisk -- --batch version
 python3 tools/bootstrap.py exec docker-compose -- version --short
+python3 tools/bootstrap.py exec node -- --version
+python3 tools/bootstrap.py exec npm -- --version
+python3 tools/bootstrap.py exec chromium -- --version
+python3 tools/bootstrap.py print-path chromium
 ```
 
 The literal `--` before tool arguments is required. On a cache miss the bootstrap downloads only locked assets for the selected host platform, verifies each locked SHA-256, and installs them into a persistent local cache. The default is `.cache/pm-tools`; set `PM_TOOLS_CACHE` to another persistent directory when needed. The bootstrap rejects caches under `/tmp` and `/private/tmp`. When the default repository-local tool cache is used, Bazel's output-user root is placed in the platform user cache because Bazel does not permit its repository-contents cache inside the source workspace.
@@ -23,6 +27,10 @@ The literal `--` before tool arguments is required. On a cache miss the bootstra
 Bootstrap environment changes apply only to the process it executes. In particular, the pinned Go directory is prepended only to that child process's `PATH`; the parent shell, global `PATH`, and globally installed tools are not changed. Go and Bazel execution force `GOTOOLCHAIN=local` and `GOWORK=off`, so an ambient workspace or Go's automatic toolchain selection cannot replace the locked inputs. For Bazel test and coverage commands, bootstrap asks the pinned Go tool for its configured `GOCACHE` and `GOMODCACHE` before Bazel changes the test `HOME`, then passes only those two values into the test environment. The sandbox `HOME` remains fresh, valid user-selected cache locations retain their Go semantics, and other Bazel commands do not perform the cache query.
 
 The Compose 5.5.1 executable stays in the project tool cache; it does not replace an installed Docker CLI plugin, install an engine, start Docker Desktop, or change a Docker context. Stack lifecycle actions require explicit operator authority and an owned project. A successful Compose version check is not dependency-stack readiness or CI evidence.
+
+Node 24.21.0 includes npm 11.19.0. Both `exec node` and `exec npm` put that Node directory first on the child process's `PATH`; npm executes its verified archive entrypoint through the same Node binary. An ambient Node executable cannot replace the selected child runtime. `print-path node` and `print-path chromium` resolve and verify one tool without launching it.
+
+The Chromium 153.0.8010.12 assets are the official headless-shell distribution used for browser qualification, pinned separately for Darwin arm64, Linux amd64 and Linux arm64. This retains the existing refusal of ZIP symlinks; bootstrap does not install Linux browser dependencies or change a host service. `exec go` does not fetch browser tools. Explicit `print-env` resolves the complete selected-tool inventory, including Node and Chromium, for environment and SBOM evidence. Tool startup alone does not prove browser/API parity or another platform's runtime.
 
 On macOS, cgo-enabled Go, Clang, and Bazel execution require an Apple macOS SDK discoverable through the fixed system command:
 
@@ -48,7 +56,7 @@ These Make targets are source-present:
 
 | Command | Boundary exercised |
 | --- | --- |
-| `make build` | Builds `.cache/bin/pm-server`, `.cache/bin/pm-worker`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
+| `make build` | Builds `.cache/bin/pm-server`, `.cache/bin/pm-worker`, `.cache/bin/pm`, `.cache/bin/pmgen`, the cgo native probe, and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
 | `make test` | Runs the resolved-dependency policy test and the native DuckDB behavioral test |
 | `make vet` | Vets the application module with cgo and the tools module without cgo |
 | `make boundaries` | Checks native-linkage and module ownership boundaries |
@@ -79,7 +87,7 @@ Run the current-platform external-tool and selected Bazel-module inventories wit
 python3 scripts/ci/check-dependencies.py --evidence-dir .cache/foundation-sboms
 ```
 
-That orchestrator resolves the five selected tool installs, expands Bazel to its actual install base, and resolves the two locked Gazelle/rules_go source repositories through Bazel's canonical repository metadata. It checks their exact archive URL/integrity pins, scans only those selected source targets rather than a whole historical cache, creates package and per-file SHA-256 CycloneDX inventories, invokes the dependency-policy CLI, and reruns `TestResolvedDependencyPolicy` against those SBOMs. Each selected Bazel module requires recognized-package coverage; file-only evidence is insufficient. File inventory describes installed bytes, not proof that a package catalog recognized every dependency or that every source component executed.
+That orchestrator resolves the current-platform selected tool installs, expands Bazel to its actual install base, and resolves the two locked Gazelle/rules_go source repositories through Bazel's canonical repository metadata. It checks their exact archive URL/integrity pins, scans only those selected source targets rather than a whole historical cache, creates package and per-file SHA-256 CycloneDX inventories, invokes the dependency-policy CLI, and reruns `TestResolvedDependencyPolicy` against those SBOMs. Each selected Bazel module requires recognized-package coverage; file-only evidence is insufficient. File inventory describes installed bytes, not proof that a package catalog recognized every dependency or that every source component executed.
 
 The optional availability report remains:
 
@@ -98,6 +106,10 @@ The [server schema](../../schemas/server-config.schema.json), [bundled example](
 `limits.run_lifetime` is a required positive duration with no implicit production default. Admission captures it with the resolved resource limits in an immutable run-budget snapshot. Query and metadata deadlines do not supply the run lifetime; the explicit durations in checked-in examples are synthetic configuration values.
 
 `identity.step_up_maximum_age` bounds fresh OIDC authentication for private credential writes. Omission selects `5m`; explicit values must be between `1s` and `15m`, inclusive. Null, numeric seconds and out-of-range durations are rejected. The freshness witness is signed OIDC `auth_time`, not the PM session's creation or expiry time.
+
+`artifacts.execution` is an optional-complete operator block. Omitting it leaves artifact-byte execution unavailable even when the base `artifacts` fields are sufficient to check the selected S3 dependency; PM never infers a byte backend or execution authority from those fields. When present, the block requires all eight controls: `region`, `max_object_bytes`, `max_in_flight`, `request_timeout`, `organization_reserved_bytes`, `workspace_reserved_bytes`, `organization_reserved_attempts`, and `workspace_reserved_attempts`. The checked-in deployment and packaging examples intentionally omit the block.
+
+The region is retained exactly and must contain 1–64 lowercase ASCII letters, digits, or hyphens. Every byte and attempt value is positive and no greater than 9,223,372,036,854,775,807. `max_object_bytes` must be smaller than that signed maximum to leave room for the verification sentinel byte. `max_in_flight` is additionally capped at 65,536, its product with `max_object_bytes` must fit the signed bound, and `request_timeout` is positive and at most five minutes. One object fits the workspace retained-byte reservation, which fits the organization retained-byte reservation; workspace retained attempts fit the organization retained-attempt reservation. These are scoped retained artifact reservations and backend I/O controls, not aliases for `limits.request_bytes`, workflow payload/input limits, run budgets, or admission controls. A valid block makes this policy available to process composition; it does not by itself install or certify a backend.
 
 Run the pure configuration and packaging-contract checks without starting services:
 
@@ -148,7 +160,27 @@ Reconnect with the opaque `Last-Event-ID` from a committed event. When retained 
 
 The subscription queue is capped at the smaller of the configured event-buffer limit and 1,000 messages. Each frame has the configured server write deadline. On an underlying write timeout, the raw transport closes before TLS shutdown can retain a blocked handler. The event handler cancels and joins its producer before returning. Disconnect and server drain end the subscription without cancelling the accepted run. These boundaries have [focused physical checks](testing.md#scoped-events-and-artifact-refusal-m4), including the composed server's signing and drain path; they do not make the provider registry ready.
 
-Artifact upload, inspection and download routes enforce scoped authorization but have no registered byte backend in this milestone. Authorized available metadata does not fabricate downloadable content: the unsupported capability returns HTTP 503. Upload is currently a bodyless capability probe; a raw upload body is rejected with HTTP 400 by the shared protocol boundary. Artifact-byte implementation and verification remain later scope.
+Artifact upload, inspection and download routes enforce scoped authorization before consulting the optional byte backend. Without both a complete `artifacts.execution` block and an installed backend, authorized requests return HTTP 503 and fabricate neither bytes nor metadata. Upload remains a bodyless capability probe, and the shared protocol boundary rejects a raw upload body with HTTP 400; configuring execution does not create a public arbitrary-upload API. A composed read backend verifies the registered object's generation, length and SHA-256 before returning metadata or any full/range bytes. Public metadata contains only the artifact ID, SHA-256, byte length and media type. Downloads use `Content-Disposition: attachment` and `X-Content-Type-Options: nosniff`; provider-controlled media must not become an active PM-origin document.
+
+### Thin PM client
+
+`make build` emits `.cache/bin/pm`. Its fresh Cobra tree owns server profiles, PM sessions, explicit workspace selection, connection/access mutations, and task/run/artifact views. Help and version work without valid settings, credentials or a server. Profiles contain nonsecret HTTPS server identity and session references, never a mutable current workspace or provider credentials.
+
+Fresh server-qualified command discovery also saves a private metadata-only documentation projection beside `profiles.json`, under `catalog-projections/`. With explicit `--server-profile`, `--workspace`, and `--connection` selectors, root/generated help, `help <command>`, `manual`, and `completion` can use that projection without reading execution settings or PM sessions or contacting a server. The output identifies the cached catalog revision and principal and labels the metadata stale and non-authoritative. Missing, corrupt/unsafe, or scope-mismatched metadata is reported while static documentation remains available.
+
+The projection retains the server-instance, principal, workspace, connection, and catalog-revision binding; it is not an execution-authority cache. A generated command invocation still performs fresh server/session/catalog qualification. Generated flags consume their declared value before the bounded selector pass interprets help or PM controls, so literal provider values such as `--help`, `-h`, `--`, and `--workspace` retain their meaning.
+
+PM sessions use the OS credential store or explicitly selected process-local memory; there is no plaintext fallback. Mutations without an explicit request key allocate a new 192-bit key for a new logical submission. An explicit key selects same-key recovery; an equal payload does not silently select an earlier intent. The existing recovery store persists secret-free scoped key/intent fingerprints before sending and permits at most three same-key sends within 30 seconds, with bounded 250 ms/1 s waits. A later uncertain send cannot be treated as a definite earlier refusal. Conflict, expiry and precondition refusals do not trigger rebasing or a replacement key.
+
+The client uses the generated public API and the canonical manual artifact boundaries. Current artifact-capability refusals come from the authenticated server; they are not fabricated client stubs. Catalog-backed commands, explicit watch/cancel behavior, physical API/client/worker replacement and same-stack CLI/browser parity have [focused local checks](testing.md#thin-client-and-source-compiler-checks-m5m6). These are synthetic-provider checks on Darwin arm64, not GitHub provider execution, Linux browser qualification or candidate CI. The production provider registry remains unavailable until its declared capabilities are implemented and registered.
+
+An available catalog command accepts `--result-controls` as one strict JSON object containing shared typed `selection`, `filter`, `total_record_cap` and `continuation` controls. For example, `--result-controls '{"selection":{"paths":[["id"]]}}'` requests the `id` path without rewriting provider inputs. Filtering precedes selection; omitted controls preserve complete action data. A positive `total_record_cap` limits emitted records per invocation after filtering, not across the whole continuation chain.
+
+Resume uses a typed token, for example `--result-controls '{"continuation":{"presence":"value","type":"string","text":"TOKEN_FROM_RESULT"}}'`. Only a present, nonempty token permits omitted required provider inputs at the client boundary. Supplied inputs remain validated; the server restores omitted original inputs and sticky selection, filter and cap controls, refuses explicit conflicts or caller-supplied navigation, and applies full source preflight before a provider send. A typed absent token does not enable partial requiredness.
+
+Duplicate, wrongly cased, unknown, raw-null or invalid controls fail before invocation. The caller's original controls and input presence participate in durable request identity, so changing them cannot reuse an earlier intent's request key. A provider field named `result-controls` receives a deterministic safe alias from the same PM-control registry used by the CLI.
+
+`pm artifacts inspect ARTIFACT_ID` renders verified public metadata. `pm artifacts download ARTIFACT_ID` writes exact raw bytes to stdout, even with `--output json` or `--json`; it adds neither an envelope nor a newline. An optional `--range` selects one closed, open-ended or suffix HTTP bytes range. Problems remain on stderr. A failed or cancelled download can leave a streamed prefix, so a nonzero exit must not be treated as a complete artifact. The client keeps instance/session qualification, bounded streaming and exact length checks; full-object downloads also verify SHA-256.
 
 ### Standalone bounded PM worker
 
@@ -170,6 +202,38 @@ At each new physical-unit boundary, the worker checks the accepted durable grant
 
 The production provider registry and operation resolver remain unavailable. Registered orchestration is not permission to execute an undeclared provider operation, and schedule admission remains unavailable without its admitted authority. The [worker checks](testing.md#bounded-workflow-and-worker-execution-m4) exercise controlled capabilities through real PostgreSQL and TLS Temporal, including the actual compiled worker's polling and graceful stop; they are not connector certification.
 
+A configured worker also owns the shared artifact publisher. Result capacity joins the lease/physical-attempt preparation transaction before the execution callback; a capacity refusal rolls back preparation and makes no provider call. A returned, valid `ActionResult` is encoded without losing typed values or presence, uploaded under a unique immutable key, and independently verified. Its artifact publication and the worker settlement receipt commit together. Run views expose only the receipt's scoped, connection-bound public result reference. Failed byte publication does not replace independently known member outcomes; unused unbound reservations are released, while bound/uncertain uploads remain charged. This shared result path does not activate the default provider registry or durable retry scheduling.
+
+Control-schema migration 16 retains existing artifact registrations as public and adds an immutable, connection-bound continuation purpose. Migration 17 requires an explicit purpose on new reservations and registrations, binds publication receipts to that purpose, and retains canonical producer lineage in the existing worker settlement receipt. Public metadata, content, authorization and run-result projections conceal private continuation artifacts. Downgrade refuses retained state that the preceding schema cannot represent.
+
+### Durable HTTP continuation
+
+`app.NewContinuationService` stores the encoded continuation in the shared object backend and opens verified bytes after worker replacement. Its opaque token selects a private artifact, not a public result. The canonical settlement receipt identifies the producing run; the envelope binds its original inputs, sticky controls, operation revision, scope, connection, selected origin, credential reference and provider-account witness. Admission and worker execution reject mismatched authority rather than trusting token-derived claims. PostgreSQL authority transactions close before object-store reads.
+
+The worker reserves both public result and private continuation capacity before provider I/O. Private envelopes cannot exceed the smaller of the configured object limit and the strict contract reader's 16 MiB limit. Publication and settlement commit the exact private and public references together. Bound or uncertain uploads remain charged.
+
+A resumed invocation may return a retained unread tail without a provider call, including terminal tails whose source operation requires navigation. That verified local result releases its still-reserved account permit by exact owner/fence CAS; it creates neither a dispatched permit nor a physical-attempt observation. A resumed provider page instead requires fresh physical-call authority. Tokens rotate through the current producing run, while public pagination retains truthful counts, unread tails and source exhaustion. The [durable continuation checks](testing.md#durable-http-continuation) exercise this shared path; the production registry and live connector qualification remain separate obligations.
+
+### Explicit provider HTTP policy
+
+The optional `provider_http` server-configuration block is complete or absent. It requires `max_request_bytes`, `max_response_bytes`, `max_dns_answers`, `max_attempts`, `max_retry_delay` (a positive duration string), and a nonempty `destinations` array. Each destination names exact `org_id`, `workspace_id`, `connection_id`, and HTTPS `origin` values. Duplicate scoped bindings, unknown/null fields and invalid bounds are rejected. There are no wildcard destinations, inferred first origins, environment bindings or production numeric defaults; API request and artifact storage limits are not substitutes for provider HTTP limits.
+
+For an operation with source-owned HTTP facts, admission selects the exact connection policy after current authorization and same-key replay resolution. The selected origin must match exactly one admitted origin, including its base path. Missing or unlisted authority refuses new admission. Only the selected policy enters the immutable run-budget snapshot, and workers receive that sealed value rather than re-reading mutable configuration. An existing accepted intent can still be recovered with its original key after policy removal; that removal prevents new logical submissions.
+
+Control-schema migration 15 extends the existing closed run-budget document without changing absent-policy digests or adding a policy table. Downgrade refuses while any HTTP execution budget is retained. These controls and their admission checks do not activate the still-unavailable production provider registry.
+
+`app.NewHTTPDirectReadRegistration` composes the shared one-attempt HTTP runtime with direct-read result validation, the configured continuation service and the common worker artifact publisher. It supports one independently attributable read member, uses only the worker's current physical-call authority and sealed policy, and supplies no write or reconciliation callback. A received cooldown is committed with settlement across connection aliases, even when the response body is unusable. The transport never resends in-process: the durable worker owns any admitted retry, retaining the exact previous attempt and outcome. This constructor alone does not activate the default provider registry.
+
+### Durable HTTP retries
+
+PostgreSQL retains each dispatch, physical attempt, outcome and settlement receipt. An eligible retry atomically prepares one child dispatch for the same logical effect and immutable input, with the next ordinal within the sealed attempt budget. It also expires the exact parent lease without resetting its fence; the next execution must claim a fresh lease, account permit, physical witness and publication capacity. Source revision, current account/grant authority, cancellation and the original deadline are rechecked before sending.
+
+Definitive no-send evidence may permit another attempt. Received responses require the declared retry status and unconditional source replay safety; unknown sends require unconditional source replay safety. Conditional or missing replay authority never authorizes a guessed resend. Known parent rejection remains in its immutable receipt while the logical retry is deferred. A genuinely unknown parent permit stays charged even if a separate safe retry succeeds.
+
+Temporal owns eligibility timers and bounded recovery polling; it does not extend the original deadline. A present malformed, excessive or beyond-deadline `Retry-After` suppresses automatic retry. Qualified unit references select one exact dispatch; retained unqualified references still mean the initial dispatch. Versioned deadline projection preserves recorded workflow commands. The payload converter admits only its registered constant SDK change ID and typed version in addition to safe-reference contracts, not arbitrary scalar data.
+
+[Migration 18](../../internal/store/migrations/postgres/0018_worker_retries.sql) preserves legacy root ordinals and refuses downgrade while retry lineage remains. Native scoped foreign keys validate child membership at commit after application scope cleanup. Cancellation or deadline closure can derive known rejection from the canonical parent receipt without inventing a child attempt; unknown outcomes remain unknown. The [retry checks](testing.md#durable-http-retries) cover these shared foundations, not default registry activation or live connector certification.
+
 ### Explicit dependency operator and physical qualification
 
 `scripts/pm-stack` invokes the selected Go toolchain and the dependency operator in `internal/stack`. It is not PM CLI auto-start and does not create a PM API or worker. `check` verifies actual PostgreSQL database/role/schema identities, the authenticated Temporal namespace, and authenticated S3 bucket access. `up` initializes and starts selected bundled dependencies; `migrate` serializes their schema tooling; `drain` stops only selected bundled services. Managed dependencies remain externally owned: lifecycle preflight rejects attempts to mutate or stop them.
@@ -181,6 +245,8 @@ Bootstrap grants the application runtime only `SELECT` on its readiness marker, 
 The digest-pinned [Compose layout](../../deploy/compose.yaml) is a bounded, non-production qualification layout, not production sizing or availability guidance. It uses separate PostgreSQL application, Temporal persistence, Temporal visibility and object-metadata databases; Temporal's official schema tool; Seaweed `postgres2`; two TLS S3 gateways; and Caddy. The filer pool ceiling of two, four concurrent listing clients, and seeded object names are synthetic qualification inputs, not production defaults. Seaweed grows one volume at a time and reserves capacity for both its default metadata collection and the configured artifact bucket.
 
 Use an explicitly owned disposable fixture with fresh test-only credentials and trusted test certificates. Configuration examples alone do not provision these inputs. `PM_STACK_SECRETS_DIR` names the confined secret-bundle root; `PM_STACK_STATE_DIR` names owned generated state and data; `PM_STACK_PROJECT` identifies the unique Compose project. The named PostgreSQL, Temporal, S3-primary, S3-secondary and public-port overrides must agree with the configured endpoints. Every published infrastructure port binds to `127.0.0.1`; service CPU, memory and process counts are bounded. All service data mounts stay under owned state. Select the intended container engine explicitly; the operator does not install or start a host engine.
+
+The selected `pm-stack-fixture` output adds an explicit development-only `artifacts.execution` block to its generated `server.json`: region `us-east-1`, 16,777,216 maximum object bytes, four in-flight object operations, a 30-second request timeout, 1,073,741,824 organization and 268,435,456 workspace retained bytes, and 4,096 organization and 1,024 workspace retained attempts. These are synthetic fixture controls for bounded integration and cleanup checks, not certified production sizing, availability guidance, or proof that a process composed the backend.
 
 With that fixture prepared, these source-present entry points operate on its configuration. The absolute path below is a placeholder, not a supplied fixture:
 
@@ -233,6 +299,14 @@ python3 tools/bootstrap.py exec go -- test -mod=readonly ./internal/contract -co
 
 These are pure contract checks, not generated API readiness, authentication/RLS enforcement, durable lifecycle or Temporal execution, registered artifact-byte verification, connector implementation or provider certification.
 
+### Source compiler
+
+`make build` also emits `.cache/bin/pmgen`. `pmgen compile` consumes an explicit source lock, captured source/license bytes and optional source-linked semantics or revision diffs; it writes the generated execution bundle, fidelity report and optional command manifest. Required path arguments are listed in `cmd/pmgen/main.go`. It does not fetch missing references, install runtime handlers or certify a connector.
+
+The compiler retains request/status/media variants, explicit no-content responses, all seven lane dispositions, exact field presence/defaults and source pointers. Defaults are not applied implicitly. Shapes the shared contract cannot represent receive explicit diagnostics rather than lossy projection. The retained Pylon `Account.parent_account_id` counterexample still lacks matching captured bytes: no reproduction or full issue #22 closure is claimed.
+
+The same runtime bundle contains the compiler's exact command projection and a separate non-executable inventory of unavailable operations. A source-linked unsupported shape does not suppress an unrelated admitted operation. Source integrity, fidelity disagreement, malformed declarations and invalid capability requirements still refuse publication. The optional command sidecar is an authoring artifact, not a second runtime input; the report retains unavailable operations' full source/request/status/media facts.
+
 ### Generated public API boundary
 
 The ordinary public API is authored once in [OpenAPI 3.1](../../api/pm.openapi.yaml), with exact PM controls in [controls.json](../../api/controls.json). The pinned generator produces the public Go DTOs/client, the Gin boundary, canonical OpenAPI JSON and their digest manifest. Edit the authoring inputs or generator, never the generated files.
@@ -253,7 +327,7 @@ Generated-router and protocol checks alone do not prove authentication, durable 
 
 ### PostgreSQL control store
 
-`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v12`; authenticated worker state extends the existing store rather than creating another queue. Workflow handoff adds immutable command intents and append-only reconciliation witnesses. Its bounded migrator-owned claim function returns scoped routes; runtime callers re-enter scoped transactions. The runtime role cannot create schemas/tables/temporary objects, truncate PM tables, delete history, assume the migrator role, or broaden its authority. Operator reinitialization must preserve these store-owned grants.
+`internal/store` owns the embedded [control](../../internal/store/migrations/postgres/0001_control.sql) and [tenancy](../../internal/store/migrations/postgres/0002_tenancy_rls.sql) migrations and their ordered extensions, bounded runtime pools, transaction-local scope, durable admission/outbox, immutable input/budget/grant snapshots, receipts/events/audit, task leases/fences, dispatch/member outcomes and manifest/checkpoint metadata CAS. The current application marker is `pm.control/v18`; authenticated worker state extends the existing store rather than creating another queue. Workflow handoff adds immutable command intents and append-only reconciliation witnesses. Its bounded migrator-owned claim function returns scoped routes; runtime callers re-enter scoped transactions. The runtime role cannot create schemas/tables/temporary objects, truncate PM tables, delete history, assume the migrator role, or broaden its authority. Operator reinitialization must preserve these store-owned grants.
 
 Migration 0011 backfills each run's durable event watermark across retained scopes. Event allocation continues beyond that watermark even when retained rows have been removed. Its temporary migrator-only policies are transaction-bound and removed before commit; runtime visibility is not widened. Downgrade refuses a watermark that the retained rows cannot represent, rather than rewinding future event identities.
 

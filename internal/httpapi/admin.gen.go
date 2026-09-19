@@ -38,7 +38,11 @@ type AdminCredentialStatusStatus string
 
 // ArtifactID defines model for ArtifactID.
 
+// CatalogOperationID defines model for CatalogOperationID.
+
 // ConnectionID defines model for ConnectionID.
+
+// ConnectorCatalogID defines model for ConnectorCatalogID.
 
 // ResourceID defines model for ResourceID.
 

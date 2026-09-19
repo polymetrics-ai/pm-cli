@@ -1,0 +1,33 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "proof",
+    srcs = [
+        "currentness.go",
+        "execution.go",
+        "inventory.go",
+        "oracle.go",
+        "receipt.go",
+        "runner.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/proof",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/api",
+        "//internal/connectors",
+        "//internal/contract",
+        "@org_golang_x_sys//unix",
+    ],
+)
+
+go_test(
+    name = "proof_test",
+    srcs = [
+        "currentness_test.go",
+        "oracle_contract_test.go",
+        "oracle_test.go",
+        "runner_mechanics_test.go",
+    ],
+    embed = [":proof"],
+    deps = ["//internal/contract"],
+)

@@ -1,0 +1,40 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "runtime",
+    srcs = [
+        "admission.go",
+        "egress.go",
+        "http.go",
+        "inputs.go",
+        "limits.go",
+        "pagination.go",
+        "response.go",
+        "retry.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/runtime",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/contract",
+        "//internal/credentials",
+    ],
+)
+
+go_test(
+    name = "runtime_test",
+    srcs = [
+        "admission_test.go",
+        "egress_test.go",
+        "http_test.go",
+        "limits_test.go",
+        "pagination_clamp_test.go",
+        "pagination_test.go",
+        "response_open_test.go",
+        "retry_test.go",
+    ],
+    embed = [":runtime"],
+    deps = [
+        "//internal/contract",
+        "//internal/credentials",
+    ],
+)

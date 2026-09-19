@@ -4,16 +4,22 @@ startup --host_jvm_args=-Xmx1024m
 startup --host_jvm_args=-XX:ActiveProcessorCount=2
 
 common --experimental_isolated_extension_usages
-common --enable_platform_specific_config
 
 build --jobs=2
 build --loading_phase_threads=2
 build --experimental_fsvc_threads=2
 # Bazel 9.2 Skymeld creates a fixed 200-thread symlink pool, independent of jobs.
-# Keep analysis and execution separate within the runner's 256-task budget.
+# Keep analysis and execution separate within the runner's bounded task budget.
 build --noexperimental_merged_skyframe_analysis_execution
 build --local_resources=cpu=2
 build --local_resources=memory=2048
+# Linux CI exhausted its shared 256-task budget during a link-heavy build.
+# Reserve listener headroom by bounding action concurrency and nested Go work.
+build:linux --jobs=1
+build:linux --action_env=GOMAXPROCS=2
+test:linux --test_env=GOMAXPROCS=2
+# Expand platform overrides after build defaults; common has lower precedence.
+build --enable_platform_specific_config
 build --spawn_strategy=processwrapper-sandbox
 build --repo_env=CC
 build --repo_env=CXX
@@ -48,6 +54,8 @@ build:macos --host_copt=-gdwarf-4
 
 test --test_env=PM_GO
 test --test_env=PM_REPO_ROOT
+# Nested bootstrap calls must reuse the caller's verified tool cache.
+test --test_env=PM_TOOLS_CACHE
 test --test_env=GOCACHE
 test --test_env=GOMODCACHE
 test --test_env=GOWORK=off

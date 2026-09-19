@@ -38,9 +38,21 @@ type Schema struct {
 	Nullable   bool              `json:"nullable,omitempty"`
 	Required   []string          `json:"required,omitempty"`
 	Properties map[string]Schema `json:"properties,omitempty"`
-	Items      *Schema           `json:"items,omitempty"`
-	OneOf      []Schema          `json:"oneOf,omitempty"`
-	AllOf      []Schema          `json:"allOf,omitempty"`
+	// OpenProperties records a source declaration that properties beyond
+	// Properties are permitted. JSON Schema and OpenAPI leave an object open
+	// unless the source declares additionalProperties: false, so an object
+	// keeps its declared property set without claiming a closed one.
+	OpenProperties bool `json:"open_properties,omitempty"`
+	// AdditionalProperties holds the declared schema of each property outside
+	// Properties when the source constrains those values. It is valid only
+	// with OpenProperties and never declares or renames a property.
+	AdditionalProperties *Schema        `json:"additional_properties,omitempty"`
+	Items                *Schema        `json:"items,omitempty"`
+	OneOf                []Schema       `json:"oneOf,omitempty"`
+	AllOf                []Schema       `json:"allOf,omitempty"`
+	Enum                 []PresentValue `json:"enum,omitempty"`
+	Minimum              *PresentValue  `json:"minimum,omitempty"`
+	Maximum              *PresentValue  `json:"maximum,omitempty"`
 }
 
 func DecodeSchema(document []byte) (Schema, error) {
@@ -65,6 +77,9 @@ func validateSchema(schema Schema, path string, depth int) error {
 	if !validSchemaType(schema.Type) {
 		return contractError(ErrUnsupportedSchema, path+".type", "logical type is unsupported")
 	}
+	if err := validateSchemaValueConstraints(schema, path); err != nil {
+		return err
+	}
 	for index, component := range schema.AllOf {
 		if component.Type != schema.Type {
 			return contractError(ErrUnsupportedSchema, fmt.Sprintf("%s.allOf[%d].type", path, index), "allOf component type must match its parent")
@@ -84,6 +99,14 @@ func validateSchema(schema Schema, path string, depth int) error {
 	case SchemaTypeObject:
 		if schema.Items != nil || schema.OneOf != nil {
 			return contractError(ErrUnsupportedSchema, path, "object cannot declare items or oneOf")
+		}
+		if schema.AdditionalProperties != nil && !schema.OpenProperties {
+			return contractError(ErrUnsupportedSchema, path+".additional_properties", "declared additional property schema requires open properties")
+		}
+		if schema.AdditionalProperties != nil {
+			if err := validateSchema(*schema.AdditionalProperties, path+".additional_properties", depth+1); err != nil {
+				return err
+			}
 		}
 		seenRequired := make(map[string]struct{}, len(schema.Required))
 		for _, name := range schema.Required {
@@ -110,8 +133,9 @@ func validateSchema(schema Schema, path string, depth int) error {
 		if schema.Items == nil {
 			return contractError(ErrUnsupportedSchema, path+".items", "array items must be declared")
 		}
-		if schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil {
-			return contractError(ErrUnsupportedSchema, path, "array cannot declare object, union, or allOf shape")
+		if schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil ||
+			schema.OpenProperties || schema.AdditionalProperties != nil {
+			return contractError(ErrUnsupportedSchema, path, "array cannot declare object, union, allOf, or undeclared-property shape")
 		}
 		if err := validateSchema(*schema.Items, path+".items", depth+1); err != nil {
 			return err
@@ -120,8 +144,9 @@ func validateSchema(schema Schema, path string, depth int) error {
 		if len(schema.OneOf) < 2 {
 			return contractError(ErrUnsupportedSchema, path+".oneOf", "union must preserve at least two variants")
 		}
-		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.AllOf != nil {
-			return contractError(ErrUnsupportedSchema, path, "union cannot combine oneOf with object, array, or allOf shape")
+		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.AllOf != nil ||
+			schema.OpenProperties || schema.AdditionalProperties != nil {
+			return contractError(ErrUnsupportedSchema, path, "union cannot combine oneOf with object, array, allOf, or undeclared-property shape")
 		}
 		for index, variant := range schema.OneOf {
 			if err := validateSchema(variant, fmt.Sprintf("%s.oneOf[%d]", path, index), depth+1); err != nil {
@@ -129,8 +154,69 @@ func validateSchema(schema Schema, path string, depth int) error {
 			}
 		}
 	default:
-		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil {
-			return contractError(ErrUnsupportedSchema, path, "scalar cannot declare object, array, union, or allOf shape")
+		if schema.Items != nil || schema.Properties != nil || schema.Required != nil || schema.OneOf != nil || schema.AllOf != nil ||
+			schema.OpenProperties || schema.AdditionalProperties != nil {
+			return contractError(ErrUnsupportedSchema, path, "scalar cannot declare object, array, union, allOf, or undeclared-property shape")
+		}
+	}
+	return nil
+}
+func validateSchemaValueConstraints(schema Schema, path string) error {
+	if schema.Enum != nil {
+		if len(schema.Enum) == 0 {
+			return contractError(ErrUnsupportedSchema, path+".enum", "must contain at least one typed value when declared")
+		}
+		switch schema.Type {
+		case SchemaTypeString, SchemaTypeBool, SchemaTypeInteger, SchemaTypeDecimal,
+			SchemaTypeDate, SchemaTypeTimestampInstant, SchemaTypeTimestampLocal:
+		default:
+			return contractError(ErrUnsupportedSchema, path+".enum", "ordinary enum constraints are unsupported for this logical type")
+		}
+		base := schema
+		base.Enum = nil
+		base.Minimum = nil
+		base.Maximum = nil
+		for index, candidate := range schema.Enum {
+			if err := candidate.Validate(); err != nil {
+				return contractError(ErrInvalidContract, fmt.Sprintf("%s.enum[%d]", path, index), "contains an invalid typed value")
+			}
+			if candidate.Presence() == PresenceAbsent || !operationInputMatchesSchema(candidate, base, false) {
+				return contractError(ErrInvalidContract, fmt.Sprintf("%s.enum[%d]", path, index), "does not match the enum schema")
+			}
+			for prior := range index {
+				if candidate.Equal(schema.Enum[prior]) {
+					return contractError(ErrDuplicateField, path+".enum", "typed enum value is duplicated")
+				}
+			}
+		}
+	}
+	if schema.Minimum == nil && schema.Maximum == nil {
+		return nil
+	}
+	if schema.Type != SchemaTypeInteger && schema.Type != SchemaTypeDecimal {
+		return contractError(ErrUnsupportedSchema, path, "minimum and maximum are valid only for numeric logical types")
+	}
+	for _, constraint := range []struct {
+		name  string
+		bound *PresentValue
+	}{
+		{name: "minimum", bound: schema.Minimum},
+		{name: "maximum", bound: schema.Maximum},
+	} {
+		if constraint.bound == nil {
+			continue
+		}
+		if err := constraint.bound.Validate(); err != nil {
+			return contractError(ErrInvalidContract, path+"."+constraint.name, "contains an invalid exact numeric bound")
+		}
+		if _, ok := constraint.bound.ExactNumber(); !ok {
+			return contractError(ErrInvalidContract, path+"."+constraint.name, "must be a present exact integer or decimal")
+		}
+	}
+	if schema.Minimum != nil && schema.Maximum != nil {
+		comparison, ok := compareExactNumericValues(*schema.Minimum, *schema.Maximum)
+		if !ok || comparison > 0 {
+			return contractError(ErrInvalidContract, path, "minimum must not exceed maximum")
 		}
 	}
 	return nil
@@ -156,8 +242,8 @@ func isJSONMediaType(value string) bool {
 }
 
 func validateMediaType(value string) error {
-	if value == "" {
-		return contractError(ErrIncompatibleMedia, "media_type", "must not be empty")
+	if value == "" || len(value) > 512 || !utf8.ValidString(value) {
+		return contractError(ErrIncompatibleMedia, "media_type", "must be a bounded nonempty valid UTF-8 value")
 	}
 	if _, _, err := mime.ParseMediaType(value); err != nil {
 		return contractError(ErrIncompatibleMedia, "media_type", "is malformed")

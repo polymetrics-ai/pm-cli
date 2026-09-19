@@ -28,6 +28,99 @@ func (e AdmissionResponseState) Valid() bool {
 	}
 }
 
+// Defines values for CatalogLaneAvailabilityLane.
+const (
+	CatalogLaneAvailabilityLaneBinaryDownload CatalogLaneAvailabilityLane = "binary_download"
+	CatalogLaneAvailabilityLaneBinaryUpload   CatalogLaneAvailabilityLane = "binary_upload"
+	CatalogLaneAvailabilityLaneDirectRead     CatalogLaneAvailabilityLane = "direct_read"
+	CatalogLaneAvailabilityLaneDirectWrite    CatalogLaneAvailabilityLane = "direct_write"
+	CatalogLaneAvailabilityLaneEtl            CatalogLaneAvailabilityLane = "etl"
+	CatalogLaneAvailabilityLaneReverseEtl     CatalogLaneAvailabilityLane = "reverse_etl"
+	CatalogLaneAvailabilityLaneSyncTransport  CatalogLaneAvailabilityLane = "sync_transport"
+)
+
+// Valid indicates whether the value is a known member of the CatalogLaneAvailabilityLane enum.
+func (e CatalogLaneAvailabilityLane) Valid() bool {
+	switch e {
+	case CatalogLaneAvailabilityLaneBinaryDownload:
+		return true
+	case CatalogLaneAvailabilityLaneBinaryUpload:
+		return true
+	case CatalogLaneAvailabilityLaneDirectRead:
+		return true
+	case CatalogLaneAvailabilityLaneDirectWrite:
+		return true
+	case CatalogLaneAvailabilityLaneEtl:
+		return true
+	case CatalogLaneAvailabilityLaneReverseEtl:
+		return true
+	case CatalogLaneAvailabilityLaneSyncTransport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CatalogLaneAvailabilitySourceStatus.
+const (
+	CatalogLaneAvailabilitySourceStatusBlocked       CatalogLaneAvailabilitySourceStatus = "blocked"
+	CatalogLaneAvailabilitySourceStatusEligible      CatalogLaneAvailabilitySourceStatus = "eligible"
+	CatalogLaneAvailabilitySourceStatusNotApplicable CatalogLaneAvailabilitySourceStatus = "not_applicable"
+	CatalogLaneAvailabilitySourceStatusUnproven      CatalogLaneAvailabilitySourceStatus = "unproven"
+	CatalogLaneAvailabilitySourceStatusUnsupported   CatalogLaneAvailabilitySourceStatus = "unsupported"
+)
+
+// Valid indicates whether the value is a known member of the CatalogLaneAvailabilitySourceStatus enum.
+func (e CatalogLaneAvailabilitySourceStatus) Valid() bool {
+	switch e {
+	case CatalogLaneAvailabilitySourceStatusBlocked:
+		return true
+	case CatalogLaneAvailabilitySourceStatusEligible:
+		return true
+	case CatalogLaneAvailabilitySourceStatusNotApplicable:
+		return true
+	case CatalogLaneAvailabilitySourceStatusUnproven:
+		return true
+	case CatalogLaneAvailabilitySourceStatusUnsupported:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CommandDescriptorAvailableLanes.
+const (
+	CommandDescriptorAvailableLanesBinaryDownload CommandDescriptorAvailableLanes = "binary_download"
+	CommandDescriptorAvailableLanesBinaryUpload   CommandDescriptorAvailableLanes = "binary_upload"
+	CommandDescriptorAvailableLanesDirectRead     CommandDescriptorAvailableLanes = "direct_read"
+	CommandDescriptorAvailableLanesDirectWrite    CommandDescriptorAvailableLanes = "direct_write"
+	CommandDescriptorAvailableLanesEtl            CommandDescriptorAvailableLanes = "etl"
+	CommandDescriptorAvailableLanesReverseEtl     CommandDescriptorAvailableLanes = "reverse_etl"
+	CommandDescriptorAvailableLanesSyncTransport  CommandDescriptorAvailableLanes = "sync_transport"
+)
+
+// Valid indicates whether the value is a known member of the CommandDescriptorAvailableLanes enum.
+func (e CommandDescriptorAvailableLanes) Valid() bool {
+	switch e {
+	case CommandDescriptorAvailableLanesBinaryDownload:
+		return true
+	case CommandDescriptorAvailableLanesBinaryUpload:
+		return true
+	case CommandDescriptorAvailableLanesDirectRead:
+		return true
+	case CommandDescriptorAvailableLanesDirectWrite:
+		return true
+	case CommandDescriptorAvailableLanesEtl:
+		return true
+	case CommandDescriptorAvailableLanesReverseEtl:
+		return true
+	case CommandDescriptorAvailableLanesSyncTransport:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ConnectionState.
 const (
 	ConnectionStateActive  ConnectionState = "active"
@@ -506,6 +599,14 @@ type AdmissionResponse struct {
 // AdmissionResponseState defines model for AdmissionResponse.State.
 type AdmissionResponseState string
 
+// ArtifactMetadata defines model for ArtifactMetadata.
+type ArtifactMetadata struct {
+	ArtifactId string `json:"artifact_id"`
+	ByteLength int64  `json:"byte_length"`
+	MediaType  string `json:"media_type"`
+	Sha256     string `json:"sha256"`
+}
+
 // BrowserLogin defines model for BrowserLogin.
 type BrowserLogin struct {
 	Code  string `json:"code"`
@@ -522,6 +623,73 @@ type BrowserLoginChallenge struct {
 type BrowserLoginStart struct {
 	// Reauthenticate Request a fresh signed OIDC authentication time using max_age=0 and prompt=login.
 	Reauthenticate bool `json:"reauthenticate"`
+}
+
+// CatalogConnector defines model for CatalogConnector.
+type CatalogConnector struct {
+	CatalogRevision   string             `json:"catalog_revision"`
+	ConnectorId       string             `json:"connector_id"`
+	Operations        []CatalogOperation `json:"operations"`
+	SemanticsRevision string             `json:"semantics_revision"`
+	SourceDigest      string             `json:"source_digest"`
+}
+
+// CatalogConnectorPage defines model for CatalogConnectorPage.
+type CatalogConnectorPage struct {
+	CatalogRevision string                    `json:"catalog_revision"`
+	Items           []CatalogConnector        `json:"items"`
+	NextCursor      nullable.Nullable[string] `json:"next_cursor"`
+}
+
+// CatalogFieldBinding defines model for CatalogFieldBinding.
+type CatalogFieldBinding = contract.FieldBinding
+
+// CatalogLaneAvailability defines model for CatalogLaneAvailability.
+type CatalogLaneAvailability struct {
+	Available          bool                                `json:"available"`
+	Lane               CatalogLaneAvailabilityLane         `json:"lane"`
+	SourceReason       string                              `json:"source_reason"`
+	SourceStatus       CatalogLaneAvailabilitySourceStatus `json:"source_status"`
+	UnavailabilityCode *string                             `json:"unavailability_code,omitempty"`
+}
+
+// CatalogLaneAvailabilityLane defines model for CatalogLaneAvailability.Lane.
+type CatalogLaneAvailabilityLane string
+
+// CatalogLaneAvailabilitySourceStatus defines model for CatalogLaneAvailability.SourceStatus.
+type CatalogLaneAvailabilitySourceStatus string
+
+// CatalogOperation defines model for CatalogOperation.
+type CatalogOperation struct {
+	CommandName       *string                   `json:"command_name,omitempty"`
+	DiagnosticCodes   []string                  `json:"diagnostic_codes"`
+	Lanes             []CatalogLaneAvailability `json:"lanes"`
+	OperationId       string                    `json:"operation_id"`
+	OperationRevision string                    `json:"operation_revision"`
+}
+
+// CommandDescriptor defines model for CommandDescriptor.
+type CommandDescriptor struct {
+	Aliases            []string                          `json:"aliases"`
+	AvailableLanes     []CommandDescriptorAvailableLanes `json:"available_lanes"`
+	CatalogRevision    string                            `json:"catalog_revision"`
+	ConnectionId       string                            `json:"connection_id"`
+	ConnectorId        string                            `json:"connector_id"`
+	Fields             []CommandFieldDescriptor          `json:"fields"`
+	Name               string                            `json:"name"`
+	OperationId        string                            `json:"operation_id"`
+	OperationRevision  string                            `json:"operation_revision"`
+	RequestBody        OperationRequestProjection        `json:"request_body"`
+	UnavailabilityCode *string                           `json:"unavailability_code,omitempty"`
+}
+
+// CommandDescriptorAvailableLanes defines model for CommandDescriptor.AvailableLanes.
+type CommandDescriptorAvailableLanes string
+
+// CommandFieldDescriptor defines model for CommandFieldDescriptor.
+type CommandFieldDescriptor struct {
+	Binding CatalogFieldBinding `json:"binding"`
+	Flag    string              `json:"flag"`
 }
 
 // Connection defines model for Connection.
@@ -734,11 +902,13 @@ type InvocationRequest struct {
 	ConnectionRef string                    `json:"connection_ref"`
 
 	// Input A present typed object keyed by exact logical FieldID values from the selected operation input bindings, not provider wire names. Omitted optional fields remain absent; source defaults are not inserted. Each supplied value retains its declared type and presence, including explicit null, false, zero, empty values, and exact numeric representation.
-	Input          PresentValue          `json:"input"`
-	Lane           InvocationRequestLane `json:"lane"`
-	OperationRef   string                `json:"operation_ref"`
-	Protocol       ProtocolMetadata      `json:"protocol"`
-	ResultControls ResultControls        `json:"result_controls"`
+	Input        PresentValue          `json:"input"`
+	Lane         InvocationRequestLane `json:"lane"`
+	OperationRef string                `json:"operation_ref"`
+	Protocol     ProtocolMetadata      `json:"protocol"`
+
+	// ResultControls Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.
+	ResultControls ResultControls `json:"result_controls"`
 }
 
 // InvocationRequestLane defines model for InvocationRequest.Lane.
@@ -831,6 +1001,9 @@ type MutationResultResponseReplay bool
 // ObjectRef defines model for ObjectRef.
 type ObjectRef = contract.ObjectRef
 
+// OperationRequestProjection defines model for OperationRequestProjection.
+type OperationRequestProjection = contract.OperationRequestProjection
+
 // OrchestrationCondition Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.
 type OrchestrationCondition string
 
@@ -884,7 +1057,10 @@ type ProtocolMetadataWireVersion string
 // RecordFilter defines model for RecordFilter.
 type RecordFilter = contract.RecordFilter
 
-// ResultControls defines model for ResultControls.
+// RequestVariantProjection defines model for RequestVariantProjection.
+type RequestVariantProjection = contract.RequestVariantProjection
+
+// ResultControls Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.
 type ResultControls = contract.ResultControls
 
 // ResultPagination defines model for ResultPagination.
@@ -1053,6 +1229,17 @@ type RunView struct {
 	UnknownEffectCount ExactCounter `json:"unknown_effect_count"`
 }
 
+// SafeCommandPage defines model for SafeCommandPage.
+type SafeCommandPage struct {
+	CatalogRevision  string                    `json:"catalog_revision"`
+	ConnectionId     string                    `json:"connection_id"`
+	Items            []CommandDescriptor       `json:"items"`
+	NextCursor       nullable.Nullable[string] `json:"next_cursor"`
+	Principal        Principal                 `json:"principal"`
+	ServerInstanceId string                    `json:"server_instance_id"`
+	WorkspaceId      string                    `json:"workspace_id"`
+}
+
 // SafeConnectionInput defines model for SafeConnectionInput.
 type SafeConnectionInput struct {
 	ConnectorId       string `json:"connector_id"`
@@ -1184,6 +1371,9 @@ type TaskView struct {
 // TaskViewLane defines model for TaskView.Lane.
 type TaskViewLane string
 
+// TypedSchema defines model for TypedSchema.
+type TypedSchema = contract.Schema
+
 // Workspace defines model for Workspace.
 type Workspace struct {
 	MembershipId       string `json:"membership_id"`
@@ -1203,11 +1393,26 @@ type WorkspacePage struct {
 // ArtifactID defines model for ArtifactID.
 type ArtifactID = string
 
+// ArtifactRange defines model for ArtifactRange.
+type ArtifactRange = string
+
 // CSRFToken defines model for CSRFToken.
 type CSRFToken = string
 
+// CatalogOperationID defines model for CatalogOperationID.
+type CatalogOperationID = string
+
+// CommandFilter defines model for CommandFilter.
+type CommandFilter = string
+
+// ConnectionFilter defines model for ConnectionFilter.
+type ConnectionFilter = string
+
 // ConnectionID defines model for ConnectionID.
 type ConnectionID = string
+
+// ConnectorCatalogID defines model for ConnectorCatalogID.
+type ConnectorCatalogID = string
 
 // Cursor defines model for Cursor.
 type Cursor = string
@@ -1260,6 +1465,9 @@ type Problem410 = Problem
 // Problem412 defines model for Problem412.
 type Problem412 = Problem
 
+// Problem416 defines model for Problem416.
+type Problem416 = Problem
+
 // Problem428 defines model for Problem428.
 type Problem428 = Problem
 
@@ -1302,6 +1510,19 @@ type ListWorkspacesParams struct {
 	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
 }
 
+// ListCatalogCommandsParams defines parameters for ListCatalogCommands.
+type ListCatalogCommandsParams struct {
+	ConnectionId ConnectionFilter `form:"connection_id" json:"connection_id"`
+	Filter       *CommandFilter   `form:"filter,omitempty" json:"filter,omitempty"`
+	Cursor       *Cursor          `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize     *PageSize        `form:"page_size,omitempty" json:"page_size,omitempty"`
+}
+
+// GetCatalogCommandParams defines parameters for GetCatalogCommand.
+type GetCatalogCommandParams struct {
+	ConnectionId ConnectionFilter `form:"connection_id" json:"connection_id"`
+}
+
 // ListConnectionsParams defines parameters for ListConnections.
 type ListConnectionsParams struct {
 	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
@@ -1339,6 +1560,12 @@ type UpdateConnectionParams struct {
 
 	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// ListCatalogConnectorsParams defines parameters for ListCatalogConnectors.
+type ListCatalogConnectorsParams struct {
+	Cursor   *Cursor   `form:"cursor,omitempty" json:"cursor,omitempty"`
+	PageSize *PageSize `form:"page_size,omitempty" json:"page_size,omitempty"`
 }
 
 // ListDelegationsParams defines parameters for ListDelegations.

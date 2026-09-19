@@ -1,6 +1,51 @@
 {
   "components": {
     "headers": {
+      "AcceptRanges": {
+        "description": "The verified content route supports one bytes range.",
+        "schema": {
+          "const": "bytes",
+          "type": "string"
+        }
+      },
+      "ArtifactContentDisposition": {
+        "description": "Untrusted artifact bytes are downloaded, not rendered as a PM-origin document.",
+        "schema": {
+          "const": "attachment",
+          "type": "string"
+        }
+      },
+      "ArtifactContentLength": {
+        "description": "Exact number of bytes in this full or partial response body.",
+        "schema": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "ArtifactETag": {
+        "description": "Strong validator derived only from the verified SHA-256 digest.",
+        "schema": {
+          "pattern": "^\"sha256:[0-9a-f]{64}\"$",
+          "type": "string"
+        }
+      },
+      "CacheControlNoStore": {
+        "description": "Private artifact representations must not be stored.",
+        "schema": {
+          "const": "no-store",
+          "type": "string"
+        }
+      },
+      "ContentRange": {
+        "description": "Selected byte interval and complete registered length, or the complete length for a 416 response.",
+        "schema": {
+          "maxLength": 128,
+          "minLength": 9,
+          "pattern": "^bytes ([0-9]+-[0-9]+|\\*)/[0-9]+$",
+          "type": "string"
+        }
+      },
       "ETag": {
         "description": "Opaque scope-bound revision validator for this authorized representation; it is not a mutation idempotency key.",
         "schema": {
@@ -22,6 +67,16 @@
           "type": "string"
         }
       },
+      "ArtifactRange": {
+        "description": "One bytes range in closed, open-ended, or suffix form. Multiple ranges are unsupported. Malformed and unsatisfiable ranges return 416 only after current artifact authorization and read-backend availability checks.",
+        "in": "header",
+        "name": "Range",
+        "schema": {
+          "maxLength": 256,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
       "CSRFToken": {
         "description": "Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.",
         "in": "header",
@@ -32,9 +87,47 @@
           "type": "string"
         }
       },
+      "CatalogOperationID": {
+        "in": "path",
+        "name": "operation_id",
+        "required": true,
+        "schema": {
+          "maxLength": 1024,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "CommandFilter": {
+        "in": "query",
+        "name": "filter",
+        "schema": {
+          "maxLength": 512,
+          "type": "string"
+        }
+      },
+      "ConnectionFilter": {
+        "in": "query",
+        "name": "connection_id",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
       "ConnectionID": {
         "in": "path",
         "name": "connection_id",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "ConnectorCatalogID": {
+        "in": "path",
+        "name": "connector_id",
         "required": true,
         "schema": {
           "maxLength": 512,
@@ -209,6 +302,27 @@
         },
         "description": "The supplied control revision is stale"
       },
+      "Problem416": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "The authorized single byte range is malformed or unsatisfiable for the registered length.",
+        "headers": {
+          "Accept-Ranges": {
+            "$ref": "#/components/headers/AcceptRanges"
+          },
+          "Cache-Control": {
+            "$ref": "#/components/headers/CacheControlNoStore"
+          },
+          "Content-Range": {
+            "$ref": "#/components/headers/ContentRange"
+          }
+        }
+      },
       "Problem428": {
         "content": {
           "application/problem+json": {
@@ -252,24 +366,72 @@
     },
     "schemas": {
       "ActionResult": {
-        "additionalProperties": false,
-        "properties": {
-          "data": {
-            "$ref": "#/components/schemas/PresentValue"
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PresentValue"
+                  },
+                  {
+                    "not": {
+                      "properties": {
+                        "presence": {
+                          "const": "absent"
+                        }
+                      },
+                      "required": [
+                        "presence"
+                      ],
+                      "type": "object"
+                    }
+                  }
+                ]
+              },
+              "media_type": {
+                "minLength": 1,
+                "type": "string"
+              },
+              "pagination": {
+                "$ref": "#/components/schemas/ResultPagination"
+              }
+            },
+            "required": [
+              "media_type",
+              "data"
+            ],
+            "type": "object"
           },
-          "media_type": {
-            "minLength": 1,
-            "type": "string"
-          },
-          "pagination": {
-            "$ref": "#/components/schemas/ResultPagination"
+          {
+            "additionalProperties": false,
+            "properties": {
+              "data": {
+                "allOf": [
+                  {
+                    "$ref": "#/components/schemas/PresentValue"
+                  },
+                  {
+                    "properties": {
+                      "presence": {
+                        "const": "absent"
+                      }
+                    },
+                    "required": [
+                      "presence"
+                    ],
+                    "type": "object"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "data"
+            ],
+            "type": "object"
           }
-        },
-        "required": [
-          "media_type",
-          "data"
         ],
-        "type": "object",
         "x-go-type": "contract.ActionResult",
         "x-go-type-import": {
           "name": "contract",
@@ -311,6 +473,37 @@
           "intent_digest",
           "outcome_reference",
           "replay"
+        ],
+        "type": "object"
+      },
+      "ArtifactMetadata": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "byte_length": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "media_type": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "sha256",
+          "byte_length",
+          "media_type"
         ],
         "type": "object"
       },
@@ -363,6 +556,340 @@
         },
         "required": [
           "reauthenticate"
+        ],
+        "type": "object"
+      },
+      "CatalogConnector": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "connector_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operations": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogOperation"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "semantics_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "source_digest": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "connector_id",
+          "source_digest",
+          "semantics_revision",
+          "catalog_revision",
+          "operations"
+        ],
+        "type": "object"
+      },
+      "CatalogConnectorPage": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogConnector"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "maxLength": 4096,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "catalog_revision",
+          "items",
+          "next_cursor"
+        ],
+        "type": "object"
+      },
+      "CatalogFieldBinding": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_reserved": {
+            "type": "boolean"
+          },
+          "explode": {
+            "type": "boolean"
+          },
+          "field_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "json_pointer": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "location": {
+            "enum": [
+              "path",
+              "query",
+              "header",
+              "cookie",
+              "body",
+              "record",
+              "metadata"
+            ],
+            "type": "string"
+          },
+          "nullable": {
+            "type": "boolean"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/TypedSchema"
+          },
+          "sensitivity": {
+            "enum": [
+              "public",
+              "secret"
+            ],
+            "type": "string"
+          },
+          "source_default": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "style": {
+            "type": "string"
+          },
+          "wire_name": {
+            "maxLength": 4096,
+            "type": "string"
+          }
+        },
+        "required": [
+          "field_id",
+          "wire_name",
+          "location",
+          "json_pointer",
+          "required",
+          "nullable",
+          "style",
+          "explode",
+          "allow_reserved",
+          "sensitivity",
+          "schema"
+        ],
+        "type": "object",
+        "x-go-type": "contract.FieldBinding",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "CatalogLaneAvailability": {
+        "additionalProperties": false,
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "lane": {
+            "enum": [
+              "direct_read",
+              "direct_write",
+              "etl",
+              "reverse_etl",
+              "binary_download",
+              "binary_upload",
+              "sync_transport"
+            ],
+            "type": "string"
+          },
+          "source_reason": {
+            "maxLength": 4096,
+            "minLength": 1,
+            "type": "string"
+          },
+          "source_status": {
+            "enum": [
+              "eligible",
+              "unsupported",
+              "not_applicable",
+              "blocked",
+              "unproven"
+            ],
+            "type": "string"
+          },
+          "unavailability_code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "lane",
+          "source_status",
+          "source_reason",
+          "available"
+        ],
+        "type": "object"
+      },
+      "CatalogOperation": {
+        "additionalProperties": false,
+        "properties": {
+          "command_name": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "diagnostic_codes": {
+            "items": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "lanes": {
+            "items": {
+              "$ref": "#/components/schemas/CatalogLaneAvailability"
+            },
+            "maxItems": 7,
+            "minItems": 7,
+            "type": "array"
+          },
+          "operation_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation_id",
+          "operation_revision",
+          "diagnostic_codes",
+          "lanes"
+        ],
+        "type": "object"
+      },
+      "CommandDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "aliases": {
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "available_lanes": {
+            "items": {
+              "enum": [
+                "direct_read",
+                "direct_write",
+                "etl",
+                "reverse_etl",
+                "binary_download",
+                "binary_upload",
+                "sync_transport"
+              ],
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "connection_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "connector_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/CommandFieldDescriptor"
+            },
+            "type": "array"
+          },
+          "name": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_id": {
+            "maxLength": 1024,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operation_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "request_body": {
+            "$ref": "#/components/schemas/OperationRequestProjection"
+          },
+          "unavailability_code": {
+            "maxLength": 128,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "aliases",
+          "connector_id",
+          "connection_id",
+          "operation_id",
+          "operation_revision",
+          "catalog_revision",
+          "fields",
+          "request_body",
+          "available_lanes"
+        ],
+        "type": "object"
+      },
+      "CommandFieldDescriptor": {
+        "additionalProperties": false,
+        "properties": {
+          "binding": {
+            "$ref": "#/components/schemas/CatalogFieldBinding"
+          },
+          "flag": {
+            "pattern": "^--[A-Za-z0-9][A-Za-z0-9-]*$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flag",
+          "binding"
         ],
         "type": "object"
       },
@@ -1476,6 +2003,31 @@
           "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
         }
       },
+      "OperationRequestProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "request_media_field_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "variants": {
+            "items": {
+              "$ref": "#/components/schemas/RequestVariantProjection"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "variants"
+        ],
+        "type": "object",
+        "x-go-type": "contract.OperationRequestProjection",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
       "OrchestrationCondition": {
         "description": "Timestamped orchestration observation only; it never replaces PostgreSQL-owned effect truth.",
         "enum": [
@@ -1876,14 +2428,67 @@
           "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
         }
       },
-      "ResultControls": {
+      "RequestVariantProjection": {
         "additionalProperties": false,
         "properties": {
+          "field_ids": {
+            "items": {
+              "maxLength": 512,
+              "minLength": 1,
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "media_type": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "schema": {
+            "$ref": "#/components/schemas/TypedSchema"
+          },
+          "variant_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "variant_id",
+          "media_type",
+          "required",
+          "schema",
+          "field_ids"
+        ],
+        "type": "object",
+        "x-go-type": "contract.RequestVariantProjection",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
+      },
+      "ResultControls": {
+        "additionalProperties": false,
+        "description": "Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.",
+        "properties": {
+          "continuation": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
           "filter": {
             "$ref": "#/components/schemas/RecordFilter"
           },
           "selection": {
             "$ref": "#/components/schemas/FieldSelection"
+          },
+          "total_record_cap": {
+            "description": "Optional positive cap on records emitted by this invocation after filtering; this is distinct from the provider page size.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
           }
         },
         "type": "object",
@@ -1902,7 +2507,10 @@
           "effective_wire_limit": {
             "format": "int64",
             "minimum": 1,
-            "type": "integer"
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "emitted_count": {
             "format": "int64",
@@ -2364,6 +2972,56 @@
           "blocked_reason",
           "revision",
           "result_references"
+        ],
+        "type": "object"
+      },
+      "SafeCommandPage": {
+        "additionalProperties": false,
+        "properties": {
+          "catalog_revision": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "connection_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/CommandDescriptor"
+            },
+            "type": "array"
+          },
+          "next_cursor": {
+            "maxLength": 4096,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "principal": {
+            "$ref": "#/components/schemas/Principal"
+          },
+          "server_instance_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "workspace_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "server_instance_id",
+          "principal",
+          "workspace_id",
+          "connection_id",
+          "catalog_revision",
+          "items",
+          "next_cursor"
         ],
         "type": "object"
       },
@@ -2835,6 +3493,82 @@
           "member_outcomes"
         ],
         "type": "object"
+      },
+      "TypedSchema": {
+        "additionalProperties": false,
+        "properties": {
+          "allOf": {
+            "items": {
+              "$ref": "#/components/schemas/TypedSchema"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "enum": {
+            "items": {
+              "$ref": "#/components/schemas/PresentValue"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "items": {
+            "$ref": "#/components/schemas/TypedSchema"
+          },
+          "maximum": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "minimum": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "nullable": {
+            "type": "boolean"
+          },
+          "oneOf": {
+            "items": {
+              "$ref": "#/components/schemas/TypedSchema"
+            },
+            "minItems": 2,
+            "type": "array"
+          },
+          "properties": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/TypedSchema"
+            },
+            "type": "object"
+          },
+          "required": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "uniqueItems": true
+          },
+          "type": {
+            "enum": [
+              "string",
+              "bool",
+              "integer",
+              "decimal",
+              "date",
+              "timestamp_instant",
+              "timestamp_local",
+              "array",
+              "object",
+              "union",
+              "binary_ref"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "type"
+        ],
+        "type": "object",
+        "x-go-type": "contract.Schema",
+        "x-go-type-import": {
+          "name": "contract",
+          "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
+        }
       },
       "Workspace": {
         "additionalProperties": false,
@@ -3418,7 +4152,7 @@
         }
       ],
       "post": {
-        "description": "M4 exposes only authorization and explicit capability refusal. No artifact byte backend is installed, so this operation advertises no successful representation and never fabricates artifact metadata. Send no request body: the shared protocol guard rejects a nonempty entity as invalid_request. A later byte-storage owner must declare the accepted raw-stream contract before enabling byte input or adding a success response.",
+        "description": "Public artifact upload remains unavailable on this route even when a read backend is installed. Send no request body: the shared protocol guard rejects a nonempty entity as invalid_request. Authorization still precedes the explicit capability refusal.",
         "operationId": "uploadArtifact",
         "parameters": [
           {
@@ -3461,9 +4195,27 @@
     },
     "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}": {
       "get": {
-        "description": "Authorizes the exact private artifact identity before reporting unavailable byte storage. Foreign and unknown artifacts remain concealed as resource_not_found. M4 advertises no successful metadata representation.",
+        "description": "Authorizes the exact private artifact identity and verifies the complete registered object before returning public digest, length, media type, and artifact identity. Foreign and unknown artifacts remain concealed. The response never exposes an object key, backend generation, URL, bucket, or credential.",
         "operationId": "inspectArtifact",
         "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactMetadata"
+                }
+              }
+            },
+            "description": "Verified public artifact metadata",
+            "headers": {
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ArtifactETag"
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/Problem400"
           },
@@ -3491,7 +4243,7 @@
             "PMBrowserSession": []
           }
         ],
-        "summary": "Authorize inspection of one artifact",
+        "summary": "Inspect verified artifact metadata",
         "tags": [
           "artifacts"
         ]
@@ -3507,9 +4259,73 @@
     },
     "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}/content": {
       "get": {
-        "description": "Applies the exact artifact authorization and concealment precedence before reporting unavailable byte storage. M4 serves no body, range metadata, digest, length, media type, or successful content response.",
+        "description": "Authorizes the registered artifact before backend availability or range validity is disclosed. A successful response contains exactly the full object or one requested byte interval after complete digest, length, and backend-generation verification. Multiple ranges are unsupported.",
         "operationId": "downloadArtifact",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ArtifactRange"
+          }
+        ],
         "responses": {
+          "200": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "Complete verified artifact bytes",
+            "headers": {
+              "Accept-Ranges": {
+                "$ref": "#/components/headers/AcceptRanges"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "Content-Disposition": {
+                "$ref": "#/components/headers/ArtifactContentDisposition"
+              },
+              "Content-Length": {
+                "$ref": "#/components/headers/ArtifactContentLength"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ArtifactETag"
+              }
+            }
+          },
+          "206": {
+            "content": {
+              "*/*": {
+                "schema": {
+                  "format": "binary",
+                  "type": "string"
+                }
+              }
+            },
+            "description": "One verified artifact byte interval",
+            "headers": {
+              "Accept-Ranges": {
+                "$ref": "#/components/headers/AcceptRanges"
+              },
+              "Cache-Control": {
+                "$ref": "#/components/headers/CacheControlNoStore"
+              },
+              "Content-Disposition": {
+                "$ref": "#/components/headers/ArtifactContentDisposition"
+              },
+              "Content-Length": {
+                "$ref": "#/components/headers/ArtifactContentLength"
+              },
+              "Content-Range": {
+                "$ref": "#/components/headers/ContentRange"
+              },
+              "ETag": {
+                "$ref": "#/components/headers/ArtifactETag"
+              }
+            }
+          },
           "400": {
             "$ref": "#/components/responses/Problem400"
           },
@@ -3521,6 +4337,9 @@
           },
           "404": {
             "$ref": "#/components/responses/Problem404"
+          },
+          "416": {
+            "$ref": "#/components/responses/Problem416"
           },
           "500": {
             "$ref": "#/components/responses/Problem500"
@@ -3537,7 +4356,7 @@
             "PMBrowserSession": []
           }
         ],
-        "summary": "Authorize download of one artifact",
+        "summary": "Download verified artifact bytes",
         "tags": [
           "artifacts"
         ]
@@ -3548,6 +4367,126 @@
         },
         {
           "$ref": "#/components/parameters/ArtifactID"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/commands": {
+      "get": {
+        "operationId": "listCatalogCommands",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionFilter"
+          },
+          {
+            "$ref": "#/components/parameters/CommandFilter"
+          },
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SafeCommandPage"
+                }
+              }
+            },
+            "description": "Principal, workspace, connection, server, and revision-bound command page"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "List connection-authorized safe generated command descriptors",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/commands/{operation_id}": {
+      "get": {
+        "operationId": "getCatalogCommand",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/ConnectionFilter"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandDescriptor"
+                }
+              }
+            },
+            "description": "Available safe generated command descriptor"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Resolve one connection-authorized available generated command",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/CatalogOperationID"
         }
       ]
     },
@@ -3886,6 +4825,115 @@
           "connections"
         ]
       }
+    },
+    "/v1/workspaces/{workspace_id}/connectors": {
+      "get": {
+        "operationId": "listCatalogConnectors",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Cursor"
+          },
+          {
+            "$ref": "#/components/parameters/PageSize"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogConnectorPage"
+                }
+              }
+            },
+            "description": "Authorized connector catalog page with its capability-bound revision"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "List the authorized immutable connector catalog and actual lane availability",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/connectors/{connector_id}": {
+      "get": {
+        "operationId": "getCatalogConnector",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CatalogConnector"
+                }
+              }
+            },
+            "description": "Safe connector descriptor and actual lane availability"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Inspect one authorized immutable connector descriptor",
+        "tags": [
+          "catalog"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectorCatalogID"
+        }
+      ]
     },
     "/v1/workspaces/{workspace_id}/delegations": {
       "get": {
@@ -5226,6 +6274,9 @@
     },
     {
       "name": "connections"
+    },
+    {
+      "name": "catalog"
     },
     {
       "name": "runs"

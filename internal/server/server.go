@@ -51,6 +51,7 @@ type Application struct {
 	services       *app.Services
 	secrets        *credentials.OperatorSecrets
 	oidcTransport  *boundedOIDCTransport
+	artifacts      *app.ArtifactResources
 	temporalClient *pmtemporal.Client
 	relayCancel    context.CancelFunc
 	relayDone      <-chan error
@@ -86,8 +87,9 @@ func openWithOIDCFactory(
 	if err != nil {
 		return nil, err
 	}
+	var artifacts *app.ArtifactResources
 	fail := func(cause error, services *app.Services, transport *boundedOIDCTransport) (*Application, error) {
-		return nil, errors.Join(cause, closeApplicationResources(services, secrets, transport))
+		return nil, errors.Join(cause, closeApplicationResources(services, secrets, transport, artifacts))
 	}
 	endpoint, err := secrets.Text(configuration.Postgres().EndpointRef, "pm-app-endpoint")
 	if err != nil {
@@ -119,6 +121,24 @@ func openWithOIDCFactory(
 		}
 		return key, nil
 	}
+	artifacts, err = app.OpenArtifactResources(configuration.Artifacts(), secrets)
+	if err != nil {
+		return fail(err, nil, oidcTransport)
+	}
+	providerHTTPTLS, err := app.LoadProviderHTTPTLS(secrets, configuration.ProviderHTTP())
+	if err != nil {
+		return fail(err, nil, oidcTransport)
+	}
+	var artifactBackend app.ArtifactBackend
+	artifactExecution := app.ArtifactExecution{}
+	if artifacts != nil {
+		artifactBackend = artifacts.Backend
+		artifactExecution = app.ArtifactExecution{
+			Backend:            artifacts.Backend,
+			Limits:             artifacts.Limits,
+			MaximumObjectBytes: int64(configuration.Artifacts().Execution.MaxObjectBytes),
+		}
+	}
 	services, err := app.OpenServices(ctx, app.ServicesConfig{
 		DeploymentID:      configuration.DeploymentID(),
 		PublicOrigin:      configuration.PublicOrigin(),
@@ -129,6 +149,10 @@ func openWithOIDCFactory(
 		OIDCClientSecret:  clientSecret,
 		OIDCHTTPClient:    oidcClient,
 		RunPolicy:         runPolicy,
+		ResolveHTTPPolicy: configuration.ProviderHTTP().Policy,
+		ProviderHTTPTLS:   providerHTTPTLS,
+		ConnectorBundles:  configuration.Connectors().BundlePaths(),
+		Artifacts:         artifactExecution,
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,
@@ -147,8 +171,10 @@ func openWithOIDCFactory(
 		Auth:           services.Authentication,
 		Identity:       services.Identity,
 		Credentials:    services.Credentials,
+		Catalog:        services.Catalog,
 		Admission:      services.Admission,
 		Runs:           services.Runs,
+		Artifacts:      artifactBackend,
 		InstanceID:     configuration.DeploymentID(),
 		OIDCHTTPClient: oidcClient,
 		ResolveEventCursorKey: func(ctx context.Context) ([]byte, error) {
@@ -203,6 +229,7 @@ func openWithOIDCFactory(
 		services:       services,
 		secrets:        secrets,
 		oidcTransport:  oidcTransport,
+		artifacts:      artifacts,
 		temporalClient: temporalClient,
 		relayCancel:    relayCancel,
 		relayDone:      relayDone,
@@ -251,13 +278,14 @@ func (application *Application) Close() error {
 		application.closeErr = errors.Join(
 			drainErr,
 			relayErr,
-			closeApplicationResources(application.services, application.secrets, application.oidcTransport),
+			closeApplicationResources(application.services, application.secrets, application.oidcTransport, application.artifacts),
 		)
 	})
 	return application.closeErr
 }
 
-func closeApplicationResources(services *app.Services, secrets *credentials.OperatorSecrets, transport *boundedOIDCTransport) error {
+func closeApplicationResources(services *app.Services, secrets *credentials.OperatorSecrets, transport *boundedOIDCTransport, artifacts *app.ArtifactResources) error {
+	artifactErr := artifacts.Close()
 	if transport != nil {
 		transport.Close()
 	}
@@ -266,10 +294,10 @@ func closeApplicationResources(services *app.Services, secrets *credentials.Oper
 	}
 	if secrets != nil {
 		if err := secrets.Close(); err != nil {
-			return errors.New("operator secret bundle cleanup failed")
+			return errors.Join(artifactErr, errors.New("operator secret bundle cleanup failed"))
 		}
 	}
-	return nil
+	return artifactErr
 }
 
 func composeTemporalRelay(

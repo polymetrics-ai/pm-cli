@@ -225,6 +225,73 @@ class BootstrapBoundaryTest(unittest.TestCase):
                                      result.stdout + result.stderr)
                     self.assertEqual(marker.exists(), accepted)
 
+    def test_npm_children_use_locked_node_instead_of_ambient_path(self):
+        cache_parent = ROOT / ".cache"
+        cache_parent.mkdir(exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="bootstrap-node-", dir=cache_parent) as directory:
+            root = Path(directory)
+            (root / "tools").mkdir()
+            (root / "build").mkdir()
+            (root / "tools/bootstrap.py").write_bytes((ROOT / "tools/bootstrap.py").read_bytes())
+            lock = json.loads((ROOT / "build/toolchains.lock.json").read_text())
+            platform = bootstrap["_selected_platform"]()
+            asset = next(a for a in lock["assets"] if a["id"] == "node" and a["platform"] == platform)
+            marker = root / "executed"
+            ambient = root / "ambient"
+            ambient.mkdir()
+            ambient_node = ambient / "node"
+            ambient_node.write_bytes(
+                b'#!/bin/sh\nprintf ambient > "$PM_BOOTSTRAP_TEST_MARKER"\n'
+            )
+            ambient_node.chmod(0o755)
+            # Synthetic SDK: observe child executable selection, not npm behavior.
+            selected_node = (
+                b'#!/bin/sh\n'
+                b'if [ "$1" = "--fixture-child" ]; then\n'
+                b'  printf selected > "$PM_BOOTSTRAP_TEST_MARKER"\n'
+                b'else\n'
+                b'  exec /usr/bin/env node --fixture-child\n'
+                b'fi\n'
+            )
+            npm_cli = (
+                PurePosixPath(asset["executable"]).parent.parent
+                / "lib/node_modules/npm/bin/npm-cli.js"
+            )
+            archive = root / "node.tar.gz"
+            with tarfile.open(archive, "w:gz") as output:
+                for path, content in (
+                    (asset["executable"], selected_node),
+                    (str(npm_cli), b"#!/usr/bin/env node\n"),
+                ):
+                    entry = tarfile.TarInfo(path)
+                    entry.mode = 0o755
+                    entry.size = len(content)
+                    output.addfile(entry, BytesIO(content))
+            payload = archive.read_bytes()
+            asset["kind"] = "tar.gz"
+            asset["sha256"] = hashlib.sha256(payload).hexdigest()
+            cache = root / "cache"
+            downloads = cache / "downloads"
+            downloads.mkdir(parents=True)
+            (downloads / f'{asset["sha256"]}.blob').write_bytes(payload)
+            (root / "build/toolchains.lock.json").write_text(json.dumps(lock))
+            environment = dict(
+                os.environ,
+                PM_TOOLS_CACHE=str(cache),
+                PM_BOOTSTRAP_TEST_MARKER=str(marker),
+                PATH=str(ambient) + os.pathsep + os.defpath,
+            )
+            subprocess.run([str(ambient_node)], env=environment, check=True, timeout=10)
+            self.assertEqual(marker.read_text(), "ambient")
+            marker.unlink()
+            result = subprocess.run(
+                [sys.executable, "-I", "-B", str(root / "tools/bootstrap.py"),
+                 "exec", "npm", "--", "--version"],
+                cwd=root, env=environment, capture_output=True, text=True, timeout=30,
+            )
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertEqual(marker.read_text(), "selected")
+
     def test_archive_extraction_cannot_escape_its_destination(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

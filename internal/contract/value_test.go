@@ -2,6 +2,8 @@ package contract
 
 import (
 	"bytes"
+	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -363,11 +365,17 @@ func TestPresencePrecisionAndMedia(t *testing.T) {
 		if text, ok := pullRequestURL.TextValue(); !present || !ok || text != "https://api.github.test/pulls/2" {
 			t.Fatalf("preserved pull_request URL = %q, %t, %t; want exact source value", text, present, ok)
 		}
-		if complete.Pagination == nil || complete.Pagination.EffectiveWireLimit != 100 || complete.Pagination.FetchedCount != 4 || complete.Pagination.ReturnedCount != 4 || complete.Pagination.EmittedCount != 4 {
+		if complete.Pagination == nil || complete.Pagination.EffectiveWireLimit == nil ||
+			*complete.Pagination.EffectiveWireLimit != 100 || complete.Pagination.FetchedCount != 4 ||
+			complete.Pagination.ReturnedCount != 4 || complete.Pagination.EmittedCount != 4 {
 			t.Fatalf("default action result lost truthful pagination: %#v", complete.Pagination)
 		}
 		if continuation, ok := complete.Pagination.Continuation.TextValue(); !ok || continuation != "next-page" {
 			t.Fatalf("default continuation = %q, %t; want next-page", continuation, ok)
+		}
+		*complete.Pagination.EffectiveWireLimit = 50
+		if got := *input.Pagination.EffectiveWireLimit; got != 100 {
+			t.Fatalf("default result pagination aliased the input wire limit: got %d, want 100", got)
 		}
 
 		selection := &FieldSelection{Paths: []FieldPath{{"details", "labels"}}}
@@ -502,7 +510,9 @@ func TestPresencePrecisionAndMedia(t *testing.T) {
 		if page == nil || page.EmittedCount != 0 || page.FetchedCount != 5 || page.ReturnedCount != 5 {
 			t.Fatalf("filtered counts = %#v; source counts and emitted count must stay distinct", page)
 		}
-		if page.SourceExhausted || !page.Continuation.Equal(input.Pagination.Continuation) || page.EffectiveWireLimit != 100 || *page.TotalRecordCap != 4 || *page.ProviderTotal != *input.Pagination.ProviderTotal {
+		if page.SourceExhausted || !page.Continuation.Equal(input.Pagination.Continuation) ||
+			page.EffectiveWireLimit == nil || *page.EffectiveWireLimit != 100 ||
+			*page.TotalRecordCap != 4 || *page.ProviderTotal != *input.Pagination.ProviderTotal {
 			t.Fatalf("empty filtered page rewrote source navigation or limits: %#v", page)
 		}
 		if len(page.UnreadTail) != 1 || !page.UnreadTail[0].Equal(tail) {
@@ -512,6 +522,171 @@ func TestPresencePrecisionAndMedia(t *testing.T) {
 			t.Fatal("filtering mutated the input result")
 		}
 	})
+	t.Run("source_no_content_has_no_invented_media", func(t *testing.T) {
+		result := ActionResult{Data: AbsentValue()}
+		if err := result.Validate(); err != nil {
+			t.Fatalf("source-declared no-content result: %v", err)
+		}
+		document, err := json.Marshal(result)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(document, &fields); err != nil {
+			t.Fatal(err)
+		}
+		if _, present := fields["media_type"]; present {
+			t.Fatal("no-content result invented a media type")
+		}
+		var decoded ActionResult
+		if err := json.Unmarshal(document, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if err := decoded.Validate(); err != nil || decoded.Data.Presence() != PresenceAbsent {
+			t.Fatalf("no-content result did not retain explicit absence: %v", err)
+		}
+		if (ActionResult{MediaType: "application/json", Data: AbsentValue()}).Validate() == nil {
+			t.Fatal("no-content result accepted an invented media type")
+		}
+		if (ActionResult{Data: AbsentValue(), Pagination: actionResultFixtureForTest(t).Pagination}).Validate() == nil {
+			t.Fatal("no-content result accepted pagination")
+		}
+		if (ActionResult{Data: PresentValue{}}).Validate() == nil {
+			t.Fatal("zero PresentValue was treated as source-declared no-content")
+		}
+		for _, data := range []PresentValue{NullValue(), NewArrayValue(nil)} {
+			if (ActionResult{Data: data}).Validate() == nil {
+				t.Fatal("actual null or empty-array content was accepted without declared media")
+			}
+		}
+	})
+	t.Run("unsent_wire_limit_remains_unknown_after_result_controls", func(t *testing.T) {
+		input := actionResultFixtureForTest(t)
+		document, err := json.Marshal(input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(document, &fields); err != nil {
+			t.Fatal(err)
+		}
+		var page map[string]json.RawMessage
+		if err := json.Unmarshal(fields["pagination"], &page); err != nil {
+			t.Fatal(err)
+		}
+		page["effective_wire_limit"] = json.RawMessage("null")
+		fields["pagination"], err = json.Marshal(page)
+		if err != nil {
+			t.Fatal(err)
+		}
+		document, err = json.Marshal(fields)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var decoded ActionResult
+		if err := json.Unmarshal(document, &decoded); err != nil {
+			t.Fatal(err)
+		}
+		if decoded.Pagination == nil || decoded.Pagination.EffectiveWireLimit != nil {
+			t.Fatalf("decoded unsent wire limit = %#v; want nil", decoded.Pagination)
+		}
+		zero := uint64(0)
+		decoded.Pagination.EffectiveWireLimit = &zero
+		if err := decoded.Validate(); err == nil {
+			t.Fatal("present zero wire limit was accepted")
+		}
+		decoded.Pagination.EffectiveWireLimit = nil
+		controlled, err := ApplyResultControls(decoded, ResultControls{
+			Selection: &FieldSelection{Paths: []FieldPath{{"id"}}},
+		})
+		if err != nil {
+			t.Fatalf("actual unsent page-size field was refused: %v", err)
+		}
+		document, err = json.Marshal(controlled.Pagination)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := json.Unmarshal(document, &page); err != nil {
+			t.Fatal(err)
+		}
+		if string(page["effective_wire_limit"]) != "null" || controlled.Pagination.SourceExhausted ||
+			!controlled.Pagination.Continuation.Equal(input.Pagination.Continuation) {
+			t.Fatal("result controls invented a sent limit or source exhaustion")
+		}
+	})
+}
+
+func TestResultControlsCapAndContinuationPresence(t *testing.T) {
+	t.Run("nil controls retain complete-default encoding", func(t *testing.T) {
+		controls := ResultControls{}
+		if controls.HasContinuation() || !controls.ContinuationValue().Equal(AbsentValue()) {
+			t.Fatalf("omitted continuation state = %#v", controls.ContinuationValue())
+		}
+		encoded, err := json.Marshal(controls)
+		if err != nil {
+			t.Fatalf("marshal default controls: %v", err)
+		}
+		if string(encoded) != `{}` {
+			t.Fatalf("default controls encoding = %s; want {}", encoded)
+		}
+	})
+
+	t.Run("explicit absence remains distinct from omission", func(t *testing.T) {
+		controls := ResultControls{Continuation: new(AbsentValue())}
+		if err := controls.Validate(); err != nil {
+			t.Fatalf("validate explicit absent continuation: %v", err)
+		}
+		if controls.HasContinuation() || !controls.ContinuationValue().Equal(AbsentValue()) {
+			t.Fatalf("explicit absent continuation state = %#v", controls.ContinuationValue())
+		}
+		encoded, err := json.Marshal(controls)
+		if err != nil {
+			t.Fatalf("marshal explicit absent continuation: %v", err)
+		}
+		if string(encoded) != `{"continuation":{"presence":"absent"}}` {
+			t.Fatalf("explicit absent continuation encoding = %s", encoded)
+		}
+	})
+
+	t.Run("positive cap and bounded opaque resume are exact", func(t *testing.T) {
+		cap := ^uint64(0)
+		token := strings.Repeat("é", maxResultContinuationBytes/2)
+		continuation := NewStringValue(token)
+		controls := ResultControls{TotalRecordCap: &cap, Continuation: &continuation}
+		if err := controls.Validate(); err != nil {
+			t.Fatalf("validate cap and boundary continuation: %v", err)
+		}
+		if !controls.HasContinuation() || !controls.ContinuationValue().Equal(continuation) {
+			t.Fatal("continuation helper lost the exact bounded opaque value")
+		}
+		text, ok := controls.ContinuationValue().TextValue()
+		if !ok || text != token || len(text) != maxResultContinuationBytes {
+			t.Fatalf("continuation text length = %d, %t; want exact %d-byte token", len(text), ok, maxResultContinuationBytes)
+		}
+	})
+
+	for _, test := range []struct {
+		name     string
+		controls ResultControls
+	}{
+		{name: "zero total cap", controls: ResultControls{TotalRecordCap: new(uint64(0))}},
+		{name: "typed null continuation", controls: ResultControls{Continuation: new(NullValue())}},
+		{name: "empty continuation", controls: ResultControls{Continuation: new(NewStringValue(""))}},
+		{name: "non-string continuation", controls: ResultControls{Continuation: new(NewBooleanValue(false))}},
+		{name: "invalid typed state", controls: ResultControls{Continuation: new(PresentValue{})}},
+		{
+			name: "continuation exceeds byte bound",
+			controls: ResultControls{
+				Continuation: new(NewStringValue(strings.Repeat("é", maxResultContinuationBytes/2) + "x")),
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := test.controls.Validate(); err == nil {
+				t.Fatal("invalid cap or continuation was accepted")
+			}
+		})
+	}
 }
 
 func TestPresentValueContainerIsolation(t *testing.T) {
@@ -666,7 +841,7 @@ func actionResultFixtureForTest(t *testing.T) ActionResult {
 		MediaType: "application/json",
 		Data:      NewArrayValue(records),
 		Pagination: &ResultPagination{
-			EffectiveWireLimit: 100,
+			EffectiveWireLimit: new(uint64(100)),
 			TotalRecordCap:     new(uint64(10)),
 			Continuation:       NewStringValue("next-page"),
 			UnreadTail:         []PresentValue{},

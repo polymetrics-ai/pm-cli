@@ -51,20 +51,59 @@ type Manifest struct {
 	CommittedAt time.Time
 }
 
+// ArtifactPurpose is the immutable visibility boundary of one registered object.
+// Public artifacts may be projected to clients; continuation artifacts remain
+// server-only and require receipt-bound producer lineage.
+type ArtifactPurpose string
+
+const (
+	ArtifactPurposePublic       ArtifactPurpose = "public"
+	ArtifactPurposeContinuation ArtifactPurpose = "continuation"
+)
+
+func (purpose ArtifactPurpose) valid() bool {
+	return purpose == ArtifactPurposePublic || purpose == ArtifactPurposeContinuation
+}
+
 type artifactRecord struct {
 	ref          contract.ObjectRef
 	connectionID sql.NullString
+	purpose      ArtifactPurpose
 }
 
+// RegisterArtifact registers an object for public artifact access.
 func RegisterArtifact(
 	ctx context.Context,
 	tx *Transaction,
 	connectionID string,
 	object PreverifiedObjectRef,
 ) error {
+	return registerArtifact(ctx, tx, connectionID, object, ArtifactPurposePublic)
+}
+
+// RegisterContinuationArtifact registers a server-only continuation object.
+func RegisterContinuationArtifact(
+	ctx context.Context,
+	tx *Transaction,
+	connectionID string,
+	object PreverifiedObjectRef,
+) error {
+	return registerArtifact(ctx, tx, connectionID, object, ArtifactPurposeContinuation)
+}
+
+func registerArtifact(
+	ctx context.Context,
+	tx *Transaction,
+	connectionID string,
+	object PreverifiedObjectRef,
+	purpose ArtifactPurpose,
+) error {
 	scope, err := tx.requireScope()
 	if err != nil {
 		return err
+	}
+	if !purpose.valid() {
+		return errors.New("artifact purpose is invalid")
 	}
 	if !validStoreID(connectionID) {
 		return errors.New("artifact connection identity is invalid")
@@ -91,8 +130,8 @@ func RegisterArtifact(
 		INSERT INTO pm.artifacts (
 			org_id, workspace_id, artifact_id, object_attempt_key, sha256,
 			byte_length, media_type, backend_generation, connection_id,
-			object_ref, registered_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+			object_ref, registered_at, purpose
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (org_id, workspace_id, artifact_id) DO NOTHING
 	`,
 		ref.OrgID,
@@ -106,6 +145,7 @@ func RegisterArtifact(
 		connectionID,
 		json.RawMessage(encoded),
 		registeredAt,
+		string(purpose),
 	)
 	if err != nil {
 		return fmt.Errorf("register artifact reference: %w", err)
@@ -117,16 +157,35 @@ func RegisterArtifact(
 	if err != nil {
 		return err
 	}
-	if stored.ref != ref || !stored.connectionID.Valid || stored.connectionID.String != connectionID {
+	if stored.ref != ref || !stored.connectionID.Valid || stored.connectionID.String != connectionID ||
+		stored.purpose != purpose {
 		return ErrImmutableConflict
 	}
 	return nil
 }
 
+// LoadArtifact loads only an object registered for public artifact access.
 func LoadArtifact(ctx context.Context, tx *Transaction, artifactID string) (contract.ObjectRef, error) {
-	stored, err := loadArtifactRecord(ctx, tx, artifactID)
+	return loadArtifactByPurpose(ctx, tx, artifactID, ArtifactPurposePublic)
+}
+
+// LoadContinuationArtifact loads only a server-only continuation object.
+func LoadContinuationArtifact(ctx context.Context, tx *Transaction, artifactID string) (contract.ObjectRef, error) {
+	return loadArtifactByPurpose(ctx, tx, artifactID, ArtifactPurposeContinuation)
+}
+
+func loadArtifactByPurpose(
+	ctx context.Context,
+	tx *Transaction,
+	artifactID string,
+	purpose ArtifactPurpose,
+) (contract.ObjectRef, error) {
+	stored, err := loadArtifactRecordMatchingPurpose(ctx, tx, artifactID, purpose)
 	if err != nil {
 		return contract.ObjectRef{}, err
+	}
+	if stored.purpose != purpose {
+		return contract.ObjectRef{}, ErrNotFound
 	}
 	return stored.ref, nil
 }
@@ -143,8 +202,9 @@ func LoadArtifactConnectionID(ctx context.Context, tx *Transaction, artifactID s
 	var connectionID sql.NullString
 	if err := tx.queryRow(
 		ctx,
-		`SELECT connection_id FROM pm.artifacts WHERE artifact_id = $1`,
+		`SELECT connection_id FROM pm.artifacts WHERE artifact_id = $1 AND purpose = $2`,
 		artifactID,
+		string(ArtifactPurposePublic),
 	).Scan(&connectionID); errors.Is(err, pgx.ErrNoRows) {
 		return "", ErrNotFound
 	} else if err != nil {
@@ -156,7 +216,18 @@ func LoadArtifactConnectionID(ctx context.Context, tx *Transaction, artifactID s
 	return connectionID.String, nil
 }
 
+// loadArtifactRecord is purpose-agnostic for internal publication receipt
+// validation. Exported object reads must use the purpose-filtered helper.
 func loadArtifactRecord(ctx context.Context, tx *Transaction, artifactID string) (artifactRecord, error) {
+	return loadArtifactRecordMatchingPurpose(ctx, tx, artifactID, "")
+}
+
+func loadArtifactRecordMatchingPurpose(
+	ctx context.Context,
+	tx *Transaction,
+	artifactID string,
+	expectedPurpose ArtifactPurpose,
+) (artifactRecord, error) {
 	scope, err := tx.requireScope()
 	if err != nil {
 		return artifactRecord{}, err
@@ -164,16 +235,34 @@ func loadArtifactRecord(ctx context.Context, tx *Transaction, artifactID string)
 	if !validStoreID(artifactID) {
 		return artifactRecord{}, errors.New("artifact identity is invalid")
 	}
+	var row pgx.Row
+	if expectedPurpose == "" {
+		row = tx.queryRow(
+			ctx,
+			`SELECT object_ref, connection_id, purpose FROM pm.artifacts WHERE artifact_id = $1`,
+			artifactID,
+		)
+	} else {
+		row = tx.queryRow(
+			ctx,
+			`SELECT object_ref, connection_id, purpose
+			 FROM pm.artifacts
+			 WHERE artifact_id = $1 AND purpose = $2`,
+			artifactID,
+			string(expectedPurpose),
+		)
+	}
 	var stored artifactRecord
 	var encoded []byte
-	if err := tx.queryRow(
-		ctx,
-		`SELECT object_ref, connection_id FROM pm.artifacts WHERE artifact_id = $1`,
-		artifactID,
-	).Scan(&encoded, &stored.connectionID); errors.Is(err, pgx.ErrNoRows) {
+	var purpose string
+	if err := row.Scan(&encoded, &stored.connectionID, &purpose); errors.Is(err, pgx.ErrNoRows) {
 		return artifactRecord{}, ErrNotFound
 	} else if err != nil {
 		return artifactRecord{}, fmt.Errorf("load artifact reference: %w", err)
+	}
+	stored.purpose = ArtifactPurpose(purpose)
+	if !stored.purpose.valid() {
+		return artifactRecord{}, ErrImmutableConflict
 	}
 	if err := json.Unmarshal(encoded, &stored.ref); err != nil {
 		return artifactRecord{}, fmt.Errorf("decode stored artifact reference: %w", err)
@@ -182,7 +271,8 @@ func loadArtifactRecord(ctx context.Context, tx *Transaction, artifactID string)
 		stored.ref.ArtifactID != artifactID {
 		return artifactRecord{}, ErrScopeMismatch
 	}
-	if stored.connectionID.Valid && !validStoreID(stored.connectionID.String) {
+	if stored.connectionID.Valid && !validStoreID(stored.connectionID.String) ||
+		stored.purpose == ArtifactPurposeContinuation && !stored.connectionID.Valid {
 		return artifactRecord{}, ErrImmutableConflict
 	}
 	return stored, nil

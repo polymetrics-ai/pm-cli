@@ -1,0 +1,21 @@
+{
+  "schema_version": "pm.lane-inventory/v1",
+  "connector_id": "github",
+  "lane": "etl",
+  "source_digest": "sha256:06795527ee448f84a979d8925331dfb3eb8ea601d7fa1a3bed4f80f708633ece",
+  "bundle_hash": "sha256:8a5b91aaa88be2ce639221c748486723c99f4173d753eb43e5e6835d65e42b9d",
+  "operations": [
+    {
+      "operation_id": "issues/list-for-repo",
+      "status": "unproven",
+      "reason": "the operation can supply bounded records, but this slice admits no accepted ETL checkpoint or warehouse publication path, so the lane stays unproven",
+      "source_refs": [
+        {
+          "source_id": "github-rest-api-description",
+          "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get"
+        }
+      ],
+      "cases": []
+    }
+  ]
+}

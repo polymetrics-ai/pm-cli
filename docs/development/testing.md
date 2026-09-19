@@ -247,6 +247,152 @@ Canonical identity arrays use PostgreSQL `COLLATE "C"` to match Go's bytewise gr
 
 These are controlled local HTTP/TLS/PostgreSQL checks. They do not establish live provider effects, artifact-byte support, final-head Linux CI, cleanup of another job's fixtures, or merge.
 
+### Bounded shared artifact prerequisite M6
+
+The approved partial pull-forward from issue #29 adds real immutable object publication and authorized reads for M6's result-delivery dependency. It does not close #29 or add arbitrary public uploads, garbage collection, warehouse/query behavior, or host infrastructure. Worker HTTP result and continuation integration have separate checks below.
+
+After rebuilding the fixture helpers from current source, run the artifact owners through the same selected fixture:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 -I -B scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //internal/store:store_test //internal/objects:objects_test \
+  //internal/api:api_test //internal/cli:cli_test //internal/httpapi:httpapi_test \
+  --test_output=errors --test_arg=-test.v --cache_test_results=no
+python3 -I -B scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-2.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //tests/client-parity:client-parity_test \
+  --test_filter='^TestArtifactCLISharedBytes$' \
+  --test_output=errors --test_arg=-test.v --cache_test_results=no
+```
+
+`TestUniqueAttemptPublication` uses selected real S3 gateways and PostgreSQL: uploaded bytes remain unreadable through the API after publication rollback; a retry uses a new immutable key; an independent adapter/gateway reads exact full and range bytes after producer closure and API restart. `TestArtifactCrashWindows` joins actual verified bytes, publication receipts and manifests in one PostgreSQL transaction. Its lost-reply case withholds the physical COMMIT acknowledgement only after an independent connection observes the atomic commit, then recovers that exact occurrence rather than inferring it from object existence.
+
+The quota checks cover cross-workspace organization contention, immutable reservation replay, cancellation racing with binding, retained unknown/bound attempts, and transactional downgrade refusal for held and released history. Route checks preserve concealed foreign/revoked scope behavior and prevent active provider-controlled documents through attachment disposition. Controlled SDK peers separately exercise unknown uploads, corrupt readback and cancellation; those are not selected-storage physical evidence.
+
+`TestArtifactCLISharedBytes` runs the actual Cobra entrypoint in isolated child processes with only owned TLS trust and a process-local PM session store injected. A persisted session reaches real Gin/PostgreSQL and the secondary S3 gateway; metadata, full binary output and a requested range remain exact after the producer's private scratch directory closes. This test does not execute a browser.
+
+These focused cases passed locally on Darwin arm64 with no skips and ownership-scoped fixture cleanup. The artifact store/object/API/CLI checks also passed with the race detector; serialize migration-bearing package tests with `-p 1`. A bounded `FuzzArtifactRangesStayWithinObject` run checks signed range arithmetic without services. None of this claims separate-host qualification, live GitHub execution, current-candidate CI, or a completed durable HTTP worker result path.
+
+`TestWorkerResultPublication` adds the common worker result boundary: selected PostgreSQL and Temporal establish the accepted execution identity, a controlled callback returns exact typed data, and the real publisher makes bytes readable through the public API and secondary S3 gateway after producer closure. Duplicate execution preserves the same result without re-entering the callback. Exhausted capacity leaves no recorded physical attempt; oversized output preserves known effects and releases its unused slot. `TestWorkerResultArtifactReceiptsControlRunProjection` separately checks PostgreSQL receipt/publication rollback, wrong connection/scope, unpublished references, and sorted/deduplicated run projections; it is metadata proof, not physical byte proof.
+
+Run these result-specific checks with the same rebuilt, selected fixture:
+
+```sh
+python3 -I -B scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-3.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //internal/app:app_test //internal/app:worker_runtime_test //internal/store:store_test \
+  --test_filter='TestWorkerResult|TestWorkerRuntimeClose' \
+  --test_output=errors --test_arg=-test.v --cache_test_results=no
+```
+
+The worker publication case has causal local RED/GREEN evidence for missing result delivery and missing pre-execution storage reservation. Alone, it does not execute the production HTTP handler, exercise a resumed provider continuation, prove durable retry timers, or certify a connector. The durable continuation and retry checks below cover their separate shared-handler integrations; connector proof remains open.
+
+### Server-only continuation artifact prerequisite
+
+`TestArtifactPurposeIsolationAndImmutability` checks real PostgreSQL public/private read separation, exact registration replay, cross-purpose and connection-change conflicts, and foreign-scope refusal. `TestArtifactPurposeMigrationRetainedData` checks preservation of existing public registrations across migration 16 and transactional downgrade refusal while private rows remain. The purpose-filtered loader also has causal evidence for a discarded first query: the broken control fails with `conn busy`; the corrected loader executes one query.
+
+`TestContinuationArtifactIsNotAPublicResult` uploads and verifies actual private bytes through the owned shared store, closes the producer, verifies those bytes through the independent gateway, then observes HTTP 404 from both public metadata and content routes. Removing the public-purpose gates produces an incorrect HTTP 200. The corrected storage, migration and API cases passed locally without skips and with fixture cleanup complete. This is private registration/read proof; the upload reservation remains bound in that case. Purpose-aware publication receipts and resumed navigation have separate checks below.
+
+### Server-owned HTTP policy
+
+`TestHTTPExecutionPolicy*` and `TestProviderHTTP*` cover strict finite limits, exact scoped destination selection and source-origin matching. `TestHTTPPolicyAdmissionAndReplay` exercises the real authenticated Gin/PostgreSQL admission route: missing or unlisted policy leaves no durable intent, an explicitly selected policy admits, same-key recovery retains the accepted run after policy removal, and a new key is refused. Its causal control removes only the policy-selection gate and observes the incorrect HTTP 202 instead of the required refusal.
+
+`TestAdmissionPersistsExactRunBudgetSnapshot` proves detached caller ownership and digest-bound readback, including refusal after persisted policy tampering. `TestHTTPBudgetMigrationRetainedData` checks retained-HTTP downgrade refusal and a real down/up round trip for legacy absent-policy snapshots. The initial selected-PostgreSQL run exposed migration 7's closed policy shape; additive migration 15 corrects it without rewriting published migrations. Store, app, server, contract and config package checks passed after that correction. These checks do not exercise a provider HTTP callback, continuation resume or retry timer.
+
+### Shared HTTP worker result and cooldown
+
+`TestHTTPDirectReadRegistrationWorkerBehavior` admits through authenticated Gin/PostgreSQL, binds the worker to a real Temporal execution, and invokes the shared HTTP direct-read registration against controlled TLS peers. A complete typed result—including a large exact integer, nesting, false, empty string and null—is published through the common worker path and read through the public artifact API and secondary gateway after producer closure. Revocation before physical admission produces zero provider calls and a receipt-bound, known-unsent blocked task. Response loss retains an unknown effect and publishes no successful result.
+
+Received `Retry-After` evidence updates the canonical shared-account cooldown in the settlement transaction. The next connection alias cannot record a new attempt or reach the provider while that cooldown is active, including when the first response body is truncated or invalid JSON. Response status remains an observed transport fact even when no valid action result can be decoded.
+
+Three causal controls failed at their intended boundaries: the previous unsent settlement produced a task/effect-summary conflict; omitted cooldown persistence allowed the next alias to execute; omitted received-status evidence prevented malformed-body cooldown settlement. The corrected cases passed locally without skips. `TestDefinitiveUnsentRetainsAttemptAuthority` separately proves that only the exact latest attempt can receive a definitive-unsent observation, every receipt remains retained, and timeout or a generic transition cannot erase uncertainty.
+
+These particular checks establish controlled local shared-handler behavior, not default production registry activation, durable retry timers, live GitHub execution or connector certification. Resumed provider continuation has the separate coverage below; remaining issue #25–#27 obligations stay open.
+
+### Durable HTTP continuation
+
+`TestDurableHTTPContinuationAcrossWorkerRestart` admits real scoped runs through Gin/PostgreSQL, reads controlled TLS provider pages, publishes through the actual shared object backend, closes the producer and resumes through a new worker adapter and independent gateway. It covers rotated multi-hop tokens, local unread tails without another send, terminal tails with required source navigation, empty filtered pages, inherited original inputs and controls, and scope, connection, source, input, account and permission conflicts before provider I/O. Public result bytes and canonical private producer lineage are observed independently.
+
+`TestDurableHTTPContinuationCapacityRefusalPrecedesProviderIO` observes zero provider calls, dials and physical attempts when combined publication capacity is unavailable. `TestDurableHTTPContinuationUsesReadableEnvelopeBound` admits and resumes within the strict reader's finite envelope bound even when a larger configured maximum is supplied; its pre-fix control fails before provider execution. Actual CLI process checks cover positive caps, partial resume requiredness, typed absence, malformed controls and the reserved provider alias. An omitted media selector with supplied fields from one unambiguous request variant has a separate causal partial-preflight regression; conflicting variants remain invalid.
+
+`TestWorkerContinuationOriginRequiresCanonicalReceiptLineage` refuses public, unpublished, foreign-connection and ambiguous producer references. `TestWorkerResultArtifactReceiptsControlRunProjection` keeps private references out of public results. `TestUniqueAttemptPublication` exercises purpose-bound real publication and recovery, while `TestDurableContinuationMigrationRetainedData` checks migration 17 retention and downgrade refusal. `TestSharedAccountPermits` races unused release against dispatch and verifies exact replay without double release. The canonical publication lock targets the published reservation, not the immutable artifact table; the runtime receives no additional artifact UPDATE privilege.
+
+Run these through the existing owned-fixture wrapper, including focused store and HTTP race checks. Local Go JSON runs completed without skips and the actual CLI smoke passed. Continuation evidence alone is not retry proof; the separate checks below cover that behavior. Neither set activates the default provider registry, qualifies a live provider, certifies a connector or replaces final-head CI.
+
+### Durable HTTP retries
+
+`TestDurableHTTPRetryAcrossTemporalWorkerReplacement` runs the actual coordinator and activities with selected PostgreSQL, shared objects and a controlled TLS peer: a 503 with `Retry-After` precedes a 200, with no early second request and distinct dispatch, attempt, permit and receipt identities for the same logical effect. Replacement stops and starts SDK workers within one process; it is not an OS-process crash qualification.
+
+The physical retry cases also cover definitive dial-before-send failure followed by one provider request, source-safe unknown outcomes retaining charged parent permits, unsafe/conditional unknown outcomes without replay, attempt exhaustion and unusable cooldowns. Revocation, changed source revision, changed account witness and authenticated cancellation between attempts all prevent another request, with independent peer counts and durable attempt checks.
+
+Store regressions retain exact parent truth, refuse changed input/source/receipt authority and orphan child membership, preserve legacy roots, and refuse lossy downgrade. Known-parent closure preserves unrelated tasks beyond the concurrency bound and never converts an unknown parent into known failure. Causal controls exposed deferred-trigger visibility after scope cleanup, an undeclared 1,024-dispatch limit, a lifetime-task/fanout confusion, and incorrect JSON persistence bindings. A separate bounded store probe exercised an admitted 1,025-attempt lineage; these were store transitions, not 1,025 provider requests.
+
+`TestQualifiedRetryScheduling` covers eligibility, control cancellation, original deadlines and ContinueAsNew. Real history tests cover current safe-converter timer execution and replay of retained pre-retry deadline commands. Payload tests keep arbitrary marker strings, unregistered versions, untyped integers and existing forbidden channels out of history. Focused Go JSON and race checks passed locally without skips; they are shared-foundation evidence, not live GitHub proof or final-head CI.
+
+### Thin-client and source-compiler checks M5/M6
+
+After rebuilding the existing fixture helpers, use the same owned wrapper for the client, API, compiler and shared-contract targets:
+
+```sh
+RUNNER_TEMP="$(mktemp -d)"
+export RUNNER_TEMP
+python3 scripts/ci/with-stack-fixture.py \
+  --manifest "$RUNNER_TEMP/pmcli-foundation-0-1.json" \
+  -- python3 tools/bootstrap.py exec bazelisk -- --batch test \
+  //internal/api:api_test //internal/cli:cli_test \
+  //internal/compile:compile_test //internal/contract:contract_test \
+  --test_output=errors --cache_test_results=no
+```
+
+The workspace test starts two real child processes through the product CLI entry point, with one shared profile/session identity and a request barrier proving concurrent use of separate workspace selectors. Its controlled TLS peer retains the real synthetic PM credential in the parent-owned fixture transport. It does not install an OS credential or export provider secrets. The dependency-boundary test resolves the actual `cmd/pm` graph, checks a disposable forbidden-import overlay, and verifies that the authenticated server still responds after the client process exits.
+
+The run/watch API and CLI targets also passed locally on Darwin arm64 with Bazel test-result caching disabled and ownership-scoped cleanup. The API cases exercise real PostgreSQL event contention, committed replay across API replicas, retention-gap snapshots and bounded reading. The CLI cases execute the real root/run command in children: SIGINT closes the subscription without a durable cancel request, a second client still sees accepted work, and explicit cancellation uses its separate API. Controlled terminal/partial/unknown projections test distinct rendering and exit codes; they are not worker-recovery proof.
+
+Each independent CLI case owns a separate scoped fixture. Sharing one fixture first exhausted its two-pending-workspace admission bound and returned HTTP 429 before later cases reached their oracle; isolating the cases made the same target pass without changing production limits.
+
+The result-control checks execute strict Cobra parsing, keep a same-named provider field separate from PM controls, and observe filter-before-selection on typed records. Reusing a request key after changing controls is refused without another API send; removing controls from both the wire request and its canonical intent causally breaks that refusal. The compiler's reserved-name collision case runs capture, resolution, normalization, capability-closure validation and bundle emission, preserving independently invocable wire fields and byte-identical repeated output. A separate isolated executable smoke exercises the actual CLI entrypoint with a synthetic catalog and shared typed result consumer: default output retains both records and exact large integers, explicit null filtering plus selection emits only the chosen field, and raw-null control input exits with usage status and no result. It is not provider execution or a GitHub demo.
+
+The separate `TestAcceptedRunSurvivesClientExit` check passed all five issue #20 case identities locally on Darwin arm64 with real PostgreSQL and Temporal. It exercises session expiry versus explicit grant revocation, hard API/worker death and independent replacement, actual SSE-client death with a second observer, API restart over the retained run/outbox, and worker death after provider acceptance with one retained run identity and one effect. The wrapper reported ownership-scoped cleanup complete. This is local synthetic-provider lifecycle evidence, not live-provider certification or final-candidate CI.
+
+Run the focused race checks through a fresh owned fixture as well:
+
+```sh
+python3 tools/bootstrap.py exec go -- test -p 1 -race -mod=readonly \
+  ./internal/cli ./internal/app \
+  -run '^(TestConcurrentExplicitWorkspaces|TestThinBinaryDependencyBoundary|TestControlsPresenceAndPrecedence|TestRegisteredHandlerReachability)$' \
+  -count=1 -timeout 10m
+```
+
+Compiler checks cover captured-reference closure, deterministic inventories, exact default/presence fidelity, sensitivity and amendment refusal. Actual `pmgen` smoke execution additionally checks emitted bundle acceptance by the published JSON Schema, byte-identical repeated outputs, and no output publication after capture mismatch. These are local shared-foundation checks, not full Pylon reproduction, GitHub execution, browser parity, live-provider certification or candidate CI.
+
+The actual mixed-source compiler smoke initially refused the entire input because one operation contained an unsupported open-object shape. After correction, `pmgen` emits the supported typed operation and its embedded command, with the other operation retained only in `unavailable_operations`. The published bundle schema accepts that output; repeated generation is byte-identical and the optional sidecar equals the embedded projection. Capture corruption still refuses all outputs. This synthetic input has no source-linked lane classifications, so its seven lanes remain unproven rather than being promoted to executable.
+
+The shared result contract represents no-content with `data.presence: absent`, without an invented media type or pagination. `effective_wire_limit` remains a required pagination field: `null` means no provider page-size field was sent; a present value must be positive. Causal contract checks, canonical OpenAPI schema checks and the regenerated browser SDK build passed locally. These representation checks do not claim that the pending HTTP executor has been integrated.
+
+### Complete action data through the generated client
+
+`TestGeneratedCommandWaitRendersPublishedActionDocument` runs the generated connector command against an in-process qualified TLS server and proves that the complete action document reaches the command's stdout byte-for-byte when the root `--wait` control is set: nested objects and arrays, explicit null, false, zero, an empty array, an exact large integer and an exact nested identifier are preserved, each event, result and artifact route is used once, the run identity is a stderr notice and no session credential is rendered. `TestGeneratedCommandWithoutWaitKeepsAdmissionResponse` keeps the admission response as the only stdout result when `--wait` is absent, with the event, result and artifact routes untouched. `TestGeneratedCommandWaitPreservesUncertaintyPrecedence` keeps a reconciling or unknown-effect run at exit 7 with empty stdout and no artifact read.
+
+`TestRunResultRendersExactPublishedDocument` renders the same exact document bytes from `pm runs result` for both `--output` values. `TestRunResultKeepsTerminalOutcomeWithPublishedDocument` retains a failed run's exit 6 while still printing the document. `TestRunResultWithoutPublishedDocumentFailsExplicitly` and `TestRunResultWithMultipleDocumentsFailsExplicitly` refuse with the existing capability-unavailable semantics and empty stdout instead of inventing, selecting or truncating output, and a document larger than the finite 16 MiB client bound fails explicitly rather than being silently cut. The complete `internal/cli` package passed in one owned fixture with no skips. These are local same-stack client checks; they do not establish a live provider read, final-head CI or Group C completion.
+
+### Pinned browser-tool boundary
+
+The [locked browser tools](setup.md#resolve-and-run-pinned-tools) are prerequisites for issue #21, not its parity result. On Darwin arm64, the selected Node/npm version commands and Chromium headless-shell startup, DOM, JavaScript and visual smoke passed. Linux browser execution has not been established by those observations.
+
+`python3 -I -B tools/test_bootstrap.py` exercises the bootstrap boundary. Its npm-child regression places a conflicting executable on ambient `PATH` and observes which child runtime is selected. Removing only the Node child-path guard in an isolated copy makes that oracle fail; the current bootstrap passes. Browser packages, the generated SDK and the actual same-stack Playwright parity cases require their own execution evidence.
+
+`make build-browser` installs the committed npm locks without lifecycle scripts, verifies the canonical browser schema projection, builds the SDK, checks the parity TypeScript and verifies the pinned Chromium executable. `scripts/browser.sh` is the single producer used by both Make and the existing CI driver; CI calls its `install` and `build` modes directly and does not require Make. npm runs without ambient configuration or credentials, using owned empty configuration files, HOME and cache.
+
+After that producer succeeds, run `//tests/client-parity:client-parity_test` through the same owned fixture wrapper shown above. The target launches the actual CLI, pinned Chromium and real PM API/PostgreSQL/Temporal paths. Its browser suite requires all eleven specifications with no skips; the outer Go owner independently checks durable run identity, input fidelity, authority, cancellation and downstream effects. Declared Bazel runfiles are materialized only where Playwright needs a regular test file; package resolution still uses the declared pinned dependency tree.
+
+The complete packaged parity target passed locally on Darwin arm64 with Bazel test-result caching disabled: all eleven Chromium specifications passed with no skips, and the outer Go owner verified the original run and one downstream effect through real Temporal execution. A separate scoped CLI smoke allocated a key without an explicit selector, resumed the same run from a fresh child using that key, and rejected changed intent locally before another mutation reached admission. Ownership-scoped fixture cleanup completed. This does not qualify Linux browser execution, live GitHub behavior or the eventual PR candidate.
+
 ### Bounded Darwin development observations
 
 The following results were observed on 2026-09-15 for the foundation candidate on Darwin arm64. They are local development evidence, not Linux or final-head CI:

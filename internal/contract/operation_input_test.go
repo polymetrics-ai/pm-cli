@@ -29,7 +29,7 @@ func TestValidateOperationInputPresencePrecisionAndLogicalIDs(t *testing.T) {
 		operationInputBindingForTest("per-page", "per_page", false, false, Schema{Type: SchemaTypeInteger}),
 	}
 	bindings[len(bindings)-1].SourceDefault = new(mustOperationInputInteger(t, "4"))
-	operation := Operation{Inputs: bindings}
+	operation := operationWithBodyBindingsForTest(bindings)
 
 	t.Run("exact values remain unchanged and defaults remain absent", func(t *testing.T) {
 		input := NewObjectValue(map[string]PresentValue{
@@ -100,18 +100,18 @@ func TestValidateOperationInputPresencePrecisionAndLogicalIDs(t *testing.T) {
 	})
 
 	t.Run("required nullable accepts explicit null but not absence", func(t *testing.T) {
-		nullable := Operation{Inputs: []FieldBinding{
+		nullable := operationWithBodyBindingsForTest([]FieldBinding{
 			operationInputBindingForTest("note", "note", true, true, Schema{Type: SchemaTypeString, Nullable: true}),
-		}}
+		})
 		if err := ValidateOperationInput(nullable, NewObjectValue(map[string]PresentValue{"note": NullValue()})); err != nil {
 			t.Fatalf("explicit nullable input: %v", err)
 		}
 		if err := ValidateOperationInput(nullable, NewObjectValue(map[string]PresentValue{"note": AbsentValue()})); !errors.Is(err, ErrInvalidValue) {
 			t.Fatalf("absent required nullable input error = %v; want invalid value", err)
 		}
-		nonnullable := Operation{Inputs: []FieldBinding{
+		nonnullable := operationWithBodyBindingsForTest([]FieldBinding{
 			operationInputBindingForTest("note", "note", true, false, Schema{Type: SchemaTypeString}),
-		}}
+		})
 		if err := ValidateOperationInput(nonnullable, NewObjectValue(map[string]PresentValue{"note": NullValue()})); !errors.Is(err, ErrInvalidValue) {
 			t.Fatalf("null non-nullable input error = %v; want invalid value", err)
 		}
@@ -137,9 +137,9 @@ func TestValidateOperationInputNestedShapes(t *testing.T) {
 			},
 		},
 	}
-	operation := Operation{Inputs: []FieldBinding{
+	operation := operationWithBodyBindingsForTest([]FieldBinding{
 		operationInputBindingForTest("payload", "payload", true, false, payloadSchema),
-	}}
+	})
 	amount := mustOperationInputDecimal(t, "9.10", 3, 2)
 
 	valid := NewObjectValue(map[string]PresentValue{
@@ -238,10 +238,10 @@ func TestValidateOperationInputComposition(t *testing.T) {
 			},
 		},
 	}
-	operation := Operation{Inputs: []FieldBinding{
+	operation := operationWithBodyBindingsForTest([]FieldBinding{
 		operationInputBindingForTest("composed", "composed", true, false, composed),
 		operationInputBindingForTest("choice", "choice", true, false, union),
-	}}
+	})
 	choice, err := NewUnionValue("record", NewObjectValue(map[string]PresentValue{"nested": NewBooleanValue(false)}))
 	if err != nil {
 		t.Fatal(err)
@@ -283,15 +283,498 @@ func TestValidateOperationInputComposition(t *testing.T) {
 			{Type: SchemaTypeObject, Properties: map[string]Schema{"flag": {Type: SchemaTypeBool}}},
 		},
 	}
-	ambiguousOperation := Operation{Inputs: []FieldBinding{
+	ambiguousOperation := operationWithBodyBindingsForTest([]FieldBinding{
 		operationInputBindingForTest("choice", "choice", true, false, ambiguousSchema),
-	}}
+	})
 	ambiguous, err := NewUnionValue("ambiguous", NewObjectValue(map[string]PresentValue{"flag": NewBooleanValue(false)}))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateOperationInput(ambiguousOperation, NewObjectValue(map[string]PresentValue{"choice": ambiguous})); !errors.Is(err, ErrInvalidValue) {
 		t.Fatalf("ambiguous oneOf error = %v; want invalid value", err)
+	}
+}
+
+func TestResolveOperationRequestVariants(t *testing.T) {
+	selector := FieldBinding{
+		FieldID:       "request-content-type",
+		WireName:      RequestMediaTypeWireName,
+		Location:      FieldLocationHeader,
+		JSONPointer:   "/headers/Content-Type",
+		Required:      false,
+		Nullable:      false,
+		Style:         "simple",
+		Explode:       false,
+		AllowReserved: false,
+		Sensitivity:   SensitivityPublic,
+		Schema: Schema{
+			Type: SchemaTypeString,
+			Enum: []PresentValue{
+				NewStringValue("application/json"),
+				NewStringValue("application/merge-patch+json"),
+			},
+		},
+	}
+	root := Schema{
+		Type:       SchemaTypeObject,
+		Required:   []string{"name"},
+		Properties: map[string]Schema{"name": {Type: SchemaTypeString}},
+	}
+	jsonBinding := operationInputBindingForTest("json-name", "name", true, false, Schema{Type: SchemaTypeString})
+	mergeBinding := operationInputBindingForTest("merge-name", "name", true, false, Schema{Type: SchemaTypeString})
+	operation := Operation{
+		Inputs:              []FieldBinding{selector},
+		RequestMediaFieldID: selector.FieldID,
+		RequestVariants: []RequestVariant{
+			{
+				VariantID:  "json",
+				MediaType:  "application/json",
+				Required:   false,
+				Schema:     root,
+				Inputs:     []FieldBinding{jsonBinding},
+				SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody/content/application~1json"}},
+			},
+			{
+				VariantID:  "merge-patch",
+				MediaType:  "application/merge-patch+json",
+				Required:   false,
+				Schema:     root,
+				Inputs:     []FieldBinding{mergeBinding},
+				SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody/content/application~1merge-patch+json"}},
+			},
+		},
+	}
+
+	selected, err := ResolveOperationRequest(operation, NewObjectValue(map[string]PresentValue{
+		selector.FieldID:    NewStringValue("application/json"),
+		jsonBinding.FieldID: NewStringValue("Ada"),
+	}))
+	if err != nil {
+		t.Fatalf("ResolveOperationRequest(selected JSON): %v", err)
+	}
+	if selected.Variant == nil || selected.Variant.VariantID != "json" {
+		t.Fatalf("selected variant = %#v; want json", selected.Variant)
+	}
+	bodyFields, ok := selected.Body.Fields()
+	if !ok || !bodyFields["name"].Equal(NewStringValue("Ada")) {
+		t.Fatalf("assembled body = %#v; want exact selected variant field", selected.Body)
+	}
+
+	absent, err := ResolveOperationRequest(operation, NewObjectValue(nil))
+	if err != nil {
+		t.Fatalf("ResolveOperationRequest(optional absent body): %v", err)
+	}
+	if absent.Variant != nil || absent.Body.Presence() != PresenceAbsent {
+		t.Fatalf("optional absent request = %#v; want no selected variant and absent body", absent)
+	}
+
+	incompleteSelector := operation
+	incompleteSelector.Inputs = append([]FieldBinding(nil), operation.Inputs...)
+	incompleteSelector.Inputs[0].Schema.Enum = []PresentValue{NewStringValue("application/json")}
+	if _, err := ResolveOperationRequest(incompleteSelector, NewObjectValue(nil)); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("incomplete media selector error = %v; want invalid contract", err)
+	}
+
+	for _, test := range []struct {
+		name  string
+		input PresentValue
+	}{
+		{
+			name: "body field without explicit media",
+			input: NewObjectValue(map[string]PresentValue{
+				jsonBinding.FieldID: NewStringValue("Ada"),
+			}),
+		},
+		{
+			name: "field from wrong selected variant",
+			input: NewObjectValue(map[string]PresentValue{
+				selector.FieldID:    NewStringValue("application/merge-patch+json"),
+				jsonBinding.FieldID: NewStringValue("Ada"),
+			}),
+		},
+		{
+			name: "mixed variant fields",
+			input: NewObjectValue(map[string]PresentValue{
+				selector.FieldID:     NewStringValue("application/json"),
+				jsonBinding.FieldID:  NewStringValue("Ada"),
+				mergeBinding.FieldID: NewStringValue("Grace"),
+			}),
+		},
+		{
+			name: "undeclared media",
+			input: NewObjectValue(map[string]PresentValue{
+				selector.FieldID: NewStringValue("text/plain"),
+			}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := ResolveOperationRequest(operation, test.input); !errors.Is(err, ErrInvalidValue) {
+				t.Fatalf("ResolveOperationRequest error = %v; want invalid value", err)
+			}
+		})
+	}
+}
+
+func TestResolveOperationRequestRejectsOverlappingBodyAssignments(t *testing.T) {
+	root := Schema{
+		Type:       SchemaTypeObject,
+		Required:   []string{},
+		Properties: map[string]Schema{"name": {Type: SchemaTypeString}},
+	}
+	whole := operationInputBindingForTest("whole-body", "", true, false, root)
+	whole.JSONPointer = ""
+	nested := operationInputBindingForTest("body-name", "name", false, false, Schema{Type: SchemaTypeString})
+	operation := Operation{
+		Inputs: []FieldBinding{},
+		RequestVariants: []RequestVariant{{
+			VariantID:  "json",
+			MediaType:  "application/json",
+			Required:   true,
+			Schema:     root,
+			Inputs:     []FieldBinding{whole, nested},
+			SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody"}},
+		}},
+	}
+
+	empty, err := ResolveOperationRequest(operation, NewObjectValue(map[string]PresentValue{
+		whole.FieldID: NewObjectValue(nil),
+	}))
+	if err != nil {
+		t.Fatalf("ResolveOperationRequest(explicit empty object): %v", err)
+	}
+	fields, ok := empty.Body.Fields()
+	if empty.Variant == nil || !ok || len(fields) != 0 {
+		t.Fatalf("explicit empty object request = %#v", empty)
+	}
+
+	unrepresentable := operation
+	unrepresentable.RequestVariants = []RequestVariant{operation.RequestVariants[0]}
+	unrepresentable.RequestVariants[0].Inputs = []FieldBinding{nested}
+	if _, err := ResolveOperationRequest(unrepresentable, NewObjectValue(nil)); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("all-optional required body without root binding error = %v; want invalid contract", err)
+	}
+
+	_, err = ResolveOperationRequest(operation, NewObjectValue(map[string]PresentValue{
+		whole.FieldID:  NewObjectValue(map[string]PresentValue{"name": NewStringValue("Ada")}),
+		nested.FieldID: NewStringValue("Grace"),
+	}))
+	if !errors.Is(err, ErrInvalidValue) {
+		t.Fatalf("overlapping body assignment error = %v; want invalid value", err)
+	}
+}
+
+func TestValidateSuppliedInputDefersOnlyOmittedRequiredFields(t *testing.T) {
+	name := operationInputBindingForTest("name", "name", true, false, Schema{Type: SchemaTypeString})
+	enabled := operationInputBindingForTest("enabled", "enabled", true, false, Schema{Type: SchemaTypeBool})
+	operation := operationWithBodyBindingsForTest([]FieldBinding{name, enabled})
+	projection, err := ProjectOperationRequest(operation)
+	if err != nil {
+		t.Fatalf("ProjectOperationRequest: %v", err)
+	}
+	fields := append([]FieldBinding(nil), operation.RequestVariants[0].Inputs...)
+
+	for _, test := range []struct {
+		name  string
+		input PresentValue
+	}{
+		{name: "all required fields omitted", input: NewObjectValue(nil)},
+		{
+			name: "one exact required field supplied",
+			input: NewObjectValue(map[string]PresentValue{
+				name.FieldID: NewStringValue("Ada"),
+			}),
+		},
+		{
+			name: "typed absence remains omitted",
+			input: NewObjectValue(map[string]PresentValue{
+				name.FieldID: AbsentValue(),
+			}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			before := cloneOperationInputForTest(t, test.input)
+			if err := projection.ValidateSuppliedInput(fields, test.input); err != nil {
+				t.Fatalf("ValidateSuppliedInput: %v", err)
+			}
+			if !test.input.Equal(before) {
+				t.Fatal("partial validation mutated supplied input")
+			}
+			if err := projection.ValidateInput(fields, test.input); !errors.Is(err, ErrInvalidValue) {
+				t.Fatalf("full ValidateInput error = %v; want omitted-required refusal", err)
+			}
+			if !fields[0].Required || !fields[1].Required {
+				t.Fatal("partial validation weakened projected field requiredness")
+			}
+		})
+	}
+
+	for _, test := range []struct {
+		name  string
+		input PresentValue
+	}{
+		{
+			name: "present null conflicts with nonnullable field",
+			input: NewObjectValue(map[string]PresentValue{
+				name.FieldID: NullValue(),
+			}),
+		},
+		{
+			name: "present value keeps exact declared type",
+			input: NewObjectValue(map[string]PresentValue{
+				name.FieldID: NewBooleanValue(false),
+			}),
+		},
+		{
+			name: "undeclared logical identity",
+			input: NewObjectValue(map[string]PresentValue{
+				"private-wire-name": NewStringValue("Ada"),
+			}),
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := projection.ValidateSuppliedInput(fields, test.input); err == nil {
+				t.Fatal("malformed supplied field was accepted")
+			}
+		})
+	}
+
+	t.Run("present nested field remains fully required", func(t *testing.T) {
+		payloadSchema := Schema{
+			Type:     SchemaTypeObject,
+			Required: []string{"active"},
+			Properties: map[string]Schema{
+				"active": {Type: SchemaTypeBool},
+			},
+		}
+		payload := operationInputBindingForTest("payload", "payload", true, false, payloadSchema)
+		nestedOperation := operationWithBodyBindingsForTest([]FieldBinding{payload})
+		nestedProjection, err := ProjectOperationRequest(nestedOperation)
+		if err != nil {
+			t.Fatalf("ProjectOperationRequest(nested): %v", err)
+		}
+		if err := nestedProjection.ValidateSuppliedInput(
+			nestedOperation.RequestVariants[0].Inputs,
+			NewObjectValue(map[string]PresentValue{payload.FieldID: NewObjectValue(nil)}),
+		); !errors.Is(err, ErrInvalidValue) {
+			t.Fatalf("present incomplete nested value error = %v; want invalid value", err)
+		}
+	})
+
+	t.Run("present overlapping body assignments remain invalid", func(t *testing.T) {
+		root := Schema{
+			Type:       SchemaTypeObject,
+			Required:   []string{},
+			Properties: map[string]Schema{"name": {Type: SchemaTypeString}},
+		}
+		whole := operationInputBindingForTest("whole-body", "", true, false, root)
+		whole.JSONPointer = ""
+		nested := operationInputBindingForTest("body-name", "name", false, false, Schema{Type: SchemaTypeString})
+		overlapOperation := Operation{
+			Inputs: []FieldBinding{},
+			RequestVariants: []RequestVariant{{
+				VariantID: "json", MediaType: "application/json", Required: true, Schema: root,
+				Inputs: []FieldBinding{whole, nested}, SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody"}},
+			}},
+		}
+		overlapProjection, err := ProjectOperationRequest(overlapOperation)
+		if err != nil {
+			t.Fatalf("ProjectOperationRequest(overlap): %v", err)
+		}
+		if err := overlapProjection.ValidateSuppliedInput(
+			overlapOperation.RequestVariants[0].Inputs,
+			NewObjectValue(map[string]PresentValue{
+				whole.FieldID:  NewObjectValue(map[string]PresentValue{"name": NewStringValue("Ada")}),
+				nested.FieldID: NewStringValue("Grace"),
+			}),
+		); !errors.Is(err, ErrInvalidValue) {
+			t.Fatalf("overlapping supplied assignments error = %v; want invalid value", err)
+		}
+	})
+
+	t.Run("observable request variant conflicts remain invalid", func(t *testing.T) {
+		selector := FieldBinding{
+			FieldID:       "request-content-type",
+			WireName:      RequestMediaTypeWireName,
+			Location:      FieldLocationHeader,
+			JSONPointer:   "/headers/Content-Type",
+			Required:      false,
+			Nullable:      false,
+			Style:         "simple",
+			Explode:       false,
+			AllowReserved: false,
+			Sensitivity:   SensitivityPublic,
+			Schema: Schema{
+				Type: SchemaTypeString,
+				Enum: []PresentValue{
+					NewStringValue("application/json"),
+					NewStringValue("application/merge-patch+json"),
+				},
+			},
+		}
+		root := Schema{
+			Type:       SchemaTypeObject,
+			Required:   []string{"name"},
+			Properties: map[string]Schema{"name": {Type: SchemaTypeString}},
+		}
+		jsonName := operationInputBindingForTest("json-name", "name", true, false, Schema{Type: SchemaTypeString})
+		mergeName := operationInputBindingForTest("merge-name", "name", true, false, Schema{Type: SchemaTypeString})
+		variantOperation := Operation{
+			Inputs:              []FieldBinding{selector},
+			RequestMediaFieldID: selector.FieldID,
+			RequestVariants: []RequestVariant{
+				{
+					VariantID: "json", MediaType: "application/json", Schema: root,
+					Inputs: []FieldBinding{jsonName}, SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/json"}},
+				},
+				{
+					VariantID: "merge", MediaType: "application/merge-patch+json", Schema: root,
+					Inputs: []FieldBinding{mergeName}, SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/merge"}},
+				},
+			},
+		}
+		variantProjection, err := ProjectOperationRequest(variantOperation)
+		if err != nil {
+			t.Fatalf("ProjectOperationRequest(variants): %v", err)
+		}
+		variantFields := []FieldBinding{selector, jsonName, mergeName}
+		selectedButIncomplete := NewObjectValue(map[string]PresentValue{
+			selector.FieldID: NewStringValue("application/json"),
+		})
+		if err := variantProjection.ValidateSuppliedInput(variantFields, selectedButIncomplete); err != nil {
+			t.Fatalf("partial selected variant: %v", err)
+		}
+		if err := variantProjection.ValidateInput(variantFields, selectedButIncomplete); !errors.Is(err, ErrInvalidValue) {
+			t.Fatalf("full selected variant error = %v; want omitted-required refusal", err)
+		}
+		inheritedSelector := NewObjectValue(map[string]PresentValue{
+			jsonName.FieldID: NewStringValue("Ada"),
+		})
+		if err := variantProjection.ValidateSuppliedInput(variantFields, inheritedSelector); err != nil {
+			t.Fatalf("partial inherited media selector: %v", err)
+		}
+		if err := variantProjection.ValidateInput(variantFields, inheritedSelector); !errors.Is(err, ErrInvalidValue) {
+			t.Fatalf("ordinary missing media selector error = %v; want invalid value", err)
+		}
+
+		for _, test := range []struct {
+			name  string
+			input PresentValue
+		}{
+			{
+				name: "supplied fields from multiple variants",
+				input: NewObjectValue(map[string]PresentValue{
+					jsonName.FieldID:  NewStringValue("Ada"),
+					mergeName.FieldID: NewStringValue("Grace"),
+				}),
+			},
+			{
+				name: "field from nonselected variant",
+				input: NewObjectValue(map[string]PresentValue{
+					selector.FieldID:  NewStringValue("application/json"),
+					mergeName.FieldID: NewStringValue("Grace"),
+				}),
+			},
+			{
+				name: "supplied field has wrong type before selector restoration",
+				input: NewObjectValue(map[string]PresentValue{
+					jsonName.FieldID: NullValue(),
+				}),
+			},
+		} {
+			t.Run(test.name, func(t *testing.T) {
+				if err := variantProjection.ValidateSuppliedInput(variantFields, test.input); !errors.Is(err, ErrInvalidValue) {
+					t.Fatalf("variant conflict error = %v; want invalid value", err)
+				}
+			})
+		}
+	})
+}
+
+func TestValidateOperationInputEnumAndExactBounds(t *testing.T) {
+	minimum := mustOperationInputInteger(t, "9007199254740993")
+	maximum := mustOperationInputInteger(t, "9007199254740995")
+	bindings := []FieldBinding{
+		operationInputBindingForTest("mode", "mode", true, false, Schema{
+			Type: SchemaTypeString,
+			Enum: []PresentValue{NewStringValue("strict"), NewStringValue("safe")},
+		}),
+		operationInputBindingForTest("sequence", "sequence", true, false, Schema{
+			Type:    SchemaTypeInteger,
+			Minimum: &minimum,
+			Maximum: &maximum,
+		}),
+	}
+	operation := operationWithBodyBindingsForTest(bindings)
+	within := mustOperationInputInteger(t, "9007199254740994")
+	if err := ValidateOperationInput(operation, NewObjectValue(map[string]PresentValue{
+		"mode":     NewStringValue("strict"),
+		"sequence": within,
+	})); err != nil {
+		t.Fatalf("ValidateOperationInput(exact constrained values): %v", err)
+	}
+
+	below := mustOperationInputInteger(t, "9007199254740992")
+	above := mustOperationInputInteger(t, "9007199254740996")
+	for _, test := range []struct {
+		name     string
+		mode     string
+		sequence PresentValue
+	}{
+		{name: "enum", mode: "other", sequence: within},
+		{name: "minimum", mode: "strict", sequence: below},
+		{name: "maximum", mode: "strict", sequence: above},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := ValidateOperationInput(operation, NewObjectValue(map[string]PresentValue{
+				"mode":     NewStringValue(test.mode),
+				"sequence": test.sequence,
+			}))
+			if !errors.Is(err, ErrInvalidValue) {
+				t.Fatalf("constraint error = %v; want invalid value", err)
+			}
+		})
+	}
+	if err := (Schema{
+		Type:    SchemaTypeInteger,
+		Minimum: &maximum,
+		Maximum: &minimum,
+	}).Validate(); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("reversed exact bounds error = %v; want invalid contract", err)
+	}
+	if err := (Schema{
+		Type: SchemaTypeInteger,
+		Enum: []PresentValue{NewStringValue("1")},
+	}).Validate(); !errors.Is(err, ErrInvalidContract) {
+		t.Fatalf("wrong-type enum error = %v; want invalid contract", err)
+	}
+}
+
+func operationWithBodyBindingsForTest(bindings []FieldBinding) Operation {
+	root := Schema{
+		Type:       SchemaTypeObject,
+		Required:   []string{},
+		Properties: make(map[string]Schema, len(bindings)),
+	}
+	for _, binding := range bindings {
+		parts := decodeJSONPointerParts(binding.JSONPointer)
+		if len(parts) != 1 {
+			panic("operation input test binding must address one root property")
+		}
+		root.Properties[parts[0]] = binding.Schema
+		if binding.Required {
+			root.Required = append(root.Required, parts[0])
+		}
+	}
+	return Operation{
+		Inputs: []FieldBinding{},
+		RequestVariants: []RequestVariant{{
+			VariantID:  "application-json",
+			MediaType:  "application/json",
+			Required:   true,
+			Schema:     root,
+			Inputs:     bindings,
+			SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/requestBody"}},
+		}},
 	}
 }
 

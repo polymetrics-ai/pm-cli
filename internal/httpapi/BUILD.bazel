@@ -7,6 +7,7 @@ go_library(
         "admin.go",
         "admin_service.go",
         "artifacts.go",
+        "catalog.go",
         "events.go",
         "identity.go",
         "middleware.go",
@@ -57,6 +58,7 @@ go_test(
     deps = [
         "//internal/api",
         "//internal/contract",
+        "//internal/objects",
         "//internal/store",
         "//internal/testfixture",
         "@com_github_gin_gonic_gin//:gin",

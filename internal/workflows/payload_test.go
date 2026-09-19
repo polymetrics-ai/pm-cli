@@ -130,6 +130,41 @@ func TestHistoryAndPayloadBounds(t *testing.T) {
 		}
 	})
 
+	t.Run("unregistered_marker_scalars_are_refused_before_history", func(t *testing.T) {
+		harness := newWorkflowHarness(t, "", func(worker sdkworker.Worker) {
+			worker.RegisterWorkflowWithOptions(payloadAcceptanceWorkflow, workflow.RegisterOptions{Name: payloadAcceptanceWorkflowName})
+		})
+		for _, testCase := range []struct {
+			name  string
+			value any
+		}{
+			{name: "arbitrary_string", value: secretCanary},
+			{name: "unregistered_version", value: workflow.Version(2)},
+			{name: "untyped_integer", value: 1},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				workflowID := "pm/test/rejected-marker/" + testIdentity(t)
+				unexpected, err := harness.client.ExecuteWorkflow(ctx, sdkclient.StartWorkflowOptions{
+					ID: workflowID, TaskQueue: contract.ControlTaskQueue,
+				}, payloadAcceptanceWorkflowName, testCase.value)
+				if err == nil {
+					testfixture.CleanupWorkflowChain(t, harness.client, harness.namespace, workflowID, unexpected.GetRunID())
+					t.Fatal("unregistered marker scalar was accepted")
+				}
+				if strings.Contains(err.Error(), secretCanary) {
+					t.Fatal("marker refusal leaked the rejected value")
+				}
+				_, err = harness.client.DescribeWorkflowExecution(ctx, workflowID, "")
+				var notFound *serviceerror.NotFound
+				if !errors.As(err, &notFound) {
+					t.Fatalf("rejected marker workflow Describe error = %v; want NotFound", err)
+				}
+			})
+		}
+	})
+
 	t.Run("C02_forbidden_channels_are_refused_without_serialization_or_server_leakage", func(t *testing.T) {
 		harness := newWorkflowHarness(t, "", registerDiagnosticWorkflows)
 		input := syntheticWorkflowInput(t, "payload-diagnostics")

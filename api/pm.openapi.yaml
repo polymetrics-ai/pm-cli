@@ -13,6 +13,7 @@ tags:
   - name: sessions
   - name: workspaces
   - name: connections
+  - name: catalog
   - name: runs
   - name: artifacts
 paths:
@@ -303,6 +304,126 @@ paths:
           $ref: "#/components/responses/Problem404"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connectors:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [catalog]
+      summary: List the authorized immutable connector catalog and actual lane availability
+      operationId: listCatalogConnectors
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Authorized connector catalog page with its capability-bound revision
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogConnectorPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connectors/{connector_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectorCatalogID"
+    get:
+      tags: [catalog]
+      summary: Inspect one authorized immutable connector descriptor
+      operationId: getCatalogConnector
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      responses:
+        "200":
+          description: Safe connector descriptor and actual lane availability
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CatalogConnector"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/commands:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+    get:
+      tags: [catalog]
+      summary: List connection-authorized safe generated command descriptors
+      operationId: listCatalogCommands
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/ConnectionFilter"
+        - $ref: "#/components/parameters/CommandFilter"
+        - $ref: "#/components/parameters/Cursor"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: Principal, workspace, connection, server, and revision-bound command page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SafeCommandPage"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/commands/{operation_id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/CatalogOperationID"
+    get:
+      tags: [catalog]
+      summary: Resolve one connection-authorized available generated command
+      operationId: getCatalogCommand
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/ConnectionFilter"
+      responses:
+        "200":
+          description: Available safe generated command descriptor
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CommandDescriptor"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/connections:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -542,12 +663,10 @@ paths:
       summary: Request an authorized artifact upload capability
       operationId: uploadArtifact
       description: >-
-        M4 exposes only authorization and explicit capability refusal. No artifact
-        byte backend is installed, so this operation advertises no successful
-        representation and never fabricates artifact metadata. Send no request
-        body: the shared protocol guard rejects a nonempty entity as invalid_request.
-        A later byte-storage owner must declare the accepted raw-stream contract
-        before enabling byte input or adding a success response.
+        Public artifact upload remains unavailable on this route even when a
+        read backend is installed. Send no request body: the shared protocol
+        guard rejects a nonempty entity as invalid_request. Authorization still
+        precedes the explicit capability refusal.
       security:
         - PMSession: []
         - PMBrowserSession: []
@@ -572,16 +691,29 @@ paths:
       - $ref: "#/components/parameters/ArtifactID"
     get:
       tags: [artifacts]
-      summary: Authorize inspection of one artifact
+      summary: Inspect verified artifact metadata
       operationId: inspectArtifact
       description: >-
-        Authorizes the exact private artifact identity before reporting unavailable
-        byte storage. Foreign and unknown artifacts remain concealed as
-        resource_not_found. M4 advertises no successful metadata representation.
+        Authorizes the exact private artifact identity and verifies the complete
+        registered object before returning public digest, length, media type, and
+        artifact identity. Foreign and unknown artifacts remain concealed. The
+        response never exposes an object key, backend generation, URL, bucket, or
+        credential.
       security:
         - PMSession: []
         - PMBrowserSession: []
       responses:
+        "200":
+          description: Verified public artifact metadata
+          headers:
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ArtifactMetadata"
         "400":
           $ref: "#/components/responses/Problem400"
         "401":
@@ -600,16 +732,59 @@ paths:
       - $ref: "#/components/parameters/ArtifactID"
     get:
       tags: [artifacts]
-      summary: Authorize download of one artifact
+      summary: Download verified artifact bytes
       operationId: downloadArtifact
       description: >-
-        Applies the exact artifact authorization and concealment precedence before
-        reporting unavailable byte storage. M4 serves no body, range metadata,
-        digest, length, media type, or successful content response.
+        Authorizes the registered artifact before backend availability or range
+        validity is disclosed. A successful response contains exactly the full
+        object or one requested byte interval after complete digest, length, and
+        backend-generation verification. Multiple ranges are unsupported.
       security:
         - PMSession: []
         - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/ArtifactRange"
       responses:
+        "200":
+          description: Complete verified artifact bytes
+          headers:
+            Accept-Ranges:
+              $ref: "#/components/headers/AcceptRanges"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Content-Disposition:
+              $ref: "#/components/headers/ArtifactContentDisposition"
+            Content-Length:
+              $ref: "#/components/headers/ArtifactContentLength"
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "206":
+          description: One verified artifact byte interval
+          headers:
+            Accept-Ranges:
+              $ref: "#/components/headers/AcceptRanges"
+            Cache-Control:
+              $ref: "#/components/headers/CacheControlNoStore"
+            Content-Disposition:
+              $ref: "#/components/headers/ArtifactContentDisposition"
+            Content-Length:
+              $ref: "#/components/headers/ArtifactContentLength"
+            Content-Range:
+              $ref: "#/components/headers/ContentRange"
+            ETag:
+              $ref: "#/components/headers/ArtifactETag"
+          content:
+            "*/*":
+              schema:
+                type: string
+                format: binary
+        "416":
+          $ref: "#/components/responses/Problem416"
         "400":
           $ref: "#/components/responses/Problem400"
         "401":
@@ -1378,6 +1553,37 @@ components:
         type: string
         minLength: 1
         maxLength: 512
+    ConnectorCatalogID:
+      name: connector_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    CatalogOperationID:
+      name: operation_id
+      in: path
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 1024
+    ConnectionFilter:
+      name: connection_id
+      in: query
+      required: true
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    CommandFilter:
+      name: filter
+      in: query
+      required: false
+      schema:
+        type: string
+        maxLength: 512
     WorkspaceID:
       name: workspace_id
       in: path
@@ -1411,6 +1617,18 @@ components:
         type: string
         minLength: 1
         maxLength: 512
+    ArtifactRange:
+      name: Range
+      in: header
+      required: false
+      description: >-
+        One bytes range in closed, open-ended, or suffix form. Multiple ranges
+        are unsupported. Malformed and unsatisfiable ranges return 416 only after
+        current artifact authorization and read-backend availability checks.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 256
     TaskID:
       name: task_id
       in: path
@@ -1451,6 +1669,39 @@ components:
         type: string
         minLength: 1
         maxLength: 512
+    ArtifactETag:
+      description: Strong validator derived only from the verified SHA-256 digest.
+      schema:
+        type: string
+        pattern: '^"sha256:[0-9a-f]{64}"$'
+    ArtifactContentDisposition:
+      description: Untrusted artifact bytes are downloaded, not rendered as a PM-origin document.
+      schema:
+        type: string
+        const: attachment
+    AcceptRanges:
+      description: The verified content route supports one bytes range.
+      schema:
+        type: string
+        const: bytes
+    ArtifactContentLength:
+      description: Exact number of bytes in this full or partial response body.
+      schema:
+        type: integer
+        format: int64
+        minimum: 0
+    CacheControlNoStore:
+      description: Private artifact representations must not be stored.
+      schema:
+        type: string
+        const: no-store
+    ContentRange:
+      description: Selected byte interval and complete registered length, or the complete length for a 416 response.
+      schema:
+        type: string
+        pattern: '^bytes ([0-9]+-[0-9]+|\*)/[0-9]+$'
+        minLength: 9
+        maxLength: 128
   responses:
     Problem400:
       description: Malformed or unsupported typed request
@@ -1494,6 +1745,19 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    Problem416:
+      description: The authorized single byte range is malformed or unsatisfiable for the registered length.
+      headers:
+        Accept-Ranges:
+          $ref: "#/components/headers/AcceptRanges"
+        Cache-Control:
+          $ref: "#/components/headers/CacheControlNoStore"
+        Content-Range:
+          $ref: "#/components/headers/ContentRange"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
     Problem428:
       description: A required control revision is absent
       content:
@@ -1519,6 +1783,311 @@ components:
           schema:
             $ref: "#/components/schemas/Problem"
   schemas:
+    CatalogLaneAvailability:
+      type: object
+      additionalProperties: false
+      required: [lane, source_status, source_reason, available]
+      properties:
+        lane:
+          type: string
+          enum: [direct_read, direct_write, etl, reverse_etl, binary_download, binary_upload, sync_transport]
+        source_status:
+          type: string
+          enum: [eligible, unsupported, not_applicable, blocked, unproven]
+        source_reason:
+          type: string
+          minLength: 1
+          maxLength: 4096
+        available:
+          type: boolean
+        unavailability_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+    CatalogOperation:
+      type: object
+      additionalProperties: false
+      required: [operation_id, operation_revision, diagnostic_codes, lanes]
+      properties:
+        operation_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        operation_revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        diagnostic_codes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+        command_name:
+          type: string
+          minLength: 1
+          maxLength: 512
+        lanes:
+          type: array
+          minItems: 7
+          maxItems: 7
+          items:
+            $ref: "#/components/schemas/CatalogLaneAvailability"
+    CatalogConnector:
+      type: object
+      additionalProperties: false
+      required: [connector_id, source_digest, semantics_revision, catalog_revision, operations]
+      properties:
+        connector_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        source_digest:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        semantics_revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        catalog_revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        operations:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CatalogOperation"
+    CatalogConnectorPage:
+      type: object
+      additionalProperties: false
+      required: [catalog_revision, items, next_cursor]
+      properties:
+        catalog_revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CatalogConnector"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
+    TypedSchema:
+      type: object
+      additionalProperties: false
+      required: [type]
+      properties:
+        type:
+          type: string
+          enum: [string, bool, integer, decimal, date, timestamp_instant, timestamp_local, array, object, union, binary_ref]
+        nullable:
+          type: boolean
+        required:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        properties:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/TypedSchema"
+        items:
+          $ref: "#/components/schemas/TypedSchema"
+        oneOf:
+          type: array
+          minItems: 2
+          items:
+            $ref: "#/components/schemas/TypedSchema"
+        allOf:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/TypedSchema"
+        enum:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/PresentValue"
+        minimum:
+          $ref: "#/components/schemas/PresentValue"
+        maximum:
+          $ref: "#/components/schemas/PresentValue"
+      x-go-type: contract.Schema
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    CatalogFieldBinding:
+      type: object
+      additionalProperties: false
+      required: [field_id, wire_name, location, json_pointer, required, nullable, style, explode, allow_reserved, sensitivity, schema]
+      properties:
+        field_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        wire_name:
+          type: string
+          maxLength: 4096
+        location:
+          type: string
+          enum: [path, query, header, cookie, body, record, metadata]
+        json_pointer:
+          type: string
+          maxLength: 4096
+        required:
+          type: boolean
+        nullable:
+          type: boolean
+        style:
+          type: string
+        explode:
+          type: boolean
+        allow_reserved:
+          type: boolean
+        sensitivity:
+          type: string
+          enum: [public, secret]
+        schema:
+          $ref: "#/components/schemas/TypedSchema"
+        source_default:
+          $ref: "#/components/schemas/PresentValue"
+      x-go-type: contract.FieldBinding
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    CommandFieldDescriptor:
+      type: object
+      additionalProperties: false
+      required: [flag, binding]
+      properties:
+        flag:
+          type: string
+          pattern: "^--[A-Za-z0-9][A-Za-z0-9-]*$"
+        binding:
+          $ref: "#/components/schemas/CatalogFieldBinding"
+    RequestVariantProjection:
+      type: object
+      additionalProperties: false
+      required: [variant_id, media_type, required, schema, field_ids]
+      properties:
+        variant_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        media_type:
+          type: string
+          minLength: 1
+          maxLength: 512
+        required:
+          type: boolean
+        schema:
+          $ref: "#/components/schemas/TypedSchema"
+        field_ids:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+      x-go-type: contract.RequestVariantProjection
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    OperationRequestProjection:
+      type: object
+      additionalProperties: false
+      required: [variants]
+      properties:
+        request_media_field_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        variants:
+          type: array
+          items:
+            $ref: "#/components/schemas/RequestVariantProjection"
+      x-go-type: contract.OperationRequestProjection
+      x-go-type-import:
+        path: github.com/polymetrics-ai/pm-cli/internal/contract
+        name: contract
+    CommandDescriptor:
+      type: object
+      additionalProperties: false
+      required: [name, aliases, connector_id, connection_id, operation_id, operation_revision, catalog_revision, fields, request_body, available_lanes]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 512
+        aliases:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            minLength: 1
+            maxLength: 512
+        connector_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        connection_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        operation_id:
+          type: string
+          minLength: 1
+          maxLength: 1024
+        operation_revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        catalog_revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        fields:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommandFieldDescriptor"
+        request_body:
+          $ref: "#/components/schemas/OperationRequestProjection"
+        available_lanes:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+            enum: [direct_read, direct_write, etl, reverse_etl, binary_download, binary_upload, sync_transport]
+        unavailability_code:
+          type: string
+          minLength: 1
+          maxLength: 128
+    SafeCommandPage:
+      type: object
+      additionalProperties: false
+      required: [server_instance_id, principal, workspace_id, connection_id, catalog_revision, items, next_cursor]
+      properties:
+        server_instance_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        principal:
+          $ref: "#/components/schemas/Principal"
+        workspace_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        connection_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        catalog_revision:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CommandDescriptor"
+        next_cursor:
+          type: [string, "null"]
+          maxLength: 4096
     DeviceStart:
       type: object
       additionalProperties: false
@@ -2820,6 +3389,26 @@ components:
       x-go-type-import:
         path: github.com/polymetrics-ai/pm-cli/internal/contract
         name: contract
+    ArtifactMetadata:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, sha256, byte_length, media_type]
+      properties:
+        artifact_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        byte_length:
+          type: integer
+          format: int64
+          minimum: 0
+        media_type:
+          type: string
+          minLength: 1
+          maxLength: 512
     ObjectRef:
       type: object
       additionalProperties: false
@@ -2999,6 +3588,15 @@ components:
           $ref: "#/components/schemas/FieldSelection"
         filter:
           $ref: "#/components/schemas/RecordFilter"
+        total_record_cap:
+          type: integer
+          format: int64
+          minimum: 1
+          description: Optional positive cap on records emitted by this invocation after filtering; this is distinct from the provider page size.
+        continuation:
+          description: Optional typed resume state. It must be absent or a present nonempty opaque string of at most 4096 UTF-8 bytes; null and every other typed value are invalid.
+          $ref: "#/components/schemas/PresentValue"
+      description: Omitted controls preserve the complete-result default. Explicit continuation resumes server-owned durable state without turning malformed supplied provider input into valid input.
       x-go-type: contract.ResultControls
       x-go-type-import:
         path: github.com/polymetrics-ai/pm-cli/internal/contract
@@ -3009,7 +3607,7 @@ components:
       required: [effective_wire_limit, continuation, unread_tail, fetched_count, returned_count, emitted_count, source_exhausted]
       properties:
         effective_wire_limit:
-          type: integer
+          type: [integer, "null"]
           format: int64
           minimum: 1
         total_record_cap:
@@ -3043,17 +3641,37 @@ components:
         path: github.com/polymetrics-ai/pm-cli/internal/contract
         name: contract
     ActionResult:
-      type: object
-      additionalProperties: false
-      required: [media_type, data]
-      properties:
-        media_type:
-          type: string
-          minLength: 1
-        data:
-          $ref: "#/components/schemas/PresentValue"
-        pagination:
-          $ref: "#/components/schemas/ResultPagination"
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [media_type, data]
+          properties:
+            media_type:
+              type: string
+              minLength: 1
+            data:
+              allOf:
+                - $ref: "#/components/schemas/PresentValue"
+                - not:
+                    type: object
+                    required: [presence]
+                    properties:
+                      presence:
+                        const: absent
+            pagination:
+              $ref: "#/components/schemas/ResultPagination"
+        - type: object
+          additionalProperties: false
+          required: [data]
+          properties:
+            data:
+              allOf:
+                - $ref: "#/components/schemas/PresentValue"
+                - type: object
+                  required: [presence]
+                  properties:
+                    presence:
+                      const: absent
       x-go-type: contract.ActionResult
       x-go-type-import:
         path: github.com/polymetrics-ai/pm-cli/internal/contract

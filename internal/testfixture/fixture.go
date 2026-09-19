@@ -3,7 +3,10 @@ package testfixture
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -32,8 +35,9 @@ import (
 )
 
 const (
-	fixtureTimeout = 30 * time.Second
-	requestTimeout = 10 * time.Second
+	fixtureTimeout           = 30 * time.Second
+	requestTimeout           = 10 * time.Second
+	processClientAccessLimit = 64 << 10
 )
 
 // ConnectionRef identifies one fixture-owned connection and its organization-
@@ -66,6 +70,42 @@ type ServiceDependencies struct {
 // dependencies must remain the fixture's real instances.
 type ConfigureService func(ServiceDependencies, *httpapi.ServiceConfig) error
 
+// ProcessDependencies are the non-secret fixture identities needed to
+// reconstruct the same API or worker composition in an owned child process.
+// PostgreSQL and Temporal endpoints remain selected by the inherited fixture
+// configuration and secret directory.
+type ProcessDependencies struct {
+	DeploymentID      string         `json:"deployment_id"`
+	Scope             contract.Scope `json:"scope"`
+	ForeignScope      contract.Scope `json:"foreign_scope"`
+	Actor             contract.Actor `json:"actor"`
+	ForeignActor      contract.Actor `json:"foreign_actor"`
+	WrongActor        contract.Actor `json:"wrong_actor"`
+	Connection        ConnectionRef  `json:"connection"`
+	ForeignConnection ConnectionRef  `json:"foreign_connection"`
+	OperationID       string         `json:"operation_id"`
+}
+
+// ProcessAPIReady identifies one actual child API listener. Certificate is the
+// exact DER certificate trusted only by clients created for this endpoint.
+type ProcessAPIReady struct {
+	BaseURL     string `json:"base_url"`
+	Certificate []byte `json:"certificate"`
+}
+
+// ProcessClientEndpoint is an authenticated client reconstructed from an
+// owned, mode-0600 child access file. Close must be called by the child.
+type ProcessClientEndpoint struct {
+	BaseURL string
+	Client  *http.Client
+}
+
+type processClientAccess struct {
+	BaseURL     string `json:"base_url"`
+	Token       string `json:"token"`
+	Certificate []byte `json:"certificate"`
+}
+
 // Fixture owns two isolated workspace scopes in one isolated organization, a
 // runtime pool, three persisted PM sessions, and one real Gin server behind TLS.
 type Fixture struct {
@@ -94,6 +134,8 @@ type Fixture struct {
 	migratorDSN    string
 	configure      ConfigureService
 	server         *httptest.Server
+	surface        *http.ServeMux
+	apiHandler     http.Handler
 	activeRequests atomic.Int64
 	sessionTokens  map[contract.Principal]string
 	clients        []*http.Client
@@ -116,11 +158,111 @@ func (fixture *Fixture) ActiveRequests() int64 {
 	return fixture.activeRequests.Load()
 }
 
+// HandleHTTP adds an owned browser-fixture surface on the existing TLS origin.
+// Its callback may exercise the unchanged registered API with controlled inbound
+// faults. Ordinary API paths never pass through ServeMux normalization.
+func (fixture *Fixture) HandleHTTP(t testing.TB, pattern string, handler func(http.ResponseWriter, *http.Request, http.Handler)) {
+	t.Helper()
+	if fixture == nil || fixture.surface == nil || fixture.apiHandler == nil || handler == nil ||
+		!strings.HasPrefix(pattern, "/__pm_fixture__/") || len(pattern) > 512 ||
+		strings.ContainsAny(pattern, " \t\r\n?#%") || strings.Contains(pattern, "..") {
+		t.Fatal("invalid owned fixture HTTP surface")
+	}
+	fixture.surface.HandleFunc(pattern, func(writer http.ResponseWriter, request *http.Request) {
+		handler(writer, request, fixture.apiHandler)
+	})
+}
+
+// ChildProcessDependencies snapshots only stable, non-secret identities. Child
+// processes reopen their own PostgreSQL and Temporal connections.
+func (fixture *Fixture) ChildProcessDependencies(t testing.TB) ProcessDependencies {
+	t.Helper()
+	if fixture == nil || fixture.closed || fixture.DeploymentID == "" {
+		t.Fatal("child process dependencies require an open fixture")
+	}
+	dependencies := ProcessDependencies{
+		DeploymentID:      fixture.DeploymentID,
+		Scope:             fixture.Scope,
+		ForeignScope:      fixture.ForeignScope,
+		Actor:             fixture.Actor,
+		ForeignActor:      fixture.ForeignActor,
+		WrongActor:        fixture.WrongActor,
+		Connection:        fixture.Connection,
+		ForeignConnection: fixture.ForeignConnection,
+		OperationID:       fixture.OperationID,
+	}
+	if err := dependencies.validate(); err != nil {
+		t.Fatalf("validate child process dependencies: %v", err)
+	}
+	return dependencies
+}
+
+// ExecutionDependencies projects the child-safe identities into the existing
+// controlled capability boundary. Each child runtime supplies its own pool.
+func (dependencies ProcessDependencies) ExecutionDependencies() ServiceDependencies {
+	return ServiceDependencies{
+		DeploymentID:      dependencies.DeploymentID,
+		Scope:             dependencies.Scope,
+		ForeignScope:      dependencies.ForeignScope,
+		Actor:             dependencies.Actor,
+		ForeignActor:      dependencies.ForeignActor,
+		WrongActor:        dependencies.WrongActor,
+		Connection:        dependencies.Connection,
+		ForeignConnection: dependencies.ForeignConnection,
+		OperationID:       dependencies.OperationID,
+	}
+}
+
+func (dependencies ProcessDependencies) validate() error {
+	if dependencies.DeploymentID == "" || dependencies.OperationID == "" ||
+		dependencies.Connection.ConnectionID == "" ||
+		dependencies.Connection.ProviderAccountID == "" ||
+		dependencies.Connection.AccountWitness == "" ||
+		dependencies.ForeignConnection.ConnectionID == "" ||
+		dependencies.ForeignConnection.ProviderAccountID == "" ||
+		dependencies.ForeignConnection.AccountWitness == "" {
+		return errors.New("child process fixture identities are incomplete")
+	}
+	if err := dependencies.Scope.Validate(); err != nil {
+		return err
+	}
+	if err := dependencies.ForeignScope.Validate(); err != nil {
+		return err
+	}
+	for _, actor := range []contract.Actor{
+		dependencies.Actor,
+		dependencies.ForeignActor,
+		dependencies.WrongActor,
+	} {
+		if err := actor.Validate(); err != nil {
+			return err
+		}
+	}
+	if dependencies.Scope.OrgID != dependencies.ForeignScope.OrgID ||
+		dependencies.Actor.RequestedActor.OrgID != dependencies.Scope.OrgID ||
+		dependencies.ForeignActor.RequestedActor.OrgID != dependencies.ForeignScope.OrgID ||
+		dependencies.WrongActor.RequestedActor.OrgID != dependencies.Scope.OrgID {
+		return errors.New("child process fixture scopes and actors conflict")
+	}
+	return nil
+}
+
 // New creates one isolated fixture. At most one optional service configurator
 // may be supplied. Its default admission service is real but truthfully has no
 // operation resolver or registered execution capability.
 func New(t testing.TB, configure ...ConfigureService) *Fixture {
 	t.Helper()
+	return NewOperation(t, "fixture.read", configure...)
+}
+
+// NewOperation seeds the selected controlled operation into both owned scopes.
+// It changes no production catalog and grants no operation outside this fixture.
+func NewOperation(t testing.TB, operationID string, configure ...ConfigureService) *Fixture {
+	t.Helper()
+	if operationID == "" || len(operationID) > 1024 || strings.TrimSpace(operationID) != operationID ||
+		strings.ContainsAny(operationID, "\x00\r\n") {
+		t.Fatal("invalid controlled fixture operation identity")
+	}
 	runtimeDSN, migratorDSN := loadStoreCredentials(t)
 	suffix := randomHex(t, 8)
 	organizationID := "org-run-api-" + suffix
@@ -134,7 +276,7 @@ func New(t testing.TB, configure ...ConfigureService) *Fixture {
 			OrgID:       organizationID,
 			WorkspaceID: "workspace-foreign-" + suffix,
 		},
-		OperationID: "fixture.read",
+		OperationID: operationID,
 		runtimeDSN:  runtimeDSN,
 		migratorDSN: migratorDSN,
 		configure:   selectConfigurator(t, nil, configure),
@@ -180,16 +322,18 @@ func NewAdmitting(t testing.TB, configure ...ConfigureService) *Fixture {
 
 // NewExecuting creates the same real authenticated admission fixture and also
 // exposes the exact operation registry and resolver to a production worker.
+// One optional configurator extends the same real HTTP service composition.
 func NewExecuting(
 	t testing.TB,
 	execute app.ExecutionCallback,
 	reconcile app.ExecutionCallback,
+	configure ...ConfigureService,
 ) *Fixture {
 	t.Helper()
 	if execute == nil {
 		t.Fatal("controlled worker execution callback is required")
 	}
-	return newAdmitting(t, execute, reconcile, nil)
+	return newAdmitting(t, execute, reconcile, selectConfigurator(t, nil, configure))
 }
 
 func newAdmitting(
@@ -207,13 +351,14 @@ func newAdmitting(
 	fixture := New(t, func(dependencies ServiceDependencies, configuration *httpapi.ServiceConfig) error {
 		resolver = admittingResolver(dependencies)
 		admission, err := app.NewAdmissionService(app.AdmissionServiceConfig{
-			Pool:             dependencies.Pool,
-			DeploymentID:     dependencies.DeploymentID,
-			Authorize:        configuration.Auth.AuthorizeResource,
-			Registry:         registry,
-			ResolveOperation: resolver,
-			Policy:           admittingPolicy(),
-			Random:           rand.Reader,
+			Pool:              dependencies.Pool,
+			DeploymentID:      dependencies.DeploymentID,
+			Authorize:         configuration.Auth.AuthorizeResource,
+			Registry:          registry,
+			ResolveOperation:  resolver,
+			ResolveHTTPPolicy: admittingHTTPPolicy(dependencies),
+			Policy:            admittingPolicy(),
+			Random:            rand.Reader,
 		})
 		if err != nil {
 			return err
@@ -276,6 +421,141 @@ func (fixture *Fixture) ClientFor(t testing.TB, actor contract.Actor) *http.Clie
 	client := fixture.newClient(t, token)
 	fixture.clients = append(fixture.clients, client)
 	return client
+}
+
+// WriteCurrentProcessClientAccess creates one mode-0600 access document for an
+// owned client child. Session material never enters child arguments or the
+// environment and the file is removed with the test's private temp directory.
+func (fixture *Fixture) WriteCurrentProcessClientAccess(
+	t testing.TB,
+	actor contract.Actor,
+) string {
+	t.Helper()
+	if fixture == nil || fixture.closed || fixture.server == nil ||
+		fixture.server.Certificate() == nil {
+		t.Fatal("current child client access requires a running fixture API")
+	}
+	return fixture.WriteProcessClientAccess(t, actor, ProcessAPIReady{
+		BaseURL:     fixture.BaseURL,
+		Certificate: fixture.server.Certificate().Raw,
+	})
+}
+
+// WriteProcessClientAccess binds one fixture session to one exact child API
+// origin and certificate. The returned path contains session material and must
+// never be logged or copied outside the owned test directory.
+func (fixture *Fixture) WriteProcessClientAccess(
+	t testing.TB,
+	actor contract.Actor,
+	ready ProcessAPIReady,
+) string {
+	t.Helper()
+	if fixture == nil || fixture.closed {
+		t.Fatal("child client access requires an open fixture")
+	}
+	if err := actor.Validate(); err != nil || actor.Delegation != nil ||
+		!actor.RequestedActor.Equal(actor.EffectiveActor) {
+		t.Fatal("child client access requires a direct fixture actor")
+	}
+	token, ok := fixture.sessionTokens[actor.RequestedActor]
+	if !ok || token == "" {
+		t.Fatal("child client actor is not owned by this fixture")
+	}
+	if err := validateProcessAPIReady(ready); err != nil {
+		t.Fatalf("validate child API endpoint: %v", err)
+	}
+	document, err := json.Marshal(processClientAccess{
+		BaseURL: ready.BaseURL, Token: token, Certificate: ready.Certificate,
+	})
+	if err != nil || len(document) > processClientAccessLimit {
+		t.Fatal("encode bounded child client access")
+	}
+	path := filepath.Join(t.TempDir(), "client-access.json")
+	if err := os.WriteFile(path, document, 0o600); err != nil {
+		t.Fatalf("write child client access: %v", err)
+	}
+	return path
+}
+
+// OpenProcessClientAccess reconstructs the authenticated transport inside the
+// client child. It refuses links, broad permissions, oversized files, redirects
+// and any TLS identity other than the exact parent-supplied certificate.
+func OpenProcessClientAccess(path string) (ProcessClientEndpoint, error) {
+	if path == "" || !filepath.IsAbs(path) {
+		return ProcessClientEndpoint{}, errors.New("child client access path must be absolute")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return ProcessClientEndpoint{}, fmt.Errorf("inspect child client access: %w", err)
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o077 != 0 ||
+		info.Size() <= 0 || info.Size() > processClientAccessLimit {
+		return ProcessClientEndpoint{}, errors.New("child client access file is not a private bounded regular file")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return ProcessClientEndpoint{}, fmt.Errorf("open child client access: %w", err)
+	}
+	document, readErr := io.ReadAll(io.LimitReader(file, processClientAccessLimit+1))
+	closeErr := file.Close()
+	if readErr != nil || closeErr != nil || len(document) == 0 ||
+		len(document) > processClientAccessLimit {
+		return ProcessClientEndpoint{}, errors.New("read bounded child client access")
+	}
+	var access processClientAccess
+	if err := json.Unmarshal(document, &access); err != nil || access.Token == "" {
+		return ProcessClientEndpoint{}, errors.New("decode child client access")
+	}
+	ready := ProcessAPIReady{BaseURL: access.BaseURL, Certificate: access.Certificate}
+	if err := validateProcessAPIReady(ready); err != nil {
+		return ProcessClientEndpoint{}, err
+	}
+	origin, _ := url.Parse(access.BaseURL)
+	certificate, _ := x509.ParseCertificate(access.Certificate)
+	roots := x509.NewCertPool()
+	roots.AddCert(certificate)
+	transport := &http.Transport{
+		Proxy: nil,
+		TLSClientConfig: &tls.Config{
+			MinVersion: tls.VersionTLS12,
+			RootCAs:    roots,
+		},
+	}
+	client := &http.Client{
+		Transport: &sessionTransport{
+			next: transport, originHost: origin.Host, token: access.Token,
+		},
+		Timeout: requestTimeout,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	return ProcessClientEndpoint{BaseURL: access.BaseURL, Client: client}, nil
+}
+
+// Close releases child-owned idle connections.
+func (endpoint ProcessClientEndpoint) Close() {
+	if endpoint.Client != nil {
+		endpoint.Client.CloseIdleConnections()
+	}
+}
+
+func validateProcessAPIReady(ready ProcessAPIReady) error {
+	origin, err := url.Parse(ready.BaseURL)
+	if err != nil || origin.Scheme != "https" || origin.Host == "" ||
+		origin.User != nil || origin.Path != "" || origin.RawQuery != "" ||
+		origin.Fragment != "" {
+		return errors.New("child API origin is invalid")
+	}
+	address := net.ParseIP(origin.Hostname())
+	if address == nil || !address.IsLoopback() {
+		return errors.New("child API origin is not an explicit loopback address")
+	}
+	certificate, err := x509.ParseCertificate(ready.Certificate)
+	if err != nil || certificate == nil {
+		return errors.New("child API certificate is invalid")
+	}
+	return nil
 }
 
 // Restart closes the fixture's HTTP clients and TLS server, closes Pool, opens
@@ -541,10 +821,16 @@ func (fixture *Fixture) open(t testing.TB) {
 	}, service, io.Discard, service.Middleware()); err != nil {
 		t.Fatalf("register real fixture Gin routes: %v", err)
 	}
+	fixture.surface = http.NewServeMux()
+	fixture.apiHandler = router
 	server.Config.Handler = http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		fixture.activeRequests.Add(1)
 		defer fixture.activeRequests.Add(-1)
-		router.ServeHTTP(writer, request)
+		if strings.HasPrefix(request.URL.Path, "/__pm_fixture__/") {
+			fixture.surface.ServeHTTP(writer, request)
+			return
+		}
+		fixture.apiHandler.ServeHTTP(writer, request)
 	})
 	server.StartTLS()
 	if server.URL != origin {
@@ -553,6 +839,159 @@ func (fixture *Fixture) open(t testing.TB) {
 	fixture.BaseURL = server.URL
 	fixture.Client = fixture.ClientFor(t, fixture.Actor)
 	fixture.assertAuthenticated(t)
+}
+
+// ServeProcessAPI runs the same authenticated Gin/application composition in
+// the calling child process against the fixture's existing durable rows. It
+// starts no dependency service and returns only after the supplied process
+// context is cancelled.
+func ServeProcessAPI(
+	t testing.TB,
+	ctx context.Context,
+	dependencies ProcessDependencies,
+	ready func(ProcessAPIReady) error,
+) {
+	t.Helper()
+	if ctx == nil || ctx.Err() != nil || ready == nil {
+		t.Fatal("child API requires a live process context and readiness callback")
+	}
+	if err := dependencies.validate(); err != nil {
+		t.Fatalf("validate child API dependencies: %v", err)
+	}
+	runtimeDSN, _ := loadStoreCredentials(t)
+	openContext, cancelOpen := context.WithTimeout(ctx, fixtureTimeout)
+	pool, err := store.OpenPool(openContext, store.PoolConfig{
+		ConnectionString:  runtimeDSN,
+		MaxConns:          8,
+		MinConns:          0,
+		MaxConnLifetime:   5 * time.Minute,
+		MaxConnIdleTime:   time.Minute,
+		HealthCheckPeriod: 30 * time.Second,
+	})
+	cancelOpen()
+	if err != nil {
+		t.Fatalf("open child API fixture store: %T", err)
+	}
+	defer pool.Close()
+
+	server := httptest.NewUnstartedServer(http.NotFoundHandler())
+	server.Listener = httpapi.CloseOnWriteTimeout(
+		boundedWriteListener{Listener: server.Listener},
+	)
+	defer func() {
+		server.CloseClientConnections()
+		server.Close()
+	}()
+	origin := "https://" + server.Listener.Addr().String()
+	parsedOrigin, err := url.Parse(origin)
+	if err != nil {
+		t.Fatal("construct child API public origin")
+	}
+	oidcClient := &http.Client{Transport: rejectingOIDCTransport{}, Timeout: 2 * time.Second}
+	authentication, err := auth.NewService(auth.Config{
+		Pool:         pool,
+		DeploymentID: dependencies.DeploymentID,
+		Random:       rand.Reader,
+		Device: auth.DevicePolicy{
+			ChallengeTTL:     5 * time.Minute,
+			PollInterval:     time.Second,
+			StartWindow:      5 * time.Minute,
+			MaximumStarts:    3,
+			MaximumBodyBytes: 1024,
+		},
+		Sessions: auth.SessionPolicy{BrowserTTL: time.Hour, DeviceTTL: 24 * time.Hour},
+		Inbound: auth.InboundPolicy{
+			AllowedHosts:   []string{parsedOrigin.Host},
+			AllowedOrigins: []string{origin},
+		},
+		OIDC: syntheticOIDC(origin),
+	})
+	if err != nil {
+		t.Fatalf("construct child API authentication service: %v", err)
+	}
+	identity, err := app.NewIdentityService(app.IdentityServiceConfig{
+		Pool:             pool,
+		DeploymentID:     dependencies.DeploymentID,
+		Authorize:        authentication.AuthorizeResource,
+		Random:           rand.Reader,
+		ReceiptRetention: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("construct child API identity service: %v", err)
+	}
+	credentials, err := app.NewCredentialIngress(identity, app.CredentialIngressConfig{
+		StepUpMaximumAge: 2 * time.Minute,
+		WrappingKeyRef:   "fixture-wrapping-key-" + dependencies.DeploymentID,
+	})
+	if err != nil {
+		t.Fatalf("construct child API credential ingress: %v", err)
+	}
+	registry, resolver, err := NewExecutionBoundary(
+		dependencies.ExecutionDependencies(),
+		nil,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("construct child API controlled capability: %v", err)
+	}
+	admission, err := app.NewAdmissionService(app.AdmissionServiceConfig{
+		Pool:              pool,
+		DeploymentID:      dependencies.DeploymentID,
+		Authorize:         authentication.AuthorizeResource,
+		Registry:          registry,
+		ResolveOperation:  resolver,
+		ResolveHTTPPolicy: admittingHTTPPolicy(dependencies.ExecutionDependencies()),
+		Policy:            admittingPolicy(),
+		Random:            rand.Reader,
+	})
+	if err != nil {
+		t.Fatalf("construct child API admission service: %v", err)
+	}
+	runs, err := app.NewRunService(app.RunServiceConfig{
+		Pool:             pool,
+		DeploymentID:     dependencies.DeploymentID,
+		Authorize:        authentication.AuthorizeResource,
+		Random:           rand.Reader,
+		ReceiptRetention: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("construct child API run service: %v", err)
+	}
+	service, err := httpapi.NewService(httpapi.ServiceConfig{
+		PublicOrigin:   origin,
+		Auth:           authentication,
+		Identity:       identity,
+		Credentials:    credentials,
+		Admission:      admission,
+		Runs:           runs,
+		InstanceID:     dependencies.DeploymentID,
+		OIDCHTTPClient: oidcClient,
+	})
+	if err != nil {
+		t.Fatalf("construct child API HTTP service: %v", err)
+	}
+	router := gin.New()
+	if err := httpapi.RegisterRoutes(router, httpapi.TransportPolicy{
+		PublicOrigin:     origin,
+		TrustedProxies:   nil,
+		RequestTimeout:   requestTimeout,
+		MaximumBodyBytes: 1 << 20,
+	}, service, io.Discard, service.Middleware()); err != nil {
+		t.Fatalf("register child API Gin routes: %v", err)
+	}
+	server.Config.Handler = router
+	server.StartTLS()
+	if server.URL != origin || server.Certificate() == nil {
+		t.Fatal("child API TLS identity changed during startup")
+	}
+	endpoint := ProcessAPIReady{
+		BaseURL:     server.URL,
+		Certificate: append([]byte(nil), server.Certificate().Raw...),
+	}
+	if err := ready(endpoint); err != nil {
+		t.Fatalf("publish child API readiness: %v", err)
+	}
+	<-ctx.Done()
 }
 
 func (fixture *Fixture) issueSessions(t testing.TB, authentication *auth.Service) {
@@ -637,6 +1076,8 @@ func (fixture *Fixture) closeHTTP() {
 		fixture.server.CloseClientConnections()
 		fixture.server.Close()
 		fixture.server = nil
+		fixture.surface = nil
+		fixture.apiHandler = nil
 	}
 	fixture.BaseURL = ""
 }
@@ -803,6 +1244,13 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			return
 		}
 		for _, statement := range []string{
+			`UPDATE pm.object_org_capacity AS organization
+			 SET reserved_bytes = organization.reserved_bytes - workspace.reserved_bytes,
+			     reserved_attempts = organization.reserved_attempts - workspace.reserved_attempts
+			 FROM pm.object_workspace_capacity AS workspace
+			 WHERE organization.org_id = $1 AND workspace.org_id = $1 AND workspace.workspace_id = $2`,
+			`DELETE FROM pm.object_reservations WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.object_workspace_capacity WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workflow_reconciliation_witnesses WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workflow_command_intents WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.credential_refresh_leases WHERE org_id = $1 AND workspace_id = $2`,
@@ -823,6 +1271,7 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 			`DELETE FROM pm.identity_collection_revisions WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.memberships WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.connections WHERE org_id = $1 AND workspace_id = $2`,
+			`DELETE FROM pm.worker_retries WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.dispatch_attempts WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.run_specs WHERE org_id = $1 AND workspace_id = $2`,
 			`DELETE FROM pm.workspace_namespaces WHERE org_id = $1 AND workspace_id = $2`,
@@ -840,6 +1289,10 @@ func (fixture *Fixture) cleanup(t testing.TB) {
 	}
 	if err := bindScope(ctx, tx, fixture.DeploymentID, fixture.Scope, fixture.Actor); err != nil {
 		t.Errorf("bind fixture organization cleanup: %T", err)
+		return
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM pm.object_org_capacity WHERE org_id = $1 AND reserved_bytes = 0 AND reserved_attempts = 0`, fixture.Scope.OrgID); err != nil {
+		t.Errorf("clean fixture object capacity: %T", err)
 		return
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM pm.identities WHERE org_id = $1`, fixture.Scope.OrgID); err != nil {
@@ -936,6 +1389,30 @@ func admittingPolicy() store.RunBudgetPolicy {
 	}
 }
 
+// admittingHTTPPolicy mirrors production admission: an accepted run seals the
+// exact bounded HTTP policy of its authorized connection. The controlled fixture
+// derives the selected origin from the operation's own admitted origin, so a
+// fixture operation that declares no bounded HTTP execution stays truthfully
+// policy-less instead of receiving an invented policy.
+func admittingHTTPPolicy(dependencies ServiceDependencies) app.HTTPPolicyResolver {
+	resolve := admittingResolver(dependencies)
+	return func(scope contract.Scope, connectionID string) (contract.HTTPExecutionPolicy, bool) {
+		selection, err := resolve(context.Background(), scope, connectionID, dependencies.OperationID)
+		if err != nil || selection.Operation.Execution == nil || selection.Operation.Execution.HTTP == nil ||
+			len(selection.Operation.Execution.HTTP.Origins) != 1 {
+			return contract.HTTPExecutionPolicy{}, false
+		}
+		return contract.HTTPExecutionPolicy{
+			MaxRequestBytes:  1 << 20,
+			MaxResponseBytes: 1 << 20,
+			MaxDNSAnswers:    4,
+			MaxAttempts:      3,
+			MaxRetryDelay:    time.Minute,
+			SelectedOrigin:   selection.Operation.Execution.HTTP.Origins[0],
+		}, true
+	}
+}
+
 func admittingResolver(dependencies ServiceDependencies) app.OperationResolver {
 	return func(
 		_ context.Context,
@@ -954,25 +1431,56 @@ func admittingResolver(dependencies ServiceDependencies) app.OperationResolver {
 
 func admittingSelection(operationID string) app.OperationSelection {
 	foundation := contract.FoundationRef{ID: "FND-6", Version: "1.0.0"}
+	sourceRefs := []contract.SourceRef{
+		{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
+	}
 	return app.OperationSelection{
 		Operation: contract.Operation{
-			SchemaVersion: contract.OperationSchemaVersion,
-			OperationID:   operationID,
-			SourceRefs: []contract.SourceRef{
-				{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
-			},
-			Transport: contract.Transport{Kind: "http", Method: http.MethodGet, Path: "/fixture"},
-			Inputs:    []contract.FieldBinding{},
+			SchemaVersion:   contract.OperationSchemaVersion,
+			OperationID:     operationID,
+			SourceRefs:      sourceRefs,
+			Transport:       contract.Transport{Kind: contract.TransportKindHTTP, Method: http.MethodGet, Path: "/fixture"},
+			Inputs:          []contract.FieldBinding{},
+			RequestVariants: []contract.RequestVariant{},
 			Responses: []contract.Response{
-				{Status: "200", MediaType: "application/json", Schema: contract.Schema{Type: contract.SchemaTypeString}},
+				{
+					Status:     "200",
+					NoContent:  false,
+					MediaType:  "application/json",
+					Schema:     &contract.Schema{Type: contract.SchemaTypeString},
+					SourceRefs: sourceRefs,
+				},
 			},
 			CapabilityRequirements: []contract.CapabilityRequirement{
 				{Capability: "http.execute", Foundation: foundation},
 			},
-			LaneEligibility: []contract.LaneEligibility{{Lane: contract.LaneDirectRead, Eligible: true}},
+			LaneEligibility: fixtureLaneEligibility(contract.LaneDirectRead),
 		},
 		SchemaRefs: []string{"fixture-schema-v1"},
 	}
+}
+
+func fixtureLaneEligibility(eligible contract.Lane) []contract.LaneEligibility {
+	lanes := []contract.Lane{
+		contract.LaneDirectRead,
+		contract.LaneDirectWrite,
+		contract.LaneETL,
+		contract.LaneReverseETL,
+		contract.LaneBinaryDownload,
+		contract.LaneBinaryUpload,
+		contract.LaneSyncTransport,
+	}
+	eligibility := make([]contract.LaneEligibility, 0, len(lanes))
+	for _, lane := range lanes {
+		status := contract.LaneUnsupported
+		reason := "fixture-lane-unsupported"
+		if lane == eligible {
+			status = contract.LaneEligible
+			reason = "fixture-handler-registered"
+		}
+		eligibility = append(eligibility, contract.LaneEligibility{Lane: lane, Status: status, Reason: reason})
+	}
+	return eligibility
 }
 
 // NewExecutionBoundary reconstructs the fixture's exact admitted operation

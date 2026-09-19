@@ -13,12 +13,15 @@ import (
 // authorities. It contains no provider adapter or client-controlled key locator.
 // NewService takes an immutable copy; callers must not replace its dependencies.
 type ServiceConfig struct {
-	PublicOrigin          string
-	Auth                  *auth.Service
-	Identity              *app.IdentityService
-	Credentials           *app.CredentialIngress
-	Admission             *app.AdmissionService
-	Runs                  *app.RunService
+	PublicOrigin string
+	Auth         *auth.Service
+	Identity     *app.IdentityService
+	Credentials  *app.CredentialIngress
+	Catalog      *app.CatalogService
+	Admission    *app.AdmissionService
+	Runs         *app.RunService
+	// Artifacts is optional; absence preserves explicit read unavailability.
+	Artifacts             app.ArtifactBackend
 	InstanceID            string
 	OIDCHTTPClient        *http.Client
 	ResolveEventCursorKey func(context.Context) ([]byte, error)

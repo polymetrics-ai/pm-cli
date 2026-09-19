@@ -1,0 +1,17 @@
+openapi: 3.1.0
+info:
+  title: Synthetic recursive capture
+  version: 1.0.0
+servers:
+  - url: https://recursive.example.test/v1
+paths:
+  /nodes:
+    get:
+      operationId: getNodes
+      responses:
+        "200":
+          description: nodes
+          content:
+            application/json:
+              schema:
+                $ref: child.yaml#/$defs/Node

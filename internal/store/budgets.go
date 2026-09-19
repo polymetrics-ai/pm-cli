@@ -12,6 +12,7 @@ import (
 
 var (
 	ErrAccountCapacity    = errors.New("provider account capacity unavailable")
+	ErrAccountCooldown    = errors.New("provider account cooldown is active")
 	ErrAccountPermitStale = errors.New("account permit is stale")
 )
 
@@ -25,6 +26,7 @@ const (
 	AccountPermitUnknown    AccountPermitState = "unknown"
 	AccountPermitResolved   AccountPermitState = "resolved"
 	AccountPermitExpired    AccountPermitState = "expired"
+	AccountPermitReleased   AccountPermitState = "released"
 )
 
 type AccountPermitRequest struct {
@@ -80,7 +82,7 @@ func (permit AccountPermit) validate() error {
 		if permit.ResolvedAt != nil {
 			return errors.New("active account permit has a resolution time")
 		}
-	case AccountPermitResolved, AccountPermitExpired:
+	case AccountPermitResolved, AccountPermitExpired, AccountPermitReleased:
 		if permit.ResolvedAt == nil || permit.ResolvedAt.IsZero() {
 			return errors.New("terminal account permit has no resolution time")
 		}
@@ -134,6 +136,9 @@ func ReserveAccountPermit(ctx context.Context, tx *Transaction, request AccountP
 		return existing, nil
 	}
 	if !errors.Is(err, ErrNotFound) {
+		return AccountPermit{}, err
+	}
+	if err := requireAccountCooldownElapsed(ctx, tx, scope.OrgID, connection.ProviderAccountID); err != nil {
 		return AccountPermit{}, err
 	}
 	if request.Units > capacity-reserved {
@@ -200,6 +205,9 @@ func ReserveAccountPermit(ctx context.Context, tx *Transaction, request AccountP
 // dispatched state is conservative durable intent, not proof of provider I/O.
 func AuthorizeAccountPermit(ctx context.Context, tx *Transaction, permit AccountPermit) (AccountPermit, error) {
 	if err := requirePermitState(tx, permit, AccountPermitReserved); err != nil {
+		return AccountPermit{}, err
+	}
+	if err := CheckAccountCooldown(ctx, tx, permit); err != nil {
 		return AccountPermit{}, err
 	}
 	updated := permit
@@ -387,6 +395,76 @@ func ExpireAccountPermit(ctx context.Context, tx *Transaction, permit AccountPer
 	)
 	if err != nil {
 		return AccountPermit{}, fmt.Errorf("expire account permit: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return AccountPermit{}, ErrAccountPermitStale
+	}
+	if err := releaseProviderAccountUnits(ctx, tx, current, reserved); err != nil {
+		return AccountPermit{}, err
+	}
+	return current, nil
+}
+
+// ReleaseUnusedAccountPermit proves by exact reserved-state CAS that no physical
+// send received this authority, then releases its capacity immediately. Its
+// distinct terminal state preserves that non-dispatch provenance for settlement.
+func ReleaseUnusedAccountPermit(
+	ctx context.Context,
+	tx *Transaction,
+	permit AccountPermit,
+) (AccountPermit, error) {
+	if err := requirePermitState(tx, permit, AccountPermitReserved); err != nil {
+		return AccountPermit{}, err
+	}
+	_, reserved, err := lockProviderAccount(
+		ctx,
+		tx,
+		permit.Scope,
+		permit.ProviderAccountID,
+	)
+	if err != nil {
+		return AccountPermit{}, normalizePermitTransitionError(err)
+	}
+	current, err := loadAccountPermit(ctx, tx, permit.Scope, permit.PermitID, true)
+	if err != nil {
+		return AccountPermit{}, normalizePermitTransitionError(err)
+	}
+	if !samePermitCAS(current, permit) {
+		return AccountPermit{}, ErrAccountPermitStale
+	}
+	if current.State == AccountPermitReleased {
+		return current, nil
+	}
+	if current.State != AccountPermitReserved || current.ResolvedAt != nil {
+		return AccountPermit{}, ErrAccountPermitStale
+	}
+	releasedAt, err := readDatabaseTime(ctx, tx)
+	if err != nil {
+		return AccountPermit{}, err
+	}
+	current.State = AccountPermitReleased
+	current.ResolvedAt = &releasedAt
+	tag, err := tx.exec(ctx, `
+		UPDATE pm.account_permits
+		SET state = $10, resolved_at = $11
+		WHERE org_id = $1 AND workspace_id = $2 AND permit_id = $3
+		  AND connection_id = $4 AND provider_account_id = $5 AND units = $6
+		  AND state = $7 AND owner_id = $8 AND fence = $9 AND resolved_at IS NULL
+	`,
+		current.Scope.OrgID,
+		current.Scope.WorkspaceID,
+		current.PermitID,
+		current.ConnectionID,
+		current.ProviderAccountID,
+		current.Units,
+		string(AccountPermitReserved),
+		current.OwnerID,
+		current.Fence,
+		string(AccountPermitReleased),
+		releasedAt,
+	)
+	if err != nil {
+		return AccountPermit{}, fmt.Errorf("release unused account permit: %w", err)
 	}
 	if tag.RowsAffected() != 1 {
 		return AccountPermit{}, ErrAccountPermitStale

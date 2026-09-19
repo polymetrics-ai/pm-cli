@@ -1,0 +1,26 @@
+openapi: 3.0.3
+info:
+  title: Synthetic City nullability counterexample
+  version: 1.0.0
+servers:
+  - url: https://city.example.test/v1
+paths:
+  /addresses:
+    post:
+      operationId: createSyntheticAddress
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [id]
+              properties:
+                id:
+                  type: string
+                City:
+                  type: string
+      responses:
+        "204":
+          description: no content

@@ -77,21 +77,49 @@ func SealWorkerPlan(
 	if err != nil {
 		t.Fatalf("materialize controlled operation task: %v", err)
 	}
-	if snapshot.Done || len(snapshot.Units) != 1 || snapshot.Units[0].TaskID == "" {
-		t.Fatalf("materialized controlled units = %#v; want one dispatchable operation task", snapshot.Units)
+	if !snapshot.Done && len(snapshot.Units) == 1 {
+		// The production planner already derived this dispatch from the durable
+		// admission facts, so the fixture returns exactly that plan instead of
+		// sealing a second one.
+		var planned SealedWorkerPlan
+		unit := snapshot.Units[0]
+		err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(
+			ctx context.Context,
+			tx *store.Transaction,
+		) error {
+			dispatch, err := store.LoadDispatch(
+				ctx, tx, store.TaskRef{RunID: reference.RunID, TaskID: unit.TaskID}, unit.DispatchID,
+			)
+			if err != nil {
+				return err
+			}
+			planned = SealedWorkerPlan{TaskID: unit.TaskID, Dispatch: dispatch.Intent}
+			return nil
+		})
+		if err != nil {
+			t.Fatalf("load the production planned dispatch: %v", err)
+		}
+		return planned
+	}
+	if snapshot.Done || len(snapshot.Units) != 0 {
+		t.Fatalf("unplanned controlled snapshot = %#v; want pending work without a dispatchable unit", snapshot)
 	}
 
-	taskRef := store.TaskRef{RunID: reference.RunID, TaskID: snapshot.Units[0].TaskID}
 	var plan SealedWorkerPlan
 	var fixtureLease store.Lease
 	err = store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(
 		ctx context.Context,
 		tx *store.Transaction,
 	) error {
-		task, err := store.LoadTask(ctx, tx, taskRef)
+		tasks, err := store.ListWorkerTasks(ctx, tx, reference.RunID)
 		if err != nil {
 			return err
 		}
+		if len(tasks) != 1 {
+			return fmt.Errorf("materialized %d controlled tasks; want one", len(tasks))
+		}
+		task := tasks[0]
+		taskRef := store.TaskRef{RunID: reference.RunID, TaskID: task.TaskID}
 		run, err := store.LoadRun(ctx, tx, reference.RunID)
 		if err != nil {
 			return err
@@ -190,7 +218,7 @@ func SealWorkerPlan(
 			t.Fatalf("observe controlled planning lease expiry: %v", err)
 		}
 		if !now.Before(fixtureLease.ExpiresAt) {
-			return plan
+			break
 		}
 		select {
 		case <-ctx.Done():
@@ -198,4 +226,13 @@ func SealWorkerPlan(
 		case <-time.After(time.Millisecond):
 		}
 	}
+	snapshot, err = service.LoadWorkflow(ctx, execution, reference)
+	if err != nil {
+		t.Fatalf("load sealed controlled worker plan: %v", err)
+	}
+	wantUnit := contract.WorkflowUnitRef{TaskID: plan.TaskID, DispatchID: plan.Dispatch.DispatchID}
+	if snapshot.Done || len(snapshot.Units) != 1 || snapshot.Units[0] != wantUnit {
+		t.Fatalf("planned controlled units = %#v; want exact dispatch %#v", snapshot.Units, wantUnit)
+	}
+	return plan
 }

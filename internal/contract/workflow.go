@@ -8,6 +8,30 @@ import (
 
 const WorkflowReferenceSchemaVersion = "pm.workflow-ref/v1"
 
+// QuantizedTemporalDuration returns the effective duration the Temporal boundary
+// records for a sealed plan. Temporal stores timeouts with second granularity, so
+// positive sub-second precision rounds up to the next whole second; zero and
+// negative values stay zero. Every comparison against a value Temporal reports
+// back must use this quantization.
+func QuantizedTemporalDuration(value time.Duration) time.Duration {
+	if value <= 0 {
+		return 0
+	}
+	remainder := value % time.Second
+	if remainder == 0 {
+		return value
+	}
+	increment := time.Second - remainder
+	if value > time.Duration(1<<63-1)-increment {
+		return 0
+	}
+	return value + increment
+}
+
+// These fixed values are the only SDK version-marker scalars admitted to history.
+const WorkflowRunDeadlineProjectionChangeID = "run-deadline-projection"
+const WorkflowRunDeadlineProjectionVersion = 1
+
 type WorkflowObservation struct {
 	TemporalRunID string    `json:"temporal_run_id"`
 	ObservedAt    time.Time `json:"observed_at"`
@@ -379,14 +403,20 @@ func (reference WorkflowRunRef) Validate() error {
 }
 
 type WorkflowUnitRef struct {
-	TaskID string `json:"task_id"`
+	TaskID     string     `json:"task_id"`
+	DispatchID DispatchID `json:"dispatch_id,omitempty"`
 }
 
 func (reference *WorkflowUnitRef) UnmarshalJSON(data []byte) error {
 	type wire WorkflowUnitRef
 	var decoded wire
-	if err := decodeRequiredObject(data, &decoded, "task_id"); err != nil {
+	fields, err := decodeRequiredObjectFields(data, &decoded, "task_id")
+	if err != nil {
 		return err
+	}
+	if raw, present := fields["dispatch_id"]; present &&
+		(strings.TrimSpace(string(raw)) == "null" || decoded.DispatchID == "") {
+		return contractError(ErrInvalidIdentity, "workflow_unit_ref.dispatch_id", "must identify one exact durable dispatch when present")
 	}
 	value := WorkflowUnitRef(decoded)
 	if err := value.Validate(); err != nil {
@@ -399,6 +429,11 @@ func (reference *WorkflowUnitRef) UnmarshalJSON(data []byte) error {
 func (reference WorkflowUnitRef) Validate() error {
 	if !validIdentityPart(reference.TaskID) {
 		return contractError(ErrInvalidIdentity, "workflow_unit_ref.task_id", "must identify one durable task")
+	}
+	if reference.DispatchID != "" {
+		if err := reference.DispatchID.Validate(); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -471,6 +506,7 @@ func (timeouts ActivityTimeouts) Validate() error {
 type WorkflowRunSnapshot struct {
 	Run             WorkflowRunRef       `json:"run"`
 	Deadline        time.Time            `json:"deadline"`
+	RetryNotBefore  *time.Time           `json:"retry_not_before,omitempty"`
 	Timeouts        ActivityTimeouts     `json:"timeouts"`
 	Units           []WorkflowUnitRef    `json:"units"`
 	Commands        []WorkflowCommandRef `json:"commands"`
@@ -482,11 +518,16 @@ type WorkflowRunSnapshot struct {
 func (snapshot *WorkflowRunSnapshot) UnmarshalJSON(data []byte) error {
 	type wire WorkflowRunSnapshot
 	var decoded wire
-	if err := decodeRequiredObject(data, &decoded,
+	fields, err := decodeRequiredObjectFields(data, &decoded,
 		"run", "deadline", "timeouts", "units", "commands",
 		"done", "cancel_requested", "fanout",
-	); err != nil {
+	)
+	if err != nil {
 		return err
+	}
+	if raw, present := fields["retry_not_before"]; present &&
+		strings.TrimSpace(string(raw)) == "null" {
+		return contractError(ErrInvalidContract, "workflow_run_snapshot.retry_not_before", "explicit null cannot stand in for absent retry eligibility")
 	}
 	value := WorkflowRunSnapshot(decoded)
 	if err := value.Validate(); err != nil {
@@ -503,6 +544,20 @@ func (snapshot WorkflowRunSnapshot) Validate() error {
 	if err := validateUTCInstant(snapshot.Deadline, "workflow_run_snapshot.deadline"); err != nil {
 		return err
 	}
+	if snapshot.RetryNotBefore != nil {
+		if err := validateUTCInstant(*snapshot.RetryNotBefore, "workflow_run_snapshot.retry_not_before"); err != nil {
+			return err
+		}
+		if snapshot.RetryNotBefore.After(snapshot.Deadline) {
+			return contractError(ErrInvalidContract, "workflow_run_snapshot.retry_not_before", "cannot exceed the immutable run deadline")
+		}
+		if len(snapshot.Units) != 0 {
+			return contractError(ErrInvalidContract, "workflow_run_snapshot.retry_not_before", "must be absent while a unit is runnable")
+		}
+		if snapshot.Done {
+			return contractError(ErrInvalidContract, "workflow_run_snapshot.retry_not_before", "must be absent after coordination is complete")
+		}
+	}
 	if err := snapshot.Timeouts.Validate(); err != nil {
 		return err
 	}
@@ -513,6 +568,9 @@ func (snapshot WorkflowRunSnapshot) Validate() error {
 		return contractError(ErrInvalidContract, "workflow_run_snapshot.fanout", "must be between one and 32")
 	}
 	seenUnits := make(map[string]struct{}, len(snapshot.Units))
+	seenDispatches := make(map[DispatchID]struct{}, len(snapshot.Units))
+	hasQualifiedUnits := false
+	hasUnqualifiedUnits := false
 	for _, unit := range snapshot.Units {
 		if err := unit.Validate(); err != nil {
 			return err
@@ -521,6 +579,18 @@ func (snapshot WorkflowRunSnapshot) Validate() error {
 			return contractError(ErrDuplicateField, "workflow_run_snapshot.units", "task identity is duplicated")
 		}
 		seenUnits[unit.TaskID] = struct{}{}
+		if unit.DispatchID == "" {
+			hasUnqualifiedUnits = true
+			continue
+		}
+		hasQualifiedUnits = true
+		if _, duplicate := seenDispatches[unit.DispatchID]; duplicate {
+			return contractError(ErrDuplicateField, "workflow_run_snapshot.units", "dispatch identity is duplicated")
+		}
+		seenDispatches[unit.DispatchID] = struct{}{}
+	}
+	if hasQualifiedUnits && hasUnqualifiedUnits {
+		return contractError(ErrInvalidContract, "workflow_run_snapshot.units", "cannot mix retained initial and qualified dispatch references")
 	}
 	seenCommands := make(map[string]struct{}, len(snapshot.Commands))
 	for _, command := range snapshot.Commands {

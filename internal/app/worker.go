@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 	"sync"
@@ -11,6 +12,9 @@ import (
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/credentials"
+	"github.com/polymetrics-ai/pm-cli/internal/objects"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -62,29 +66,39 @@ type ScheduledRunAdmitter func(
 	contract.ScheduledRunInput,
 ) (contract.StartRunInput, error)
 
+// WorkerCredentialKeyLoader transfers ownership of one freshly loaded
+// operator-owned wrapping key to the caller, which must wipe it.
+type WorkerCredentialKeyLoader func(context.Context, string) ([]byte, error)
+
 type WorkerServiceConfig struct {
-	Pool                 *store.Pool
-	DeploymentID         string
-	Registry             *HandlerRegistry
-	ResolveOperation     OperationResolver
-	Authorization        auth.ResourceAuthorization
-	ObserveContinuation  contract.WorkflowContinuationObserver
-	ActivityTimeouts     contract.ActivityTimeouts
-	ScheduledRunAdmitter ScheduledRunAdmitter
+	Pool                      *store.Pool
+	DeploymentID              string
+	Registry                  *HandlerRegistry
+	ResolveOperation          OperationResolver
+	Authorization             auth.ResourceAuthorization
+	ObserveContinuation       contract.WorkflowContinuationObserver
+	ActivityTimeouts          contract.ActivityTimeouts
+	ScheduledRunAdmitter      ScheduledRunAdmitter
+	LoadCredentialWrappingKey WorkerCredentialKeyLoader
+	ArtifactPublisher         *objects.Publisher
+	MaximumResultBytes        int64
 }
 
 // WorkerService is the authenticated application boundary behind Temporal
 // activities. Workflow payload tenant fields are integrity checks only; the
 // database route derives the accepted scope and actor before RLS is installed.
 type WorkerService struct {
-	pool                *store.Pool
-	deploymentID        string
-	registry            *HandlerRegistry
-	resolveOperation    OperationResolver
-	authorization       auth.ResourceAuthorization
-	observeContinuation contract.WorkflowContinuationObserver
-	timeouts            contract.ActivityTimeouts
-	scheduledAdmitter   ScheduledRunAdmitter
+	pool                      *store.Pool
+	deploymentID              string
+	registry                  *HandlerRegistry
+	resolveOperation          OperationResolver
+	authorization             auth.ResourceAuthorization
+	observeContinuation       contract.WorkflowContinuationObserver
+	timeouts                  contract.ActivityTimeouts
+	scheduledAdmitter         ScheduledRunAdmitter
+	loadCredentialWrappingKey WorkerCredentialKeyLoader
+	artifactPublisher         *objects.Publisher
+	maximumResultBytes        int64
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -101,15 +115,22 @@ func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error)
 	if err := configuration.ActivityTimeouts.Validate(); err != nil {
 		return nil, fmt.Errorf("validate worker activity timeouts: %w", err)
 	}
+	if configuration.ArtifactPublisher == nil && configuration.MaximumResultBytes != 0 ||
+		configuration.ArtifactPublisher != nil && (configuration.MaximumResultBytes <= 0 || configuration.MaximumResultBytes == math.MaxInt64) {
+		return nil, errors.New("worker result publisher requires a finite artifact byte bound")
+	}
 	return &WorkerService{
-		pool:                configuration.Pool,
-		deploymentID:        configuration.DeploymentID,
-		registry:            configuration.Registry,
-		resolveOperation:    configuration.ResolveOperation,
-		authorization:       configuration.Authorization,
-		observeContinuation: configuration.ObserveContinuation,
-		timeouts:            configuration.ActivityTimeouts,
-		scheduledAdmitter:   configuration.ScheduledRunAdmitter,
+		pool:                      configuration.Pool,
+		deploymentID:              configuration.DeploymentID,
+		registry:                  configuration.Registry,
+		resolveOperation:          configuration.ResolveOperation,
+		authorization:             configuration.Authorization,
+		observeContinuation:       configuration.ObserveContinuation,
+		timeouts:                  configuration.ActivityTimeouts,
+		scheduledAdmitter:         configuration.ScheduledRunAdmitter,
+		loadCredentialWrappingKey: configuration.LoadCredentialWrappingKey,
+		artifactPublisher:         configuration.ArtifactPublisher,
+		maximumResultBytes:        configuration.MaximumResultBytes,
 	}, nil
 }
 
@@ -205,31 +226,58 @@ func (service *WorkerService) LoadWorkflow(
 		}
 		units := make([]contract.WorkflowUnitRef, 0, len(tasks))
 		allCoordinated := true
+		var retryNotBefore *time.Time
 		for _, task := range tasks {
 			if task.Lane != state.input.Lane {
 				return workerFailure(ErrWorkerConflict, errors.New("task lane differs from the immutable admission lane"))
 			}
-			coordinated, err := workerTaskCoordinationComplete(ctx, tx, state.route.Scope, task)
+			// A task with no durable dispatch becomes runnable only through the
+			// production planner, which persists the exact effect, dispatch and
+			// member intent before any provider I/O. It never creates send
+			// authority and never derives a plan from a provider response, a
+			// desired row or a cached proof.
+			if err := service.planWorkerTaskDispatch(ctx, tx, state, task); err != nil {
+				return err
+			}
+			dispatch, coordinated, err := workerTaskCoordination(ctx, tx, state.route.Scope, task)
 			if err != nil {
 				return err
 			}
-			if !coordinated {
-				allCoordinated = false
-				if workerRunDispatchable(state.record.State) &&
-					workerRunDispatchable(task.State) && !task.CancelRequested {
-					units = append(units, contract.WorkflowUnitRef{TaskID: task.TaskID})
+			if coordinated {
+				continue
+			}
+			allCoordinated = false
+			if dispatch == nil || state.record.CancelRequested || task.CancelRequested {
+				continue
+			}
+			if workerDispatchRunnable(state, task, *dispatch) {
+				units = append(units, contract.WorkflowUnitRef{
+					TaskID: task.TaskID, DispatchID: dispatch.Intent.DispatchID,
+				})
+				continue
+			}
+			if workerRetryMaySchedule(state, task, *dispatch) &&
+				dispatch.State == store.DispatchPrepared && len(dispatch.Attempts) == 0 &&
+				state.now.Before(dispatch.Retry.NotBefore) {
+				notBefore := dispatch.Retry.NotBefore
+				if retryNotBefore == nil || notBefore.Before(*retryNotBefore) {
+					retryNotBefore = &notBefore
 				}
 			}
 		}
 		done := workerTerminalState(state.record.State) || allCoordinated
 		if done {
 			units = []contract.WorkflowUnitRef{}
+			retryNotBefore = nil
+		} else if len(units) != 0 {
+			retryNotBefore = nil
 		}
 		snapshot = contract.WorkflowRunSnapshot{
 			Run:             reference,
 			Deadline:        state.deadline,
 			Timeouts:        timeouts,
 			Units:           units,
+			RetryNotBefore:  retryNotBefore,
 			Commands:        commands,
 			Done:            done,
 			CancelRequested: state.record.CancelRequested,
@@ -311,50 +359,54 @@ func (service *WorkerService) ensureOperationTask(
 	return tasks, nil
 }
 
-func workerTaskCoordinationComplete(
+func workerTaskCoordination(
 	ctx context.Context,
 	tx *store.Transaction,
 	scope contract.Scope,
 	task contract.Task,
-) (bool, error) {
+) (*store.DispatchRecord, bool, error) {
 	taskRef := store.TaskRef{RunID: task.RunID, TaskID: task.TaskID}
 	dispatch, err := store.LoadWorkerDispatch(ctx, tx, taskRef)
 	if errors.Is(err, store.ErrNotFound) {
 		if workerTaskRequiresSettlement(task.State) {
-			return false, workerFailure(ErrWorkerConflict, errors.New("completed task lacks its durable dispatch"))
+			return nil, false, workerFailure(ErrWorkerConflict, errors.New("completed task lacks its durable dispatch"))
 		}
-		return false, nil
+		return nil, false, nil
 	}
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	outcomes, err := store.ListMemberOutcomes(ctx, tx, taskRef, dispatch.Intent.DispatchID)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if len(outcomes) == 0 {
-		if workerTaskRequiresSettlement(task.State) {
-			return false, workerFailure(ErrWorkerConflict, errors.New("completed task lacks durable member outcomes"))
+		if workerTerminalState(task.State) && dispatch.Retry != nil &&
+			dispatch.State == store.DispatchPrepared && len(dispatch.Attempts) == 0 {
+			return &dispatch, true, nil
 		}
-		return false, nil
+		if workerTaskRequiresSettlement(task.State) && dispatch.Retry == nil {
+			return nil, false, workerFailure(ErrWorkerConflict, errors.New("completed task lacks durable member outcomes"))
+		}
+		return &dispatch, false, nil
 	}
 	if err := contract.ValidateSettlement(dispatch.Intent, outcomes); err != nil {
-		return false, workerFailure(ErrWorkerConflict, err)
+		return nil, false, workerFailure(ErrWorkerConflict, err)
 	}
 	settlementRef, err := workerSettlementRef(scope, task, dispatch.Intent)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	exists, err := store.WorkerReceiptExists(
 		ctx, tx, task.RunID, settlementRef, workerSettlementReceiptKind,
 	)
 	if err != nil {
-		return false, err
+		return nil, false, err
 	}
 	if !exists {
-		return false, workerFailure(ErrWorkerConflict, errors.New("settled outcomes lack their durable worker receipt"))
+		return nil, false, workerFailure(ErrWorkerConflict, errors.New("settled outcomes lack their durable worker receipt"))
 	}
-	return true, nil
+	return &dispatch, true, nil
 }
 
 func sameWorkerTaskIdentity(stored, expected contract.Task) bool {
@@ -367,16 +419,17 @@ func sameWorkerTaskIdentity(stored, expected contract.Task) bool {
 }
 
 type workerUnitPlan struct {
-	state     workerRunState
-	timeouts  contract.ActivityTimeouts
-	task      contract.Task
-	dispatch  store.DispatchRecord
-	lease     store.Lease
-	permit    store.AccountPermit
-	handler   ResolvedHandler
-	request   ExecutionRequest
-	reconcile bool
-	existing  *contract.WorkflowUnitResult
+	state             workerRunState
+	timeouts          contract.ActivityTimeouts
+	task              contract.Task
+	dispatch          store.DispatchRecord
+	lease             store.Lease
+	permit            store.AccountPermit
+	handler           ResolvedHandler
+	request           ExecutionRequest
+	reconcile         bool
+	existing          *contract.WorkflowUnitResult
+	resultReservation store.ObjectReservation
 }
 
 func (service *WorkerService) ExecuteUnit(
@@ -427,6 +480,13 @@ func (service *WorkerService) ExecuteUnit(
 	} else {
 		observation, callbackErr = plan.handler.Execute(callbackCtx, plan.request)
 	}
+	continuationPublication, continuationPublicationErr := plan.request.continuation.preparedForResult(observation.Result)
+	resultForPublication := observation.Result
+	if continuationPublicationErr != nil {
+		resultForPublication = nil
+	}
+	publication, resultPublicationErr := service.prepareWorkerResult(callbackCtx, plan, resultForPublication)
+	publicationErr := errors.Join(continuationPublicationErr, resultPublicationErr)
 	cancel()
 
 	settlementDeadline := plan.state.deadline
@@ -437,7 +497,7 @@ func (service *WorkerService) ExecuteUnit(
 		ctx, settlementDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 	)
 	defer settleCancel()
-	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, callbackErr)
+	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, publication, continuationPublication, publicationErr, callbackErr)
 	stopHeartbeats()
 	if err != nil {
 		return contract.WorkflowUnitResult{}, service.mapWorkerError(err)
@@ -481,10 +541,15 @@ func (service *WorkerService) prepareWorkerUnit(
 		if task.Lane != state.input.Lane {
 			return workerFailure(ErrWorkerConflict, errors.New("task lane differs from immutable admission"))
 		}
-		dispatch, err := store.LoadWorkerDispatch(ctx, tx, taskRef)
+		var dispatch store.DispatchRecord
+		if request.Unit.DispatchID == "" {
+			dispatch, err = store.LoadInitialWorkerDispatch(ctx, tx, taskRef)
+		} else {
+			dispatch, err = store.LoadDispatch(ctx, tx, taskRef, request.Unit.DispatchID)
+		}
 		if err != nil {
 			if errors.Is(err, store.ErrNotFound) {
-				return workerFailure(ErrWorkerCapabilityUnavailable, errors.New("sealed execution-plan dispatch is unavailable"))
+				return workerFailure(ErrWorkerCapabilityUnavailable, errors.New("qualified sealed dispatch is unavailable"))
 			}
 			return err
 		}
@@ -518,9 +583,21 @@ func (service *WorkerService) prepareWorkerUnit(
 			if !exists {
 				return workerFailure(ErrWorkerConflict, errors.New("settled outcomes lack their durable worker receipt"))
 			}
+			result, err := workerUnitResultForStoredSettlement(
+				ctx, tx, taskRef, task.TaskID, settlementRef, dispatch.Intent, outcomes,
+			)
+			if err != nil {
+				return err
+			}
+			plan.existing = &result
+			return nil
+		}
+		if workerTerminalState(task.State) && dispatch.Retry != nil &&
+			dispatch.State == store.DispatchPrepared && len(dispatch.Attempts) == 0 {
 			result := contract.WorkflowUnitResult{
 				TaskID: task.TaskID, State: task.State,
-				UnknownEffectCount: task.UnknownEffectCount, ResultRef: settlementRef,
+				UnknownEffectCount: task.UnknownEffectCount,
+				ResultRef:          dispatch.Retry.SettlementReceiptID,
 			}
 			if err := result.Validate(); err != nil {
 				return workerFailure(ErrWorkerConflict, err)
@@ -532,7 +609,7 @@ func (service *WorkerService) prepareWorkerUnit(
 			return workerFailure(ErrWorkerConflict, errors.New("unsettled dispatch belongs to terminal durable state"))
 		}
 		freshSend := false
-		_, handler, err := service.resolveHandler(ctx, state, task.OperationID, expectedRevision, task.Lane)
+		selection, handler, err := service.resolveHandler(ctx, state, task.OperationID, expectedRevision, task.Lane)
 		if err != nil {
 			return err
 		}
@@ -550,36 +627,55 @@ func (service *WorkerService) prepareWorkerUnit(
 		switch {
 		case dispatch.State == store.DispatchPrepared && len(dispatch.Attempts) == 0:
 			freshSend = true
-			if state.record.State == contract.RunStateRunning {
-				locked, err := store.LoadWorkerRunForUpdate(ctx, tx, task.RunID)
-				if err != nil {
+			locked, err := store.LoadWorkerRunForUpdate(ctx, tx, task.RunID)
+			if err != nil {
+				return err
+			}
+			state.record = locked
+			plan.state = state
+			if dispatch.Retry != nil {
+				if state.record.CancelRequested || task.CancelRequested ||
+					!workerRetryMaySchedule(state, task, dispatch) {
+					result := contract.WorkflowUnitResult{
+						TaskID: task.TaskID, State: task.State,
+						UnknownEffectCount: task.UnknownEffectCount, ResultRef: task.TaskID,
+					}
+					if err := result.Validate(); err != nil {
+						return workerFailure(ErrWorkerConflict, err)
+					}
+					plan.existing = &result
+					return nil
+				}
+				if state.now.Before(dispatch.Retry.NotBefore) {
+					return workerFailure(ErrWorkerAuthorization, errors.New("worker retry is not yet eligible"))
+				}
+				if err := validatePreparedWorkerRetry(state, task, dispatch, selection, handler); err != nil {
 					return err
 				}
-				state.record = locked
-				plan.state = state
-			}
-			if state.record.CancelRequested || !workerRunDispatchable(state.record.State) ||
-				task.CancelRequested || !workerRunDispatchable(task.State) {
-				result := contract.WorkflowUnitResult{
-					TaskID: task.TaskID, State: task.State,
-					UnknownEffectCount: task.UnknownEffectCount, ResultRef: task.TaskID,
+			} else {
+				if state.record.CancelRequested || !workerRunDispatchable(state.record.State) ||
+					task.CancelRequested || !workerRunDispatchable(task.State) {
+					result := contract.WorkflowUnitResult{
+						TaskID: task.TaskID, State: task.State,
+						UnknownEffectCount: task.UnknownEffectCount, ResultRef: task.TaskID,
+					}
+					if err := result.Validate(); err != nil {
+						return workerFailure(ErrWorkerConflict, err)
+					}
+					plan.existing = &result
+					return nil
 				}
-				if err := result.Validate(); err != nil {
-					return workerFailure(ErrWorkerConflict, err)
+				if state.record.State != contract.RunStateRunning {
+					started, err := store.StartWorkerRun(ctx, tx, state.record, state.now)
+					if err != nil {
+						return err
+					}
+					state.record = started
+					plan.state = state
 				}
-				plan.existing = &result
-				return nil
 			}
 			if !state.deadline.After(state.now) {
 				return workerFailure(ErrWorkerAuthorization, errors.New("accepted run lifetime has expired"))
-			}
-			if state.record.State != contract.RunStateRunning {
-				started, err := store.StartWorkerRun(ctx, tx, state.record, state.now)
-				if err != nil {
-					return err
-				}
-				state.record = started
-				plan.state = state
 			}
 		case dispatch.State == store.DispatchPossiblySent && len(dispatch.Attempts) == 1:
 			// A durable attempt authorizes reconciliation-only observation even
@@ -594,7 +690,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		if err != nil {
 			return err
 		}
-		if freshSend {
+		if freshSend && dispatch.Retry == nil {
 			task, err = store.StartWorkerTask(ctx, tx, lease, task, state.now)
 			if err != nil {
 				return err
@@ -626,10 +722,15 @@ func (service *WorkerService) prepareWorkerUnit(
 		}
 		var permit store.AccountPermit
 		if freshSend {
-			permit, err = AcquirePermit(ctx, tx, store.AccountPermitRequest{
+			permitRequest := store.AccountPermitRequest{
 				PermitID: permitID, ConnectionID: state.input.ConnectionID,
 				OwnerID: permitOwner, Units: 1, TTL: permitTTL,
-			}, connection.ProviderAccountID)
+			}
+			if handler.Kind == HandlerHTTP && state.input.ResultControls.HasContinuation() {
+				permit, err = reserveWorkerPermit(ctx, tx, permitRequest, connection.ProviderAccountID)
+			} else {
+				permit, err = AcquirePermit(ctx, tx, permitRequest, connection.ProviderAccountID)
+			}
 			if err != nil {
 				return err
 			}
@@ -686,6 +787,14 @@ func (service *WorkerService) prepareWorkerUnit(
 			if _, err := store.RecordDispatchAttempt(ctx, tx, workerAttemptCommit(taskRef, task, dispatch.Intent, permit, attempt)); err != nil {
 				return err
 			}
+			dispatch, err = store.LoadDispatch(ctx, tx, taskRef, dispatch.Intent.DispatchID)
+			if err != nil {
+				return err
+			}
+			if dispatch.State != store.DispatchPossiblySent || len(dispatch.Attempts) != 1 ||
+				dispatch.Attempts[0] != attempt {
+				return workerFailure(ErrWorkerConflict, errors.New("recorded dispatch attempt could not be reloaded exactly"))
+			}
 		case 1:
 			if freshSend {
 				return workerFailure(ErrWorkerConflict, errors.New("new dispatch unexpectedly has a durable physical attempt"))
@@ -708,7 +817,38 @@ func (service *WorkerService) prepareWorkerUnit(
 			Scope: state.route.Scope, ConnectionID: state.input.ConnectionID, PermitRef: permit.PermitID,
 			ReconciliationOnly: !freshSend,
 			Run:                state.record.Spec, Task: task, Dispatch: dispatch.Intent, Attempt: attempt,
-			Input: state.input.Input, Controls: state.input.ResultControls, Deadline: state.deadline,
+			AttemptNumber: dispatch.AttemptNumber,
+			Operation:     selection.Operation,
+			Input:         state.input.Input, Controls: state.input.ResultControls, Deadline: state.deadline,
+		}
+		if state.budget.Policy.HTTP != nil {
+			plan.request.HTTPPolicy = *state.budget.Policy.HTTP
+		}
+		if freshSend {
+			physicalCall, err := newWorkerPhysicalCallBoundary(
+				service, execution, request.Run, state, task, dispatch.Intent, attempt, lease, permit,
+				dispatch.Retry != nil,
+			)
+			if err != nil {
+				return err
+			}
+			plan.request.physicalCall = physicalCall
+		}
+		if freshSend && continuationRequiredForHTTP(selection.Operation, state.input.ResultControls) {
+			if handler.Kind != HandlerHTTP || handler.continuations == nil ||
+				service.artifactPublisher == nil || service.maximumResultBytes <= 0 {
+				return workerFailure(ErrWorkerCapabilityUnavailable, ErrContinuationInvalid)
+			}
+			plan.request.continuation, err = handler.continuations.reserveWorkerContinuation(
+				ctx, tx, plan, selection.Operation, connection, account,
+			)
+			if err != nil {
+				return err
+			}
+		}
+		plan.resultReservation, err = service.reserveWorkerResult(ctx, tx, plan)
+		if err != nil {
+			return err
 		}
 		return nil
 	})
@@ -735,6 +875,13 @@ func claimWorkerTask(
 	if err != nil {
 		return store.Lease{}, err
 	}
+	ttl := maxTTL
+	if !reconciliationOnly {
+		ttl = minWorkerDuration(state.deadline.Sub(state.now), ttl)
+	}
+	if ttl <= 0 {
+		return store.Lease{}, workerFailure(ErrWorkerAuthorization, errors.New("worker lease authority has elapsed"))
+	}
 	expectedFence := uint64(0)
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
@@ -744,13 +891,6 @@ func claimWorkerTask(
 		expectedFence = current.Fence
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return store.Lease{}, err
-	}
-	ttl := maxTTL
-	if !reconciliationOnly {
-		ttl = minWorkerDuration(state.deadline.Sub(state.now), ttl)
-	}
-	if ttl <= 0 {
-		return store.Lease{}, workerFailure(ErrWorkerAuthorization, errors.New("worker lease authority has elapsed"))
 	}
 	return store.ClaimTask(ctx, tx, store.ClaimRequest{
 		Task: ref, OwnerID: ownerID, ExpectedFence: expectedFence, TTL: ttl,
@@ -803,6 +943,9 @@ func (service *WorkerService) settleWorkerUnit(
 	request contract.WorkflowUnitRequest,
 	plan workerUnitPlan,
 	observation ExecutionObservation,
+	publication *objects.PreparedPublication,
+	continuationPublication *objects.PreparedPublication,
+	publicationErr error,
 	callbackErr error,
 ) (contract.WorkflowUnitResult, error) {
 	var result contract.WorkflowUnitResult
@@ -816,9 +959,13 @@ func (service *WorkerService) settleWorkerUnit(
 		if err != nil {
 			return err
 		}
-		dispatch, err := store.LoadWorkerDispatch(ctx, tx, taskRef)
+		dispatch, err := store.LoadDispatch(ctx, tx, taskRef, plan.dispatch.Intent.DispatchID)
 		if err != nil {
 			return err
+		}
+		if dispatch.Intent.DispatchID != plan.dispatch.Intent.DispatchID ||
+			dispatch.AttemptNumber != plan.dispatch.AttemptNumber {
+			return workerFailure(ErrWorkerConflict, errors.New("settlement dispatch differs from the executed qualified unit"))
 		}
 		settlementRef, err := workerSettlementRef(state.route.Scope, task, dispatch.Intent)
 		if err != nil {
@@ -839,11 +986,10 @@ func (service *WorkerService) settleWorkerUnit(
 			if !exists {
 				return workerFailure(ErrWorkerConflict, errors.New("settled outcomes lack their durable worker receipt"))
 			}
-			result = contract.WorkflowUnitResult{
-				TaskID: task.TaskID, State: task.State,
-				UnknownEffectCount: task.UnknownEffectCount, ResultRef: settlementRef,
-			}
-			return result.Validate()
+			result, err = workerUnitResultForStoredSettlement(
+				ctx, tx, taskRef, task.TaskID, settlementRef, dispatch.Intent, storedOutcomes,
+			)
+			return err
 		}
 		if dispatch.State != store.DispatchPossiblySent || len(dispatch.Attempts) != 1 ||
 			dispatch.Attempts[0].ReceiptRef != plan.request.Attempt.ReceiptRef {
@@ -862,9 +1008,29 @@ func (service *WorkerService) settleWorkerUnit(
 		if contract.ValidateSettlement(dispatch.Intent, outcomes) != nil {
 			outcomes = unknownWorkerOutcomes(dispatch.Intent, now, plan.request.Attempt.ReceiptRef)
 		}
-		summary, err := store.WorkerSettlementSummary(dispatch.Intent, outcomes)
+		attemptSummary, err := store.WorkerSettlementSummary(dispatch.Intent, outcomes)
 		if err != nil {
 			return workerFailure(ErrWorkerConflict, err)
+		}
+		localCompletion := verifiedLocalHTTPCompletion(plan, observation, outcomes, callbackErr)
+		var retry *store.WorkerRetryPlan
+		if !state.record.CancelRequested && !task.CancelRequested &&
+			state.grant.RevokedAt == nil &&
+			now.Before(state.deadline) && now.Before(state.grant.Grant.ExpiresAt) {
+			retry, err = workerHTTPRetryPlan(plan, observation, outcomes, settlementRef)
+			if err != nil {
+				return err
+			}
+		}
+		if retry != nil && (localCompletion || publication != nil || continuationPublication != nil) {
+			return workerFailure(ErrWorkerConflict, errors.New("HTTP retry cannot coexist with a result or continuation publication"))
+		}
+		summary := attemptSummary
+		if retry != nil {
+			summary, err = store.WorkerRetrySettlementSummary(dispatch.Intent, outcomes, *retry)
+			if err != nil {
+				return workerFailure(ErrWorkerConflict, err)
+			}
 		}
 		projectedAt := now
 		for _, outcome := range outcomes {
@@ -872,7 +1038,12 @@ func (service *WorkerService) settleWorkerUnit(
 				projectedAt = outcome.ObservedAt.UTC()
 			}
 		}
-		updatedTask, err := task.ApplyEffectSummary(summary, false, "", projectedAt)
+		blockedReason := ""
+		policyBlocked := retry == nil && summary.Unsent != 0
+		if policyBlocked {
+			blockedReason = "attempt_not_sent"
+		}
+		updatedTask, err := task.ApplyEffectSummary(summary, policyBlocked, blockedReason, projectedAt)
 		if err != nil {
 			return workerFailure(ErrWorkerConflict, err)
 		}
@@ -888,12 +1059,35 @@ func (service *WorkerService) settleWorkerUnit(
 		if err := updatedTask.Validate(); err != nil {
 			return workerFailure(ErrWorkerConflict, err)
 		}
-		if summary.Unknown != 0 {
+		switch {
+		case localCompletion:
+			if permit.State != store.AccountPermitReserved {
+				return workerFailure(ErrWorkerConflict, errors.New("verified local result has a dispatched account permit"))
+			}
+		case attemptSummary.Unknown != 0:
 			if permit.State != store.AccountPermitDispatched && permit.State != store.AccountPermitUnknown {
 				return workerFailure(ErrWorkerConflict, errors.New("unknown settlement has incompatible account permit state"))
 			}
-		} else if permit.State != store.AccountPermitDispatched && permit.State != store.AccountPermitUnknown {
+		case attemptSummary.Unsent != 0 && permit.State == store.AccountPermitReserved:
+			// A continuation callback can fail before reaching the one-use
+			// physical admission boundary. The reserved permit proves the
+			// provider send was not admitted, but only a verified local result
+			// may release it; ordinary expiry retains bounded accounting.
+		case permit.State != store.AccountPermitDispatched && permit.State != store.AccountPermitUnknown:
 			return workerFailure(ErrWorkerConflict, errors.New("known settlement has incompatible account permit state"))
+		}
+		if err := recordWorkerHTTPCooldown(ctx, tx, plan, permit, observation.HTTP); err != nil {
+			return err
+		}
+		resultArtifactID, err := commitWorkerResult(ctx, tx, plan, publication)
+		if err != nil {
+			return err
+		}
+		continuationArtifactID, err := commitWorkerContinuation(
+			ctx, tx, plan, continuationPublication, resultArtifactID,
+		)
+		if err != nil {
+			return err
 		}
 		commit := workerSettlementCommit(
 			plan.lease,
@@ -901,19 +1095,36 @@ func (service *WorkerService) settleWorkerUnit(
 			dispatch.Intent,
 			outcomes,
 			settlementRef,
-			observation.Result != nil,
+			resultArtifactID,
+			continuationArtifactID,
+			publicationErr != nil,
 			callbackErr != nil,
+			localCompletion,
+			retry,
 		)
 		if _, err := store.CommitSettlement(ctx, tx, commit); err != nil {
 			return err
 		}
-		if summary.Unknown != 0 {
+		switch {
+		case localCompletion:
+			released, err := store.ReleaseUnusedAccountPermit(ctx, tx, permit)
+			if err != nil {
+				return err
+			}
+			if released.State != store.AccountPermitReleased {
+				return workerFailure(ErrWorkerConflict, errors.New("unused local-result permit was not released"))
+			}
+		case attemptSummary.Unknown != 0:
 			if permit.State == store.AccountPermitDispatched {
 				if _, err := store.MarkAccountPermitUnknown(ctx, tx, permit); err != nil {
 					return err
 				}
 			}
-		} else {
+		case attemptSummary.Unsent != 0 && permit.State == store.AccountPermitReserved:
+			// Keep the unused non-local reservation charged until its ordinary
+			// expiry; ReleaseUnusedAccountPermit is reserved for verified local
+			// continuation completion.
+		default:
 			if _, err := store.ResolveAccountPermit(ctx, tx, permit); err != nil {
 				return err
 			}
@@ -936,8 +1147,12 @@ func workerSettlementCommit(
 	dispatch contract.Dispatch,
 	outcomes []contract.MemberOutcome,
 	settlementRef string,
+	resultArtifactID string,
+	continuationArtifactID string,
 	resultPublicationUnavailable bool,
 	callbackFailed bool,
+	localCompletion bool,
+	retry *store.WorkerRetryPlan,
 ) store.SettlementCommit {
 	reasonCodes := []string{"member_settlement"}
 	if resultPublicationUnavailable {
@@ -945,6 +1160,12 @@ func workerSettlementCommit(
 	}
 	if callbackFailed {
 		reasonCodes = append(reasonCodes, "callback_error_observed")
+	}
+	if localCompletion {
+		reasonCodes = append(reasonCodes, "verified_local_continuation_result")
+	}
+	if retry != nil {
+		reasonCodes = append(reasonCodes, "worker_retry_prepared")
 	}
 	payload := contract.SafePayload{
 		References: []contract.SafeReference{
@@ -959,9 +1180,19 @@ func workerSettlementCommit(
 		},
 		ReasonCodes: reasonCodes,
 	}
+	if resultArtifactID != "" {
+		payload.References = append(payload.References, contract.SafeReference{
+			Name: store.WorkerResultArtifactReferenceName, Ref: resultArtifactID,
+		})
+	}
+	if continuationArtifactID != "" {
+		payload.References = append(payload.References, contract.SafeReference{
+			Name: store.WorkerContinuationArtifactReferenceName, Ref: continuationArtifactID,
+		})
+	}
 	base := strings.TrimPrefix(settlementRef, "worker-settlement-v1-")
 	return store.SettlementCommit{
-		Lease: lease, DispatchID: dispatch.DispatchID, Outcomes: outcomes, Task: task,
+		Lease: lease, DispatchID: dispatch.DispatchID, Outcomes: outcomes, Task: task, Retry: retry,
 		Receipt: store.Receipt{
 			ReceiptID: settlementRef, Kind: workerSettlementReceiptKind, RunID: task.RunID, Payload: payload,
 		},
@@ -1101,6 +1332,9 @@ func (service *WorkerService) FinalizeRunProjection(
 			_, err := store.InsertWorkerProjectionReceipt(
 				ctx, tx, current.Spec.RunID, request.Run.Generation, projectionKey, result,
 			)
+			return err
+		}
+		if err := store.CloseUnattemptedWorkerRetries(ctx, tx, current.Spec.RunID); err != nil {
 			return err
 		}
 		effects, err := store.ListWorkerRunEffects(ctx, tx, current.Spec.RunID)
@@ -1350,6 +1584,600 @@ func (service *WorkerService) requireCurrentWorkerAuthorization(
 	return nil
 }
 
+// workerPhysicalCallBoundary is a callback-local, one-use capability. Every
+// successful use re-derives the worker route and rechecks current durable
+// authority; the captured values are comparison witnesses, never authority.
+type workerPhysicalCallBoundary struct {
+	service   *WorkerService
+	execution contract.WorkflowExecution
+	reference contract.WorkflowRunRef
+	route     store.WorkerRoute
+	task      contract.Task
+	dispatch  contract.Dispatch
+	lease     store.Lease
+	permit    store.AccountPermit
+	call      pmruntime.PhysicalCall
+	approval  string
+	retry     bool
+
+	mu             sync.Mutex
+	admissionUsed  bool
+	credentialUsed bool
+}
+
+// PhysicalCallAuthority returns the exact fresh-send identity and the two
+// application-owned interfaces that re-authorize it. Reconciliation callbacks
+// deliberately receive no physical-send or credential authority.
+func (request ExecutionRequest) PhysicalCallAuthority() (
+	pmruntime.PhysicalCall,
+	pmruntime.PhysicalCallAdmitter,
+	pmruntime.CredentialResolver,
+	error,
+) {
+	if request.ReconciliationOnly || request.physicalCall == nil {
+		return pmruntime.PhysicalCall{}, nil, nil, workerFailure(
+			ErrWorkerAuthorization,
+			errors.New("physical calls are unavailable outside a fresh execution callback"),
+		)
+	}
+	return request.physicalCall.call, request.physicalCall, request.physicalCall, nil
+}
+
+func newWorkerPhysicalCallBoundary(
+	service *WorkerService,
+	execution contract.WorkflowExecution,
+	reference contract.WorkflowRunRef,
+	state workerRunState,
+	task contract.Task,
+	dispatch contract.Dispatch,
+	attempt contract.Attempt,
+	lease store.Lease,
+	permit store.AccountPermit,
+	retryAuthorized bool,
+) (*workerPhysicalCallBoundary, error) {
+	if service == nil || !workerPhysicalStateEligible(state.record.State, task.State, retryAuthorized) ||
+		state.record.CancelRequested || task.CancelRequested || state.grant.RevokedAt != nil ||
+		!state.now.Before(state.grant.Grant.ExpiresAt) ||
+		(permit.State != store.AccountPermitReserved && permit.State != store.AccountPermitDispatched) ||
+		permit.ResolvedAt != nil ||
+		!state.now.Before(permit.ExpiresAt) || !state.now.Before(lease.ExpiresAt) ||
+		!state.now.Before(state.deadline) {
+		return nil, workerFailure(
+			ErrWorkerAuthorization,
+			errors.New("fresh physical-call authority is not current"),
+		)
+	}
+	if err := execution.Validate(); err != nil {
+		return nil, workerFailure(ErrWorkerConflict, err)
+	}
+	if err := reference.Validate(); err != nil {
+		return nil, workerFailure(ErrWorkerConflict, err)
+	}
+	if err := task.Validate(); err != nil {
+		return nil, workerFailure(ErrWorkerConflict, err)
+	}
+	if err := dispatch.Validate(); err != nil {
+		return nil, workerFailure(ErrWorkerConflict, err)
+	}
+	if err := attempt.Validate(); err != nil {
+		return nil, workerFailure(ErrWorkerConflict, err)
+	}
+	if attempt.AttemptID != dispatch.AttemptID || attempt.DispatchID != dispatch.DispatchID ||
+		!attempt.RecordedAt.Equal(permit.ReservedAt) ||
+		task.RunID != reference.RunID || dispatch.RunID != reference.RunID ||
+		state.record.Spec.RunID != reference.RunID ||
+		state.record.Spec.ExecutionGrantRef != state.grant.Grant.GrantRef ||
+		!state.record.Spec.Actor.Equal(state.route.Actor) ||
+		!state.route.Scope.Equal(reference.Scope) ||
+		state.grant.Grant.GrantEpoch != dispatch.GrantEpoch ||
+		state.input.ConnectionID != permit.ConnectionID ||
+		!permit.Scope.Equal(state.route.Scope) || permit.ProviderAccountID == "" ||
+		!lease.Scope.Equal(state.route.Scope) ||
+		lease.Task.RunID != task.RunID || lease.Task.TaskID != task.TaskID ||
+		dispatch.AccountWitness == "" ||
+		state.budget.Binding() != state.record.Spec.Budget {
+		return nil, workerFailure(
+			ErrWorkerConflict,
+			errors.New("physical-call identity conflicts with immutable worker authority"),
+		)
+	}
+	approval, err := workerPhysicalApprovalRef(state.input.ApprovalRef)
+	if err != nil {
+		return nil, workerFailure(ErrWorkerConflict, err)
+	}
+	call := pmruntime.PhysicalCall{
+		Scope:              state.route.Scope,
+		ConnectionID:       state.input.ConnectionID,
+		OperationID:        task.OperationID,
+		OperationRevision:  dispatch.OperationRevision,
+		RunID:              task.RunID,
+		TaskID:             task.TaskID,
+		ExecutionGrantRef:  state.grant.Grant.GrantRef,
+		GrantEpoch:         dispatch.GrantEpoch,
+		DispatchID:         dispatch.DispatchID,
+		Attempt:            attempt,
+		PermitRef:          permit.PermitID,
+		AccountWitness:     dispatch.AccountWitness,
+		Budget:             state.budget.Binding(),
+		Capacity:           dispatch.CapacityReservation,
+		Deadline:           state.deadline,
+		ReconciliationOnly: false,
+	}
+	task.InputRefs = slices.Clone(task.InputRefs)
+	task.SchemaRefs = slices.Clone(task.SchemaRefs)
+	dispatch.OrderedMemberIDs = slices.Clone(dispatch.OrderedMemberIDs)
+	return &workerPhysicalCallBoundary{
+		service: service, execution: execution, reference: reference, route: state.route,
+		task: task, dispatch: dispatch, lease: lease, permit: cloneWorkerPhysicalPermit(permit),
+		call: call, approval: approval, retry: retryAuthorized,
+	}, nil
+}
+
+func workerPhysicalApprovalRef(value contract.PresentValue) (string, error) {
+	switch value.Presence() {
+	case contract.PresenceAbsent, contract.PresenceNull:
+		return "", nil
+	case contract.PresenceValue:
+		approval, ok := value.TextValue()
+		if !ok || approval == "" {
+			return "", errors.New("physical-call approval reference is invalid")
+		}
+		return approval, nil
+	default:
+		return "", errors.New("physical-call approval presence is invalid")
+	}
+}
+
+func cloneWorkerPhysicalPermit(permit store.AccountPermit) store.AccountPermit {
+	if permit.ResolvedAt != nil {
+		resolvedAt := *permit.ResolvedAt
+		permit.ResolvedAt = &resolvedAt
+	}
+	return permit
+}
+
+func (boundary *workerPhysicalCallBoundary) beginPhysicalAdmission(call pmruntime.PhysicalCall) error {
+	if boundary == nil || !sameWorkerPhysicalCall(call, boundary.call) {
+		return workerFailure(ErrWorkerRouteMismatch, errors.New("physical-call identity differs from callback authority"))
+	}
+	boundary.mu.Lock()
+	defer boundary.mu.Unlock()
+	if boundary.admissionUsed {
+		return workerFailure(ErrWorkerAuthorization, errors.New("physical-call admission was already consumed"))
+	}
+	boundary.admissionUsed = true
+	return nil
+}
+
+func (boundary *workerPhysicalCallBoundary) beginCredentialResolution(call pmruntime.PhysicalCall) error {
+	if boundary == nil || !sameWorkerPhysicalCall(call, boundary.call) {
+		return workerFailure(ErrWorkerRouteMismatch, errors.New("credential effect differs from callback authority"))
+	}
+	boundary.mu.Lock()
+	defer boundary.mu.Unlock()
+	if boundary.credentialUsed || boundary.admissionUsed {
+		return workerFailure(ErrWorkerAuthorization, errors.New("credential authority was already consumed"))
+	}
+	boundary.credentialUsed = true
+	return nil
+}
+
+func (boundary *workerPhysicalCallBoundary) AdmitPhysicalCall(
+	ctx context.Context,
+	call pmruntime.PhysicalCall,
+) error {
+	if ctx == nil || ctx.Err() != nil {
+		return workerFailure(ErrWorkerAuthorization, context.Canceled)
+	}
+	if err := boundary.beginPhysicalAdmission(call); err != nil {
+		return err
+	}
+	err := boundary.service.withinWorkerRun(
+		ctx,
+		boundary.execution,
+		boundary.reference,
+		func(ctx context.Context, tx *store.Transaction, state workerRunState) error {
+			if err := boundary.recheckPhysicalCall(ctx, tx, state, call); err != nil {
+				return err
+			}
+			if boundary.permit.State != store.AccountPermitReserved {
+				return nil
+			}
+			permit, err := store.LoadAccountPermit(ctx, tx, call.PermitRef)
+			if err != nil {
+				return err
+			}
+			if !sameWorkerPhysicalPermit(permit, boundary.permit) {
+				return workerFailure(ErrWorkerAuthorization, errors.New("physical-call account permit changed before dispatch"))
+			}
+			authorized, err := store.AuthorizeAccountPermit(ctx, tx, permit)
+			if err != nil {
+				return err
+			}
+			expected := cloneWorkerPhysicalPermit(boundary.permit)
+			expected.State = store.AccountPermitDispatched
+			if !sameWorkerPhysicalPermit(authorized, expected) {
+				return workerFailure(ErrWorkerAuthorization, errors.New("physical-call account permit dispatch changed immutable identity"))
+			}
+			return nil
+		},
+	)
+	if err != nil {
+		var failure *WorkerFailure
+		if errors.As(err, &failure) {
+			return failure
+		}
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	return nil
+}
+
+func (boundary *workerPhysicalCallBoundary) ResolveCredential(
+	ctx context.Context,
+	call pmruntime.PhysicalCall,
+) (credentials.CredentialMaterial, error) {
+	if ctx == nil || ctx.Err() != nil {
+		return nil, workerFailure(ErrWorkerAuthorization, context.Canceled)
+	}
+	if err := boundary.beginCredentialResolution(call); err != nil {
+		return nil, err
+	}
+	binding, err := boundary.loadCurrentCredentialBinding(ctx, call)
+	if err != nil {
+		return nil, err
+	}
+	if boundary.service.loadCredentialWrappingKey == nil {
+		return nil, credentials.ErrWrappingKeyUnavailable
+	}
+	effect := credentials.EffectAccess{
+		ExecutionGrantRef:  call.ExecutionGrantRef,
+		OperationID:        call.OperationID,
+		OperationRevision:  call.OperationRevision,
+		EffectRef:          boundary.dispatch.EffectKey.Occurrence,
+		DispatchID:         string(call.DispatchID),
+		AttemptID:          string(call.Attempt.AttemptID),
+		PermitRef:          call.PermitRef,
+		ApprovalRef:        boundary.approval,
+		Deadline:           call.Deadline,
+		ReconciliationOnly: false,
+	}
+	var transferredKey []byte
+	resolveKey := func(ctx context.Context, reference string) ([]byte, error) {
+		key, loadErr := boundary.service.loadCredentialWrappingKey(ctx, reference)
+		transferredKey = key
+		return key, loadErr
+	}
+	defer func() { clear(transferredKey) }()
+	return credentials.ResolveForEffect(
+		ctx,
+		boundary.service.pool,
+		resolveKey,
+		func(ctx context.Context, tx *store.Transaction, access credentials.Access) error {
+			if !boundary.matchesCredentialAccess(access, binding, effect) {
+				return credentials.ErrAuthorizationDenied
+			}
+			if err := store.BindAuthDeployment(ctx, tx, boundary.service.deploymentID); err != nil {
+				return err
+			}
+			state, err := loadWorkerRunState(
+				ctx, tx, boundary.route, boundary.execution, boundary.reference,
+			)
+			if err != nil {
+				return err
+			}
+			return boundary.recheckPhysicalCall(ctx, tx, state, call)
+		},
+		credentials.ResolveRequest{
+			Scope: call.Scope, Actor: boundary.route.Actor, Binding: binding, Effect: effect,
+		},
+	)
+}
+
+func (boundary *workerPhysicalCallBoundary) loadCurrentCredentialBinding(
+	ctx context.Context,
+	call pmruntime.PhysicalCall,
+) (contract.CredentialRef, error) {
+	var binding contract.CredentialRef
+	err := boundary.service.withinWorkerRun(
+		ctx,
+		boundary.execution,
+		boundary.reference,
+		func(ctx context.Context, tx *store.Transaction, state workerRunState) error {
+			if err := boundary.recheckPhysicalCall(ctx, tx, state, call); err != nil {
+				return err
+			}
+			connection, err := store.LoadConnection(ctx, tx, call.ConnectionID)
+			if err != nil {
+				return err
+			}
+			account, err := store.LoadProviderAccount(ctx, tx, connection.ProviderAccountID)
+			if err != nil {
+				return err
+			}
+			lifecycle, err := store.LoadCredentialLifecycle(ctx, tx, call.ConnectionID)
+			if err != nil {
+				return err
+			}
+			if lifecycle.Status != store.CredentialLifecycleActive ||
+				lifecycle.CredentialRef == "" ||
+				lifecycle.CredentialRef != connection.CredentialRef ||
+				lifecycle.ProviderAccountID != account.AccountID ||
+				lifecycle.AccountWitness != call.AccountWitness ||
+				lifecycle.ConnectionRevision != connection.Revision ||
+				lifecycle.AccountRevision != account.Revision {
+				return credentials.ErrCredentialStale
+			}
+			encrypted, err := store.LoadEncryptedSecret(
+				ctx, tx, lifecycle.CredentialRef, lifecycle.CiphertextVersion,
+			)
+			if err != nil {
+				return err
+			}
+			defer clear(encrypted.Ciphertext)
+			if !encrypted.Scope.Equal(call.Scope) ||
+				encrypted.ProviderAccountID != account.AccountID ||
+				encrypted.Binding.CredentialRef != lifecycle.CredentialRef ||
+				encrypted.Binding.WorkspaceID != call.Scope.WorkspaceID ||
+				encrypted.Binding.ConnectionID != call.ConnectionID ||
+				encrypted.Binding.ProviderAccountWitness != call.AccountWitness ||
+				encrypted.Binding.CiphertextVersion != lifecycle.CiphertextVersion ||
+				encrypted.Binding.AuthEpoch != lifecycle.AuthEpoch {
+				return credentials.ErrCredentialStale
+			}
+			binding = encrypted.Binding
+			binding.Scopes = slices.Clone(binding.Scopes)
+			return binding.Validate()
+		},
+	)
+	if err != nil {
+		return contract.CredentialRef{}, err
+	}
+	return binding, nil
+}
+
+func (boundary *workerPhysicalCallBoundary) matchesCredentialAccess(
+	access credentials.Access,
+	binding contract.CredentialRef,
+	effect credentials.EffectAccess,
+) bool {
+	if access.Action != credentials.ActionResolveEffect ||
+		access.Stage != credentials.StagePreEffect ||
+		!access.Scope.Equal(boundary.call.Scope) ||
+		!access.Actor.Equal(boundary.route.Actor) ||
+		!access.Connection.Scope.Equal(boundary.call.Scope) ||
+		access.ConnectionState != "active" ||
+		access.Connection.ConnectionID != boundary.call.ConnectionID ||
+		access.Connection.ProviderAccountID != boundary.permit.ProviderAccountID ||
+		access.Account.OrgID != boundary.call.Scope.OrgID ||
+		access.Account.AccountID != boundary.permit.ProviderAccountID ||
+		access.Account.AccountWitness != boundary.call.AccountWitness ||
+		access.Credential.CredentialRef != binding.CredentialRef ||
+		access.Credential.BoundProviderAccountID != boundary.permit.ProviderAccountID ||
+		access.Credential.BoundAccountWitness != boundary.call.AccountWitness ||
+		access.Credential.BoundConnectionRevision != access.Connection.Revision ||
+		access.Credential.BoundAccountRevision != access.Account.Revision ||
+		access.Credential.CiphertextVersion != binding.CiphertextVersion ||
+		access.Credential.Status != store.CredentialLifecycleActive ||
+		access.Credential.AuthEpoch != binding.AuthEpoch ||
+		!slices.Equal(access.Credential.RequestedScopes, binding.Scopes) ||
+		access.Effect == nil {
+		return false
+	}
+	return sameWorkerCredentialEffect(*access.Effect, effect)
+}
+
+func (boundary *workerPhysicalCallBoundary) recheckPhysicalCall(
+	ctx context.Context,
+	tx *store.Transaction,
+	state workerRunState,
+	call pmruntime.PhysicalCall,
+) error {
+	if ctx == nil || tx == nil || !sameWorkerPhysicalCall(call, boundary.call) ||
+		call.ReconciliationOnly || !state.route.Scope.Equal(boundary.route.Scope) ||
+		!state.route.Actor.Equal(boundary.route.Actor) ||
+		state.record.Spec.RunID != call.RunID ||
+		state.record.Spec.ExecutionGrantRef != call.ExecutionGrantRef ||
+		state.record.Spec.Budget != call.Budget ||
+		state.input.ConnectionID != call.ConnectionID ||
+		state.budget.Binding() != call.Budget ||
+		state.grant.RunID != call.RunID ||
+		state.grant.Grant.GrantRef != call.ExecutionGrantRef ||
+		state.grant.Grant.GrantEpoch != call.GrantEpoch ||
+		!state.grant.Grant.Scope.Equal(call.Scope) ||
+		!state.grant.Grant.Actor.Equal(boundary.route.Actor) ||
+		state.grant.RevokedAt != nil ||
+		!state.now.Before(state.grant.Grant.ExpiresAt) ||
+		!state.deadline.Equal(call.Deadline) ||
+		!state.now.Before(call.Deadline) {
+		return workerFailure(ErrWorkerAuthorization, errors.New("current run authority differs from the physical call"))
+	}
+	contextDeadline, bounded := ctx.Deadline()
+	if !bounded || contextDeadline.After(call.Deadline) || ctx.Err() != nil {
+		return workerFailure(ErrWorkerAuthorization, errors.New("physical-call context exceeds durable authority"))
+	}
+	run, err := store.LoadWorkerRunForUpdate(ctx, tx, call.RunID)
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	if !workerPhysicalStateEligible(run.State, boundary.task.State, boundary.retry) ||
+		run.CancelRequested ||
+		run.Spec.RunID != call.RunID ||
+		run.Spec.ExecutionGrantRef != call.ExecutionGrantRef ||
+		run.Spec.Budget != call.Budget ||
+		!run.Spec.Actor.Equal(boundary.route.Actor) {
+		return workerFailure(ErrWorkerAuthorization, errors.New("current run cannot dispatch a physical call"))
+	}
+	taskRef := store.TaskRef{RunID: call.RunID, TaskID: call.TaskID}
+	task, err := store.LoadTask(ctx, tx, taskRef)
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	if !workerPhysicalStateEligible(run.State, task.State, boundary.retry) ||
+		task.CancelRequested ||
+		!sameWorkerPhysicalTask(task, boundary.task) ||
+		task.OperationID != call.OperationID {
+		return workerFailure(ErrWorkerAuthorization, errors.New("current task cannot dispatch a physical call"))
+	}
+	dispatch, err := store.LoadWorkerDispatch(ctx, tx, taskRef)
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	if dispatch.State != store.DispatchPossiblySent || len(dispatch.Attempts) != 1 ||
+		!sameWorkerPhysicalDispatch(dispatch.Intent, boundary.dispatch) ||
+		!sameWorkerPhysicalAttempt(dispatch.Attempts[0], call.Attempt) ||
+		dispatch.Intent.OperationRevision != call.OperationRevision ||
+		dispatch.Intent.GrantEpoch != call.GrantEpoch ||
+		dispatch.Intent.AccountWitness != call.AccountWitness ||
+		dispatch.Intent.CapacityReservation != call.Capacity ||
+		(dispatch.Retry != nil) != boundary.retry {
+		return workerFailure(ErrWorkerAuthorization, errors.New("current dispatch differs from the physical call"))
+	}
+	if boundary.retry {
+		if state.budget.Policy.HTTP == nil ||
+			dispatch.AttemptNumber <= 1 ||
+			dispatch.AttemptNumber > state.budget.Policy.HTTP.MaxAttempts ||
+			state.now.Before(dispatch.Retry.NotBefore) {
+			return workerFailure(ErrWorkerAuthorization, errors.New("current retry authority is not eligible"))
+		}
+		inputDigest, err := store.WorkerRetryInputDigest(state.input)
+		if err != nil || inputDigest != dispatch.Retry.InputDigest {
+			return workerFailure(ErrWorkerAuthorization, errors.New("current retry input authority differs"))
+		}
+	} else if dispatch.AttemptNumber != 1 {
+		return workerFailure(ErrWorkerAuthorization, errors.New("initial dispatch has an invalid attempt ordinal"))
+	}
+	lease, err := store.LoadLease(ctx, tx, taskRef)
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	if !sameWorkerPhysicalLease(lease, boundary.lease) || !state.now.Before(lease.ExpiresAt) {
+		return workerFailure(ErrWorkerAuthorization, errors.New("physical-call task lease is stale"))
+	}
+	permit, err := store.LoadAccountPermit(ctx, tx, call.PermitRef)
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	if (permit.State != store.AccountPermitReserved && permit.State != store.AccountPermitDispatched) ||
+		!sameWorkerPhysicalPermit(permit, boundary.permit) ||
+		!state.now.Before(permit.ExpiresAt) ||
+		permit.ConnectionID != call.ConnectionID {
+		return workerFailure(ErrWorkerAuthorization, errors.New("physical-call account permit is stale"))
+	}
+	connection, err := store.LoadConnection(ctx, tx, call.ConnectionID)
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	account, err := store.LoadProviderAccount(ctx, tx, connection.ProviderAccountID)
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	if connection.ProviderAccountID != permit.ProviderAccountID ||
+		account.AccountID != permit.ProviderAccountID ||
+		account.AccountWitness != call.AccountWitness {
+		return workerFailure(ErrWorkerAuthorization, errors.New("physical-call provider-account witness is stale"))
+	}
+	if err := boundary.service.requireCurrentWorkerAuthorization(
+		ctx, tx, state, call.OperationID,
+	); err != nil {
+		return err
+	}
+	if err := store.CheckAccountCooldown(ctx, tx, permit); err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	return nil
+}
+
+func sameWorkerPhysicalCall(left, right pmruntime.PhysicalCall) bool {
+	return left.Scope.Equal(right.Scope) &&
+		left.ConnectionID == right.ConnectionID &&
+		left.OperationID == right.OperationID &&
+		left.OperationRevision == right.OperationRevision &&
+		left.RunID == right.RunID &&
+		left.TaskID == right.TaskID &&
+		left.ExecutionGrantRef == right.ExecutionGrantRef &&
+		left.GrantEpoch == right.GrantEpoch &&
+		left.DispatchID == right.DispatchID &&
+		sameWorkerPhysicalAttempt(left.Attempt, right.Attempt) &&
+		left.PermitRef == right.PermitRef &&
+		left.AccountWitness == right.AccountWitness &&
+		left.Budget == right.Budget &&
+		left.Capacity == right.Capacity &&
+		left.Deadline.Equal(right.Deadline) &&
+		left.ReconciliationOnly == right.ReconciliationOnly
+}
+
+func sameWorkerPhysicalTask(left, right contract.Task) bool {
+	return sameWorkerTaskIdentity(left, right) &&
+		left.State == right.State &&
+		left.EffectSummary == right.EffectSummary &&
+		left.UnknownEffectCount == right.UnknownEffectCount &&
+		left.CancelRequested == right.CancelRequested &&
+		left.OrchestrationCondition == right.OrchestrationCondition &&
+		left.ProjectionObservedAt.Equal(right.ProjectionObservedAt) &&
+		left.BlockedReason == right.BlockedReason &&
+		left.Revision == right.Revision
+}
+
+func sameWorkerPhysicalDispatch(left, right contract.Dispatch) bool {
+	return left.RunID == right.RunID &&
+		left.EffectKey == right.EffectKey &&
+		left.DispatchID == right.DispatchID &&
+		slices.Equal(left.OrderedMemberIDs, right.OrderedMemberIDs) &&
+		left.PayloadHash == right.PayloadHash &&
+		left.RequestArtifactRef == right.RequestArtifactRef &&
+		left.OperationRevision == right.OperationRevision &&
+		left.AccountWitness == right.AccountWitness &&
+		left.GrantEpoch == right.GrantEpoch &&
+		left.CapacityReservation == right.CapacityReservation &&
+		left.AttemptID == right.AttemptID
+}
+
+func sameWorkerPhysicalAttempt(left, right contract.Attempt) bool {
+	return left.AttemptID == right.AttemptID &&
+		left.DispatchID == right.DispatchID &&
+		left.ReceiptRef == right.ReceiptRef &&
+		left.RecordedAt.Equal(right.RecordedAt)
+}
+
+func sameWorkerPhysicalLease(left, right store.Lease) bool {
+	return left.Scope.Equal(right.Scope) &&
+		left.Task == right.Task &&
+		left.OwnerID == right.OwnerID &&
+		left.Fence == right.Fence &&
+		left.ClaimedAt.Equal(right.ClaimedAt) &&
+		left.ExpiresAt.Equal(right.ExpiresAt)
+}
+
+func sameWorkerPhysicalPermit(left, right store.AccountPermit) bool {
+	if !left.Scope.Equal(right.Scope) ||
+		left.PermitID != right.PermitID ||
+		left.ConnectionID != right.ConnectionID ||
+		left.ProviderAccountID != right.ProviderAccountID ||
+		left.Units != right.Units ||
+		left.State != right.State ||
+		left.Fence != right.Fence ||
+		left.OwnerID != right.OwnerID ||
+		!left.ReservedAt.Equal(right.ReservedAt) ||
+		!left.ExpiresAt.Equal(right.ExpiresAt) ||
+		(left.ResolvedAt == nil) != (right.ResolvedAt == nil) {
+		return false
+	}
+	return left.ResolvedAt == nil || left.ResolvedAt.Equal(*right.ResolvedAt)
+}
+
+func sameWorkerCredentialEffect(left, right credentials.EffectAccess) bool {
+	return left.ExecutionGrantRef == right.ExecutionGrantRef &&
+		left.OperationID == right.OperationID &&
+		left.OperationRevision == right.OperationRevision &&
+		left.EffectRef == right.EffectRef &&
+		left.DispatchID == right.DispatchID &&
+		left.AttemptID == right.AttemptID &&
+		left.PermitRef == right.PermitRef &&
+		left.ApprovalRef == right.ApprovalRef &&
+		left.Deadline.Equal(right.Deadline) &&
+		left.ReconciliationOnly == right.ReconciliationOnly
+}
+
 func (service *WorkerService) mapWorkerError(err error) error {
 	if err == nil {
 		return nil
@@ -1455,7 +2283,7 @@ func workerEffectsKnownUnsent(effects []contract.EffectRecord) bool {
 		return false
 	}
 	for _, effect := range effects {
-		if effect.State != contract.OutcomeUnsent || len(effect.Attempts) != 0 {
+		if effect.State != contract.OutcomeUnsent {
 			return false
 		}
 	}
@@ -1505,6 +2333,59 @@ func workerRunDispatchable(state contract.RunState) bool {
 	default:
 		return false
 	}
+}
+
+func workerDispatchRunnable(
+	state workerRunState,
+	task contract.Task,
+	dispatch store.DispatchRecord,
+) bool {
+	if dispatch.Retry == nil {
+		return workerRunDispatchable(state.record.State) && workerRunDispatchable(task.State)
+	}
+	return workerRetryMaySchedule(state, task, dispatch) &&
+		!state.now.Before(dispatch.Retry.NotBefore)
+}
+
+func workerRetryMaySchedule(
+	state workerRunState,
+	task contract.Task,
+	dispatch store.DispatchRecord,
+) bool {
+	if dispatch.Retry == nil ||
+		dispatch.Intent.RunID != state.record.Spec.RunID ||
+		task.RunID != state.record.Spec.RunID ||
+		state.record.CancelRequested ||
+		task.CancelRequested ||
+		state.grant.RevokedAt != nil ||
+		!state.now.Before(state.grant.Grant.ExpiresAt) ||
+		!state.now.Before(state.deadline) {
+		return false
+	}
+	runEligible := state.record.State == contract.RunStateRunning ||
+		state.record.State == contract.RunStateReconciling ||
+		state.record.State == contract.RunStateBlocked
+	taskEligible := task.State == contract.RunStateRunning ||
+		task.State == contract.RunStateReconciling ||
+		task.State == contract.RunStateBlocked
+	return runEligible && taskEligible
+}
+
+func workerPhysicalStateEligible(
+	runState contract.RunState,
+	taskState contract.RunState,
+	retryAuthorized bool,
+) bool {
+	if !retryAuthorized {
+		return runState == contract.RunStateRunning && taskState == contract.RunStateRunning
+	}
+	runEligible := runState == contract.RunStateRunning ||
+		runState == contract.RunStateReconciling ||
+		runState == contract.RunStateBlocked
+	taskEligible := taskState == contract.RunStateRunning ||
+		taskState == contract.RunStateReconciling ||
+		taskState == contract.RunStateBlocked
+	return runEligible && taskEligible
 }
 
 func workerTerminalState(state contract.RunState) bool {

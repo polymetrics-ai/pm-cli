@@ -42,26 +42,32 @@ type OperationResolver func(
 	string,
 ) (OperationSelection, error)
 
+// HTTPPolicyResolver selects already-resolved server controls for one exact
+// connection. Admission invokes it only after current resource authorization.
+type HTTPPolicyResolver func(contract.Scope, string) (contract.HTTPExecutionPolicy, bool)
+
 type AdmissionServiceConfig struct {
-	Pool             *store.Pool
-	DeploymentID     string
-	Authorize        auth.AuthorizationCallback
-	Registry         *HandlerRegistry
-	ResolveOperation OperationResolver
-	Policy           store.RunBudgetPolicy
-	Random           io.Reader
+	Pool              *store.Pool
+	DeploymentID      string
+	Authorize         auth.AuthorizationCallback
+	Registry          *HandlerRegistry
+	ResolveOperation  OperationResolver
+	ResolveHTTPPolicy HTTPPolicyResolver
+	Policy            store.RunBudgetPolicy
+	Random            io.Reader
 }
 
 // AdmissionService owns authenticated acceptance only. Handler resolution proves
 // local reachability, but admission never invokes a provider callback.
 type AdmissionService struct {
-	pool             *store.Pool
-	deploymentID     string
-	authorize        auth.AuthorizationCallback
-	registry         *HandlerRegistry
-	resolveOperation OperationResolver
-	policy           store.RunBudgetPolicy
-	random           io.Reader
+	pool              *store.Pool
+	deploymentID      string
+	authorize         auth.AuthorizationCallback
+	registry          *HandlerRegistry
+	resolveOperation  OperationResolver
+	resolveHTTPPolicy HTTPPolicyResolver
+	policy            store.RunBudgetPolicy
+	random            io.Reader
 }
 
 func NewAdmissionService(configuration AdmissionServiceConfig) (*AdmissionService, error) {
@@ -77,6 +83,9 @@ func NewAdmissionService(configuration AdmissionServiceConfig) (*AdmissionServic
 	if err := configuration.Policy.Validate(); err != nil {
 		return nil, errors.New("admission service run budget policy is invalid")
 	}
+	if configuration.Policy.HTTP != nil {
+		return nil, errors.New("HTTP policy must be selected for the authorized connection")
+	}
 	if configuration.Registry == nil {
 		configuration.Registry = &HandlerRegistry{}
 	}
@@ -84,13 +93,14 @@ func NewAdmissionService(configuration AdmissionServiceConfig) (*AdmissionServic
 		configuration.Random = rand.Reader
 	}
 	return &AdmissionService{
-		pool:             configuration.Pool,
-		deploymentID:     configuration.DeploymentID,
-		authorize:        configuration.Authorize,
-		registry:         configuration.Registry,
-		resolveOperation: configuration.ResolveOperation,
-		policy:           configuration.Policy,
-		random:           configuration.Random,
+		pool:              configuration.Pool,
+		deploymentID:      configuration.DeploymentID,
+		authorize:         configuration.Authorize,
+		registry:          configuration.Registry,
+		resolveOperation:  configuration.ResolveOperation,
+		resolveHTTPPolicy: configuration.ResolveHTTPPolicy,
+		policy:            configuration.Policy,
+		random:            configuration.Random,
 	}, nil
 }
 
@@ -113,6 +123,25 @@ func OperationSelectionRevision(selection OperationSelection) (string, error) {
 		return "", err
 	}
 	return string(digest), nil
+}
+
+func (service *AdmissionService) policyForOperation(scope contract.Scope, connectionID string, operation contract.Operation) (store.RunBudgetPolicy, error) {
+	policy := service.policy
+	if operation.Execution == nil || operation.Execution.HTTP == nil {
+		return policy, nil
+	}
+	if service.resolveHTTPPolicy == nil {
+		return store.RunBudgetPolicy{}, capabilityUnavailableFailure(errors.New("provider HTTP policy is unavailable"))
+	}
+	httpPolicy, configured := service.resolveHTTPPolicy(scope, connectionID)
+	if !configured {
+		return store.RunBudgetPolicy{}, capabilityUnavailableFailure(errors.New("connection HTTP policy is unavailable"))
+	}
+	if err := httpPolicy.ValidateForOperation(operation); err != nil {
+		return store.RunBudgetPolicy{}, capabilityUnavailableFailure(err)
+	}
+	policy.HTTP = &httpPolicy
+	return policy, nil
 }
 
 func RunPolicyFromConfiguration(configuration config.Configuration) (store.RunBudgetPolicy, error) {
@@ -226,11 +255,24 @@ func (service *AdmissionService) AcceptRun(
 		if selectionRevision != invocation.ExpectedRevision {
 			return specificationStaleFailure()
 		}
-		if err := contract.ValidateOperationInput(selection.Operation, invocation.Input); err != nil {
-			return invalidRequestFailure()
+		hasContinuation := invocation.ResultControls.HasContinuation()
+		if !hasContinuation {
+			if err := contract.ValidateOperationInput(selection.Operation, invocation.Input); err != nil {
+				return invalidRequestFailure()
+			}
 		}
 		if _, err := service.registry.Resolve(selection.Operation, invocation.Lane); err != nil {
 			return mapHandlerResolutionFailure(err)
+		}
+		policy, err := service.policyForOperation(scope, invocation.ConnectionRef, selection.Operation)
+		if err != nil {
+			return err
+		}
+		if hasContinuation {
+			invocation, err = restoreContinuationInvocation(ctx, tx, invocation, selection.Operation, policy)
+			if err != nil {
+				return err
+			}
 		}
 
 		now, err := store.ReadAuthenticationTime(ctx, tx)
@@ -250,6 +292,7 @@ func (service *AdmissionService) AcceptRun(
 			actor,
 			invocation,
 			selection,
+			policy,
 			selectionRevision,
 			intentDigest,
 			authorization,
@@ -279,6 +322,7 @@ func (service *AdmissionService) newAdmissionRequest(
 	actor contract.Actor,
 	invocation RunInvocation,
 	selection OperationSelection,
+	policy store.RunBudgetPolicy,
 	selectionRevision string,
 	intentDigest contract.SemanticDigest,
 	authorization auth.Authorization,
@@ -318,7 +362,7 @@ func (service *AdmissionService) newAdmissionRequest(
 		return store.AdmissionRequest{}, err
 	}
 
-	budget, err := store.NewRunBudgetSnapshot(scope, runID, budgetRef, service.policy)
+	budget, err := store.NewRunBudgetSnapshot(scope, runID, budgetRef, policy)
 	if err != nil {
 		return store.AdmissionRequest{}, err
 	}

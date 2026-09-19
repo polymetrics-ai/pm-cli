@@ -3,12 +3,17 @@
 load("@gazelle//:def.bzl", "gazelle")
 
 exports_files([
+    ".cache/browser-sdk/api/controls.json",
+    ".cache/browser-sdk/sdk/browser/client.js",
+    "connectors/github/lanes/direct_read.json",
     "go.mod",
     "go.sum",
     "packaging/install-manifest.schema.json",
     "packaging/release-pair.schema.json",
     "scripts/generate.sh",
     "scripts/install.sh",
+    "sdk/browser/tsconfig.json",
+    "sdk/browser/node_modules/openapi-fetch/dist/index.mjs",
 ])
 
 gazelle(name = "gazelle")

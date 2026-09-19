@@ -58,7 +58,16 @@ func LoadRunView(ctx context.Context, tx *Transaction, runID string) (RunViewRec
 	} else if err != nil {
 		return RunViewRecord{}, fmt.Errorf("load run view: %w", err)
 	}
-	return decodeRunViewRecord(scope, runID, recordJSON, snapshotJSON)
+	view, err := decodeRunViewRecord(scope, runID, recordJSON, snapshotJSON)
+	if err != nil {
+		return RunViewRecord{}, err
+	}
+	references, err := loadWorkerResultArtifactReferences(ctx, tx, []string{runID})
+	if err != nil {
+		return RunViewRecord{}, err
+	}
+	view.ResultRefs = references[runID]
+	return view, nil
 }
 
 // ListRunViews applies the caller's current connection and operation authority
@@ -113,6 +122,7 @@ func ListRunViews(
 	}
 	defer rows.Close()
 	views := make([]RunViewRecord, 0, limit)
+	runIDs := make([]string, 0, limit)
 	for rows.Next() {
 		var runID string
 		var recordJSON, snapshotJSON []byte
@@ -124,9 +134,17 @@ func ListRunViews(
 			return nil, err
 		}
 		views = append(views, view)
+		runIDs = append(runIDs, runID)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate authorized run views: %w", err)
+	}
+	references, err := loadWorkerResultArtifactReferences(ctx, tx, runIDs)
+	if err != nil {
+		return nil, err
+	}
+	for index := range views {
+		views[index].ResultRefs = references[runIDs[index]]
 	}
 	return views, nil
 }

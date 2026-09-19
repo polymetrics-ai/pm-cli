@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -24,6 +25,96 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
 )
+
+func TestHTTPPolicyAdmissionAndReplay(t *testing.T) {
+	const selectedOrigin = "https://api.example.test/v1"
+	var policyMode atomic.Int32
+	var selectionRevision string
+	fixture := testfixture.New(t, func(dependencies testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
+		registry := &app.HandlerRegistry{}
+		if err := registry.RegisterHTTP(externalAdmissionRegistration()); err != nil {
+			return err
+		}
+		baseResolver := externalAdmissionResolver(dependencies)
+		resolver := func(ctx context.Context, scope contract.Scope, connectionID, operationID string) (app.OperationSelection, error) {
+			selection, err := baseResolver(ctx, scope, connectionID, operationID)
+			if err != nil {
+				return app.OperationSelection{}, err
+			}
+			selection.Operation.Execution = &contract.OperationExecution{HTTP: &contract.OperationHTTP{
+				Origins: []string{selectedOrigin},
+				Witness: contract.ExecutionWitness{
+					ProofID:    "controlled-http-origin",
+					SourceRefs: selection.Operation.SourceRefs,
+				},
+			}}
+			return selection, nil
+		}
+		selection, err := resolver(context.Background(), dependencies.Scope, dependencies.Connection.ConnectionID, dependencies.OperationID)
+		if err != nil {
+			return err
+		}
+		selectionRevision, err = app.OperationSelectionRevision(selection)
+		if err != nil {
+			return err
+		}
+		admission, err := app.NewAdmissionService(app.AdmissionServiceConfig{
+			Pool: dependencies.Pool, DeploymentID: dependencies.DeploymentID,
+			Authorize: configuration.Auth.AuthorizeResource, Registry: registry,
+			ResolveOperation: resolver,
+			ResolveHTTPPolicy: func(scope contract.Scope, connectionID string) (contract.HTTPExecutionPolicy, bool) {
+				mode := policyMode.Load()
+				if mode == 0 || !scope.Equal(dependencies.Scope) || connectionID != dependencies.Connection.ConnectionID {
+					return contract.HTTPExecutionPolicy{}, false
+				}
+				origin := selectedOrigin
+				if mode == 1 {
+					origin = "https://unlisted.example.test/v1"
+				}
+				return contract.HTTPExecutionPolicy{
+					MaxRequestBytes: 1024, MaxResponseBytes: 4096, MaxDNSAnswers: 8,
+					MaxAttempts: 3, MaxRetryDelay: 2 * time.Second, SelectedOrigin: origin,
+				}, true
+			},
+			Policy: store.RunBudgetPolicy{
+				Pending:     store.AdmissionLimits{GlobalPending: 3, WorkspacePending: 2, WorkspaceMaxPendingAge: 30 * time.Second},
+				RunLifetime: time.Hour, InputMaxBytes: 1 << 20, WorkspaceActiveRuns: 4,
+				WorkflowPayloadBytes: 1 << 16, WorkflowFanout: 32,
+			},
+		})
+		configuration.Admission = admission
+		return err
+	})
+	invocation := func(key string) api.InvocationRequest {
+		request := testfixture.Invocation(t, fixture, key)
+		request.Protocol.ExpectedRevision = selectionRevision
+		return request
+	}
+
+	// Neither missing operator authority nor an unlisted origin may leave an
+	// admitted run, even when the controlled execution capability is present.
+	requireAdmissionProblem(t, requireAdmissionRoute(t, fixture, fixture.Client, invocation("http-policy-missing")), http.StatusServiceUnavailable, "capability_unavailable")
+	assertAdmissionAbsent(t, fixture, "http-policy-missing")
+	policyMode.Store(1)
+	requireAdmissionProblem(t, requireAdmissionRoute(t, fixture, fixture.Client, invocation("http-policy-unlisted")), http.StatusServiceUnavailable, "capability_unavailable")
+	assertAdmissionAbsent(t, fixture, "http-policy-unlisted")
+
+	policyMode.Store(2)
+	request := invocation("http-policy-accepted")
+	accepted := requireAcceptedAdmission(t, requireAdmissionRoute(t, fixture, fixture.Client, request), false)
+	// Current configuration cannot rewrite or prevent recovery of an already
+	// accepted intent. It still governs every new logical submission.
+	policyMode.Store(0)
+	replayed := requireAcceptedAdmission(t, requireAdmissionRoute(t, fixture, fixture.Client, request), true)
+	if replayed.RunRef != accepted.RunRef {
+		t.Fatal("policy removal replaced the previously accepted run")
+	}
+	fresh := invocation("http-policy-after-removal")
+	requireAdmissionProblem(t, requireAdmissionRoute(t, fixture, fixture.Client, fresh), http.StatusServiceUnavailable, "capability_unavailable")
+	if _, err := lookupAdmissionRun(context.Background(), fixture, fresh.Protocol.RequestKey); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("refused fresh admission retained durable intent: %v", err)
+	}
+}
 
 func TestDurableAcceptedBefore202(t *testing.T) {
 	t.Run("S01/C01_committed", func(t *testing.T) {
@@ -502,25 +593,56 @@ func externalAdmissionResolver(dependencies testfixture.ServiceDependencies) app
 
 func externalAdmissionSelection(operationID string) app.OperationSelection {
 	foundation := contract.FoundationRef{ID: "FND-6", Version: "1.0.0"}
+	sourceRefs := []contract.SourceRef{
+		{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
+	}
 	return app.OperationSelection{
 		Operation: contract.Operation{
-			SchemaVersion: contract.OperationSchemaVersion,
-			OperationID:   operationID,
-			SourceRefs: []contract.SourceRef{
-				{SourceID: "fixture-source", Pointer: "#/operations/fixture"},
-			},
-			Transport: contract.Transport{Kind: "http", Method: http.MethodGet, Path: "/fixture"},
-			Inputs:    []contract.FieldBinding{},
+			SchemaVersion:   contract.OperationSchemaVersion,
+			OperationID:     operationID,
+			SourceRefs:      sourceRefs,
+			Transport:       contract.Transport{Kind: contract.TransportKindHTTP, Method: http.MethodGet, Path: "/fixture"},
+			Inputs:          []contract.FieldBinding{},
+			RequestVariants: []contract.RequestVariant{},
 			Responses: []contract.Response{
-				{Status: "200", MediaType: "application/json", Schema: contract.Schema{Type: contract.SchemaTypeString}},
+				{
+					Status:     "200",
+					NoContent:  false,
+					MediaType:  "application/json",
+					Schema:     &contract.Schema{Type: contract.SchemaTypeString},
+					SourceRefs: sourceRefs,
+				},
 			},
 			CapabilityRequirements: []contract.CapabilityRequirement{
 				{Capability: "http.execute", Foundation: foundation},
 			},
-			LaneEligibility: []contract.LaneEligibility{{Lane: contract.LaneDirectRead, Eligible: true}},
+			LaneEligibility: storeLaneEligibilityForTest(contract.LaneDirectRead),
 		},
 		SchemaRefs: []string{"fixture-schema-v1"},
 	}
+}
+
+func storeLaneEligibilityForTest(eligible contract.Lane) []contract.LaneEligibility {
+	lanes := []contract.Lane{
+		contract.LaneDirectRead,
+		contract.LaneDirectWrite,
+		contract.LaneETL,
+		contract.LaneReverseETL,
+		contract.LaneBinaryDownload,
+		contract.LaneBinaryUpload,
+		contract.LaneSyncTransport,
+	}
+	eligibility := make([]contract.LaneEligibility, 0, len(lanes))
+	for _, lane := range lanes {
+		status := contract.LaneUnsupported
+		reason := "fixture-lane-unsupported"
+		if lane == eligible {
+			status = contract.LaneEligible
+			reason = "fixture-handler-registered"
+		}
+		eligibility = append(eligibility, contract.LaneEligibility{Lane: lane, Status: status, Reason: reason})
+	}
+	return eligibility
 }
 
 func externalAdmissionRegistration() app.HandlerRegistration {

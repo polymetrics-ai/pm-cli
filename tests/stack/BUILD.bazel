@@ -36,7 +36,11 @@ go_test(
     ],
     # Physical qualification requires the explicitly owned local stack and
     # PM_STACK_ROOT; absent fixture inputs fail instead of skipping.
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
         "//internal/config",
         "//internal/stack",

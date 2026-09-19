@@ -14,3 +14,6 @@
 /.cache/
 /bazel-*
 /tools/bazel-*
+# Browser dependency locks are versioned; installed packages are local.
+/sdk/browser/node_modules/
+/tests/client-parity/node_modules/

@@ -265,7 +265,7 @@ func seedFixtureWorkspace(
 	_, err := tx.Exec(ctx, `
 		INSERT INTO pm.artifacts (
 			org_id, workspace_id, artifact_id, object_attempt_key, sha256,
-			byte_length, media_type, backend_generation, connection_id, object_ref, registered_at
+			byte_length, media_type, backend_generation, connection_id, object_ref, registered_at, purpose
 		) VALUES (
 			$1, $2, $3, $4, $5, 0, 'application/octet-stream', 'fixture-generation', $6,
 			jsonb_build_object(
@@ -278,7 +278,7 @@ func seedFixtureWorkspace(
 				'media_type', 'application/octet-stream',
 				'backend_generation', 'fixture-generation'
 			),
-			clock_timestamp()
+			clock_timestamp(), 'public'
 		)
 	`, scope.OrgID, scope.WorkspaceID, artifactID, "attempt-"+scope.WorkspaceID, digest, connectionID)
 	return err

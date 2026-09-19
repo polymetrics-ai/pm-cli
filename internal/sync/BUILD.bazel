@@ -1,0 +1,12 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "sync",
+    srcs = ["direct.go"],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/sync",
+    visibility = ["//visibility:public"],
+    deps = [
+        "//internal/contract",
+        "//internal/runtime",
+    ],
+)

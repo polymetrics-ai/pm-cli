@@ -97,7 +97,14 @@
           "type": "array",
           "uniqueItems": true,
           "items": {"$ref": "#/$defs/capture"}
-        }
+        },
+        "input_bindings": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {"$ref": "#/$defs/inputBinding"}
+        },
+        "connection_ref": {"$ref": "#/$defs/identity"},
+        "result_controls": {"$ref": "#/$defs/resultControls"}
       }
     },
     "capture": {
@@ -137,6 +144,192 @@
           "type": "array",
           "items": {"$ref": "#/$defs/step"}
         }
+      }
+    },
+    "inputBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pointer", "capture"],
+      "properties": {
+        "pointer": {"type": "string", "maxLength": 4096, "pattern": "^(/([^~]|~[01])*)*$"},
+        "capture": {"$ref": "#/$defs/identity"}
+      }
+    },
+    "resultControls": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "selection": {"$ref": "#/$defs/fieldSelection"},
+        "filter": {"$ref": "#/$defs/recordFilter"},
+        "total_record_cap": {"type": "integer", "minimum": 1},
+        "continuation": {"$ref": "#/$defs/presentValue"}
+      }
+    },
+    "fieldSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["paths"],
+      "properties": {
+        "paths": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string"}
+          }
+        }
+      }
+    },
+    "recordFilter": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "operator"],
+      "properties": {
+        "path": {
+          "type": "array",
+          "minItems": 1,
+          "items": {"type": "string"}
+        },
+        "operator": {"enum": ["equal", "is_absent", "is_null"]},
+        "value": {"$ref": "#/$defs/presentValue"}
+      },
+      "allOf": [
+        {
+          "if": {"properties": {"operator": {"const": "equal"}}},
+          "then": {
+            "required": ["value"],
+            "properties": {
+              "value": {
+                "not": {
+                  "type": "object",
+                  "required": ["presence"],
+                  "properties": {"presence": {"const": "absent"}}
+                }
+              }
+            }
+          }
+        },
+        {
+          "if": {"properties": {"operator": {"enum": ["is_absent", "is_null"]}}},
+          "then": {"not": {"required": ["value"]}}
+        }
+      ]
+    },
+    "presentValue": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence"],
+          "properties": {"presence": {"const": "absent"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence"],
+          "properties": {"presence": {"const": "null"}}
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "text"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"enum": ["string", "date", "timestamp_instant", "timestamp_local"]},
+            "text": {"type": "string"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "boolean"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "bool"},
+            "boolean": {"type": "boolean"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "exact", "precision", "scale"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"enum": ["integer", "decimal"]},
+            "exact": {"type": "string"},
+            "precision": {"type": "integer", "minimum": 1},
+            "scale": {"type": "integer", "minimum": 0}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "elements"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "array"},
+            "elements": {"type": "array", "items": {"$ref": "#/$defs/presentValue"}}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "fields"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "object"},
+            "fields": {
+              "type": "object",
+              "additionalProperties": {"$ref": "#/$defs/presentValue"}
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "variant", "member"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "union"},
+            "variant": {"type": "string", "minLength": 1},
+            "member": {"$ref": "#/$defs/presentValue"}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["presence", "type", "binary"],
+          "properties": {
+            "presence": {"const": "value"},
+            "type": {"const": "binary_ref"},
+            "binary": {"$ref": "#/$defs/objectRef"}
+          }
+        }
+      ]
+    },
+    "objectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "org_id",
+        "workspace_id",
+        "artifact_id",
+        "object_attempt_key",
+        "sha256",
+        "byte_length",
+        "media_type",
+        "backend_generation"
+      ],
+      "properties": {
+        "org_id": {"type": "string", "minLength": 1},
+        "workspace_id": {"type": "string", "minLength": 1},
+        "artifact_id": {"type": "string", "minLength": 1},
+        "object_attempt_key": {"type": "string", "minLength": 1},
+        "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "byte_length": {"type": "integer", "minimum": 0},
+        "media_type": {"type": "string", "minLength": 1},
+        "backend_generation": {"type": "string", "minLength": 1}
       }
     },
     "value": {

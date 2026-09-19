@@ -1,0 +1,60 @@
+openapi: 3.0.3
+info:
+  title: Synthetic explicit default boundary
+  version: 1.0.0
+servers:
+  - url: https://defaults.example.test/v1
+components:
+  schemas:
+    LimitWithDefault:
+      type: integer
+      default: 0
+paths:
+  /defaults:
+    get:
+      operationId: getDefaults
+      parameters:
+        - name: enabled
+          in: query
+          required: false
+          schema:
+            type: boolean
+            default: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/LimitWithDefault'
+        - name: note
+          in: query
+          required: false
+          schema:
+            type: string
+            nullable: true
+            default: null
+      responses:
+        "200":
+          description: response default is report-only
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: false
+                properties:
+                  status:
+                    type: string
+                    default: pending
+  /body:
+    post:
+      operationId: postDefaultBody
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              default: {}
+      responses:
+        "204":
+          description: no content

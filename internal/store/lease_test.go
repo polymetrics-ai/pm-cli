@@ -231,3 +231,66 @@ func testDispatchFor(t *testing.T, runID, suffix string) contract.Dispatch {
 	}
 	return dispatch
 }
+
+// A planning lease claimed with the minimum admissible TTL must still be
+// releasable by the exact holder. The release writes the smallest representable
+// released expiry, so a guard that requires the stored expiry to be strictly
+// greater than that value would report a spurious lost claim for a
+// one-microsecond claim and leave the planning transaction rolled back.
+func TestReleaseMinimumTTLLeaseSucceeds(t *testing.T) {
+	credentials, pool := prepareTestStore(t, 6)
+	scope := newTestScope(t)
+	t.Cleanup(func() { cleanupTestScope(t, credentials, scope) })
+	request := testAdmissionRequest(t, scope, "minimum-lease-key", "minimum-lease")
+	admitForTest(t, pool, scope, request)
+	task := testTask(request, "task-minimum", time.Now().UTC())
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return CreateTask(ctx, tx, task)
+	}); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+
+	var claimed Lease
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		lease, err := ClaimTask(ctx, tx, ClaimRequest{
+			Task:          TaskRef{RunID: request.Spec.RunID, TaskID: task.TaskID},
+			OwnerID:       "worker-minimum",
+			ExpectedFence: 0,
+			TTL:           time.Microsecond,
+		})
+		claimed = lease
+		return err
+	}); err != nil {
+		t.Fatalf("claim with the minimum TTL: %v", err)
+	}
+	if claimed.ExpiresAt.Sub(claimed.ClaimedAt) != time.Microsecond {
+		t.Fatalf("claimed expiry span = %s; want exactly one microsecond", claimed.ExpiresAt.Sub(claimed.ClaimedAt))
+	}
+
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		return ReleaseTaskLease(ctx, tx, claimed)
+	}); err != nil {
+		t.Fatalf("release a minimum-TTL lease: %v", err)
+	}
+
+	// The released lease must be reclaimable, so the release really ended it
+	// rather than only reporting success.
+	var reclaimed Lease
+	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
+		lease, err := ClaimTask(ctx, tx, ClaimRequest{
+			Task:          TaskRef{RunID: request.Spec.RunID, TaskID: task.TaskID},
+			OwnerID:       "worker-successor",
+			ExpectedFence: claimed.Fence,
+			TTL:           2 * time.Second,
+		})
+		reclaimed = lease
+		return err
+	}); err != nil {
+		t.Fatalf("reclaim the released minimum-TTL lease: %v", err)
+	}
+	if reclaimed.OwnerID != "worker-successor" || reclaimed.Fence != claimed.Fence+1 {
+		t.Fatalf("reclaimed lease = %#v; want the successor owner on the next fence", reclaimed)
+	}
+}

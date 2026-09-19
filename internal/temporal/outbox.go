@@ -246,9 +246,18 @@ func (relay *Relay) StartOrReconcile(ctx context.Context, route store.WorkflowRo
 
 	workflowRun, err := routeRPC(ctx, relay, route, func(callCtx context.Context, backend WorkflowClient) (sdkclient.WorkflowRun, error) {
 		return backend.ExecuteWorkflow(callCtx, sdkclient.StartWorkflowOptions{
-			ID:                                       intent.Plan.WorkflowID,
-			TaskQueue:                                intent.Plan.TaskQueue,
-			WorkflowExecutionTimeout:                 intent.Plan.ExecutionTimeout,
+			ID:        intent.Plan.WorkflowID,
+			TaskQueue: intent.Plan.TaskQueue,
+			// Temporal records the exact timeout it is given in the started
+			// execution, and every binding-evidence comparison in this package
+			// reads that recorded value back as the second-quantized effective
+			// timeout (temporalDuration). The sealed plan keeps the exact
+			// accepted lifetime that the durable deadline, grant, permit and
+			// physical-call checks use, so the Temporal boundary must send the
+			// quantized value it will later verify: otherwise a run whose
+			// accepted lifetime is not a whole number of seconds could never
+			// bind its execution.
+			WorkflowExecutionTimeout:                 temporalDuration(intent.Plan.ExecutionTimeout),
 			WorkflowIDConflictPolicy:                 enumspb.WORKFLOW_ID_CONFLICT_POLICY_FAIL,
 			WorkflowIDReusePolicy:                    enumspb.WORKFLOW_ID_REUSE_POLICY_REJECT_DUPLICATE,
 			WorkflowExecutionErrorWhenAlreadyStarted: true,

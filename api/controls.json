@@ -3,6 +3,7 @@
   "wire_version": "pm.api/v1",
   "protocol_major": 1,
   "supported_features": [
+    "catalog-v1",
     "exact-values",
     "metadata-only-replay",
     "typed-result-controls",
@@ -113,6 +114,12 @@
       "status": 412,
       "code": "control_revision_mismatch",
       "safe_retry_action": "refresh_control_revision",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 416,
+      "code": "artifact_range_not_satisfiable",
+      "safe_retry_action": "correct_input",
       "disposition": "confirmed_refusal"
     },
     {
@@ -346,6 +353,24 @@
       "requires_if_match": false
     },
     {
+      "operation_id": "getCatalogCommand",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/commands/{operation_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getCatalogConnector",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/connectors/{connector_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
       "operation_id": "getConnection",
       "method": "GET",
       "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}",
@@ -421,6 +446,24 @@
       "operation_id": "inspectArtifact",
       "method": "GET",
       "path": "/v1/workspaces/{workspace_id}/artifacts/{artifact_id}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listCatalogCommands",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/commands",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "listCatalogConnectors",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/connectors",
       "required_body_fields": [],
       "optional_body_fields": [],
       "requires_idempotency_key": false,

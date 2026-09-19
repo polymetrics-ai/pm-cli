@@ -13,6 +13,7 @@ import (
 	"go.temporal.io/sdk/converter"
 	"go.temporal.io/sdk/interceptor"
 	sdktemporal "go.temporal.io/sdk/temporal"
+	"go.temporal.io/sdk/workflow"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
@@ -140,6 +141,24 @@ func validateWorkflowValue(value interface{}) error {
 	if !supportedWorkflowValue(value) || nilWorkflowValue(value) {
 		return errors.New("workflow payload type is not an admitted safe-reference contract")
 	}
+	// The SDK serializes GetVersion's change ID and typed version separately.
+	// Admit only registered, constant metadata; never arbitrary strings or ints.
+	switch value := value.(type) {
+	case string:
+		if value != contract.WorkflowRunDeadlineProjectionChangeID {
+			return errors.New("workflow version marker change is not admitted")
+		}
+		return nil
+	case *string:
+		return validateWorkflowValue(*value)
+	case workflow.Version:
+		if value != contract.WorkflowRunDeadlineProjectionVersion {
+			return errors.New("workflow version marker version is not admitted")
+		}
+		return nil
+	case *workflow.Version:
+		return validateWorkflowValue(*value)
+	}
 	validator, ok := value.(interface{ Validate() error })
 	if !ok {
 		return errors.New("workflow payload type has no contract validator")
@@ -157,6 +176,8 @@ func nilWorkflowValue(value interface{}) bool {
 
 func supportedWorkflowValue(value interface{}) bool {
 	switch value.(type) {
+	case string, *string, workflow.Version, *workflow.Version:
+		return true
 	case contract.StartRunInput, *contract.StartRunInput,
 		contract.ProjectionRetryCommand, *contract.ProjectionRetryCommand,
 		contract.WorkflowRunRef, *contract.WorkflowRunRef,

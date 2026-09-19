@@ -18,7 +18,6 @@ go_test(
     name = "activities_test",
     size = "large",
     srcs = ["effect_crash_test.go"],
-    embed = [":activities"],
     env_inherit = [
         "GOMAXPROCS",
         "GOMEMLIMIT",
@@ -26,8 +25,13 @@ go_test(
         "PM_STACK_TEST_CONFIG",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
-    tags = ["exclusive", "external", "no-remote"],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
+        ":activities",
         "//internal/api",
         "//internal/app",
         "//internal/config",

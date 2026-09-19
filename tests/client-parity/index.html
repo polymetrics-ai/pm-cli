@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PM client parity fixture</title>
+  <script type="importmap">
+    {"imports":{"openapi-fetch":"/__pm_fixture__/vendor/openapi-fetch.mjs"}}
+  </script>
+</head>
+<body>
+  <main>
+    <h1>PM client parity fixture</h1>
+    <p>Controlled same-stack evidence. No live provider operation.</p>
+    <form id="invocation">
+      <label for="text">Text</label>
+      <input id="text" name="text" type="text" required maxlength="128" autocomplete="off">
+      <button type="submit">Submit typed invocation</button>
+    </form>
+    <output id="status" aria-live="polite">Not connected</output>
+    <pre id="result"></pre>
+  </main>
+  <script type="module">
+    import { createBrowserClient, canonicalDigest } from "/__pm_fixture__/sdk/browser/client.js";
+
+    const status = document.querySelector("#status");
+    const result = document.querySelector("#result");
+    let client;
+    let configuration;
+
+    window.parity = {
+      async connect(value) {
+        configuration = structuredClone(value);
+        const csrf = document.cookie.split("; ").find(item => item.startsWith("__Host-pm_csrf="))?.split("=")[1];
+        client = await createBrowserClient({
+          expectedInstanceID: configuration.instance_id,
+          ...(configuration.omit_csrf ? {} : csrf ? { csrfToken: csrf } : {}),
+        });
+        status.textContent = "Connected to explicit workspace";
+        return { instance_id: client.information.instance_id, principal: client.session.principal };
+      },
+      async submit(text, key = configuration.request_key) {
+        const input = structuredClone(configuration.input);
+        input.input.fields[configuration.input_field] = { presence: "value", type: "string", text };
+        try {
+          const admission = await client.submitInvocation(configuration.workspace_id, input, {
+            expectedRevision: configuration.operation_revision,
+            ...(key ? { requestKey: key } : {}),
+          });
+          status.textContent = "Durably accepted";
+          result.textContent = JSON.stringify(admission, null, 2);
+          return { status: 202, admission };
+        } catch (error) {
+          status.textContent = error.code ?? "client_failure";
+          const failure = { status: error.status ?? 0, code: error.code ?? "client_failure", request_key: error.requestKey ?? "" };
+          result.textContent = JSON.stringify(failure, null, 2);
+          return failure;
+        }
+      },
+      canonicalDigest,
+      api() { return client.api; },
+    };
+
+    document.querySelector("#invocation").addEventListener("submit", async event => {
+      event.preventDefault();
+      await window.parity.submit(document.querySelector("#text").value);
+    });
+  </script>
+</body>
+</html>
