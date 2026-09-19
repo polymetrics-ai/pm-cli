@@ -38,23 +38,23 @@ const (
 var errInvalidHTTPInput = errors.New("invalid HTTP application input")
 
 type Service struct {
-	publicOrigin          string
-	auth                  *auth.Service
-	identity              *app.IdentityService
-	credentials           *app.CredentialIngress
-	catalog               *app.CatalogService
-	instanceID            string
-	oidcHTTPClient        *http.Client
-	admission             *app.AdmissionService
-	runs                  *app.RunService
-	artifacts             *app.ArtifactService
-	warehouse             *warehouseSurface
+	publicOrigin           string
+	auth                   *auth.Service
+	identity               *app.IdentityService
+	credentials            *app.CredentialIngress
+	catalog                *app.CatalogService
+	instanceID             string
+	oidcHTTPClient         *http.Client
+	admission              *app.AdmissionService
+	runs                   *app.RunService
+	artifacts              *app.ArtifactService
+	warehouse              *warehouseSurface
 	connectionMetadataRoot string
-	resolveEventCursorKey func(context.Context) ([]byte, error)
-	eventBufferSize       uint64
-	eventWriteTimeout     time.Duration
-	draining              <-chan struct{}
-	cursorKey             [sha256.Size]byte
+	resolveEventCursorKey  func(context.Context) ([]byte, error)
+	eventBufferSize        uint64
+	eventWriteTimeout      time.Duration
+	draining               <-chan struct{}
+	cursorKey              [sha256.Size]byte
 }
 
 var _ StrictServerInterface = (*Service)(nil)
@@ -111,22 +111,22 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 	}
 	client := *configuration.OIDCHTTPClient
 	service := &Service{
-		publicOrigin:          configuration.PublicOrigin,
-		auth:                  configuration.Auth,
-		identity:              configuration.Identity,
-		credentials:           configuration.Credentials,
-		catalog:               configuration.Catalog,
-		instanceID:            configuration.InstanceID,
-		oidcHTTPClient:        &client,
-		admission:             configuration.Admission,
-		runs:                  configuration.Runs,
-		artifacts:             artifacts,
-		warehouse:             warehouse,
+		publicOrigin:           configuration.PublicOrigin,
+		auth:                   configuration.Auth,
+		identity:               configuration.Identity,
+		credentials:            configuration.Credentials,
+		catalog:                configuration.Catalog,
+		instanceID:             configuration.InstanceID,
+		oidcHTTPClient:         &client,
+		admission:              configuration.Admission,
+		runs:                   configuration.Runs,
+		artifacts:              artifacts,
+		warehouse:              warehouse,
 		connectionMetadataRoot: configuration.ConnectionMetadataRoot,
-		resolveEventCursorKey: configuration.ResolveEventCursorKey,
-		eventBufferSize:       configuration.EventBufferSize,
-		eventWriteTimeout:     configuration.EventWriteTimeout,
-		draining:              configuration.Draining,
+		resolveEventCursorKey:  configuration.ResolveEventCursorKey,
+		eventBufferSize:        configuration.EventBufferSize,
+		eventWriteTimeout:      configuration.EventWriteTimeout,
+		draining:               configuration.Draining,
 	}
 	if _, err := io.ReadFull(rand.Reader, service.cursorKey[:]); err != nil {
 		return nil, fmt.Errorf("initialize HTTP cursor authentication: %w", err)

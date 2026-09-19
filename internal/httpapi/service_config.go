@@ -29,10 +29,10 @@ type ServiceConfig struct {
 	// metadata state directory. Absence preserves explicit schema read
 	// unavailability rather than defaulting to another location.
 	ConnectionMetadataRoot string
-	InstanceID            string
-	OIDCHTTPClient        *http.Client
-	ResolveEventCursorKey func(context.Context) ([]byte, error)
-	EventBufferSize       uint64
-	EventWriteTimeout     time.Duration
-	Draining              <-chan struct{}
+	InstanceID             string
+	OIDCHTTPClient         *http.Client
+	ResolveEventCursorKey  func(context.Context) ([]byte, error)
+	EventBufferSize        uint64
+	EventWriteTimeout      time.Duration
+	Draining               <-chan struct{}
 }

@@ -135,10 +135,10 @@ type SourceReference struct {
 // RelationBinding are pointers so an absent fact stays distinct from an
 // explicitly empty one.
 type SourceOperation struct {
-	SourceOperationID string       `json:"source_operation_id"`
-	SourceRefs        []SourceRef  `json:"source_refs"`
-	RequestVariants   []VariantRef `json:"request_variants"`
-	ResponseVariants  []VariantRef `json:"response_variants"`
+	SourceOperationID string                            `json:"source_operation_id"`
+	SourceRefs        []SourceRef                       `json:"source_refs"`
+	RequestVariants   []VariantRef                      `json:"request_variants"`
+	ResponseVariants  []VariantRef                      `json:"response_variants"`
 	StatementKind     *contract.PostgreSQLStatementKind `json:"statement_kind,omitempty"`
 	RelationBinding   *string                           `json:"relation_binding,omitempty"`
 }

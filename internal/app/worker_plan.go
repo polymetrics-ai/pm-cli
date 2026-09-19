@@ -70,7 +70,7 @@ func (service *WorkerService) planWorkerTaskDispatch(
 	}
 	if state.input.Lane != contract.LaneDirectRead && state.input.Lane != contract.LaneDirectWrite {
 		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
-			"dispatch planning supports only the direct_read lane",
+			"dispatch planning supports the direct_read lane and the PostgreSQL direct_write transport",
 		))
 	}
 	if reference.ID != task.OperationID {
@@ -93,7 +93,7 @@ func (service *WorkerService) planWorkerTaskDispatch(
 	if state.input.Lane == contract.LaneDirectWrite &&
 		selection.Operation.Transport.Kind != contract.TransportKindPostgreSQL {
 		return workerFailure(ErrWorkerCapabilityUnavailable, errors.New(
-			"dispatch planning supports only the direct_read lane",
+			"dispatch planning supports the PostgreSQL direct_write transport only",
 		))
 	}
 	responseBytes, err := workerDispatchResponseBytes(state, selection, handler, service.sqlBounds)
