@@ -1,8 +1,8 @@
 {
   "schema_version": "pm.semantics/v1",
   "connector_id": "postgres",
-  "source_digest": "sha256:cb28f4284a5e08e03cbc5e14e72e259506bda6dc382f9fe87c2a7a660489900b",
-  "revision": "sha256:b6da965c0ae2e20bcf58e615293497fed7c49b25cad90648e2e9d830550462a3",
+  "source_digest": "sha256:25952582914c648a0d0f193f07679f41cd15c8e7ced92d34ee0bd2a55ac176f2",
+  "revision": "sha256:91463ecb00fd9997f04b1131abab41e7a00d2c1df9b574baabdcfb70e82a4030",
   "operations": [
     {
       "operation_id": "relation/metadata",

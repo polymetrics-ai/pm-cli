@@ -197,5 +197,5 @@
       "relation_binding": "postgres.reusable-relation"
     }
   ],
-  "semantics_revision": "sha256:b6da965c0ae2e20bcf58e615293497fed7c49b25cad90648e2e9d830550462a3"
+  "semantics_revision": "sha256:91463ecb00fd9997f04b1131abab41e7a00d2c1df9b574baabdcfb70e82a4030"
 }
