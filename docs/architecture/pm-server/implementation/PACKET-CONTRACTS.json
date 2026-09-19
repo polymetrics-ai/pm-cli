@@ -18343,7 +18343,336 @@
           ],
           "subsequent_wiring_milestones": []
         }
-      ],
+      ,
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/config/provider_sql.go",
+          "group_id": "N14",
+          "go_package": "config",
+          "responsibility": "Closed, strictly validated server-owned declaration for customer SQL connections: structured endpoint facts, TLS trust and secret references, permitted relation bindings with their concrete schema/table and declared key columns, and the declared bounds. No raw DSN and no secret value is declarable here.",
+          "interfaces": [
+            "ProviderSQLConfiguration"
+          ]
+        },
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/config/provider_sql_test.go",
+          "group_id": "N14",
+          "go_package": "config",
+          "responsibility": "Prove the provider SQL declaration's refusals and acceptance: unknown, duplicate, wrongly typed, absent or secret-bearing members are refused and a complete declaration resolves.",
+          "interfaces": [
+            "TestProviderSQLDeclaration"
+          ]
+        },
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/app/sql_composition.go",
+          "group_id": "N14",
+          "go_package": "app",
+          "responsibility": "Compose the declared postgresql operation with its server-owned connection binding and the bounded runtime SQL transport behind the shared handler registry: resolve the operation, binding, credential and current authority at execution, refuse explicitly when any is unavailable, and never substitute another connection, relation or statement.",
+          "interfaces": [
+            "OpenSQLComposition",
+            "SQLComposition"
+          ]
+        },
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/app/sql_composition_test.go",
+          "group_id": "N14",
+          "go_package": "app",
+          "responsibility": "Same-stack case over the real authenticated admission path: exact typed rows through the registered SQL handler against an isolated customer relation, plus zero-send refusals for an unregistered capability, another workspace's declaration, an unusable binding and a credential that is not the declared one.",
+          "interfaces": [
+            "TestSQLExecutionCompositionWorkerBehavior"
+          ]
+        }],
       "acceptance": [
         {
           "id": "pm-postgres-transport-V34",

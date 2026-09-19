@@ -12,7 +12,7 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
-      "sha256": "88b046210d984862f5125595754a0ee8432daafb5727a7191dca33c45df0ee38"
+      "sha256": "be131f4596e11cf6677876e48bc9f41feb1da49ba67cb00a8fe5dde5977bdc6e"
     },
     {
       "path": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
@@ -20,15 +20,15 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
-      "sha256": "081a3f20143f65f8da5121df49c7062e449acbbe1c8bc357175e63b24745d602"
+      "sha256": "619004fa46aebe5ddba616d532619c358be8bac076ab37ff4f78c67b68cc1425"
     }
   ],
   "counts": {
     "foundations": 20,
     "requirements": 43,
     "packets": 44,
-    "declared_paths": 710,
-    "actual_go_files": 391
+    "declared_paths": 714,
+    "actual_go_files": 402
   },
   "validation": {
     "id": "V80",
@@ -6168,6 +6168,24 @@
       "declaration_state": "present"
     },
     {
+      "packet_id": "pm-postgres-transport",
+      "path": "internal/app/sql_composition.go",
+      "symbol": "OpenSQLComposition",
+      "declaration_state": "present"
+    },
+    {
+      "packet_id": "pm-postgres-transport",
+      "path": "internal/app/sql_composition.go",
+      "symbol": "SQLComposition",
+      "declaration_state": "present"
+    },
+    {
+      "packet_id": "pm-postgres-transport",
+      "path": "internal/app/sql_composition_test.go",
+      "symbol": "TestSQLExecutionCompositionWorkerBehavior",
+      "declaration_state": "present"
+    },
+    {
       "packet_id": "pm-workflow-activity-runtime",
       "path": "internal/app/worker.go",
       "symbol": "AdmitScheduledRun",
@@ -6399,7 +6417,7 @@
       "packet_id": "pm-etl-checkpoint-publication",
       "path": "internal/cli/schema.go",
       "symbol": "InspectSchema",
-      "declaration_state": "unavailable"
+      "declaration_state": "missing"
     },
     {
       "packet_id": "pm-cli-session-transport",
@@ -6471,6 +6489,18 @@
       "packet_id": "pm-source-compiler-fidelity",
       "path": "internal/compile/sensitivity_test.go",
       "symbol": "TestSecretOperationsNeverProjectToCLI",
+      "declaration_state": "present"
+    },
+    {
+      "packet_id": "pm-postgres-transport",
+      "path": "internal/config/provider_sql.go",
+      "symbol": "ProviderSQLConfiguration",
+      "declaration_state": "present"
+    },
+    {
+      "packet_id": "pm-postgres-transport",
+      "path": "internal/config/provider_sql_test.go",
+      "symbol": "TestProviderSQLDeclaration",
       "declaration_state": "present"
     },
     {
@@ -6861,7 +6891,7 @@
       "packet_id": "pm-etl-checkpoint-publication",
       "path": "internal/httpapi/schema.go",
       "symbol": "GetSchema",
-      "declaration_state": "unavailable"
+      "declaration_state": "missing"
     },
     {
       "packet_id": "pm-human-agent-auth",
@@ -7875,7 +7905,7 @@
       "packet_id": "pm-etl-checkpoint-publication",
       "path": "internal/sync/ack_test.go",
       "symbol": "TestPartialAckContiguousCursor",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-reverse-etl-settlement",

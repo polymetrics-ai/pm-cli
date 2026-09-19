@@ -6118,6 +6118,10 @@
         "internal/app/http_continuation_test.go",
         "internal/app/physical_boundary_test.go",
         "internal/app/continuations.go",
+        "internal/config/provider_sql.go",
+        "internal/config/provider_sql_test.go",
+        "internal/app/sql_composition.go",
+        "internal/app/sql_composition_test.go",
         "internal/store/worker_retries.go",
         "internal/store/worker_retries_test.go"
       ]
