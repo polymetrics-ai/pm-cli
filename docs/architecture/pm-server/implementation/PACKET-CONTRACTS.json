@@ -19810,6 +19810,74 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V38",
+            "V57"
+          ],
+          "generator": null,
+          "assignment_owner": "store",
+          "group_responsibility": "Dataset/object manifest/checkpoint and schema snapshot PG tables; same commit boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/store/migrations/postgres/0019_warehouse_segments.sql",
+          "group_id": "R17",
+          "go_package": null,
+          "responsibility": "Own the warehouse dataset/segment/cursor/snapshot/retention tables this packet's manifest and query paths require, under the warehouse store authority; a registered segment ledger is the only membership and a downgrade that would discard retained authority is refused."
+        },
+        {
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V38",
+            "V57"
+          ],
+          "generator": null,
+          "assignment_owner": "store",
+          "group_responsibility": "Dataset/object manifest/checkpoint and schema snapshot PG tables; same commit boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/store/warehouse_manifest.go",
+          "group_id": "R17",
+          "go_package": "store",
+          "responsibility": "Persist the warehouse dataset, segment ledger, cursor, snapshot and retention registry under the shared scoped-store conventions: compare-and-swap publication, a cursor that never advances over a gap, and retention that keeps a referenced object from collection."
+        },
+        {
           "path": "internal/warehouse/query_test.go",
           "group_id": "T_V37",
           "prior_group_id": "T_V37",
@@ -20429,6 +20497,16 @@
       ],
       "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
+      "integration_edits": [
+      {
+        "paths": [
+          "internal/store/migrations/postgres/0019_warehouse_segments.sql",
+          "internal/store/warehouse_manifest.go"
+        ],
+        "reason": "The warehouse manifest/query path needs its own registered segment ledger, cursor, snapshot and retention tables and their scoped store access; the warehouse store authority stays with its existing R17 first owner.",
+        "authority": "CREATE under the warehouse store authority; do not redefine the shared publication or checkpoint contracts."
+      }
+      ],
       "non_goals": [
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
         "Do not redefine unowned package contracts or add another runtime/proof authority.",

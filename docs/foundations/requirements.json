@@ -12,7 +12,7 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
-      "sha256": "fae83a34570bccfc879b2aa58d564a799a1dfc71551b5581e7c4efb20ba246c6"
+      "sha256": "88b046210d984862f5125595754a0ee8432daafb5727a7191dca33c45df0ee38"
     },
     {
       "path": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
@@ -20,7 +20,7 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
-      "sha256": "96c3fd20e4f0c42aec65d1e50dfe6378d747695e35c2b77b08a2331f13f138c0"
+      "sha256": "081a3f20143f65f8da5121df49c7062e449acbbe1c8bc357175e63b24745d602"
     }
   ],
   "requirements": [

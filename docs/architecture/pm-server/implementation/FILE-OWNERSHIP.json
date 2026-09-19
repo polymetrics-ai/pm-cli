@@ -5788,7 +5788,9 @@
       "first_milestone": "M7",
       "action": "CREATE",
       "paths": [
-        "internal/store/migrations/postgres/0006_warehouse_schema.sql"
+        "internal/store/migrations/postgres/0006_warehouse_schema.sql",
+        "internal/store/migrations/postgres/0019_warehouse_segments.sql",
+        "internal/store/warehouse_manifest.go"
       ],
       "package": "store",
       "process_owner": "Scoped PG migration",
