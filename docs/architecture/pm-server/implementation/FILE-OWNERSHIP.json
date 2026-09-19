@@ -13225,7 +13225,7 @@
       "kind": "authored",
       "responsibility": "Own schema behavior within httpapi; bounded role: Authorized warehouse/query and schema endpoints.",
       "interfaces": [
-        "GetSchema"
+        "GetConnectionSchema"
       ],
       "dependencies": [
         "api",
@@ -13323,7 +13323,8 @@
       "kind": "authored",
       "responsibility": "Own schema behavior within cli; bounded role: Read-only query/schema controls",
       "interfaces": [
-        "InspectSchema"
+        "newSchemaCommand",
+        "newSchemaShowCommand"
       ],
       "dependencies": [
         "api",
