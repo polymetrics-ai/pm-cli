@@ -327,7 +327,18 @@ func (harness *warehouseHarness) publishSegments(t *testing.T) []PublishedSegmen
 
 func (harness *warehouseHarness) state(t *testing.T) warehouse.DatasetState {
 	t.Helper()
-	state, err := harness.manifest.State(context.Background(), harness.fixture.Actor, harness.fixture.Scope)
+	return harness.stateFor(t, harness.layout)
+}
+
+// stateFor loads the committed state of one dataset in this fixture, whether or
+// not the harness retains a manifest for it.
+func (harness *warehouseHarness) stateFor(t *testing.T, layout warehouse.WarehouseLayout) warehouse.DatasetState {
+	t.Helper()
+	manifest, err := warehouse.NewDatasetManifest(harness.fixture.Pool, harness.publisher, layout, warehouseMaximumSegment)
+	if err != nil {
+		t.Fatalf("construct the dataset manifest for %s: %v", layout.DatasetID(), err)
+	}
+	state, err := manifest.State(context.Background(), harness.fixture.Actor, harness.fixture.Scope)
 	if err != nil {
 		t.Fatalf("load the committed dataset state: %v", err)
 	}

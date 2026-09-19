@@ -178,6 +178,21 @@ type MaterializeRequest struct {
 	MaximumBytes int64
 }
 
+// WriteSegment is the declared warehouse segment writer entry point: it
+// constructs one supervisor from the validated configuration and materializes
+// exactly one Parquet segment through it. A caller that holds a supervisor
+// configuration rather than a constructed instance uses this seam;
+// MaterializeParquetSegment is the underlying materialization for a retained
+// supervisor.
+func WriteSegment(ctx context.Context, config ChildConfig, request MaterializeRequest) (SegmentBytes, error) {
+	var segment SegmentBytes
+	child, err := NewQueryChild(config)
+	if err != nil {
+		return segment, err
+	}
+	return MaterializeParquetSegment(ctx, child, request)
+}
+
 // MaterializeParquetSegment writes one immutable Parquet segment through the
 // restricted child and returns the verified local bytes. The declared bounds and
 // the output path are admitted before any child process exists, and the bytes

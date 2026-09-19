@@ -9,7 +9,9 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -22,11 +24,13 @@ import (
 // TestRowsBeforeCheckpoint is the V38 acceptance case. It exercises the three
 // publication windows that decide whether a cursor can ever name rows that were
 // not verified and registered: a segment refused before its object completed, a
-// verified object whose manifest transaction never committed, and a committed
-// manifest/cursor transaction whose COMMIT reply was lost. After every window
-// the registered ledger, the manifest revision, and the cursor still agree, and
-// an independent host reads the exact registered rows through the other shared
-// gateway without any shared filesystem.
+// verified object whose manifest transaction never committed, and a
+// manifest/cursor transaction whose worker was killed while PostgreSQL was
+// committing it, so the COMMIT reply never arrived and the outcome was unknown
+// to the publication. After every window the registered ledger, the manifest
+// revision, and the cursor still agree, and an independent host reads the exact
+// registered rows through the other shared gateway without any shared
+// filesystem.
 func TestRowsBeforeCheckpoint(t *testing.T) {
 	harness := newWarehouseHarness(t)
 
@@ -182,6 +186,154 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 		assertManifestAgrees(t, harness, 2, 2)
 	})
 
+	t.Run("worker_killed_during_the_manifest_commit_keeps_one_complete_transaction", func(t *testing.T) {
+		// V38's third window, driven on its own dataset so the checkpoint
+		// history the other windows assert stays exact: the worker publishing a
+		// manifest/cursor transaction is killed while PostgreSQL is committing
+		// it, so the COMMIT reply never arrives and the publication cannot know
+		// whether the transaction committed or rolled back. The publication
+		// must reconcile through the immutable occurrence instead of inferring
+		// anything from object existence, and the dataset must hold exactly one
+		// of the two complete transactions: the prior checkpoint, or the
+		// committed new revision whose cursor names the registered row.
+		layout, err := warehouse.NewWarehouseLayout(
+			harness.fixture.Connection.ConnectorID,
+			harness.fixture.Connection.ConnectionID,
+			killedCommitRelationName,
+		)
+		if err != nil {
+			t.Fatalf("compose the killed-commit dataset namespace: %v", err)
+		}
+		harness.registerDataset(t, harness.fixture.Scope, layout)
+		// The declared entry points are the seams this window is driven
+		// through, as a worker holding a configuration rather than retained
+		// instances holds them.
+		writeSegment := func(requestID string, rows [][]warehouse.QueryValue) warehouse.SegmentBytes {
+			t.Helper()
+			segment, err := warehouse.WriteSegment(context.Background(), warehouse.ChildConfig{
+				BinaryPath:    harness.childPath,
+				ScratchRoot:   harness.scratch,
+				AdmittedRoots: []string{harness.materials},
+				Limits:        harness.limits,
+			}, warehouse.MaterializeRequest{
+				RequestID:           requestID,
+				AdmittedDirectories: []string{harness.materials},
+				OutputPath:          filepath.Join(harness.materials, requestID+".parquet"),
+				Columns:             harness.columnCopy(),
+				Rows:                rows,
+				Bounds:              harness.bounds,
+				MaximumBytes:        warehouseMaximumSegment,
+			})
+			if err != nil {
+				t.Fatalf("materialize the segment %s through the declared writer entry point: %v", requestID, err)
+			}
+			return segment
+		}
+		publish := func(attemptID string, segment warehouse.SegmentBytes, rows [][]warehouse.QueryValue) (store.WarehouseSegment, error) {
+			t.Helper()
+			return warehouse.PublishManifest(
+				context.Background(), harness.fixture.Pool, harness.publisher, layout, warehouseMaximumSegment,
+				warehouse.PublishSegmentRequest{
+					Actor:     harness.fixture.Actor,
+					Scope:     harness.fixture.Scope,
+					AttemptID: attemptID,
+					Segment:   segment,
+					RowCount:  int64(len(rows)),
+				},
+			)
+		}
+
+		// The prior checkpoint the lost COMMIT must never disturb.
+		priorRows := harness.rows[:warehouseSegmentSplit]
+		prior, err := publish("killed-commit-prior", writeSegment("killed-commit-prior", priorRows), priorRows)
+		if err != nil {
+			t.Fatalf("publish the prior checkpoint: %v", err)
+		}
+		if prior.Ordinal != 1 || prior.ManifestRevision != 1 {
+			t.Fatalf("prior publication = ordinal %d at revision %d; want 1/1", prior.Ordinal, prior.ManifestRevision)
+		}
+
+		// Kill the publishing backend while PostgreSQL commits the next
+		// manifest/cursor transaction.
+		fault := harness.injectKilledCommitFault(t, layout)
+		lostRows := harness.rows[warehouseSegmentSplit : warehouseSegmentSplit*2]
+		lostSegment := writeSegment("killed-commit", lostRows)
+		published, err := publish("killed-commit", lostSegment, lostRows)
+		if activations := fault.activations(t); activations != 1 {
+			t.Fatalf("the injected manifest-commit kill did not fire exactly once: sequence position %d", activations)
+		}
+		fault.remove(t)
+
+		state := harness.stateFor(t, layout)
+		if err == nil {
+			t.Logf("the injected kill left the committed occurrence at revision %d", published.ManifestRevision)
+			assertStateAgrees(t, state, 2, 2)
+			// The kill did not stop the commit: the durable occurrence is the
+			// registered row, so the lost reply was reconciled from it rather
+			// than re-published.
+			if published.Ordinal != 2 || published.ManifestRevision != 2 {
+				t.Fatalf("recovered publication = ordinal %d at revision %d; want 2/2", published.Ordinal, published.ManifestRevision)
+			}
+			registered := state.Segments[1]
+			if registered.Object != published.Object || !registered.PublishedAt.Equal(published.PublishedAt) {
+				t.Fatalf("the recovered publication is not the committed ledger row: %+v", registered)
+			}
+			harness.verifyObjectBytes(t, published.Object, mustReadFile(t, lostSegment.Path))
+		} else {
+			// The kill aborted the commit: the verified bytes are retained as
+			// an orphan, and the prior checkpoint is exactly what it was.
+			t.Logf("the injected kill aborted the commit and retained an orphan: %v", err)
+			var refused *warehouse.PublicationRefusedError
+			if !errors.As(err, &refused) {
+				t.Fatalf("killed publication error = %v; want a retained refused publication", err)
+			}
+			if !errors.Is(err, store.ErrCommitOutcomeUnknown) {
+				t.Fatalf("the lost COMMIT reply was not reconciled as an unknown outcome: %v", err)
+			}
+			// The publication reconciled through the immutable occurrence: the
+			// refusal names the absent occurrence, not only the failed COMMIT,
+			// so the unknown outcome was never inferred from object existence.
+			if !errors.Is(err, store.ErrNotFound) {
+				t.Fatalf("the unknown outcome was refused without consulting the immutable occurrence: %v", err)
+			}
+			assertStateAgrees(t, state, 1, 1)
+			harness.verifyObjectBytes(t, refused.Object, mustReadFile(t, lostSegment.Path))
+			reservationID, err := layout.SegmentReservationID("killed-commit")
+			if err != nil {
+				t.Fatalf("compose the killed-commit reservation identity: %v", err)
+			}
+			if err := store.WithinScope(context.Background(), harness.fixture.Pool, harness.fixture.Scope, harness.fixture.Actor,
+				func(ctx context.Context, tx *store.Transaction) error {
+					if _, err := store.LoadArtifact(ctx, tx, refused.Object.ArtifactID); !errors.Is(err, store.ErrNotFound) {
+						return fmt.Errorf("a killed publication registered an artifact: %v", err)
+					}
+					if _, err := store.LoadWarehouseSegmentByArtifact(ctx, tx, refused.Object.ArtifactID); !errors.Is(err, store.ErrNotFound) {
+						return fmt.Errorf("a killed publication registered a ledger row: %v", err)
+					}
+					return nil
+				}); err != nil {
+				t.Fatal(err)
+			}
+			// Object existence is never a publication witness.
+			if _, err := harness.consumerReader.Recover(context.Background(), harness.fixture.Actor, harness.fixture.Scope, reservationID); err == nil {
+				t.Fatal("retained orphan bytes stood in for a committed publication occurrence")
+			}
+			// The dataset stays publishable: the retry advances exactly one
+			// revision onto the prior checkpoint and registers the same rows.
+			retried, err := publish("killed-commit-repaired", lostSegment, lostRows)
+			if err != nil {
+				t.Fatalf("publish after the lost manifest COMMIT: %v", err)
+			}
+			if retried.Ordinal != 2 || retried.ManifestRevision != 2 {
+				t.Fatalf("retry after the lost COMMIT = ordinal %d at revision %d; want 2/2", retried.Ordinal, retried.ManifestRevision)
+			}
+			state = harness.stateFor(t, layout)
+		}
+		// Either way the dataset is one complete transaction: the cursor names
+		// the last registered row and never runs ahead of the ledger.
+		assertStateAgrees(t, state, 2, 2)
+	})
+
 	t.Run("cursor_cannot_advance_ahead_of_registered_rows", func(t *testing.T) {
 		// A caller writing SQL directly cannot name a cursor position that no
 		// registered segment occupies.
@@ -280,11 +432,18 @@ func TestRowsBeforeCheckpoint(t *testing.T) {
 	})
 }
 
-// assertManifestAgrees confirms that the manifest revision, the registered
-// ledger, and the cursor describe one contiguous dataset.
+// assertManifestAgrees confirms that the dataset this harness retains agrees
+// with its manifest revision and cursor.
 func assertManifestAgrees(t *testing.T, harness *warehouseHarness, revision uint64, cursor uint64) {
 	t.Helper()
-	state := harness.state(t)
+	assertStateAgrees(t, harness.state(t), revision, cursor)
+}
+
+// assertStateAgrees confirms that one committed dataset state describes a
+// contiguous dataset: the manifest revision, the registered ledger, and the
+// cursor name the same rows, so the cursor never runs ahead of the ledger.
+func assertStateAgrees(t *testing.T, state warehouse.DatasetState, revision uint64, cursor uint64) {
+	t.Helper()
 	if state.Revision != revision {
 		t.Fatalf("manifest revision = %d; want %d", state.Revision, revision)
 	}
@@ -300,6 +459,104 @@ func assertManifestAgrees(t *testing.T, harness *warehouseHarness, revision uint
 			t.Fatalf("ledger position %d carries ordinal %d and revision %d", index, segment.Ordinal, segment.ManifestRevision)
 		}
 	}
+}
+
+// killedCommitRelationName is the dataset the killed-COMMIT window drives. It
+// is a second dataset in the same fixture, so the checkpoint history the other
+// windows assert stays exact.
+const killedCommitRelationName = "orders_killed_commit"
+
+// killedCommitFault is one installed kill of the backend that commits a
+// dataset's manifest/cursor transaction.
+type killedCommitFault struct {
+	harness  *warehouseHarness
+	function string
+	trigger  string
+	sequence string
+}
+
+// injectKilledCommitFault installs a deferred constraint trigger that
+// terminates the backend committing the manifest/cursor transaction of one
+// dataset. PostgreSQL raises the termination itself while the COMMIT is
+// executing, so the publication never receives the COMMIT reply and cannot tell
+// whether the transaction committed: this is the window a worker killed during
+// the manifest/cursor transaction leaves behind. The trigger is scoped to the
+// dataset identity and fires for no other dataset.
+func (harness *warehouseHarness) injectKilledCommitFault(t *testing.T, layout warehouse.WarehouseLayout) *killedCommitFault {
+	t.Helper()
+	// The injected objects are uniquely named, so a stale leftover from an
+	// interrupted run can never be mistaken for this case's injection.
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	fault := &killedCommitFault{
+		harness:  harness,
+		function: "pm.fixture_killed_commit_" + suffix,
+		trigger:  "fixture_killed_commit_" + suffix,
+		sequence: "pm.fixture_killed_commit_" + suffix + "_evidence",
+	}
+	// Every component of the dataset identity is a validated layout component,
+	// so the rendered identity carries no text that a literal could escape.
+	datasetID := layout.DatasetID()
+	harness.fixture.SetupSQL(t, harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		for _, statement := range []string{
+			`CREATE SEQUENCE ` + fault.sequence,
+			`CREATE FUNCTION ` + fault.function + `() RETURNS trigger
+				LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+			BEGIN
+				IF NEW.dataset_id = '` + datasetID + `' THEN
+					PERFORM nextval('` + fault.sequence + `');
+					PERFORM pg_terminate_backend(pg_backend_pid());
+				END IF;
+				RETURN NULL;
+			END
+			$$`,
+			`REVOKE ALL ON FUNCTION ` + fault.function + `() FROM PUBLIC`,
+			`GRANT EXECUTE ON FUNCTION ` + fault.function + `() TO ` + store.RuntimeRole,
+			`GRANT USAGE ON SEQUENCE ` + fault.sequence + ` TO ` + store.RuntimeRole,
+			`CREATE CONSTRAINT TRIGGER ` + fault.trigger + ` AFTER INSERT ON pm.warehouse_segments
+				DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ` + fault.function + `()`,
+		} {
+			if _, err := tx.Exec(ctx, statement); err != nil {
+				return fmt.Errorf("install the killed-commit fault: %w", err)
+			}
+		}
+		return nil
+	})
+	t.Cleanup(func() { fault.remove(t) })
+	return fault
+}
+
+// remove drops the installed fault again. It is idempotent, so a case can
+// remove it before a retry and the cleanup can remove it once more.
+func (fault *killedCommitFault) remove(t *testing.T) {
+	t.Helper()
+	fault.harness.fixture.SetupSQL(t, fault.harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		for _, statement := range []string{
+			`DROP TRIGGER IF EXISTS ` + fault.trigger + ` ON pm.warehouse_segments`,
+			`DROP FUNCTION IF EXISTS ` + fault.function + `()`,
+			`DROP SEQUENCE IF EXISTS ` + fault.sequence,
+		} {
+			if _, err := tx.Exec(ctx, statement); err != nil {
+				return fmt.Errorf("remove the killed-commit fault: %w", err)
+			}
+		}
+		return nil
+	})
+}
+
+// activations reports how often the injected trigger fired. Every firing is
+// recorded in a sequence, whose position a rolled-back transaction cannot undo,
+// so the case can prove the window was actually driven.
+func (fault *killedCommitFault) activations(t *testing.T) int64 {
+	t.Helper()
+	var position int64
+	var called bool
+	fault.harness.fixture.SetupSQL(t, fault.harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT last_value, is_called FROM `+fault.sequence).Scan(&position, &called)
+	})
+	if !called {
+		return 0
+	}
+	return position
 }
 
 // advanceCursorDirectly attempts to move the cursor onto an ordinal that no

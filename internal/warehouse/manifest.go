@@ -159,6 +159,27 @@ func (failure *PublicationRefusedError) Error() string {
 // observable to a caller.
 func (failure *PublicationRefusedError) Unwrap() error { return failure.Reason }
 
+// PublishManifest is the declared warehouse publication entry point: it
+// composes one dataset manifest from the validated construction inputs and
+// delegates exactly one publication to (*DatasetManifest).PublishSegment. A
+// caller that holds the dataset configuration rather than a constructed
+// manifest uses this seam; a caller that already retains a manifest for repeated
+// publication and state reads keeps calling PublishSegment directly.
+func PublishManifest(
+	ctx context.Context,
+	pool *store.Pool,
+	publisher *objects.Publisher,
+	layout WarehouseLayout,
+	maximumSegmentBytes int64,
+	request PublishSegmentRequest,
+) (store.WarehouseSegment, error) {
+	manifest, err := NewDatasetManifest(pool, publisher, layout, maximumSegmentBytes)
+	if err != nil {
+		return store.WarehouseSegment{}, err
+	}
+	return manifest.PublishSegment(ctx, request)
+}
+
 // PublishSegment materializes no bytes itself: it takes one verified local
 // segment, reserves scoped capacity, uploads once through the shared object
 // store, and registers the result in one transaction. A refused publication
