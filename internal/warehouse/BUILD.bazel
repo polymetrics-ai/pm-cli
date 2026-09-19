@@ -32,6 +32,10 @@ go_test(
     embed = [":warehouse"],
     env_inherit = [
         "PM_STACK_ROOT",
+        "PM_STACK_SECRETS_DIR",
+        "PM_STACK_TEST_CONFIG",
+        "PM_STACK_TEST_S3_PRIMARY_ENDPOINT",
+        "PM_STACK_TEST_S3_SECONDARY_ENDPOINT",
         "PM_STORE_TEST_SECRETS_DIR",
     ],
     tags = [
