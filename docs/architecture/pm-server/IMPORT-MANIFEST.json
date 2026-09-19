@@ -90,7 +90,7 @@
       "target": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
       "source": "data/pm-cli/implementation/FILE-OWNERSHIP.json",
       "source_sha256": "5c5b461dda1f81f10a63a7234e07792f54a9996d11df8a5d7cd88ca5f83f7411",
-      "sha256": "caa663a88d93aeef700bb1d1c46e997492b3ed8d996b6f671a42195c3caa674d",
+      "sha256": "c7b4394f74ae89a21d8e0c6e386178f0065bb5cca06d80cf2ee7937bbc29fa8e",
       "transformation": "Added N13-PG and serialized PostgreSQL #28-create/#34-update/#41-composition ownership while retaining disjoint owners. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled M3 physical paths, shared helpers, browser assets and registered-HTTP proof ownership without changing acceptance or later ownership. Reconciled 47 current Go path/group mappings into their retained aggregate first-owner responsibilities, including the F11/T_V13 secret-reader clean cutover; per-file package/import facts remain separately explicit in PACKET-CONTRACTS. Completed the Atlas 284-file WalkDir inventory by adding ten exact current Go-source owners to both ownership projections without changing group identity or order."
     },
     {

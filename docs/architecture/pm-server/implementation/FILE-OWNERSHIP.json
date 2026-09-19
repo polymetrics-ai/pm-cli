@@ -1121,7 +1121,7 @@
         "CommitCursor",
         "CommitPrefix"
       ],
-      "data_owned": "Fetch→durableartifact→ack/cursor protocol",
+      "data_owned": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
       "imports": [
         "contract",
@@ -2870,12 +2870,14 @@
       "first_milestone": "M6",
       "action": "CREATE",
       "paths": [
-        "internal/runtime/pagination_test.go"
+        "internal/runtime/pagination_test.go",
+        "internal/runtime/pagination_clamp_test.go"
       ],
       "package": "runtime",
       "process_owner": "Worker",
       "public_interfaces": [
-        "TestReturnedCountsAndCompleteness"
+        "TestReturnedCountsAndCompleteness",
+        "TestProviderPageSizeClamp"
       ],
       "data_owned": "A known larger fixture proves exact page count, sent size and navigation. Unsent size never implies complete; raw/PM navigation conflicts fail. Staging: Contract introduction does not complete later consumer integration.",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
@@ -12188,7 +12190,7 @@
       "milestone": "M6",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Actual staged source→delivery→durableack→contiguouscursor with lostack/restart",
+      "responsibility": "Actual staged source\u2192delivery\u2192durableack\u2192contiguouscursor with lostack/restart",
       "interfaces": [
         "ExecuteCase"
       ],
@@ -12955,7 +12957,7 @@
       "milestone": "M7",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Own etl behavior within sync; bounded role: Fetch→durableartifact→ack/cursor protocol",
+      "responsibility": "Own etl behavior within sync; bounded role: Fetch\u2192durableartifact\u2192ack/cursor protocol",
       "interfaces": [],
       "dependencies": [
         "contract",
@@ -12972,7 +12974,7 @@
       "generator": null,
       "go_package": "sync",
       "assignment_owner": "sync",
-      "group_responsibility": "Fetch→durableartifact→ack/cursor protocol",
+      "group_responsibility": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
       "allowed_internal_dependencies": [
         "contract",
         "runtime",
@@ -13018,7 +13020,7 @@
       "milestone": "M7",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Own checkpoint behavior within sync; bounded role: Fetch→durableartifact→ack/cursor protocol",
+      "responsibility": "Own checkpoint behavior within sync; bounded role: Fetch\u2192durableartifact\u2192ack/cursor protocol",
       "interfaces": [],
       "dependencies": [
         "contract",
@@ -13035,7 +13037,7 @@
       "generator": null,
       "go_package": "sync",
       "assignment_owner": "sync",
-      "group_responsibility": "Fetch→durableartifact→ack/cursor protocol",
+      "group_responsibility": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
       "allowed_internal_dependencies": [
         "contract",
         "runtime",
@@ -22938,7 +22940,7 @@
       "generator": null,
       "go_package": null,
       "assignment_owner": "proof",
-      "group_responsibility": "N13-PG narrow PostgreSQL source→warehouse/query/mapping→separate destination mapped-upsert composition through the common runner; not full #41 closure.",
+      "group_responsibility": "N13-PG narrow PostgreSQL source\u2192warehouse/query/mapping\u2192separate destination mapped-upsert composition through the common runner; not full #41 closure.",
       "allowed_internal_dependencies": [],
       "import_activation": [],
       "subsequent_wiring_milestones": [
@@ -32958,6 +32960,48 @@
       "import_activation": [
         {
           "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/runtime/pagination_clamp_test.go",
+      "group_id": "T_V29",
+      "prior_group_id": "T_V29",
+      "owner": "runtime",
+      "process": "Worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "A provider that clamps the declared page size is followed at its own smaller size with the honest effective wire limit and continuation, while every other navigation difference still fails.",
+      "interfaces": [
+        "TestProviderPageSizeClamp"
+      ],
+      "dependencies": [
+        "contract",
+        "credentials"
+      ],
+      "test_ids": [
+        "V29"
+      ],
+      "generator": null,
+      "go_package": "runtime",
+      "assignment_owner": "runtime",
+      "group_responsibility": "A known larger fixture proves exact page count, sent size and navigation. Unsent size never implies complete; raw/PM navigation conflicts fail.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "credentials"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "credentials",
           "earliest_milestone": "M6",
           "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
         }
