@@ -1,0 +1,19 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "warehouse",
+    srcs = [
+        "child.go",
+        "query_protocol.go",
+        "scratch.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/warehouse",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/contract"],
+)
+
+go_test(
+    name = "warehouse_test",
+    srcs = ["child_test.go"],
+    embed = [":warehouse"],
+)

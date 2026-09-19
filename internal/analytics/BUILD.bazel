@@ -1,0 +1,17 @@
+load("@rules_go//go:def.bzl", "go_library")
+
+go_library(
+    name = "analytics",
+    srcs = [
+        "engine.go",
+        "limits.go",
+        "parquet.go",
+        "values.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/analytics",
+    visibility = ["//:__subpackages__"],
+    deps = [
+        "//internal/contract",
+        "@com_github_duckdb_duckdb_go_v2//:duckdb-go",
+    ],
+)
