@@ -12,7 +12,7 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
-      "sha256": "e7cfa58f8400a759241355d55cfe1b3fb10f3049cbce90835e83f2508e5ddccc"
+      "sha256": "fae83a34570bccfc879b2aa58d564a799a1dfc71551b5581e7c4efb20ba246c6"
     },
     {
       "path": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
@@ -20,15 +20,15 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
-      "sha256": "3dfb94a08495135d0496d00d726ee9724169dfa66afbf4bd5c6e250e731f4668"
+      "sha256": "96c3fd20e4f0c42aec65d1e50dfe6378d747695e35c2b77b08a2331f13f138c0"
     }
   ],
   "counts": {
     "foundations": 20,
     "requirements": 43,
     "packets": 44,
-    "declared_paths": 707,
-    "actual_go_files": 358
+    "declared_paths": 708,
+    "actual_go_files": 382
   },
   "validation": {
     "id": "V80",
@@ -2051,12 +2051,12 @@
         {
           "path": "internal/schema/discover.go",
           "symbol": "Discover",
-          "declaration_state": "unavailable"
+          "declaration_state": "present"
         },
         {
           "path": "internal/schema/effective.go",
           "symbol": "BuildEffectiveSchema",
-          "declaration_state": "unavailable"
+          "declaration_state": "present"
         }
       ],
       "requirement_ids": [
@@ -2069,18 +2069,7 @@
         "V36",
         "V73"
       ],
-      "gaps": [
-        {
-          "kind": "handler_unavailable",
-          "pointer": "/foundations/FND-09/registration_bindings/0",
-          "detail": "internal/schema/discover.go:Discover"
-        },
-        {
-          "kind": "handler_unavailable",
-          "pointer": "/foundations/FND-09/registration_bindings/1",
-          "detail": "internal/schema/effective.go:BuildEffectiveSchema"
-        }
-      ]
+      "gaps": []
     },
     {
       "id": "FND-10",
@@ -2985,7 +2974,7 @@
         {
           "path": "internal/warehouse/child.go",
           "symbol": "ExecuteQueryChild",
-          "declaration_state": "unavailable"
+          "declaration_state": "missing"
         }
       ],
       "requirement_ids": [
@@ -3006,7 +2995,7 @@
           "detail": "internal/warehouse/manifest.go:PublishManifest"
         },
         {
-          "kind": "handler_unavailable",
+          "kind": "handler_missing",
           "pointer": "/foundations/FND-13/registration_bindings/1",
           "detail": "internal/warehouse/child.go:ExecuteQueryChild"
         }
@@ -5761,7 +5750,7 @@
       "packet_id": "pm-warehouse-query-child",
       "path": "cmd/pm-query/main.go",
       "symbol": "main",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-api-lifecycle-gin",
@@ -5839,31 +5828,31 @@
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/analytics/engine.go",
       "symbol": "RunAnalyticRequest",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/analytics/limits.go",
       "symbol": "BoundAnalytics",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/analytics/parquet.go",
       "symbol": "MaterializeParquet",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/analytics/values.go",
       "symbol": "DecodeAnalyticValue",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/analytics/values.go",
       "symbol": "EncodeAnalyticValue",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-catalog-command-projection",
@@ -7075,43 +7064,43 @@
       "packet_id": "pm-postgres-transport",
       "path": "internal/runtime/sqltls_test.go",
       "symbol": "TestStrictSQLTLS",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-postgres-transport",
       "path": "internal/runtime/sqltypes_test.go",
       "symbol": "TestLosslessParameterizedSQL",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-schema-snapshots",
       "path": "internal/schema/discover.go",
       "symbol": "Discover",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-schema-snapshots",
       "path": "internal/schema/drift_test.go",
       "symbol": "TestScopedCompleteSchema",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-schema-snapshots",
       "path": "internal/schema/effective.go",
       "symbol": "BuildEffectiveSchema",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-schema-snapshots",
       "path": "internal/schema/predicates.go",
       "symbol": "CheckPredicates",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-schema-snapshots",
       "path": "internal/schema/predicates_test.go",
       "symbol": "TestTypedRequirementsAndAtlasGaps",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-dynamic-property-discovery",
@@ -7123,7 +7112,7 @@
       "packet_id": "pm-schema-snapshots",
       "path": "internal/schema/snapshot_test.go",
       "symbol": "TestDynamicFieldDriftBeforeWrite",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-api-lifecycle-gin",
@@ -8179,13 +8168,13 @@
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/warehouse/child.go",
       "symbol": "ExecuteQueryChild",
-      "declaration_state": "unavailable"
+      "declaration_state": "missing"
     },
     {
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/warehouse/child_test.go",
       "symbol": "TestQueryProcessIsolation",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
@@ -8221,7 +8210,7 @@
       "packet_id": "pm-warehouse-query-child",
       "path": "internal/warehouse/scratch.go",
       "symbol": "BoundScratch",
-      "declaration_state": "unavailable"
+      "declaration_state": "present"
     },
     {
       "packet_id": "pm-warehouse-query-child",
@@ -8457,16 +8446,6 @@
       "detail": "internal/runtime/pagination.go:NewPaginator"
     },
     {
-      "kind": "handler_unavailable",
-      "pointer": "/foundations/FND-09/registration_bindings/0",
-      "detail": "internal/schema/discover.go:Discover"
-    },
-    {
-      "kind": "handler_unavailable",
-      "pointer": "/foundations/FND-09/registration_bindings/1",
-      "detail": "internal/schema/effective.go:BuildEffectiveSchema"
-    },
-    {
       "kind": "handler_missing",
       "pointer": "/foundations/FND-10/registration_bindings/1",
       "detail": "internal/runtime/admission.go:AdmitPhysicalCall"
@@ -8477,7 +8456,7 @@
       "detail": "internal/warehouse/manifest.go:PublishManifest"
     },
     {
-      "kind": "handler_unavailable",
+      "kind": "handler_missing",
       "pointer": "/foundations/FND-13/registration_bindings/1",
       "detail": "internal/warehouse/child.go:ExecuteQueryChild"
     },

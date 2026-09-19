@@ -17746,6 +17746,37 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "path": "internal/compile/documentation.go",
+          "group_id": "F16",
+          "prior_group_id": "F16",
+          "owner": "compile",
+          "process": "Build tools",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Admit the pinned documentation dialect this packet's connector declares: a strict anchor selector grammar verified against the captured bytes, dialect-routed source loading and normalization into the declared postgresql operation shape. Introduced by the accepted PostgreSQL source authority; the compile package keeps first ownership.",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "compile",
+          "assignment_owner": "compile",
+          "group_responsibility": "Source-to-bundle compiler and explicit shape refusals",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "connectors/postgres/source.lock.json",
           "group_id": "C_postgres",
           "prior_group_id": "C_postgres",
@@ -18375,6 +18406,29 @@
       "parity_ids": [],
       "state_ownership_ids": [],
       "integration_edits": [
+      {
+        "paths": [
+          "internal/compile/documentation.go"
+        ],
+        "reason": "The accepted PostgreSQL source authority needs a documentation dialect in the compiler; the file is first-owned by the compile package (F16) and declared here as the introducing packet.",
+        "authority": "CREATE in the compiler first owner's package; do not redefine the OpenAPI dialect contracts."
+      },
+      {
+        "paths": [
+          "schemas/bundle.schema.json",
+          "schemas/source.schema.json",
+          "schemas/field-binding.schema.json"
+        ],
+        "reason": "The published schemas must admit the declared documentation anchor and match the Go contract's already-implemented open_properties/additional_properties rules; the committed GitHub bundle already declared those members while the published field-binding schema refused them.",
+        "authority": "UPDATE the published projections only; the Go contract keeps first ownership and no member was added to it."
+      },
+      {
+        "paths": [
+          "scripts/check-boundaries.sh"
+        ],
+        "reason": "ADR475-12 admits the native engine only in the restricted analytical child, so the boundary allow-list gains internal/analytics and cmd/pm-query while every other package, including internal/warehouse, stays native-free.",
+        "authority": "UPDATE the build owner's check with the accepted ADR scope; the refusal stays fail-closed for every other package."
+      },
         {
           "paths": [
             "internal/runtime/admission_test.go"

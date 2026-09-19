@@ -538,6 +538,7 @@
         "cmd/pmgen/main.go",
         "internal/compile/source.go",
         "internal/compile/dialects.go",
+        "internal/compile/documentation.go",
         "internal/compile/refs.go",
         "internal/compile/normalize.go",
         "internal/compile/semantics.go",
