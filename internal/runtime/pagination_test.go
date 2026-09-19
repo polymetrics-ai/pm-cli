@@ -680,6 +680,285 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 	})
 }
 
+// providerTargetScheme repeats the scheme the controlled destination was
+// reached with, so an absolute provider target names the admitted origin
+// exactly as the destination serves it.
+func providerTargetScheme(request *http.Request) string {
+	if request.TLS != nil {
+		return "https"
+	}
+	return "http"
+}
+
+// recordedGitHubIssueListNextTarget is the provider navigation of a
+// credential-free read of
+// https://api.github.com/repos/golang/go/issues?per_page=2&page=1 observed on
+// 2026-09-19: HTTP 200 with Link rel="next" naming the canonical
+// repository-id route, an `after` cursor and the page that cursor addresses.
+// The admitted GitHub slice declares query `page` as its only navigation on
+// /repos/{owner}/{repo}/issues and query `per_page` as its page size, and the
+// pinned capture declares neither an `after` parameter nor the
+// /repositories/{id}/issues route, so this target is provider truth the
+// admitted strategy cannot express and must keep failing rather than be
+// replayed as a URL.
+const recordedGitHubIssueListNextTarget = `/repositories/23096959/issues?per_page=2&page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D`
+
+// TestLinkProviderNavigationBoundary pins the exact boundary of the admitted
+// Link strategy: a provider next target on the declared origin and path that
+// differs only in the declared navigation field yields one scoped
+// continuation, while the recorded GitHub target keeps failing on both counts
+// the declared source cannot express — it leaves the declared route and it
+// carries a cursor no admitted field names.
+func TestLinkProviderNavigationBoundary(t *testing.T) {
+	t.Run("absolute declared-origin target yields one scoped continuation", func(t *testing.T) {
+		var (
+			peerMu      sync.Mutex
+			seenQueries []string
+		)
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			peerMu.Lock()
+			seenQueries = append(seenQueries, request.URL.RawQuery)
+			peerMu.Unlock()
+			writer.Header().Set("Content-Type", "application/json")
+			switch request.URL.Query().Get("page") {
+			case "1":
+				// An absolute target on the admitted origin qualifies itself as
+				// the untrusted source of one scalar navigation value: the
+				// provider's own parameter order is not the sent order.
+				writer.Header().Set("Link",
+					`<`+providerTargetScheme(request)+`://`+request.Host+`/items?per_page=2&page=2&state=open>; rel="next", `+
+						`<`+providerTargetScheme(request)+`://`+request.Host+`/items?per_page=2&page=9&state=open>; rel="last"`)
+				_, _ = io.WriteString(writer, `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`)
+			case "2":
+				// The provider ended the authored source: a truthful last page
+				// names no next relation.
+				writer.Header().Set("Link",
+					`<`+providerTargetScheme(request)+`://`+request.Host+`/items?per_page=2&page=1&state=open>; rel="first", `+
+						`<`+providerTargetScheme(request)+`://`+request.Host+`/items?per_page=2&page=1&state=open>; rel="prev"`)
+				_, _ = io.WriteString(writer, `[{"id":3,"open":true,"title":"three"}]`)
+			default:
+				t.Errorf("unexpected page query %q", request.URL.RawQuery)
+				writer.WriteHeader(http.StatusBadRequest)
+			}
+		}))
+		defer server.Close()
+		operation := testLinkOperation("link-absolute-navigation")
+		if err := operation.Execution.Pagination.Validate(operation); err != nil {
+			t.Fatalf("Link pagination fact: %v", err)
+		}
+		now := time.Now().UTC()
+		origin := serverOrigin(t, server.URL)
+		codec := newMemoryContinuationCodec()
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      admitter,
+			Continuations: codec,
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}
+		binding := ContinuationBinding{
+			Scope:        contract.Scope{OrgID: "org-fixture", WorkspaceID: "workspace-fixture"},
+			ConnectionID: "connection-fixture", OperationID: operation.OperationID,
+			OperationRevision: "operation-revision-fixture", RunID: "run-fixture",
+		}
+		first, err := ExecuteHTTP(
+			context.Background(), dependencies,
+			testHTTPRequest(t, operation, origin, now, linkInput(t, "open", new(uint64(1)), new(uint64(2)))),
+		)
+		if err != nil {
+			t.Fatalf("declared-origin Link page: %v (cause %v)", err, errors.Unwrap(err))
+		}
+		page := first.Result.Pagination
+		if page == nil || page.SourceExhausted || page.Continuation.Presence() != contract.PresenceValue ||
+			page.EffectiveWireLimit == nil || *page.EffectiveWireLimit != 2 ||
+			page.FetchedCount != 2 || page.ReturnedCount != 2 || page.EmittedCount != 2 {
+			t.Fatalf("declared-origin Link pagination = %#v", page)
+		}
+		state := codec.mustState(t, binding, page.Continuation)
+		next, present := state.NextInputs["page"].ExactNumber()
+		if state.SourceExhausted || len(state.NextInputs) != 1 || !present || next.Text != "2" ||
+			state.EffectiveWireLimit == nil || *state.EffectiveWireLimit != 2 ||
+			state.MediaType != "application/json" || len(state.UnreadTail) != 0 {
+			t.Fatalf("declared-origin continuation state = %#v", state)
+		}
+
+		secondRequest := testHTTPRequest(t, operation, origin, now, linkInput(t, "open", nil, nil))
+		secondRequest.Continuation = page.Continuation
+		second, err := ExecuteHTTP(context.Background(), dependencies, secondRequest)
+		if err != nil {
+			t.Fatalf("continued Link page: %v", err)
+		}
+		if second.Result.Pagination == nil || !second.Result.Pagination.SourceExhausted ||
+			second.Result.Pagination.Continuation.Presence() != contract.PresenceAbsent ||
+			second.Result.Pagination.FetchedCount != 1 {
+			t.Fatalf("continued Link pagination = %#v", second.Result.Pagination)
+		}
+		peerMu.Lock()
+		gotQueries := strings.Join(seenQueries, "|")
+		peerMu.Unlock()
+		// The continuation is re-requested through the declared operation in
+		// the declared field order; the provider's absolute target is never
+		// replayed as a URL.
+		if gotQueries != "state=open&page=1&per_page=2|state=open&page=2&per_page=2" ||
+			admitter.calls.Load() != 2 || dialer.calls.Load() != 2 {
+			t.Fatalf("queries=%q admits=%d dials=%d", gotQueries, admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+
+	t.Run("canonical route with declared navigation keeps failing", func(t *testing.T) {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			// Every value this target carries is declared navigation or the sent
+			// page size; only the path differs from the admitted route, so this
+			// case fails exactly when an undeclared path is admitted.
+			writer.Header().Set("Link",
+				`<`+providerTargetScheme(request)+`://`+request.Host+`/repositories/23096959/issues?state=open&page=2&per_page=2>; rel="next"`)
+			_, _ = io.WriteString(writer, `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`)
+		}))
+		defer server.Close()
+		operation := testLinkOperation("link-canonical-route-navigation")
+		origin := serverOrigin(t, server.URL)
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      admitter,
+			Continuations: newMemoryContinuationCodec(),
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}, testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if !errors.Is(err, ErrNavigationConflict) || !execution.PhysicalSend {
+			t.Fatalf("canonical route navigation execution=%#v error=%v", execution, err)
+		}
+		if requests.Load() != 1 || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+			t.Fatalf("canonical route navigation requests=%d admits=%d dials=%d",
+				requests.Load(), admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+
+	t.Run("canonical route cursor target keeps failing", func(t *testing.T) {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			writer.Header().Set("Link", `<`+providerTargetScheme(request)+`://`+request.Host+recordedGitHubIssueListNextTarget+`>; rel="next"`)
+			_, _ = io.WriteString(writer, `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`)
+		}))
+		defer server.Close()
+		operation := testLinkOperation("link-recorded-github-navigation")
+		origin := serverOrigin(t, server.URL)
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      admitter,
+			Continuations: newMemoryContinuationCodec(),
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}, testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if !errors.Is(err, ErrNavigationConflict) || !execution.PhysicalSend {
+			t.Fatalf("recorded GitHub navigation execution=%#v error=%v", execution, err)
+		}
+		if requests.Load() != 1 || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+			t.Fatalf("recorded GitHub navigation requests=%d admits=%d dials=%d",
+				requests.Load(), admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+
+	t.Run("undeclared cursor on the declared route keeps failing", func(t *testing.T) {
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			writer.Header().Set("Link",
+				`<`+providerTargetScheme(request)+`://`+request.Host+`/items?state=open&page=2&per_page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D>; rel="next"`)
+			_, _ = io.WriteString(writer, `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`)
+		}))
+		defer server.Close()
+		operation := testLinkOperation("link-undeclared-cursor")
+		origin := serverOrigin(t, server.URL)
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      admitter,
+			Continuations: newMemoryContinuationCodec(),
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}, testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if !errors.Is(err, ErrNavigationConflict) || !execution.PhysicalSend {
+			t.Fatalf("undeclared cursor execution=%#v error=%v", execution, err)
+		}
+		if requests.Load() != 1 || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+			t.Fatalf("undeclared cursor requests=%d admits=%d dials=%d",
+				requests.Load(), admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+
+	t.Run("last page without a next relation is exhausted, never continued", func(t *testing.T) {
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			writer.Header().Set("Content-Type", "application/json")
+			writer.Header().Set("Link",
+				`<`+providerTargetScheme(request)+`://`+request.Host+`/items?state=open&page=1&per_page=2>; rel="first", `+
+					`<`+providerTargetScheme(request)+`://`+request.Host+`/items?state=open&page=3&per_page=2>; rel="last"`)
+			_, _ = io.WriteString(writer, `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`)
+		}))
+		defer server.Close()
+		operation := testLinkOperation("link-last-page")
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      &testAdmitter{},
+			Continuations: newMemoryContinuationCodec(),
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        &mappedDialer{address: server.Listener.Addr().String()},
+		}, testHTTPRequest(t, operation, serverOrigin(t, server.URL), time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2)))))
+		if err != nil {
+			t.Fatalf("last Link page: %v", err)
+		}
+		page := execution.Result.Pagination
+		if page == nil || !page.SourceExhausted || page.Continuation.Presence() != contract.PresenceAbsent ||
+			len(page.UnreadTail) != 0 || page.FetchedCount != 2 || page.ReturnedCount != 2 || page.EmittedCount != 2 ||
+			page.EffectiveWireLimit == nil || *page.EffectiveWireLimit != 2 {
+			t.Fatalf("last Link pagination = %#v", page)
+		}
+	})
+
+	t.Run("continuation naming another operation's navigation is refused before provider IO", func(t *testing.T) {
+		operation := testOffsetOperation()
+		if err := operation.Execution.Pagination.Validate(operation); err != nil {
+			t.Fatalf("offset pagination fact: %v", err)
+		}
+		codec := newMemoryContinuationCodec()
+		binding := ContinuationBinding{
+			Scope:        contract.Scope{OrgID: "org-fixture", WorkspaceID: "workspace-fixture"},
+			ConnectionID: "connection-fixture", OperationID: operation.OperationID,
+			OperationRevision: "operation-revision-fixture", RunID: "run-fixture",
+		}
+		foreign, err := codec.SealContinuation(context.Background(), binding, ContinuationState{
+			MediaType:  "application/json",
+			UnreadTail: []contract.PresentValue{},
+			NextInputs: map[string]contract.PresentValue{"page": testInteger(t, "2")},
+		})
+		if err != nil {
+			t.Fatalf("seal foreign continuation: %v", err)
+		}
+		request := testHTTPRequest(t, operation, "https://provider.test", time.Now().UTC(), paginationInput(t, nil, nil))
+		request.Continuation = foreign
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: "127.0.0.1:1"}
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      admitter,
+			Continuations: codec,
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}, request)
+		if !errors.Is(err, ErrNavigationConflict) || execution.PhysicalSend {
+			t.Fatalf("foreign continuation execution=%#v error=%v", execution, err)
+		}
+		if admitter.calls.Load() != 0 || dialer.calls.Load() != 0 {
+			t.Fatalf("foreign continuation admits=%d dials=%d", admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+}
 func testOffsetOperation() contract.Operation {
 	record := contract.Schema{
 		Type:     contract.SchemaTypeObject,

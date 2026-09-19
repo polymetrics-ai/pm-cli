@@ -1,0 +1,1920 @@
+{
+  "schema_version": "pm.connector-official-documentation/v1",
+  "connector_id": "github",
+  "capture_id": "github-official-documentation-authentication-and-pagination",
+  "created_at_utc": "2026-09-19T12:50:00Z",
+  "purpose": "Supplemental, separately provenanced official provider documentation for typed authentication and pagination facts that the pinned OpenAPI capture does not contain. It exists because missing OpenAPI security metadata is not evidence of anonymous-only operation, and because the pinned OpenAPI document declares no security scheme and no cursor parameter.",
+  "not_the_openapi_capture": {
+    "statement": "These bytes are NOT the OpenAPI capture and do not replace, extend, or reinterpret it. The pinned OpenAPI source set, its closure capture and its source lock are untouched by this directory. OpenAPI facts stay authoritative for everything they declare; the facts here may only add what OpenAPI does not declare.",
+    "openapi_capture_orientation_only": {
+      "source_lock": "connectors/github/source.lock.json",
+      "upstream_url": "https://raw.githubusercontent.com/github/rest-api-description/0a144e030abbe358000f0d32874e197b59a8f7ed/descriptions/api.github.com/api.github.com.json",
+      "upstream_byte_length": 12939686,
+      "upstream_sha256": "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2",
+      "closure_capture_path": "connectors/github/captures/github-rest-api-description",
+      "closure_capture_sha256": "c3d848d898194a3088180e363192ae7ddd8c7810059de278dad5709c76fece6a",
+      "declared_operation": "issues/list-for-repo",
+      "note": "Copied from the repository's locked source identity for orientation only. Nothing in this capture re-derives, verifies or alters it."
+    }
+  },
+  "identities": {
+    "identity_1_original_provider_bytes": {
+      "description": "The exact response bytes received from the provider's documentation site and from the pinned github/docs raw endpoints, each with its URL, retrieval time, HTTP status, content type, byte length and SHA-256. These bytes are the authority for every quote in this manifest; the retained files are unmodified.",
+      "documents": [
+        {
+          "document_id": "github-docs-rest-authentication",
+          "role": "official_provider_documentation",
+          "title": "Authenticating to the REST API",
+          "requested_url": "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+          "retained_path": "connectors/github/official-documentation/documents/authenticating-to-the-rest-api.html",
+          "retained_byte_length": 345525,
+          "retained_sha256": "24bf2e4f9e61946a68e52f5436ef7310aaaca390a22ada441dd1f4ed38bd9d66",
+          "retrieved_at_utc": "2026-09-19T12:43:59Z",
+          "http_status": 200,
+          "content_type": "text/html; charset=utf-8",
+          "content_length_header": 345525,
+          "date_header": "Sat, 19 Sep 2026 12:43:59 GMT",
+          "etag": null,
+          "last_modified": null,
+          "x_github_request_id": "D324:2891AC:64061D:98E429:6AAE838F",
+          "response_headers_path": "connectors/github/official-documentation/headers/authenticating-to-the-rest-api.html.headers",
+          "revision_identity_exposed": null,
+          "revision_identity_note": "No page revision or last-updated identity is exposed in the retained bytes and no ETag or Last-Modified header was returned. The only version-like value the page exposes is the documentation site API version selector, recorded in retained_page_api_version_selector.",
+          "retrieval_evidence": [
+            {
+              "document_id": "github-docs-rest-authentication",
+              "quote": "HTTP/2 200",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "HTTP status line of the retained response.",
+              "locator": {
+                "file": "headers/authenticating-to-the-rest-api.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  0,
+                  10
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-authentication",
+              "quote": "content-type: text/html; charset=utf-8",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "Content type of the retained response.",
+              "locator": {
+                "file": "headers/authenticating-to-the-rest-api.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  1283,
+                  1321
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "document_id": "github-docs-rest-pagination",
+          "role": "official_provider_documentation",
+          "title": "Using pagination in the REST API",
+          "requested_url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+          "retained_path": "connectors/github/official-documentation/documents/using-pagination-in-the-rest-api.html",
+          "retained_byte_length": 352329,
+          "retained_sha256": "835a376afe5971b03ab9efb2692ca8edd420bb8fce6528b6374028467063677f",
+          "retrieved_at_utc": "2026-09-19T12:44:00Z",
+          "http_status": 200,
+          "content_type": "text/html; charset=utf-8",
+          "content_length_header": 352329,
+          "date_header": "Sat, 19 Sep 2026 12:44:00 GMT",
+          "etag": null,
+          "last_modified": null,
+          "x_github_request_id": "1364:14EE27:155377E:1E59623:6AAE8390",
+          "response_headers_path": "connectors/github/official-documentation/headers/using-pagination-in-the-rest-api.html.headers",
+          "revision_identity_exposed": null,
+          "revision_identity_note": "No page revision or last-updated identity is exposed in the retained bytes and no ETag or Last-Modified header was returned. The only version-like value the page exposes is the documentation site API version selector, recorded in retained_page_api_version_selector.",
+          "retrieval_evidence": [
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "HTTP/2 200",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "HTTP status line of the retained response.",
+              "locator": {
+                "file": "headers/using-pagination-in-the-rest-api.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  0,
+                  10
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "content-type: text/html; charset=utf-8",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "Content type of the retained response.",
+              "locator": {
+                "file": "headers/using-pagination-in-the-rest-api.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  1283,
+                  1321
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "document_id": "github-docs-rest-issues-list-repository-issues",
+          "role": "official_provider_documentation",
+          "title": "REST API endpoints for issues",
+          "requested_url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+          "retained_path": "connectors/github/official-documentation/documents/list-repository-issues.html",
+          "retained_byte_length": 948916,
+          "retained_sha256": "d6c24b7f33ccaa3062ab75a33c91dcdcdc400c93d7891f91c392e588c2631b9a",
+          "retrieved_at_utc": "2026-09-19T12:44:01Z",
+          "http_status": 200,
+          "content_type": "text/html; charset=utf-8",
+          "content_length_header": 948916,
+          "date_header": "Sat, 19 Sep 2026 12:44:01 GMT",
+          "etag": null,
+          "last_modified": null,
+          "x_github_request_id": "5BF0:1586DE:15F5BAC:1EFBC65:6AAE8386",
+          "response_headers_path": "connectors/github/official-documentation/headers/list-repository-issues.html.headers",
+          "revision_identity_exposed": null,
+          "revision_identity_note": "No page revision or last-updated identity is exposed in the retained bytes and no ETag or Last-Modified header was returned. The only version-like value the page exposes is the documentation site API version selector, recorded in retained_page_api_version_selector.",
+          "retrieval_evidence": [
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "HTTP/2 200",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "HTTP status line of the retained response.",
+              "locator": {
+                "file": "headers/list-repository-issues.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  0,
+                  10
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "content-type: text/html; charset=utf-8",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "Content type of the retained response.",
+              "locator": {
+                "file": "headers/list-repository-issues.html.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  1283,
+                  1321
+                ]
+              }
+            }
+          ],
+          "effective_url": "https://docs.github.com/en/rest/issues/issues",
+          "url_note": "A URL fragment is not sent to the server; the retained bytes are the whole article served for the effective URL. The fragment #list-repository-issues identifies the operation section inside the retained article."
+        },
+        {
+          "document_id": "github-docs-repository-license",
+          "role": "attribution_and_pin_evidence",
+          "title": "github/docs LICENSE (Creative Commons Attribution 4.0 International)",
+          "requested_url": "https://raw.githubusercontent.com/github/docs/27965d1687907bf5f365166999eea249ac88c088/LICENSE",
+          "retained_path": "connectors/github/official-documentation/documents/github-docs-LICENSE.txt",
+          "retained_byte_length": 18620,
+          "retained_sha256": "12d3a82a7d1378e6f597ec23d63a081aeb6ec4bc8de2a76ee9dc96c34c6d7a1b",
+          "retrieved_at_utc": "2026-09-19T12:46:35Z",
+          "http_status": 200,
+          "content_type": "text/plain; charset=utf-8",
+          "content_length_header": 18620,
+          "date_header": "Sat, 19 Sep 2026 12:46:35 GMT",
+          "etag": "\"958761ae55b127fd319667aaae52ebb031fa2fb45760d5495a7f6f9d993fa96d\"",
+          "last_modified": null,
+          "x_github_request_id": "97C0:350275:1068D4:2A879D:6AAE842A",
+          "response_headers_path": "connectors/github/official-documentation/headers/github-docs-LICENSE-pinned.headers",
+          "revision_identity_exposed": null,
+          "revision_identity_note": "No revision identity is published for the file itself; the revision is the pinned github/docs commit recorded in license_and_attribution.attribution_source_pin. The response carried an ETag, recorded above.",
+          "retrieval_evidence": [
+            {
+              "document_id": "github-docs-repository-license",
+              "quote": "HTTP/2 200",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "HTTP status line of the retained response.",
+              "locator": {
+                "file": "headers/github-docs-LICENSE-pinned.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  0,
+                  10
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-repository-license",
+              "quote": "content-type: text/plain; charset=utf-8",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "Content type of the retained response.",
+              "locator": {
+                "file": "headers/github-docs-LICENSE-pinned.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  122,
+                  161
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "document_id": "github-docs-repository-readme",
+          "role": "attribution_and_pin_evidence",
+          "title": "github/docs README.md",
+          "requested_url": "https://raw.githubusercontent.com/github/docs/27965d1687907bf5f365166999eea249ac88c088/README.md",
+          "retained_path": "connectors/github/official-documentation/documents/github-docs-README.md",
+          "retained_byte_length": 2279,
+          "retained_sha256": "1adc06cb1008208c356da0982fc8b81ee6d006695aae02f8464370ad87d78a5d",
+          "retrieved_at_utc": "2026-09-19T12:46:35Z",
+          "http_status": 200,
+          "content_type": "text/plain; charset=utf-8",
+          "content_length_header": 2279,
+          "date_header": "Sat, 19 Sep 2026 12:46:35 GMT",
+          "etag": "\"3909856f30420cd263599857eb3efee6d7173bade0fb1e3ea138769da5219953\"",
+          "last_modified": null,
+          "x_github_request_id": "08BA:342D15:10714B:2A8E01:6AAE842A",
+          "response_headers_path": "connectors/github/official-documentation/headers/github-docs-README.headers",
+          "revision_identity_exposed": null,
+          "revision_identity_note": "No revision identity is published for the file itself; the revision is the pinned github/docs commit recorded in license_and_attribution.attribution_source_pin. The response carried an ETag, recorded above.",
+          "retrieval_evidence": [
+            {
+              "document_id": "github-docs-repository-readme",
+              "quote": "HTTP/2 200",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "HTTP status line of the retained response.",
+              "locator": {
+                "file": "headers/github-docs-README.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  0,
+                  10
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-repository-readme",
+              "quote": "content-type: text/plain; charset=utf-8",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "Content type of the retained response.",
+              "locator": {
+                "file": "headers/github-docs-README.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  122,
+                  161
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "document_id": "github-docs-commits-main",
+          "role": "attribution_and_pin_evidence",
+          "title": "github/docs main-branch commit, unauthenticated read of a public resource",
+          "requested_url": "https://api.github.com/repos/github/docs/commits/main",
+          "retained_path": "connectors/github/official-documentation/documents/github-docs-commits-main.json",
+          "retained_byte_length": 16945,
+          "retained_sha256": "3c12bbf297282a1b1b08e7469538122d12528476fd8992691b1fdcfea183a288",
+          "retrieved_at_utc": "2026-09-19T12:44:59Z",
+          "http_status": 200,
+          "content_type": "application/json; charset=utf-8",
+          "content_length_header": null,
+          "date_header": "Sat, 19 Sep 2026 12:45:05 GMT",
+          "etag": "W/\"be1de02c87b2da00fb6da884f007442cb2bd72816f3703ab192e611fa40a3a9a\"",
+          "last_modified": "Fri, 18 Sep 2026 23:29:13 GMT",
+          "x_github_request_id": "2E98:262ADB:B382CF:CD5EC3:6AAE83D1",
+          "response_headers_path": "connectors/github/official-documentation/headers/github-docs-commits-main.headers",
+          "revision_identity_exposed": null,
+          "revision_identity_note": "This document is itself the revision answer: the commit sha and committer date are recorded in license_and_attribution.attribution_source_pin, and the response carried both an ETag and a Last-Modified header.",
+          "retrieval_evidence": [
+            {
+              "document_id": "github-docs-commits-main",
+              "quote": "HTTP/2 200",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "HTTP status line of the retained response.",
+              "locator": {
+                "file": "headers/github-docs-commits-main.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  0,
+                  10
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-commits-main",
+              "quote": "content-type: application/json; charset=utf-8",
+              "quote_basis": "byte-exact substring of the retained file",
+              "summary": "Content type of the retained response.",
+              "locator": {
+                "file": "headers/github-docs-commits-main.headers",
+                "element": "exact_bytes",
+                "byte_range": [
+                  50,
+                  95
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      "retrieval": {
+        "method": "plain HTTP GET over HTTP/2 with curl, identity encoding (no Accept-Encoding sent, no --compressed), and no credentials of any kind",
+        "request_headers_observed": "connectors/github/official-documentation/headers/request-trace.txt",
+        "reproduction_script": "connectors/github/official-documentation/retrieve.sh",
+        "verification_script": "connectors/github/official-documentation/verify.py",
+        "response_header_captures": "connectors/github/official-documentation/headers/"
+      }
+    },
+    "identity_2_authored_normalized_facts": {
+      "description": "Typed, authored facts derived from identity 1, each carrying its verbatim quote and locator. Authored means selected, typed and worded for a compiler slice; the quote and locator are the evidence and MUST travel with the fact. Fields named authored_* are authorship, not provider bytes.",
+      "facts": [
+        {
+          "fact_id": "F1",
+          "name": "rest_bearer_authorization_header",
+          "kind": "provider_protocol_fact",
+          "authored_statement": "GitHub's REST API documents that a token is presented to the API in the Authorization request header, and documents two value forms: `Authorization: Bearer <TOKEN>` and `Authorization: token <TOKEN>`; a JSON web token (JWT) must use the Bearer form. GitHub's own published code sample for GET /repos/{owner}/{repo}/issues sends the Bearer form to https://api.github.com/repos/OWNER/REPO/issues.",
+          "typed": {
+            "applies_to": "github_rest_api",
+            "credential_channel": "request_header",
+            "header_name": "Authorization",
+            "documented_value_forms": [
+              "Bearer <TOKEN>",
+              "token <TOKEN>"
+            ],
+            "jwt_value_form": "Bearer <TOKEN>",
+            "scheme_token_separator_as_documented": "one space"
+          },
+          "evidence": [
+            {
+              "document_id": "github-docs-rest-authentication",
+              "quote": "Many REST API endpoints require authentication or return additional information if you are authenticated. Additionally, you can make more requests per hour when you are authenticated.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Some endpoints require authentication or return more information when authenticated; authentication also raises the rate limit.",
+              "locator": {
+                "file": "documents/authenticating-to-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+                "anchor": "#about-authentication",
+                "heading_text": "About authentication",
+                "element": "prose",
+                "byte_range": [
+                  226163,
+                  226353
+                ],
+                "section_byte_range": [
+                  225976,
+                  228718
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-authentication",
+              "quote": "After creating a token, you can authenticate your request by sending the token in the Authorization header of your request. For example, in the following request, replace YOUR-TOKEN with a reference to your token:",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The token is presented in the Authorization request header.",
+              "locator": {
+                "file": "documents/authenticating-to-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+                "anchor": "#about-authentication",
+                "heading_text": "About authentication",
+                "element": "prose",
+                "byte_range": [
+                  226676,
+                  226922
+                ],
+                "section_byte_range": [
+                  225976,
+                  228718
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-authentication",
+              "quote": "In most cases, you can use Authorization: Bearer or Authorization: token to pass a token. However, if you are passing a JSON web token (JWT), you must use Authorization: Bearer.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Both documented value forms, and the rule that a JWT must use the Bearer form.",
+              "locator": {
+                "file": "documents/authenticating-to-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+                "anchor": "#about-authentication",
+                "heading_text": "About authentication",
+                "element": "prose",
+                "byte_range": [
+                  227630,
+                  227854
+                ],
+                "section_byte_range": [
+                  225976,
+                  228718
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-authentication",
+              "quote": "curl --request GET \\ --url \"https://api.github.com/octocat\" \\ --header \"Authorization: Bearer YOUR-TOKEN\" \\ --header \"X-GitHub-Api-Version: 2026-03-10\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "GitHub's own sample request showing the header value on the wire.",
+              "locator": {
+                "file": "documents/authenticating-to-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api",
+                "anchor": "#about-authentication",
+                "heading_text": "About authentication",
+                "element": "preformatted",
+                "byte_range": [
+                  226923,
+                  227157
+                ],
+                "section_byte_range": [
+                  225976,
+                  228718
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "curl -L \\ -H \"Accept: application/vnd.github+json\" \\ -H \"Authorization: Bearer <YOUR-TOKEN>\" \\ -H \"X-GitHub-Api-Version: 2026-03-10\" \\ https://api.github.com/repos/OWNER/REPO/issues",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The code sample published on the operation's own page sends Authorization: Bearer <YOUR-TOKEN> to the operation's URL.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--code-samples",
+                "heading_text": "Code samples for \"List repository issues\"",
+                "element": "code",
+                "byte_range": [
+                  310396,
+                  310661
+                ],
+                "section_byte_range": [
+                  307102,
+                  322290
+                ]
+              },
+              "note": "First code block of the operation's Code samples section (curl, GET)."
+            }
+          ],
+          "must_not_be_read_as": [
+            "Not evidence that every REST read requires a token: the same operation page states the endpoint can be used without authentication for public resources (fact F3).",
+            "Not connection policy: it says nothing about this PM connection, which requires a server-held credential for its declared operation. That requirement is a PM connection declaration, not a provider protocol fact.",
+            "Not a licence to send an arbitrary header value: the documented value forms are the two above, and a JWT must use the Bearer form.",
+            "Not a statement about any origin other than the documented https://api.github.com REST API."
+          ]
+        },
+        {
+          "fact_id": "F2",
+          "name": "rest_link_header_pagination",
+          "kind": "provider_protocol_fact",
+          "authored_statement": "GitHub's REST API documents pagination through a link response header, present only when a response is paginated, whose URLs address the previous, next, first and last page of results and are annotated with rel=\"prev\", rel=\"next\", rel=\"last\" and rel=\"first\". The published example link header value addresses the listing through https://api.github.com/repositories/1300192/issues with a page query parameter, while the example request published in the same article uses https://api.github.com/repos/octocat/Spoon-Knife/issues. The article states that the query parameters in link URLs may differ between endpoints and that each paginated endpoint uses the page, before/after, or since query parameters.",
+          "typed": {
+            "response_header_name": "link",
+            "response_header_name_as_written_in_the_article": "link (lower case)",
+            "response_header_field_name_expected_on_the_wire": "Link",
+            "relations": [
+              "prev",
+              "next",
+              "first",
+              "last"
+            ],
+            "next_relation_literal": "rel=\"next\"",
+            "continuation_parameter_families": [
+              "page",
+              "before",
+              "after",
+              "since"
+            ],
+            "continuation_is_expressed_as": "query parameters on the URLs carried by the link header value",
+            "header_omitted_when": "the endpoint does not support pagination, or all results fit on a single page",
+            "documented_meaning_for_pm": "A rel=\"next\" target is a provider-supplied continuation for the next page of the same listing; the document does not state that an arbitrary same-origin URL, or any URL on a different path, is a legal continuation."
+          },
+          "evidence": [
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "When a response from the REST API would include many results, GitHub will paginate the results and return a subset of the results. For example, GET /repos/octocat/Spoon-Knife/issues will only return 30 issues from the octocat/Spoon-Knife repository even though the repository includes over 1600 open issues. This makes the response easier to handle for servers and for people.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Default page size, and that the issues listing route is paginated in the documented example.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#about-pagination",
+                "heading_text": "About pagination",
+                "element": "prose",
+                "byte_range": [
+                  224854,
+                  225263
+                ],
+                "section_byte_range": [
+                  224679,
+                  225713
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "You can use the link header from the response to request additional pages of data. If an endpoint supports the per_page query parameter, you can control how many results are returned on a page.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The link response header is the documented means of requesting additional pages; per_page controls page size when supported.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#about-pagination",
+                "heading_text": "About pagination",
+                "element": "prose",
+                "byte_range": [
+                  225264,
+                  225490
+                ],
+                "section_byte_range": [
+                  224679,
+                  225713
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "When a response is paginated, the response headers will include a link header. If the endpoint does not support pagination, or if all results fit on a single page, the link header will be omitted.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The header is present only when the response is paginated.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "prose",
+                "byte_range": [
+                  225907,
+                  226136
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "The link header contains URLs that you can use to fetch additional pages of results. For example, the previous, next, first, and last page of results.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The header carries URLs for the previous, next, first and last pages.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "prose",
+                "byte_range": [
+                  226137,
+                  226307
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "The URL for the previous page is followed by rel=\"prev\".",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Relation annotation for the previous page.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "listitem",
+                "byte_range": [
+                  227618,
+                  227706
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "The URL for the next page is followed by rel=\"next\".",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Relation annotation for the next page: rel=\"next\".",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "listitem",
+                "byte_range": [
+                  227707,
+                  227791
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "The URL for the last page is followed by rel=\"last\".",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Relation annotation for the last page.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "listitem",
+                "byte_range": [
+                  227792,
+                  227876
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "The URL for the first page is followed by rel=\"first\".",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Relation annotation for the first page.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "listitem",
+                "byte_range": [
+                  227877,
+                  227963
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "In some cases, only a subset of these links are available. For example, the link to the previous page won't be included if you are on the first page of results, and the link to the last page won't be included if it can't be calculated.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Only a subset of the relations must be present.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "prose",
+                "byte_range": [
+                  227970,
+                  228227
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "link: <https://api.github.com/repositories/1300192/issues?page=2>; rel=\"prev\", <https://api.github.com/repositories/1300192/issues?page=4>; rel=\"next\", <https://api.github.com/repositories/1300192/issues?page=515>; rel=\"last\", <https://api.github.com/repositories/1300192/issues?page=1>; rel=\"first\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The published example link header value: numeric-route URLs with page query parameters and the four rel annotations.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "preformatted",
+                "byte_range": [
+                  227013,
+                  227502
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              },
+              "note": "Compare with the example request earlier in the same section, which uses https://api.github.com/repos/octocat/Spoon-Knife/issues. The retained documents do not state that these two routes are equivalent."
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "curl --include --request GET \\ --url \"https://api.github.com/repositories/1300192/issues?page=515\" \\ --header \"Accept: application/vnd.github+json\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The published example of requesting another page: the URL taken from the link header is re-requested with the Accept header only.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "preformatted",
+                "byte_range": [
+                  228406,
+                  228626
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              },
+              "note": "The second preformatted block in the section; the first contains the same URL text inside the example link header value."
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "The URLs in the link header use query parameters to indicate which page of results to return. The query parameters in the link URLs may differ between endpoints, however each paginated endpoint will use the page, before/after, or since query parameters. (Some endpoints use the since parameter for something other than pagination.) In all cases, you can use the URLs in the link header to fetch additional pages of results. For more information about query parameters see Getting started with the REST API.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Link URLs carry query parameters; their families may differ between endpoints and are page, before/after, or since; all cases use the URLs from the header.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#using-link-headers",
+                "heading_text": "Using link headers",
+                "element": "prose",
+                "byte_range": [
+                  228627,
+                  229337
+                ],
+                "section_byte_range": [
+                  225713,
+                  229338
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "If an endpoint supports the per_page query parameter, then you can control how many results are returned on a page. For more information about query parameters see Getting started with the REST API.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "per_page is the documented page-size parameter where the endpoint supports it.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#changing-the-number-of-items-per-page",
+                "heading_text": "Changing the number of items per page",
+                "element": "prose",
+                "byte_range": [
+                  229576,
+                  229887
+                ],
+                "section_byte_range": [
+                  229338,
+                  231287
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-pagination",
+              "quote": "For most endpoints, the maximum value of per_page is 100. If you specify a value greater than the maximum, GitHub does not return an error. Instead, the value is automatically reduced to the maximum, and the response includes no more than the maximum number of results per page. Because the request still succeeds, you may receive fewer results than you expect without any indication that the per_page value was reduced. To confirm the default and maximum per_page values for an endpoint, see the reference documentation for that endpoint.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "For most endpoints per_page is capped at 100, silently reduced rather than refused.",
+              "locator": {
+                "file": "documents/using-pagination-in-the-rest-api.html",
+                "url": "https://docs.github.com/en/rest/using-the-rest-api/using-pagination-in-the-rest-api",
+                "anchor": "#changing-the-number-of-items-per-page",
+                "heading_text": "Changing the number of items per page",
+                "element": "prose",
+                "byte_range": [
+                  229888,
+                  230486
+                ],
+                "section_byte_range": [
+                  229338,
+                  231287
+                ]
+              }
+            }
+          ],
+          "must_not_be_read_as": [
+            "It does not state that a link target on a different path is an equivalent canonical route for the same resource; the article only publishes example values on a different route than its own example request. See unverified_items.",
+            "It does not state that the issues endpoints use an after cursor: the article names the families page, before/after and since without assigning one to any endpoint.",
+            "It does not authorise replaying a provider-supplied URL verbatim, and it does not relax PM's navigation rule that a continuation must stay on the declared operation identity.",
+            "It does not state that every paginated endpoint always sends the header for every request."
+          ]
+        },
+        {
+          "fact_id": "F3",
+          "name": "get_repos_owner_repo_issues_documented_semantics",
+          "kind": "provider_operation_documentation",
+          "authored_statement": "The published documentation for GET /repos/{owner}/{repo}/issues states its summary and pull-request caveat, its custom media types, that the endpoint works with fine-grained tokens holding Issues repository permission (read) but can also be used without authentication when only public resources are requested, its complete parameter set (an accept header, the path parameters owner and repo, and the query parameters milestone, state, assignee, type, creator, mentioned, issue_field_values, labels, sort, direction, since, per_page and page with their documented defaults, enumerations and limits), and its response status codes 200, 301, 404 and 422. The operation page publishes no response-header table, so the link response header is not documented on that page; it is documented generically in the pagination article (fact F2).",
+          "typed": {
+            "method": "GET",
+            "path_template": "/repos/{owner}/{repo}/issues",
+            "documented_parameters": [
+              {
+                "name": "accept",
+                "in": "header",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "owner",
+                "in": "path",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "repo",
+                "in": "path",
+                "type": "string",
+                "required": true
+              },
+              {
+                "name": "milestone",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "state",
+                "in": "query",
+                "type": "string",
+                "required": false,
+                "default": "open",
+                "enum": [
+                  "open",
+                  "closed",
+                  "all"
+                ]
+              },
+              {
+                "name": "assignee",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "type",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "creator",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "mentioned",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "issue_field_values",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "labels",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "sort",
+                "in": "query",
+                "type": "string",
+                "required": false,
+                "default": "created",
+                "enum": [
+                  "created",
+                  "updated",
+                  "comments"
+                ]
+              },
+              {
+                "name": "direction",
+                "in": "query",
+                "type": "string",
+                "required": false,
+                "default": "desc",
+                "enum": [
+                  "asc",
+                  "desc"
+                ]
+              },
+              {
+                "name": "since",
+                "in": "query",
+                "type": "string",
+                "required": false
+              },
+              {
+                "name": "per_page",
+                "in": "query",
+                "type": "integer",
+                "required": false,
+                "default": 30,
+                "documented_max": 100
+              },
+              {
+                "name": "page",
+                "in": "query",
+                "type": "integer",
+                "required": false,
+                "default": 1
+              }
+            ],
+            "documented_status_codes": {
+              "200": "OK",
+              "301": "Moved permanently",
+              "404": "Resource not found",
+              "422": "Validation failed, or the endpoint has been spammed."
+            },
+            "documented_custom_media_types": [
+              "application/vnd.github.raw+json",
+              "application/vnd.github.text+json",
+              "application/vnd.github.html+json",
+              "application/vnd.github.full+json"
+            ],
+            "authentication_documented": {
+              "works_with": [
+                "GitHub App user access tokens",
+                "GitHub App installation access tokens",
+                "Fine-grained personal access tokens"
+              ],
+              "permission_documented": "\"Issues\" repository permissions (read)",
+              "unauthenticated_use_documented": "public resources only, without authentication"
+            },
+            "documented_response_headers": []
+          },
+          "evidence": [
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "List repository issues",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The operation's section heading in the retained article.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues",
+                "heading_text": "List repository issues",
+                "element": "heading2",
+                "byte_range": [
+                  294122,
+                  294314
+                ],
+                "section_byte_range": [
+                  294122,
+                  322290
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "List issues in a repository. Only open issues will be listed.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Summary of the operation.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues",
+                "heading_text": "List repository issues",
+                "element": "prose",
+                "byte_range": [
+                  294432,
+                  294500
+                ],
+                "section_byte_range": [
+                  294122,
+                  322290
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "GitHub's REST API considers every pull request an issue, but not every issue is a pull request. For this reason, \"Issues\" endpoints may return both issues and pull requests in the response. You can identify pull requests by the pull_request key. Be aware that the id of a pull request returned from \"Issues\" endpoints will be an issue id. To find out the pull request id, use the \"List pull requests\" endpoint.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Pull requests appear in issue listings and are identified by the pull_request key.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues",
+                "heading_text": "List repository issues",
+                "element": "prose",
+                "byte_range": [
+                  294969,
+                  295531
+                ],
+                "section_byte_range": [
+                  294122,
+                  322290
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "This endpoint supports the following custom media types. For more information, see \"Media types.\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The endpoint accepts custom media types.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues",
+                "heading_text": "List repository issues",
+                "element": "prose",
+                "byte_range": [
+                  295539,
+                  295761
+                ],
+                "section_byte_range": [
+                  294122,
+                  322290
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "application/vnd.github.raw+json: Returns the raw markdown body. Response will include body. This is the default if you do not pass any specific media type.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Raw markdown media type, the default when no specific media type is requested.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues",
+                "heading_text": "List repository issues",
+                "element": "listitem",
+                "byte_range": [
+                  295767,
+                  295974
+                ],
+                "section_byte_range": [
+                  294122,
+                  322290
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "application/vnd.github.full+json: Returns raw, text, and HTML representations. Response will include body, body_text, and body_html.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Full media type returning raw, text and HTML representations.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues",
+                "heading_text": "List repository issues",
+                "element": "listitem",
+                "byte_range": [
+                  296323,
+                  296533
+                ],
+                "section_byte_range": [
+                  294122,
+                  322290
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "This endpoint works with the following fine-grained token types:",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The fine-grained token types the endpoint works with.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--fine-grained-access-tokens",
+                "heading_text": "Fine-grained access tokens for \"List repository issues\"",
+                "element": "prose",
+                "byte_range": [
+                  296767,
+                  296846
+                ],
+                "section_byte_range": [
+                  296545,
+                  297706
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "\"Issues\" repository permissions (read)",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The permission set the fine-grained token must have for this endpoint.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--fine-grained-access-tokens",
+                "heading_text": "Fine-grained access tokens for \"List repository issues\"",
+                "element": "listitem",
+                "byte_range": [
+                  297489,
+                  297572
+                ],
+                "section_byte_range": [
+                  296545,
+                  297706
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "This endpoint can be used without authentication or the aforementioned permissions if only public resources are requested.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Unauthenticated use is documented for public resources.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--fine-grained-access-tokens",
+                "heading_text": "Fine-grained access tokens for \"List repository issues\"",
+                "element": "prose",
+                "byte_range": [
+                  297577,
+                  297706
+                ],
+                "section_byte_range": [
+                  296545,
+                  297706
+                ]
+              },
+              "note": "This is why missing OpenAPI security metadata must not be read as anonymous-only, and equally why this documentation does not make a token mandatory for every read."
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "Parameters for \"List repository issues\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The published parameters of the operation: headers, path parameters, query parameters.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "heading3",
+                "byte_range": [
+                  297706,
+                  297880
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "accept string Setting to application/vnd.github+json is recommended.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Header parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  298305,
+                  298624
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "owner string Required The account owner of the repository. The name is not case sensitive.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Path parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  299070,
+                  299445
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "repo string Required The name of the repository without the .git extension. The name is not case sensitive.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Path parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  299445,
+                  299850
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "milestone string If an integer is passed, it should refer to a milestone by its number field. If the string * is passed, issues with any milestone are accepted. If the string none is passed, issues without milestones are returned.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  300298,
+                  300818
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "state string Indicates the state of the issues to return. Default: open Can be one of: open, closed, all",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row with documented default and enumeration.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  300818,
+                  301330
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "assignee string Can be the name of a user. Pass in none for issues with no assigned user, and * for issues assigned to any user.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  301330,
+                  301722
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "type string Can be the name of an issue type. If the string * is passed, issues with any type are accepted. If the string none is passed, issues without type are returned.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  301722,
+                  302157
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "creator string The user that created the issue.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  302157,
+                  302442
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "mentioned string A user that's mentioned in the issue.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  302442,
+                  302739
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "issue_field_values string A comma-separated list of issue field filters in field_slug:value format. Only issues matching all specified field values are returned. Requires issue fields to be enabled for the repository. Issue fields are not available for user-owned repositories, and field availability for organization-owned public repositories depends on the organization's visibility settings. For example, priority:Urgent,severity:High filters issues where the priority field is Urgent AND the severity field is High.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  302739,
+                  303579
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "labels string A list of comma separated label names. Example: bug,ui,@high",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  303579,
+                  303904
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "sort string What to sort results by. Default: created Can be one of: created, updated, comments",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row with documented default and enumeration.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  303904,
+                  304407
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "direction string The direction to sort the results by. Default: desc Can be one of: asc, desc",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row with documented default and enumeration.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  304407,
+                  304874
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "since string Only show results that were last updated after the given time. This is a timestamp in ISO 8601 format: YYYY-MM-DDTHH:MM:SSZ.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Query parameter row.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  304874,
+                  305315
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "per_page integer The number of results per page (max 100). For more information, see \"Using pagination in the REST API.\" Default: 30",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Page-size query parameter: documented default 30, documented maximum 100, deferred to the pagination article.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  305315,
+                  305830
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "page integer The page number of the results to fetch. For more information, see \"Using pagination in the REST API.\" Default: 1",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Page-number query parameter: documented default 1, no cursor parameter alongside it.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--parameters",
+                "heading_text": "Parameters for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  305830,
+                  306339
+                ],
+                "section_byte_range": [
+                  297706,
+                  306355
+                ]
+              },
+              "note": "Second match: the needle also matches the per_page row (substring \"page integer\")."
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "HTTP response status codes for \"List repository issues\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The published status-code table of the operation.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--status-codes",
+                "heading_text": "HTTP response status codes for \"List repository issues\"",
+                "element": "heading3",
+                "byte_range": [
+                  306355,
+                  306549
+                ],
+                "section_byte_range": [
+                  306355,
+                  307102
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "200 OK",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Status row 200.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--status-codes",
+                "heading_text": "HTTP response status codes for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  306645,
+                  306708
+                ],
+                "section_byte_range": [
+                  306355,
+                  307102
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "301 Moved permanently",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Status row 301.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--status-codes",
+                "heading_text": "HTTP response status codes for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  306708,
+                  306786
+                ],
+                "section_byte_range": [
+                  306355,
+                  307102
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "404 Resource not found",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Status row 404.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--status-codes",
+                "heading_text": "HTTP response status codes for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  306786,
+                  306865
+                ],
+                "section_byte_range": [
+                  306355,
+                  307102
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "422 Validation failed, or the endpoint has been spammed.",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "Status row 422.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--status-codes",
+                "heading_text": "HTTP response status codes for \"List repository issues\"",
+                "element": "row",
+                "byte_range": [
+                  306865,
+                  306978
+                ],
+                "section_byte_range": [
+                  306355,
+                  307102
+                ]
+              }
+            },
+            {
+              "document_id": "github-docs-rest-issues-list-repository-issues",
+              "quote": "Code samples for \"List repository issues\"",
+              "quote_basis": "verbatim rendered text of the cited element: block and cell boundaries become spaces, inline markup is removed without adding a space, HTML entities are decoded, and runs of whitespace (including line breaks in code blocks) are collapsed to one space",
+              "summary": "The code samples published for the operation.",
+              "locator": {
+                "file": "documents/list-repository-issues.html",
+                "url": "https://docs.github.com/en/rest/issues/issues#list-repository-issues",
+                "anchor": "#list-repository-issues--code-samples",
+                "heading_text": "Code samples for \"List repository issues\"",
+                "element": "heading3",
+                "byte_range": [
+                  307102,
+                  307277
+                ],
+                "section_byte_range": [
+                  307102,
+                  322290
+                ]
+              }
+            }
+          ],
+          "must_not_be_read_as": [
+            "It does not document the link response header for this operation: the parameter table and the status table are the only structured tables the operation page publishes.",
+            "It does not license any parameter absent from the parameter table, nor an arbitrary request body or additional header.",
+            "The status table lists no 401 or 403 for this operation; nothing here defines PM's refusal classes.",
+            "It does not state that the operation returns only issues (pull requests are included) nor that a 404 means the resource is absent rather than inaccessible; only the quoted sentences are admitted."
+          ]
+        }
+      ],
+      "documented_absences": [
+        {
+          "absence_id": "A1",
+          "authored_statement": "The operation page for GET /repos/{owner}/{repo}/issues publishes no response-header table, so the link response header is not documented on that page.",
+          "check": {
+            "kind": "occurrence_count_in_retained_bytes",
+            "document_id": "github-docs-rest-issues-list-repository-issues",
+            "file": "documents/list-repository-issues.html",
+            "needles": [
+              "response headers"
+            ],
+            "case_insensitive": true,
+            "occurrences": {
+              "response headers": 0
+            }
+          },
+          "consequence": "For this operation the link header fact comes from the generic pagination article (F2) and from the pinned OpenAPI declaration, not from the operation's documentation page.",
+          "note": "The words may still occur in the article as a whole; the check is over the whole retained page, which is the strongest form of the claim."
+        },
+        {
+          "absence_id": "A2",
+          "authored_statement": "No cursor parameter is documented for GET /repos/{owner}/{repo}/issues: the query-parameter table lists page and per_page, and the words cursor, before= and after= do not occur in the retained page.",
+          "check": {
+            "kind": "occurrence_count_in_retained_bytes",
+            "document_id": "github-docs-rest-issues-list-repository-issues",
+            "file": "documents/list-repository-issues.html",
+            "needles": [
+              "cursor",
+              "before=",
+              "after="
+            ],
+            "case_insensitive": true,
+            "occurrences": {
+              "cursor": 0,
+              "before=": 0,
+              "after=": 0
+            }
+          },
+          "note": "The needle is the parameter spelling (before= / after=) so that prose use of the words cannot mask a documented cursor parameter."
+        },
+        {
+          "absence_id": "A3",
+          "authored_statement": "The three retained article responses carried no ETag and no Last-Modified header. The only version-like identity they expose is the documentation site's API version selector 2026-03-10 (latest).",
+          "check": {
+            "kind": "header_absence",
+            "documents": [
+              {
+                "document_id": "github-docs-rest-authentication",
+                "file": "headers/authenticating-to-the-rest-api.html.headers"
+              },
+              {
+                "document_id": "github-docs-rest-pagination",
+                "file": "headers/using-pagination-in-the-rest-api.html.headers"
+              },
+              {
+                "document_id": "github-docs-rest-issues-list-repository-issues",
+                "file": "headers/list-repository-issues.html.headers"
+              }
+            ],
+            "header_names": [
+              "etag",
+              "last-modified"
+            ],
+            "occurrences": {
+              "github-docs-rest-authentication": {
+                "etag": 0,
+                "last-modified": 0
+              },
+              "github-docs-rest-pagination": {
+                "etag": 0,
+                "last-modified": 0
+              },
+              "github-docs-rest-issues-list-repository-issues": {
+                "etag": 0,
+                "last-modified": 0
+              }
+            }
+          }
+        }
+      ],
+      "unverified_items": [
+        {
+          "item": "Route equivalence between a requested path and a link header target",
+          "status": "not stated by the retained documents",
+          "detail": "F2 records that the pagination article's example link header addresses the listing through https://api.github.com/repositories/1300192/issues while the article's own example request uses https://api.github.com/repos/octocat/Spoon-Knife/issues. None of the retained documents states that these routes are equivalent, that the numeric route is canonical for the same resource, or that a link target on a different path may be treated as the same resource. Any such reading is an inference from an example and is NOT admitted by this capture."
+        },
+        {
+          "item": "Use of an after cursor by GET /repos/{owner}/{repo}/issues",
+          "status": "not stated by the retained documents",
+          "detail": "The pagination article states that a paginated endpoint uses the page, before/after, or since query parameters but does not say which family any endpoint uses; the operation page documents page and per_page only and contains no cursor, before= or after= occurrence. No retained document states that this operation accepts an after cursor."
+        },
+        {
+          "item": "Token-required or anonymous-only readings of the operation",
+          "status": "not stated either way; connection policy is a PM declaration",
+          "detail": "The operation page states the endpoint can be used without authentication if only public resources are requested, and the authentication page states that many endpoints require authentication. No retained document states that GitHub requires a token for every public read, and none states that this connection may call the provider without a credential."
+        },
+        {
+          "item": "Page revision or last-updated identity",
+          "status": "not exposed by the retained documents",
+          "detail": "The retained responses carry no ETag and no Last-Modified header, and the retained bytes contain no revision or last-updated identifier. Whether the article text changed since retrieval cannot be determined from this evidence; the SHA-256 digest is the only identity of the retained bytes."
+        },
+        {
+          "item": "License coverage of the rendered page bytes",
+          "status": "stated for the repository, inferred for the rendered pages",
+          "detail": "The github/docs README at the pinned commit states the project is dual-licensed, with Creative Commons Attribution 4.0 for documentation and content and MIT for code; the retained LICENSE file is the Creative Commons Attribution 4.0 International license text. The retained pages carry no per-page license statement (their footer says only \"All Docs are open source.\" and \"GitHub Inc. (c) 2026\"), so applying the repository license to the rendered page bytes is an inference from the repository statement; LICENSE-CODE was not retained."
+        },
+        {
+          "item": "Per-endpoint pagination contract",
+          "status": "not stated by the retained documents",
+          "detail": "The pagination article is written about the REST API generally and does not publish a per-endpoint pagination contract; it does not state that every paginated endpoint responds with a link header to every request, nor which parameter family a given endpoint uses."
+        },
+        {
+          "item": "Order and completeness of the link header relations",
+          "status": "partially stated",
+          "detail": "The article lists the four relations and states that in some cases only a subset is available; it does not state an order requirement, does not state that the relations are mutually exclusive, and does not state how a client must treat duplicate relations."
+        }
+      ]
+    },
+    "identity_3_generated_output": {
+      "description": "No generated output identity exists yet. Nothing in this directory has been compiled, normalized into a connector semantics document or lowered into an execution bundle, and no digest of a generated artifact is recorded here.",
+      "exists": false,
+      "generated_artifacts": []
+    }
+  },
+  "precedence_and_conflict_rules": {
+    "openapi_is_authoritative": "Facts declared by the pinned OpenAPI source set (paths, parameters, media types, response statuses, declared response headers, declared security and securitySchemes) are authoritative for what they declare; a supplemental documentation fact never overrides them.",
+    "supplemental_may_only_add": "A supplemental documentation fact is admissible only where the pinned OpenAPI document declares nothing about the subject, for example no security scheme, no authorization requirement on the operation, and no cursor parameter.",
+    "never_contradict": "A supplemental fact that contradicts a declared OpenAPI fact is inadmissible and must be refused as a source conflict, never reconciled by preference.",
+    "never_widen": "A supplemental fact must not widen origins (the server URL declared by the source), credentials (it may not create or enlarge a credential channel beyond what the operation declares), or capabilities (it may not add operations, parameters, media types, statuses or response headers beyond the declared operation).",
+    "protocol_versus_policy": "These facts are provider protocol facts. Connection policy, namely that this private connection requires a credential, is a PM connection declaration and is neither established nor weakened by them.",
+    "scope": "The admitted facts cover the single declared operation issues/list-for-repo (GET /repos/{owner}/{repo}/issues) only.",
+    "observation_is_not_authority": "A link header value published as an example is an observation about what the provider may send. It never authorises replaying a provider-supplied URL, and it does not change PM's navigation rule that a continuation must remain on the declared operation identity."
+  },
+  "license_and_attribution": {
+    "position": "GitHub Docs content is published by GitHub under a dual license: Creative Commons Attribution 4.0 for documentation and content, and MIT for code. The retained LICENSE file is the Creative Commons Attribution 4.0 International license text; the retained README states the split.",
+    "attribution": "Documentation content (c) GitHub, Inc., from GitHub Docs (github/docs), licensed under Creative Commons Attribution 4.0 International (CC BY 4.0). Retrieved unmodified from https://docs.github.com and from raw.githubusercontent.com/github/docs at the pinned commit recorded below.",
+    "license_evidence": [
+      {
+        "document_id": "github-docs-repository-license",
+        "quote": "Attribution 4.0 International",
+        "quote_basis": "byte-exact substring of the retained file",
+        "summary": "First line of the retained license file.",
+        "locator": {
+          "file": "documents/github-docs-LICENSE.txt",
+          "element": "exact_bytes",
+          "byte_range": [
+            0,
+            29
+          ]
+        }
+      },
+      {
+        "document_id": "github-docs-repository-license",
+        "quote": "Creative Commons Attribution 4.0 International Public License",
+        "quote_basis": "byte-exact substring of the retained file",
+        "summary": "License line naming the license.",
+        "locator": {
+          "file": "documents/github-docs-LICENSE.txt",
+          "element": "exact_bytes",
+          "byte_range": [
+            2955,
+            3016
+          ]
+        }
+      },
+      {
+        "document_id": "github-docs-repository-readme",
+        "quote": "* **Creative Commons Attribution 4.0** - for documentation and content in the assets, content, and data folders (see [LICENSE](LICENSE))",
+        "quote_basis": "byte-exact substring of the retained file",
+        "summary": "README license bullet covering documentation and content.",
+        "locator": {
+          "file": "documents/github-docs-README.md",
+          "element": "exact_bytes",
+          "byte_range": [
+            2078,
+            2214
+          ]
+        }
+      },
+      {
+        "document_id": "github-docs-repository-readme",
+        "quote": "* **MIT License** - for code (see [LICENSE-CODE](LICENSE-CODE))",
+        "quote_basis": "byte-exact substring of the retained file",
+        "summary": "README license bullet covering code; LICENSE-CODE was not retained.",
+        "locator": {
+          "file": "documents/github-docs-README.md",
+          "element": "exact_bytes",
+          "byte_range": [
+            2215,
+            2278
+          ]
+        }
+      }
+    ],
+    "attribution_source_pin": {
+      "resolved_from": "https://api.github.com/repos/github/docs/commits/main",
+      "resolved_commit_sha": "27965d1687907bf5f365166999eea249ac88c088",
+      "resolved_commit_date": "2026-09-18T23:29:13Z",
+      "resolved_at_utc": "2026-09-19T12:44:59Z",
+      "pinned_documents": [
+        "https://raw.githubusercontent.com/github/docs/27965d1687907bf5f365166999eea249ac88c088/LICENSE",
+        "https://raw.githubusercontent.com/github/docs/27965d1687907bf5f365166999eea249ac88c088/README.md"
+      ],
+      "resolution_evidence": [
+        {
+          "document_id": "github-docs-commits-main",
+          "quote": "\"sha\":\"27965d1687907bf5f365166999eea249ac88c088\"",
+          "quote_basis": "byte-exact substring of the retained file",
+          "summary": "Top-level commit sha answered by the unauthenticated public API at retrieval time.",
+          "locator": {
+            "file": "documents/github-docs-commits-main.json",
+            "element": "exact_bytes",
+            "byte_range": [
+              1,
+              49
+            ]
+          }
+        },
+        {
+          "document_id": "github-docs-commits-main",
+          "quote": "\"date\":\"2026-09-18T23:29:13Z\"",
+          "quote_basis": "byte-exact substring of the retained file",
+          "summary": "Committer date of that commit as answered at retrieval time.",
+          "locator": {
+            "file": "documents/github-docs-commits-main.json",
+            "element": "exact_bytes",
+            "byte_range": [
+              223,
+              252
+            ]
+          }
+        }
+      ],
+      "note": "The LICENSE and README bytes were first fetched through the moving main ref and then re-fetched at the resolved commit; both LICENSE fetches returned identical bytes (SHA-256 12d3a82a7d1378e6f597ec23d63a081aeb6ec4bc8de2a76ee9dc96c34c6d7a1b), and only the commit-pinned bytes are retained."
+    },
+    "page_bytes_note": "The retained pages are unmodified HTML responses from docs.github.com retained for evidence; any redistribution of those bytes must carry this attribution."
+  },
+  "retained_page_api_version_selector": [
+    {
+      "document_id": "github-docs-rest-authentication",
+      "quote": "2026-03-10 (latest)",
+      "quote_basis": "byte-exact substring of the retained file",
+      "summary": "Documentation site API version selector exposed in the retained page.",
+      "locator": {
+        "file": "documents/authenticating-to-the-rest-api.html",
+        "element": "exact_bytes",
+        "byte_range": [
+          21663,
+          21682
+        ]
+      }
+    },
+    {
+      "document_id": "github-docs-rest-pagination",
+      "quote": "2026-03-10 (latest)",
+      "quote_basis": "byte-exact substring of the retained file",
+      "summary": "Documentation site API version selector exposed in the retained page.",
+      "locator": {
+        "file": "documents/using-pagination-in-the-rest-api.html",
+        "element": "exact_bytes",
+        "byte_range": [
+          21709,
+          21728
+        ]
+      }
+    },
+    {
+      "document_id": "github-docs-rest-issues-list-repository-issues",
+      "quote": "2026-03-10 (latest)",
+      "quote_basis": "byte-exact substring of the retained file",
+      "summary": "Documentation site API version selector exposed in the retained page.",
+      "locator": {
+        "file": "documents/list-repository-issues.html",
+        "element": "exact_bytes",
+        "byte_range": [
+          21441,
+          21460
+        ]
+      }
+    }
+  ],
+  "consumption_contract": {
+    "admission": "A compiler slice may admit these facts only through the approved source admission and normalization mechanism, keeping each fact's quote and locator, and keeping provider protocol facts separate from connection policy.",
+    "refusal": "A supplemental fact that would contradict the pinned OpenAPI declaration, widen the declared origin, credential channel or capability, or re-identify the resource address must be refused as a source conflict.",
+    "scope": "Single declared operation: issues/list-for-repo. Nothing here generalizes to other GitHub endpoints.",
+    "verification": "verify.py re-checks the SHA-256 and byte length of every retained document and re-extracts every quote from the retained bytes at its recorded byte range. A digest mismatch or a quote that no longer matches its locator is a blocker, never a substitution."
+  }
+}

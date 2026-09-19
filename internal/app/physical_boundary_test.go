@@ -557,6 +557,252 @@ func seedPhysicalBoundaryCredential(
 	}
 }
 
+// TestCredentialChannelAttachmentBoundaries pins the whole server-held
+// credential path at the worker boundary: a declared channel is served by the
+// same reference the worker resolves after its grant checks, a reference that
+// is absent or no longer current is refused before any key, ciphertext or
+// provider byte is touched, an unapproved origin never sees a credential, and
+// an operation that declares no channel attaches nothing.
+func TestCredentialChannelAttachmentBoundaries(t *testing.T) {
+	const secret = "credential-channel-fixture-canary"
+	cases := []struct {
+		slug             string
+		name             string
+		declared         bool
+		seedCredential   bool
+		revokeCredential bool
+		revokeConnection bool
+		selectedOrigin   string
+		wantError        error
+		wantHeader       string
+		wantPeerCalls    int64
+		wantKeyLoads     int32
+		wantPhysicalSend bool
+		wantCallback     bool
+	}{
+		{
+			slug: "attached", name: "declared channel attaches the server-held reference after grant checks",
+			declared: true, seedCredential: true, wantCallback: true,
+			wantHeader: "Bearer " + secret, wantPeerCalls: 1, wantKeyLoads: 1, wantPhysicalSend: true,
+		},
+		{
+			slug: "missing", name: "missing credential reference is refused before key resolution or send",
+			declared: true, wantCallback: true, wantError: pmruntime.ErrCredentialRequired,
+		},
+		{
+			slug: "revoked-credential", name: "credential no longer active is refused before key resolution or send",
+			declared: true, seedCredential: true, revokeCredential: true, wantCallback: true,
+			wantError: pmruntime.ErrCredentialRequired,
+		},
+		{
+			slug: "revoked-connection", name: "revoked connection never reaches the credential boundary",
+			declared: true, seedCredential: true, revokeConnection: true,
+		},
+		{
+			slug: "unapproved-origin", name: "unapproved origin is refused before credential resolution or send",
+			declared: true, seedCredential: true, selectedOrigin: "http://unapproved.invalid", wantCallback: true,
+			wantError: pmruntime.ErrDestinationDenied,
+		},
+		{
+			slug: "undeclared", name: "operation without a declared channel attaches nothing",
+			seedCredential: true, wantCallback: true,
+			wantPeerCalls: 1, wantPhysicalSend: true,
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			temporal := newPermitTemporalHarness(t)
+			key := []byte("0123456789abcdef0123456789abcdef")
+			t.Cleanup(func() { clear(key) })
+			loader := &physicalBoundaryKeyLoader{key: slices.Clone(key)}
+			t.Cleanup(func() { clear(loader.key) })
+
+			var peerCalls atomic.Int64
+			var observedHeader atomic.Value
+			observedHeader.Store("")
+			peer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+				peerCalls.Add(1)
+				observedHeader.Store(request.Header.Get("Authorization"))
+				writer.Header().Set("Content-Type", "application/json")
+				_, _ = writer.Write([]byte(`"ok"`))
+			}))
+			defer peer.Close()
+			origin := physicalBoundaryOrigin(t, peer)
+
+			type credentialChannelEvidence struct {
+				sendErr error
+				send    bool
+			}
+			evidence := make(chan credentialChannelEvidence, 1)
+			var fixture *testfixture.Fixture
+			fixture = testfixture.NewExecuting(
+				t,
+				func(ctx context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+					call, admitter, resolver, err := request.PhysicalCallAuthority()
+					if err != nil {
+						return app.ExecutionObservation{}, err
+					}
+					// Grant checks first: a callback whose identity differs never
+					// reaches the server-held reference.
+					forged := call
+					forged.TaskID += "-other"
+					material, forgedErr := resolver.ResolveCredential(ctx, forged)
+					if material != nil {
+						material.Destroy()
+					}
+					if forgedErr == nil {
+						return app.ExecutionObservation{}, errors.New("forged credential effect reached the server-held reference")
+					}
+					selection, err := fixture.ResolveOperation(ctx, request.Scope, request.ConnectionID, request.Task.OperationID)
+					if err != nil {
+						return app.ExecutionObservation{}, err
+					}
+					httpRequest := physicalBoundaryHTTPRequest(selection.Operation, origin, call, request)
+					if test.declared {
+						httpRequest = physicalBoundaryAuthorizationRequest(
+							selection.Operation, origin, call, request,
+							&contract.OperationAuthorization{
+								Required: true, Audience: origin, Placement: contract.FieldLocationHeader,
+								WireName: "Authorization", Prefix: "Bearer ", FieldID: "auth.fixture-bearer",
+							},
+						)
+					}
+					if test.selectedOrigin != "" {
+						httpRequest.Egress.SelectedOrigin = test.selectedOrigin
+					}
+					execution, sendErr := pmruntime.ExecuteHTTP(
+						ctx,
+						physicalBoundaryCredentialHTTPDependencies(admitter, resolver, peer),
+						httpRequest,
+					)
+					evidence <- credentialChannelEvidence{sendErr: sendErr, send: execution.PhysicalSend}
+					if sendErr != nil {
+						return app.ExecutionObservation{}, sendErr
+					}
+					return successfulPermitObservation(request), nil
+				},
+				unexpectedPermitReconciliation,
+			)
+			if test.seedCredential {
+				seedPhysicalBoundaryCredential(t, fixture, key, []byte(secret))
+			}
+			service := newPhysicalBoundaryWorkerService(t, fixture, temporal, loader.load)
+			admitted := admitPermitRun(
+				t, fixture, fixture.Client, fixture.Scope, fixture.Connection.ConnectionID,
+				"credential-channel-"+test.slug,
+			)
+			run := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, admitted)
+			if test.revokeCredential {
+				fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+					tag, err := tx.Exec(ctx, `
+						UPDATE pm.credential_lifecycles
+						SET status = 'reauthorization_required', revision = revision + 1,
+						    updated_at = clock_timestamp()
+						WHERE org_id = $1 AND workspace_id = $2 AND connection_id = $3
+						  AND status = 'active'
+					`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, fixture.Connection.ConnectionID)
+					if err != nil {
+						return err
+					}
+					if tag.RowsAffected() != 1 {
+						return errors.New("controlled credential revocation changed no active lifecycle")
+					}
+					return nil
+				})
+			}
+			if test.revokeConnection {
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				if err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
+					_, _, revokeErr := store.RevokeConnectionControl(ctx, tx, fixture.Connection.ConnectionID, 1)
+					return revokeErr
+				}); err != nil {
+					t.Fatalf("revoke controlled connection: %v", err)
+				}
+			}
+			_, _ = executePermitWorkerUnit(t, service, run)
+
+			var observed credentialChannelEvidence
+			reached := true
+			if test.wantCallback {
+				select {
+				case observed = <-evidence:
+				case <-time.After(5 * time.Second):
+					t.Fatal("worker did not reach the controlled credential boundary")
+				}
+			} else {
+				select {
+				case observed = <-evidence:
+				case <-time.After(time.Second):
+					reached = false
+				}
+			}
+			if reached != test.wantCallback {
+				t.Fatalf("controlled credential boundary reached = %t; want %t", reached, test.wantCallback)
+			}
+			if reached {
+				if !errors.Is(observed.sendErr, test.wantError) {
+					t.Fatalf("controlled credential attempt error = %v; want %v", observed.sendErr, test.wantError)
+				}
+				if observed.send != test.wantPhysicalSend {
+					t.Fatalf("physical send = %t; want %t", observed.send, test.wantPhysicalSend)
+				}
+			}
+			if header := observedHeader.Load(); header != test.wantHeader {
+				t.Fatalf("controlled peer Authorization header = %v; want %q", header, test.wantHeader)
+			}
+			if peerCalls.Load() != test.wantPeerCalls {
+				t.Fatalf("controlled peer calls = %d; want %d", peerCalls.Load(), test.wantPeerCalls)
+			}
+			if loader.calls.Load() != test.wantKeyLoads {
+				t.Fatalf("wrapping-key loads = %d; want %d", loader.calls.Load(), test.wantKeyLoads)
+			}
+			if test.wantKeyLoads != 0 && !loader.returnedKeysWiped() {
+				t.Fatal("resolved wrapping key was retained after the attempt")
+			}
+		})
+	}
+}
+
+// physicalBoundaryCredentialHTTPDependencies wires the worker's own credential
+// boundary into the runtime, so the declared channel is served by the same
+// server-held reference production resolves.
+func physicalBoundaryCredentialHTTPDependencies(
+	admitter pmruntime.PhysicalCallAdmitter,
+	credentialResolver pmruntime.CredentialResolver,
+	peer *httptest.Server,
+) pmruntime.HTTPDependencies {
+	dependencies := physicalBoundaryHTTPDependencies(admitter, peer)
+	dependencies.Credentials = credentialResolver
+	return dependencies
+}
+
+// physicalBoundaryAuthorizationRequest declares one source authorization channel
+// on the controlled operation. The secret binding is the source-backed
+// credential input the contract requires to match that declaration; it stays
+// unsupplied by the caller, as a credential input must.
+func physicalBoundaryAuthorizationRequest(
+	operation contract.Operation,
+	origin string,
+	call pmruntime.PhysicalCall,
+	request app.ExecutionRequest,
+	authorization *contract.OperationAuthorization,
+) pmruntime.HTTPRequest {
+	httpRequest := physicalBoundaryHTTPRequest(operation, origin, call, request)
+	httpRequest.Operation.Inputs = append(slices.Clone(operation.Inputs), contract.FieldBinding{
+		FieldID: authorization.FieldID, WireName: authorization.WireName, Location: authorization.Placement,
+		JSONPointer: "", Required: authorization.Required, Nullable: false, Style: "simple", Explode: false,
+		AllowReserved: false, Sensitivity: contract.SensitivitySecret,
+		Schema: contract.Schema{Type: contract.SchemaTypeString},
+	})
+	execution := *httpRequest.Operation.Execution
+	httpFact := *execution.HTTP
+	httpFact.Authorization = authorization
+	execution.HTTP = &httpFact
+	httpRequest.Operation.Execution = &execution
+	return httpRequest
+}
+
 func newPhysicalBoundaryWorkerService(
 	t *testing.T,
 	fixture *testfixture.Fixture,
