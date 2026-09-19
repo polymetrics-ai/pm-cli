@@ -3,15 +3,16 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"net/http"
 	"fmt"
+	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/polymetrics-ai/pm-cli/internal/api"
-	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/oapi-codegen/nullable"
+	"github.com/polymetrics-ai/pm-cli/internal/api"
+	"github.com/polymetrics-ai/pm-cli/internal/auth"
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
@@ -111,7 +112,7 @@ func (service *Service) GetWarehouseDataset(
 		Layout: layout, SnapshotID: snapshotID,
 	})
 	if err != nil {
-		return asProblemResponse(err, nil), nil
+		return asProblemResponse(concealedWarehouseSelector(err), nil), nil
 	}
 	projected, err := warehouseSnapshotResponse(scope, layout, snapshotID, view)
 	if err != nil {
@@ -155,7 +156,7 @@ func (service *Service) RunWarehouseQuery(
 		Layout: layout, SnapshotID: snapshotID,
 	})
 	if err != nil {
-		return asProblemResponse(err, nil), nil
+		return asProblemResponse(concealedWarehouseSelector(err), nil), nil
 	}
 	if err := requireProjectableColumns(view, query); err != nil {
 		return asProblemResponse(err, nil), nil
@@ -179,6 +180,29 @@ func (service *Service) RunWarehouseQuery(
 		return asProblemResponse(err, nil), nil
 	}
 	return RunWarehouseQuery200JSONResponse(projected), nil
+}
+
+// concealedWarehouseSelector translates the query service's not-found and
+// scope-mismatch refusals into the shared concealment refusal. The selector —
+// the dataset the caller names and the retained snapshot it asks for — is
+// correctable input, so a read view this authenticated scope cannot reach is
+// refused exactly like a restricted artifact: one 404 that does not disclose
+// whether the dataset, the snapshot or the binding exists elsewhere, never an
+// internal fault. Both read routes conceal the resolution step they take before
+// they read anything; a later refusal (a corrupt, collected or unreadable
+// registered segment) keeps the query service's own answer.
+func concealedWarehouseSelector(err error) error {
+	var refusal *warehouse.Refusal
+	if !errors.As(err, &refusal) {
+		return err
+	}
+	switch refusal.Code {
+	case warehouse.RefusalUnknownRelation, warehouse.RefusalUnadmittedPath:
+		return fmt.Errorf("%w: the requested dataset read view is unavailable in the authenticated scope",
+			auth.ErrResourceNotFound)
+	default:
+		return err
+	}
 }
 
 // warehouseReadSurface reports the installed surface or an explicit unavailable

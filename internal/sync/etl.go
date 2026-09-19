@@ -2,6 +2,8 @@ package sync
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -18,8 +20,10 @@ import (
 // acknowledged after its exact bytes are durably readable through the shared
 // object store, and the cursor only ever moves to a registered revision. A
 // crash before the transaction leaves the previous checkpoint and, at most, an
-// unregistered retained object; a crash after it leaves the complete next
-// checkpoint. Nothing in between is observable.
+// unregistered retained object plus the admitted scratch of the attempt that
+// died; that scratch names the attempt that wrote it, so a newer attempt at the
+// same page is never refused by it, and a crash after the transaction leaves the
+// complete next checkpoint. Nothing in between is observable.
 type ETLCheckpoint struct {
 	pool                *store.Pool
 	manifest            *warehouse.DatasetManifest
@@ -86,8 +90,11 @@ type PageRequest struct {
 	// the page's complete row count: an acknowledgement that covers less would
 	// otherwise advance the checkpoint over rows that were never published.
 	DeclaredRows int64
-	// RequestID names this materialization attempt. It is unique per attempt,
-	// because an immutable admitted segment is never overwritten.
+	// RequestID names this materialization attempt. It is unique per attempt:
+	// it is the attempt's own admitted scratch identity, and an immutable
+	// admitted segment is never overwritten by a second attempt. A page
+	// re-driven after a crash therefore declares a new identity of its own
+	// rather than reusing the dead attempt's.
 	RequestID string
 }
 
@@ -168,6 +175,12 @@ func (checkpoint *ETLCheckpoint) CommitPage(ctx context.Context, request PageReq
 // of publishing its page over a newer one, and the registered row and the
 // cursor advance are committed by one transaction. An acknowledgement that
 // already resolved to a registered page never reaches the compare-and-swap.
+//
+// The admitted scratch file carries this attempt's own identity, so the file a
+// process that died after materializing left behind refuses nothing the next
+// attempt at the same page does. The registered segment identity stays
+// position-derived, so a replay of the page still resolves to the one
+// registered occurrence.
 func (checkpoint *ETLCheckpoint) publish(
 	ctx context.Context,
 	request PageRequest,
@@ -177,11 +190,14 @@ func (checkpoint *ETLCheckpoint) publish(
 	segment, err := warehouse.MaterializeParquetSegment(ctx, checkpoint.child, warehouse.MaterializeRequest{
 		RequestID:           request.RequestID,
 		AdmittedDirectories: []string{checkpoint.admittedDirectory},
-		OutputPath:          filepath.Join(checkpoint.admittedDirectory, pageAttemptID(request.Position)+".parquet"),
-		Columns:             schema.Columns(),
-		Rows:                request.Rows,
-		Bounds:              checkpoint.bounds,
-		MaximumBytes:        checkpoint.maximumSegmentBytes,
+		OutputPath: filepath.Join(
+			checkpoint.admittedDirectory,
+			pageScratchName(request.Position, request.RequestID),
+		),
+		Columns:      schema.Columns(),
+		Rows:         request.Rows,
+		Bounds:       checkpoint.bounds,
+		MaximumBytes: checkpoint.maximumSegmentBytes,
 	})
 	if err != nil {
 		return store.WarehouseSegment{}, err
@@ -209,4 +225,66 @@ func (checkpoint *ETLCheckpoint) publish(
 		return store.WarehouseSegment{}, err
 	}
 	return published, nil
+}
+
+const (
+	// maximumScratchTokenBytes bounds the attempt-identity part of one admitted
+	// scratch name, so the whole name stays inside one file-system component
+	// whatever identity an attempt declares.
+	maximumScratchTokenBytes = 48
+	// scratchDigestBytes is how much of an identity digest binds a sanitized or
+	// truncated token to the exact attempt identity it was derived from.
+	scratchDigestBytes = 8
+)
+
+// pageScratchName is the admitted scratch identity of one materialization
+// attempt: the page position this attempt materializes plus the attempt's own
+// identity. The position keeps the file recognizable, and the attempt identity
+// keeps two attempts at one position from sharing a name, so the scratch file a
+// dead attempt left behind refuses nothing the next attempt at that page does.
+// The registered segment identity stays position-derived (pageAttemptID), so a
+// replay still resolves to the one registered occurrence.
+func pageScratchName(position uint64, requestID string) string {
+	return pageAttemptID(position) + "-" + scratchAttemptToken(requestID) + ".parquet"
+}
+
+// scratchAttemptToken renders one attempt identity as one bounded file-name
+// token. An identity that already is one run of admitted characters is kept
+// exactly as declared, so an operator can attribute a leftover scratch file to
+// the attempt that wrote it. Every other identity is sanitized into that
+// alphabet and carries a digest of the exact identity, so sanitizing can never
+// collapse two attempts onto one name and no identity can reach outside the
+// admitted directory.
+func scratchAttemptToken(requestID string) string {
+	token := make([]byte, 0, min(len(requestID), maximumScratchTokenBytes))
+	for _, character := range requestID {
+		if len(token) == maximumScratchTokenBytes {
+			break
+		}
+		if isScratchCharacter(character) {
+			token = append(token, byte(character))
+			continue
+		}
+		token = append(token, '_')
+	}
+	if string(token) == requestID {
+		return string(token)
+	}
+	digest := sha256.Sum256([]byte(requestID))
+	return string(token) + "-" + hex.EncodeToString(digest[:scratchDigestBytes])
+}
+
+// isScratchCharacter reports whether one character may appear verbatim in an
+// admitted scratch name: the identifier alphabet of a declared attempt identity
+// plus the dot that keeps a name readable.
+func isScratchCharacter(character rune) bool {
+	switch {
+	case character >= 'a' && character <= 'z',
+		character >= 'A' && character <= 'Z',
+		character >= '0' && character <= '9',
+		character == '-', character == '_', character == '.':
+		return true
+	default:
+		return false
+	}
 }

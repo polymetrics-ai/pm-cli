@@ -427,7 +427,9 @@ func (composition *SQLComposition) bind(
 
 // limits projects the declared finite bounds onto one exact attempt. The
 // transport re-validates them before any physical work, so an unusable declared
-// bound refuses there instead of being silently widened here.
+// bound refuses there instead of being silently widened here. MaxAttempts is the
+// declared ceiling the transport compares this attempt against; while no SQL
+// retry is scheduled (see project) it bounds the one attempt that runs.
 func (composition *SQLComposition) limits(attemptNumber uint32) pmruntime.SQLLimits {
 	return pmruntime.SQLLimits{
 		MaxConnectDuration:   composition.bounds.MaxConnectDuration,
@@ -686,6 +688,16 @@ func sqlValueTypeError(column pmruntime.SQLColumn) error {
 // statement committed, and the immediate callback error. A mapped write's rows
 // exist only for an acknowledged COMMIT, so a possibly accepted write never
 // presents rows as an accepted effect.
+//
+// The transport's own retry directive is deliberately not projected. The shared
+// worker planner admits one retry basis, for the registered HTTP handler only,
+// so a PostgreSQL attempt has no durable retry path today: the directive states
+// what a definitively unsent or definitively rolled-back attempt could earn, and
+// nothing here may publish it as a scheduled retry. provider_sql.max_attempts is
+// consequently a declared, validated ceiling for the one physical attempt this
+// callback performs, never evidence that more than one attempt is scheduled.
+// Forwarding the directive into this observation and admitting a SQL retry basis
+// in the planner is later integration work.
 func (bound sqlBoundOperation) project(
 	request ExecutionRequest,
 	observation pmruntime.SQLObservation,

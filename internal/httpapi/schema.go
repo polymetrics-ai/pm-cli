@@ -3,12 +3,13 @@ package httpapi
 import (
 	"context"
 	"errors"
-	"net/http"
 	"fmt"
+	"net/http"
 	"path/filepath"
 	"strings"
 
 	"github.com/polymetrics-ai/pm-cli/internal/api"
+	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
 )
@@ -74,13 +75,33 @@ func (service *Service) GetConnectionSchema(
 	}
 	snapshot, err := store.LoadFor(binding, selected)
 	if err != nil {
-		return asProblemResponse(err, nil), nil
+		return asProblemResponse(concealedSchemaSelector(err), nil), nil
 	}
 	projected, err := connectionSchemaResponse(scope, binding, selected, &snapshot)
 	if err != nil {
 		return asProblemResponse(err, nil), nil
 	}
 	return GetConnectionSchema200JSONResponse(projected), nil
+}
+
+// concealedSchemaSelector translates the metadata store's not-found and
+// scope-mismatch refusals into the shared concealment refusal. The selector is
+// the caller's own: the binding members and the snapshot identity it names are
+// correctable input, so a snapshot this exact binding cannot see is refused
+// exactly like a restricted artifact — one 404 that does not disclose whether
+// the snapshot exists under another connection, account, permission revision,
+// resource or source revision — and never as an internal fault. The store
+// cannot tell this route which of the two it held, and concealing both is the
+// answer that reveals nothing. A stored payload that is present but unusable
+// keeps the store's own refusal.
+func concealedSchemaSelector(err error) error {
+	switch {
+	case errors.Is(err, schema.ErrSnapshotScope), errors.Is(err, schema.ErrSnapshotUnavailable):
+		return fmt.Errorf("%w: the selected metadata snapshot is unavailable in the authenticated scope",
+			auth.ErrResourceNotFound)
+	default:
+		return err
+	}
 }
 
 // connectionSchemaStore resolves the connection's owned metadata state
