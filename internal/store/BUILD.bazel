@@ -36,6 +36,7 @@ go_library(
         "settlements.go",
         "tasks.go",
         "transaction.go",
+        "warehouse_manifest.go",
         "worker_result_artifacts.go",
         "worker_retries.go",
         "workers.go",

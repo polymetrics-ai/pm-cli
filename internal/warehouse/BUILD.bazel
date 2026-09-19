@@ -4,17 +4,31 @@ go_library(
     name = "warehouse",
     srcs = [
         "child.go",
+        "compaction.go",
+        "manifest.go",
+        "object_layout.go",
+        "parquet.go",
+        "query.go",
         "query_protocol.go",
         "scratch.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/warehouse",
     visibility = ["//:__subpackages__"],
-    deps = ["//internal/contract"],
+    deps = [
+        "//internal/contract",
+        "//internal/objects",
+        "//internal/store",
+    ],
 )
 
 go_test(
     name = "warehouse_test",
-    srcs = ["child_test.go"],
+    srcs = [
+        "child_test.go",
+        "publish_test.go",
+        "query_test.go",
+        "segments_test.go",
+    ],
     embed = [":warehouse"],
     env_inherit = [
         "PM_STACK_ROOT",
@@ -24,5 +38,14 @@ go_test(
         "exclusive",
         "external",
         "no-remote",
+    ],
+    deps = [
+        "//internal/app",
+        "//internal/contract",
+        "//internal/objects",
+        "//internal/store",
+        "//internal/testfixture",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_jackc_pgx_v5//pgconn",
     ],
 )
