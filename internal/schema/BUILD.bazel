@@ -1,0 +1,27 @@
+load("@rules_go//go:def.bzl", "go_library", "go_test")
+
+go_library(
+    name = "schema",
+    srcs = [
+        "completeness.go",
+        "discover.go",
+        "drift.go",
+        "effective.go",
+        "predicates.go",
+        "snapshot.go",
+    ],
+    importpath = "github.com/polymetrics-ai/pm-cli/internal/schema",
+    visibility = ["//:__subpackages__"],
+    deps = ["//internal/contract"],
+)
+
+go_test(
+    name = "schema_test",
+    srcs = [
+        "drift_test.go",
+        "predicates_test.go",
+        "snapshot_test.go",
+    ],
+    embed = [":schema"],
+    deps = ["//internal/contract"],
+)
