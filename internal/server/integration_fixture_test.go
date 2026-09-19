@@ -1631,14 +1631,33 @@ func TestIdentityIssuerTrustRootFailsClosed(t *testing.T) {
 		{"oversized member", map[string][]byte{oidcTrustRootMember: bytes.Repeat([]byte("A"), (64<<10)+1)}, errIdentityTrustRootUnavailable},
 		{"non-PEM body", map[string][]byte{oidcTrustRootMember: []byte("not a certificate")}, errIdentityTrustRootInvalid},
 		{"truncated PEM body", map[string][]byte{oidcTrustRootMember: []byte("-----BEGIN CERTIFICATE-----\nAAAA\n")}, errIdentityTrustRootInvalid},
+		// The walk refuses a well-framed block whose body is not a certificate,
+		// so the unparsable DER bytes must not fall through to the pool.
+		{"unparsable certificate body", map[string][]byte{
+			oidcTrustRootMember: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("not a certificate")}),
+		}, errIdentityTrustRootInvalid},
 		{"non-certificate PEM entry", map[string][]byte{
 			oidcTrustRootMember: pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: []byte("synthetic")}),
 		}, errIdentityTrustRootInvalid},
+		// The walk refuses any PEM type other than CERTIFICATE, so an
+		// authority's own certificate bytes under another type must not be
+		// admitted as the trust root.
+		{"non-certificate PEM type with an authority body", map[string][]byte{
+			oidcTrustRootMember: pem.EncodeToMemory(&pem.Block{Type: "TRUSTED CERTIFICATE", Bytes: authority.Raw}),
+		}, errIdentityTrustRootInvalid},
 		{"leaf certificate entry", map[string][]byte{oidcTrustRootMember: leafPEM}, errIdentityTrustRootInvalid},
 		{"leaf entry beside an authority", map[string][]byte{oidcTrustRootMember: append(authorityPEM, leafPEM...)}, errIdentityTrustRootInvalid},
+		// The walk refuses a body that does not begin at a PEM boundary
+		// instead of letting the decoder skip forward to a later block.
+		{"leading bytes before an authority", map[string][]byte{
+			oidcTrustRootMember: append([]byte("not a certificate\n"), authorityPEM...),
+		}, errIdentityTrustRootInvalid},
 		{"trailing bytes after an authority", map[string][]byte{
 			oidcTrustRootMember: append(authorityPEM, []byte("trailing text")...),
 		}, errIdentityTrustRootInvalid},
+		// A readable body that decodes to no entry is refused rather than
+		// returned as an empty pool that trusts nothing.
+		{"whitespace-only member", map[string][]byte{oidcTrustRootMember: []byte(" \t\r\n")}, errIdentityTrustRootInvalid},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			secrets := openIdentityTrustRootSecrets(t, test.members)
