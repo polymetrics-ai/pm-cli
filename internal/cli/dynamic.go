@@ -33,6 +33,10 @@ type DynamicInvocation struct {
 	ResultControls contract.ResultControls
 	RequestKey     string
 	Output         io.Writer
+	// Diagnostics receives human-readable progress notices only. Requested
+	// results are never written there, and no provider credential is ever
+	// rendered by either writer.
+	Diagnostics io.Writer
 }
 
 type DynamicInvoker func(context.Context, DynamicInvocation) error
@@ -179,6 +183,7 @@ func projectedCommand(binding pmapi.CatalogBinding, descriptor pmapi.CommandDesc
 				Input:          typedInput,
 				ResultControls: resultControls,
 				Output:         command.OutOrStdout(),
+				Diagnostics:    command.ErrOrStderr(),
 			}
 			if requestKey.set {
 				invocation.RequestKey = requestKey.raw
@@ -1040,5 +1045,36 @@ func (runtime *commandRuntime) invokeDynamic(ctx context.Context, invocation Dyn
 	if err != nil {
 		return err
 	}
-	return renderWireResponse(invocation.Output, config.output, accepted)
+	if !config.wait {
+		return renderWireResponse(invocation.Output, config.output, accepted)
+	}
+	// --wait: the accepted run's terminal published document is the requested
+	// result. The admission response remains the durable acceptance record and
+	// is superseded on stdout by the exact published action document.
+	envelope, err := pmapi.DecodeEnvelope(accepted)
+	if err != nil {
+		return err
+	}
+	admitted, err := pmapi.DecodeAdmissionResponse(envelope.Body)
+	if err != nil {
+		return err
+	}
+	if invocation.Diagnostics != nil {
+		_, _ = fmt.Fprintf(
+			invocation.Diagnostics,
+			"notice: accepted run %s; waiting for its terminal published result\n",
+			admitted.RunRef,
+		)
+	}
+	waitContext, cancelWait := context.WithTimeout(ctx, config.requestTimeout)
+	defer cancelWait()
+	bundle := prepared
+	bundle.config = config
+	// The event stream is followed for its terminal projection and durable
+	// ordering only; requested results stay on stdout.
+	completed, err := watchRunToTerminal(waitContext, io.Discard, bundle, admitted.RunRef)
+	if err != nil || !completed {
+		return err
+	}
+	return fetchAndRenderPublishedRunResult(waitContext, invocation.Output, bundle, admitted.RunRef)
 }
