@@ -15678,7 +15678,8 @@
         "T_V28",
         "T_V29",
         "T_V67",
-        "T_V74"
+        "T_V74",
+        "N14"
       ],
       "files": [
         {
@@ -16340,6 +16341,44 @@
             },
             {
               "package": "credentials",
+              "earliest_milestone": "M6",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/worker_retries.go",
+          "group_id": "N14",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker",
+          "milestone": "M6",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own worker retries behavior within store; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "interfaces": [
+            "CloseUnattemptedWorkerRetries",
+            "WorkerRetry",
+            "WorkerRetryBasis",
+            "WorkerRetryInputDigest",
+            "WorkerRetryPlan",
+            "WorkerRetrySettlementSummary"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
               "earliest_milestone": "M6",
               "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
             }
@@ -18867,7 +18906,8 @@
         "R17",
         "T_V83",
         "T_R16",
-        "T_R17"
+        "T_R17",
+        "N17"
       ],
       "files": [
         {
@@ -19223,6 +19263,84 @@
           "go_package": "store",
           "assignment_owner": "store",
           "group_responsibility": "Dataset/object manifest/checkpoint and schema snapshot PG tables; same commit boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/artifact_publication.go",
+          "group_id": "N17",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own artifact publication behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+          "interfaces": [
+            "ArtifactPublicationReceipt",
+            "BindObjectAttempt",
+            "CancelObjectReservation",
+            "CommitObjectPublication",
+            "LoadArtifactPublication",
+            "LoadObjectReservation",
+            "ObjectAttemptBinding",
+            "ObjectCapacityLimits",
+            "ObjectReservation",
+            "ObjectReservationRequest",
+            "ObjectReservationState",
+            "ReserveObjectCapacity"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/store/worker_result_artifacts.go",
+          "group_id": "N17",
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Own worker result artifacts behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+          "interfaces": [
+            "LoadWorkerContinuationOrigin",
+            "WorkerContinuationOrigin"
+          ],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "store",
+          "assignment_owner": "store",
+          "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
           "allowed_internal_dependencies": [
             "contract"
           ],

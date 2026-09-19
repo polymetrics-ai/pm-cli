@@ -544,7 +544,10 @@
         "internal/compile/commands.go",
         "internal/compile/compatibility.go",
         "internal/compile/emit.go",
-        "internal/compile/sensitivity.go"
+        "internal/compile/sensitivity.go",
+        "cmd/pmgen/connector.go",
+        "cmd/pmgen/connector_test.go",
+        "internal/compile/closure_test.go"
       ],
       "package": "compile",
       "process_owner": "Build tools",
@@ -729,7 +732,8 @@
         "internal/runtime/response.go",
         "internal/runtime/pagination.go",
         "internal/runtime/retry.go",
-        "internal/runtime/egress.go"
+        "internal/runtime/egress.go",
+        "internal/runtime/response_open_test.go"
       ],
       "package": "runtime",
       "process_owner": "Worker",
@@ -5994,6 +5998,358 @@
       ],
       "sequence_within_milestone": 1,
       "review_state": "planning_semantics_audited; implementation UNEXECUTED"
+    },
+    {
+      "id": "N14",
+      "prior_group_id": null,
+      "first_milestone": "M6",
+      "action": "CREATE",
+      "package": "app",
+      "process_owner": "API and worker",
+      "public_interfaces": [
+        "CloseUnattemptedWorkerRetries",
+        "ContinuationService",
+        "HTTPAttemptObservation",
+        "HTTPDirectReadDependencies",
+        "HTTPExecutionPolicy",
+        "IsReservedPMControlFlag",
+        "NewContinuationService",
+        "NewHTTPDirectReadRegistration",
+        "ProviderHTTPConfiguration",
+        "TestCloseUnattemptedWorkerRetriesUsesOnlyKnownParentTruth",
+        "TestDefinitiveUnsentHTTPRetryCreatesOneProviderRequest",
+        "TestDefinitiveUnsentRetryUsesStrictAttemptTransition",
+        "TestDurableHTTPContinuationAcrossWorkerRestart",
+        "TestDurableHTTPContinuationCapacityRefusalPrecedesProviderIO",
+        "TestDurableHTTPContinuationUsesReadableEnvelopeBound",
+        "TestDurableHTTPRetryAcrossTemporalWorkerReplacement",
+        "TestDurableHTTPRetryRechecksChangedAuthorityBeforeSecondSend",
+        "TestDurableHTTPRetryRechecksRevocationBeforeSecondSend",
+        "TestDurableHTTPRetryStopsAtMaxAttempts",
+        "TestDurableHTTPRetrySuppressesInvalidOrLateRetryAfter",
+        "TestHTTPDirectReadRegistrationRequiresSealedPolicyAndPhysicalAuthority",
+        "TestHTTPDirectReadRegistrationWorkerBehavior",
+        "TestHTTPExecutionPolicyStrictDecoding",
+        "TestHTTPExecutionPolicyValidatesSourceOriginSelection",
+        "TestHTTPExecutionPolicyValidationBoundaries",
+        "TestPhysicalCallBoundaryCurrentSingleUseAndSessionIndependence",
+        "TestPhysicalCallBoundaryDeniesRevokedExpiredAndFencedAuthorityBeforeKeyOrSend",
+        "TestProviderHTTPConfigurationRefusals",
+        "TestProviderHTTPPolicySelection",
+        "TestProviderHTTPTrustRootReference",
+        "TestReconciliationCallbackCannotAcquireFreshPhysicalAuthority",
+        "TestSourceSafeUnknownHTTPRetryRetainsChargedParentPermit",
+        "TestUnknownHTTPAttemptWithoutUnconditionalSourceSafetyCreatesNoRetry",
+        "TestWorkerRetryLineagePreservesSourceSafeAttemptTruth",
+        "TestWorkerRetryMembershipSurvivesScopeClear",
+        "TestWorkerRetryOperationRevisionRemainsSealed",
+        "TestWorkerRetryRefusesUnboundOrExhaustedPlan",
+        "TestWorkflowRunSnapshotBoundsRetryEligibility",
+        "TestWorkflowUnitRefPreservesQualifiedAndInitialMeaning",
+        "WorkerRetry",
+        "WorkerRetryBasis",
+        "WorkerRetryInputDigest",
+        "WorkerRetryPlan",
+        "WorkerRetrySettlementSummary"
+      ],
+      "data_owned": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "activities",
+        "api",
+        "app",
+        "auth",
+        "config",
+        "contract",
+        "credentials",
+        "httpapi",
+        "objects",
+        "runtime",
+        "store",
+        "sync",
+        "testfixture",
+        "workflows"
+      ],
+      "test_ids": [],
+      "sequence_within_milestone": 3,
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED",
+      "paths": [
+        "internal/contract/http_policy.go",
+        "internal/contract/http_policy_test.go",
+        "internal/contract/pm_controls.go",
+        "internal/contract/workflow_test.go",
+        "internal/config/provider_http.go",
+        "internal/config/provider_http_test.go",
+        "internal/app/http_execution.go",
+        "internal/app/http_execution_test.go",
+        "internal/app/http_observation.go",
+        "internal/app/http_retry.go",
+        "internal/app/http_retry_test.go",
+        "internal/app/http_continuation_test.go",
+        "internal/app/physical_boundary_test.go",
+        "internal/app/continuations.go",
+        "internal/store/worker_retries.go",
+        "internal/store/worker_retries_test.go"
+      ]
+    },
+    {
+      "id": "T_R27",
+      "prior_group_id": null,
+      "first_milestone": "M6",
+      "action": "CREATE",
+      "package": "workflows",
+      "process_owner": "Developer/test runner against same stack",
+      "public_interfaces": [
+        "TestQualifiedRetryRetainsInitialDeadlineHistory",
+        "TestQualifiedRetryScheduling",
+        "TestQualifiedRetryTimerHistoryReplays"
+      ],
+      "data_owned": "Qualified retry scheduling at the workflow boundary: no activity starts before eligibility, the eligibility timer wakes it, and the initial deadline survives history replay.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "contract",
+        "testfixture",
+        "workflows"
+      ],
+      "test_ids": [],
+      "sequence_within_milestone": 4,
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED",
+      "paths": [
+        "internal/workflows/retry_test.go"
+      ]
+    },
+    {
+      "id": "N15",
+      "prior_group_id": null,
+      "first_milestone": "M6",
+      "action": "CREATE",
+      "package": "proof",
+      "process_owner": "Proof runner",
+      "public_interfaces": [
+        "Config",
+        "DeploymentObservation",
+        "ExecutorObservation",
+        "Facts",
+        "Fixture",
+        "Fixtures",
+        "ImplementationClosure",
+        "NewPMPathExecutor",
+        "PMPathConfig",
+        "PMPathExecutor",
+        "Prepare",
+        "ProofAssertionObservation",
+        "ProofCleanupDiagnostic",
+        "ProofEffect",
+        "ProofProvenance",
+        "ProofReceipt",
+        "ProofRedaction",
+        "ProofRequestObservation",
+        "ProofResponseObservation",
+        "ProofStatus",
+        "Server",
+        "TestAssertExpectedContainsUsesRecursiveMultiplicityAwareMatching",
+        "TestAssertExpectedDistinguishesAbsenceNullAndType",
+        "TestAssertExpectedExactStructuredKindsRejectWrongRecord",
+        "TestAssertExpectedHashesActualBytesOnly",
+        "TestAssertExpectedRejectsMalformedOrOversizedEvidence",
+        "TestAuthoredPagesAndContinuationAreServedExactly",
+        "TestConfigurationRefusals",
+        "TestFaultFixturesProduceDocumentedResponses",
+        "TestJournalRecordsExactlyOneEntryPerServedRequest",
+        "TestJournalRedactsSecretBearingRequestFields",
+        "TestLookupJSONPointerPreservesAbsenceAndNull",
+        "TestProofReceiptStrictAndSemanticContract",
+        "TestRunnerDoesNotReplayUnresolvedEffect",
+        "TestRunnerModesTerminalExitAndRedaction",
+        "TestRunnerRejectsWrongRecordAndPreservesSiblings",
+        "TestRunnerRetainsCleanupDiagnostics",
+        "TestScenarioDependencyAndCleanupOwnership",
+        "TestScenarioStrictContract",
+        "TestTLSChainsOnlyUnderTheDeclaredAuthorityAndNames"
+      ],
+      "data_owned": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "api",
+        "connectors",
+        "contract",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "sequence_within_milestone": 5,
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED",
+      "paths": [
+        "internal/contract/proof.go",
+        "internal/contract/proof_contract_test.go",
+        "internal/proof/execution.go",
+        "internal/proof/oracle_contract_test.go",
+        "internal/proof/runner_mechanics_test.go",
+        "internal/testfixture/githubcompat/fixture.go",
+        "internal/testfixture/githubcompat/journal.go",
+        "internal/testfixture/githubcompat/server.go",
+        "internal/testfixture/githubcompat/server_test.go",
+        "internal/testfixture/githubcompat/tls.go",
+        "cmd/pm-github-fixture/main.go"
+      ]
+    },
+    {
+      "id": "N16",
+      "prior_group_id": null,
+      "first_milestone": "M6",
+      "action": "CREATE",
+      "package": "app",
+      "process_owner": "API and worker",
+      "public_interfaces": [
+        "ConnectorComposition",
+        "ConnectorCompositionConfig",
+        "LoadProviderHTTPTLS",
+        "OpenConnectorComposition",
+        "Scenario",
+        "ScenarioAssertion",
+        "ScenarioCapture",
+        "ScenarioCleanup",
+        "ScenarioInputBinding",
+        "ScenarioRequirement",
+        "ScenarioStep",
+        "TestConnectorBundleDeclaration",
+        "TestConnectorBundleDeclarationRefusals",
+        "TestConnectorCompositionRefusesUnsafeBundleDeclarations",
+        "TestConnectorCompositionResolvesDeclaredConnectorInScope",
+        "TestConnectorCompositionServesDirectReadCatalogAndAdmission",
+        "TestConnectorCompositionWithoutDeclaredBundles",
+        "TestGeneratedGitHubDirectReadThroughControlledDestination",
+        "TestProviderHTTPTrustRootFailsClosed",
+        "TestProviderHTTPTrustRootVerification",
+        "TestWorkerDispatchPlanning",
+        "TestWorkerDispatchPlanningRefusals"
+      ],
+      "data_owned": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "api",
+        "app",
+        "config",
+        "connectors",
+        "contract",
+        "credentials",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "sequence_within_milestone": 6,
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED",
+      "paths": [
+        "internal/app/connector_composition.go",
+        "internal/app/connector_composition_test.go",
+        "internal/app/generated_github_read_test.go",
+        "internal/app/worker_plan.go",
+        "internal/app/worker_plan_test.go",
+        "internal/app/provider_http_tls.go",
+        "internal/app/provider_http_tls_test.go",
+        "internal/config/connectors_test.go",
+        "internal/contract/scenario.go"
+      ]
+    },
+    {
+      "id": "N17",
+      "prior_group_id": null,
+      "first_milestone": "M7",
+      "action": "CREATE",
+      "package": "store",
+      "process_owner": "API and worker, scoped PG transactions",
+      "public_interfaces": [
+        "ArtifactExecutionConfiguration",
+        "ArtifactGateway",
+        "ArtifactOperationResponse",
+        "ArtifactPublicationReceipt",
+        "ArtifactResources",
+        "BindObjectAttempt",
+        "CancelObjectReservation",
+        "CommitObjectPublication",
+        "FuzzArtifactRangesStayWithinObject",
+        "LoadArtifactPublication",
+        "LoadObjectReservation",
+        "LoadWorkerContinuationOrigin",
+        "ObjectAttemptBinding",
+        "ObjectCapacityLimits",
+        "ObjectReservation",
+        "ObjectReservationRequest",
+        "ObjectReservationState",
+        "OpenArtifactResources",
+        "OpenArtifacts",
+        "ReserveObjectCapacity",
+        "TestArtifactAuthorityBindingIsImmutable",
+        "TestArtifactCLISharedBytes",
+        "TestArtifactDownloadFailuresNeverExitSuccess",
+        "TestArtifactDownloadHelpIsOffline",
+        "TestArtifactDownloadWritesExactFullAndRangeBytes",
+        "TestArtifactExecutionConfigurationRefusals",
+        "TestArtifactInspectRendersTypedMetadataAndProblem",
+        "TestArtifactMetadataCrashWindows",
+        "TestArtifactPurposeIsolationAndImmutability",
+        "TestArtifactUploadRemainsBodylessAndUnavailable",
+        "TestContinuationArtifactIsNotAPublicResult",
+        "TestCorruptObjectNeverBecomesReadable",
+        "TestDownloadArtifactDetectsLengthAndDigestMismatch",
+        "TestDownloadArtifactPreservesCancellationAndWriteFailureWithoutRetry",
+        "TestDownloadArtifactRejectsSilentRangeMismatch",
+        "TestDownloadArtifactReturnsTypedRangeRefusal",
+        "TestDownloadArtifactStreamsBeyondEnvelopeLimitAndVerifiesDigest",
+        "TestDownloadArtifactValidatesClosedFromAndSuffixRanges",
+        "TestImmutableObjectAttempts",
+        "TestInspectArtifactDecodesStrictMetadata",
+        "TestObjectCapacityConcurrentWorkspaces",
+        "TestObjectPublicationTransactionBoundaries",
+        "TestObjectReadCancellationReleasesCapacity",
+        "TestObjectReservationCancellationCannotRacePastBinding",
+        "TestScopedObjectCapacity",
+        "TestStoreManifestCommit",
+        "TestTypedArtifactExecutionConfiguration",
+        "TestUnknownObjectUploadRequiresNewAttempt",
+        "TestWorkerContinuationOriginRequiresCanonicalReceiptLineage",
+        "TestWorkerResultArtifactReceiptsControlRunProjection",
+        "TestWorkerResultPublication",
+        "TestWorkerRuntimeCloseClosesSecretsAfterArtifactCleanupFailure",
+        "WorkerContinuationOrigin"
+      ],
+      "data_owned": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "api",
+        "app",
+        "auth",
+        "config",
+        "contract",
+        "credentials",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "sequence_within_milestone": 3,
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED",
+      "paths": [
+        "internal/api/artifacts.go",
+        "internal/api/artifacts_test.go",
+        "internal/app/artifact_resources.go",
+        "internal/app/worker_results.go",
+        "internal/app/worker_results_test.go",
+        "internal/app/worker_runtime_test.go",
+        "internal/cli/artifacts_test.go",
+        "internal/config/artifacts.go",
+        "internal/config/artifacts_test.go",
+        "internal/objects/backend_test.go",
+        "internal/store/artifact_metadata_test.go",
+        "internal/store/artifact_publication.go",
+        "internal/store/artifact_publication_test.go",
+        "internal/store/worker_result_artifacts.go",
+        "internal/store/worker_result_artifacts_test.go",
+        "internal/testfixture/artifacts.go",
+        "tests/client-parity/artifact_test.go"
+      ]
     }
   ],
   "files": [
@@ -30106,6 +30462,2507 @@
         "R14"
       ],
       "generator": null
+    },
+    {
+      "path": "internal/contract/http_policy.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "contract",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http policy behavior within contract; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "HTTPExecutionPolicy"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "contract",
+      "assignment_owner": "contract",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/contract/http_policy_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "contract",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http policy test behavior within contract; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestHTTPExecutionPolicyStrictDecoding",
+        "TestHTTPExecutionPolicyValidatesSourceOriginSelection",
+        "TestHTTPExecutionPolicyValidationBoundaries"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "contract",
+      "assignment_owner": "contract",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/contract/pm_controls.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "contract",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own pm controls behavior within contract; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "IsReservedPMControlFlag"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "contract",
+      "assignment_owner": "contract",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/contract/workflow_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "contract",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own workflow test behavior within contract; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestWorkflowRunSnapshotBoundsRetryEligibility",
+        "TestWorkflowUnitRefPreservesQualifiedAndInitialMeaning"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "contract",
+      "assignment_owner": "contract",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/config/provider_http.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "config",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own provider http behavior within config; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "ProviderHTTPConfiguration"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "config",
+      "assignment_owner": "config",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/config/provider_http_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "config",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own provider http test behavior within config; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestProviderHTTPConfigurationRefusals",
+        "TestProviderHTTPPolicySelection",
+        "TestProviderHTTPTrustRootReference"
+      ],
+      "dependencies": [
+        "config",
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "config_test",
+      "assignment_owner": "config",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "config",
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "config",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/http_execution.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http execution behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "HTTPDirectReadDependencies",
+        "NewHTTPDirectReadRegistration"
+      ],
+      "dependencies": [
+        "contract",
+        "runtime",
+        "sync"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "runtime",
+        "sync"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "runtime",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "sync",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/http_execution_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http execution test behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestHTTPDirectReadRegistrationRequiresSealedPolicyAndPhysicalAuthority",
+        "TestHTTPDirectReadRegistrationWorkerBehavior"
+      ],
+      "dependencies": [
+        "api",
+        "app",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "api",
+        "app",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/http_observation.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http observation behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "HTTPAttemptObservation"
+      ],
+      "dependencies": [
+        "contract",
+        "runtime",
+        "store"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "runtime",
+        "store"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "runtime",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/http_retry.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http retry behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [],
+      "dependencies": [
+        "contract",
+        "runtime",
+        "store"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "runtime",
+        "store"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "runtime",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/http_retry_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http retry test behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestDefinitiveUnsentHTTPRetryCreatesOneProviderRequest",
+        "TestDurableHTTPRetryAcrossTemporalWorkerReplacement",
+        "TestDurableHTTPRetryRechecksChangedAuthorityBeforeSecondSend",
+        "TestDurableHTTPRetryRechecksRevocationBeforeSecondSend",
+        "TestDurableHTTPRetryStopsAtMaxAttempts",
+        "TestDurableHTTPRetrySuppressesInvalidOrLateRetryAfter",
+        "TestSourceSafeUnknownHTTPRetryRetainsChargedParentPermit",
+        "TestUnknownHTTPAttemptWithoutUnconditionalSourceSafetyCreatesNoRetry"
+      ],
+      "dependencies": [
+        "activities",
+        "app",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture",
+        "workflows"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "activities",
+        "app",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture",
+        "workflows"
+      ],
+      "import_activation": [
+        {
+          "package": "activities",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "workflows",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/http_continuation_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own http continuation test behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestDurableHTTPContinuationAcrossWorkerRestart",
+        "TestDurableHTTPContinuationCapacityRefusalPrecedesProviderIO",
+        "TestDurableHTTPContinuationUsesReadableEnvelopeBound"
+      ],
+      "dependencies": [
+        "api",
+        "app",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "api",
+        "app",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/physical_boundary_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own physical boundary test behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestPhysicalCallBoundaryCurrentSingleUseAndSessionIndependence",
+        "TestPhysicalCallBoundaryDeniesRevokedExpiredAndFencedAuthorityBeforeKeyOrSend",
+        "TestReconciliationCallbackCannotAcquireFreshPhysicalAuthority"
+      ],
+      "dependencies": [
+        "app",
+        "auth",
+        "contract",
+        "credentials",
+        "runtime",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "app",
+        "auth",
+        "contract",
+        "credentials",
+        "runtime",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "auth",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "credentials",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "runtime",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/continuations.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own continuations behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "ContinuationService",
+        "NewContinuationService"
+      ],
+      "dependencies": [
+        "contract",
+        "objects",
+        "runtime",
+        "store"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "objects",
+        "runtime",
+        "store"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "runtime",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/store/worker_retries.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "store",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker retries behavior within store; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "CloseUnattemptedWorkerRetries",
+        "WorkerRetry",
+        "WorkerRetryBasis",
+        "WorkerRetryInputDigest",
+        "WorkerRetryPlan",
+        "WorkerRetrySettlementSummary"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "store",
+      "assignment_owner": "store",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/store/worker_retries_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "store",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker retries test behavior within store; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestCloseUnattemptedWorkerRetriesUsesOnlyKnownParentTruth",
+        "TestDefinitiveUnsentRetryUsesStrictAttemptTransition",
+        "TestWorkerRetryLineagePreservesSourceSafeAttemptTruth",
+        "TestWorkerRetryMembershipSurvivesScopeClear",
+        "TestWorkerRetryOperationRevisionRemainsSealed",
+        "TestWorkerRetryRefusesUnboundOrExhaustedPlan"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "store",
+      "assignment_owner": "store",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/workflows/retry_test.go",
+      "group_id": "T_R27",
+      "prior_group_id": null,
+      "owner": "workflows",
+      "process": "Developer/test runner against same stack",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own retry test behavior within workflows; bounded role: Qualified retry scheduling at the workflow boundary: no activity starts before eligibility, the eligibility timer wakes it, and the initial deadline survives history replay.",
+      "interfaces": [
+        "TestQualifiedRetryRetainsInitialDeadlineHistory",
+        "TestQualifiedRetryScheduling",
+        "TestQualifiedRetryTimerHistoryReplays"
+      ],
+      "dependencies": [
+        "contract",
+        "testfixture",
+        "workflows"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "workflows_test",
+      "assignment_owner": "workflows",
+      "group_responsibility": "Qualified retry scheduling at the workflow boundary: no activity starts before eligibility, the eligibility timer wakes it, and the initial deadline survives history replay.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "testfixture",
+        "workflows"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "workflows",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/contract/proof.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "contract",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own proof behavior within contract; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "ImplementationClosure",
+        "ProofAssertionObservation",
+        "ProofCleanupDiagnostic",
+        "ProofEffect",
+        "ProofProvenance",
+        "ProofReceipt",
+        "ProofRedaction",
+        "ProofRequestObservation",
+        "ProofResponseObservation",
+        "ProofStatus"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "contract",
+      "assignment_owner": "contract",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/contract/proof_contract_test.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "contract",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own proof contract test behavior within contract; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "TestProofReceiptStrictAndSemanticContract",
+        "TestScenarioDependencyAndCleanupOwnership",
+        "TestScenarioStrictContract"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "contract",
+      "assignment_owner": "contract",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/proof/execution.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "proof",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own execution behavior within proof; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "DeploymentObservation",
+        "ExecutorObservation",
+        "NewPMPathExecutor",
+        "PMPathConfig",
+        "PMPathExecutor"
+      ],
+      "dependencies": [
+        "api",
+        "connectors",
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "proof",
+      "assignment_owner": "proof",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [
+        "api",
+        "connectors",
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "connectors",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/proof/oracle_contract_test.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "proof",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own oracle contract test behavior within proof; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "TestAssertExpectedContainsUsesRecursiveMultiplicityAwareMatching",
+        "TestAssertExpectedDistinguishesAbsenceNullAndType",
+        "TestAssertExpectedExactStructuredKindsRejectWrongRecord",
+        "TestAssertExpectedHashesActualBytesOnly",
+        "TestAssertExpectedRejectsMalformedOrOversizedEvidence",
+        "TestLookupJSONPointerPreservesAbsenceAndNull"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "proof",
+      "assignment_owner": "proof",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/proof/runner_mechanics_test.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "proof",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own runner mechanics test behavior within proof; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "TestRunnerDoesNotReplayUnresolvedEffect",
+        "TestRunnerModesTerminalExitAndRedaction",
+        "TestRunnerRejectsWrongRecordAndPreservesSiblings",
+        "TestRunnerRetainsCleanupDiagnostics"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "proof",
+      "assignment_owner": "proof",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/testfixture/githubcompat/fixture.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "testfixture",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own fixture behavior within testfixture; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "Fixture",
+        "Fixtures"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "githubcompat",
+      "assignment_owner": "testfixture",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/testfixture/githubcompat/journal.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "testfixture",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own journal behavior within testfixture; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "githubcompat",
+      "assignment_owner": "testfixture",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/testfixture/githubcompat/server.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "testfixture",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own server behavior within testfixture; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "Config",
+        "Facts",
+        "Prepare",
+        "Server"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "githubcompat",
+      "assignment_owner": "testfixture",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/testfixture/githubcompat/server_test.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "testfixture",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own server test behavior within testfixture; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [
+        "TestAuthoredPagesAndContinuationAreServedExactly",
+        "TestConfigurationRefusals",
+        "TestFaultFixturesProduceDocumentedResponses",
+        "TestJournalRecordsExactlyOneEntryPerServedRequest",
+        "TestJournalRedactsSecretBearingRequestFields",
+        "TestTLSChainsOnlyUnderTheDeclaredAuthorityAndNames"
+      ],
+      "dependencies": [
+        "contract",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "githubcompat_test",
+      "assignment_owner": "testfixture",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/testfixture/githubcompat/tls.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "testfixture",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own tls behavior within testfixture; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "githubcompat",
+      "assignment_owner": "testfixture",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "cmd/pm-github-fixture/main.go",
+      "group_id": "N15",
+      "prior_group_id": null,
+      "owner": "testfixture",
+      "process": "Proof runner",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own main behavior within testfixture; bounded role: Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "interfaces": [],
+      "dependencies": [
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "main",
+      "assignment_owner": "testfixture",
+      "group_responsibility": "Common proof runner execution and the controlled GitHub-compatible HTTPS fixture: real client/server invocation, independent observation journal and bounded TLS material for credential-free direct-read proof.",
+      "allowed_internal_dependencies": [
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/connector_composition.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own connector composition behavior within app; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "ConnectorComposition",
+        "ConnectorCompositionConfig",
+        "OpenConnectorComposition"
+      ],
+      "dependencies": [
+        "connectors",
+        "contract",
+        "store"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "connectors",
+        "contract",
+        "store"
+      ],
+      "import_activation": [
+        {
+          "package": "connectors",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/connector_composition_test.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own connector composition test behavior within app; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "TestConnectorCompositionRefusesUnsafeBundleDeclarations",
+        "TestConnectorCompositionResolvesDeclaredConnectorInScope",
+        "TestConnectorCompositionServesDirectReadCatalogAndAdmission",
+        "TestConnectorCompositionWithoutDeclaredBundles"
+      ],
+      "dependencies": [
+        "api",
+        "app",
+        "connectors",
+        "contract",
+        "httpapi",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "api",
+        "app",
+        "connectors",
+        "contract",
+        "httpapi",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "connectors",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/generated_github_read_test.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own generated github read test behavior within app; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "TestGeneratedGitHubDirectReadThroughControlledDestination"
+      ],
+      "dependencies": [
+        "api",
+        "app",
+        "connectors",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "api",
+        "app",
+        "connectors",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "connectors",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/worker_plan.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker plan behavior within app; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [],
+      "dependencies": [
+        "contract",
+        "store"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "store"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/worker_plan_test.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker plan test behavior within app; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "TestWorkerDispatchPlanning",
+        "TestWorkerDispatchPlanningRefusals"
+      ],
+      "dependencies": [
+        "api",
+        "app",
+        "contract",
+        "httpapi",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "api",
+        "app",
+        "contract",
+        "httpapi",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/provider_http_tls.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own provider http tls behavior within app; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "LoadProviderHTTPTLS"
+      ],
+      "dependencies": [
+        "config",
+        "credentials"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "config",
+        "credentials"
+      ],
+      "import_activation": [
+        {
+          "package": "config",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "credentials",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/provider_http_tls_test.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own provider http tls test behavior within app; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "TestProviderHTTPTrustRootFailsClosed",
+        "TestProviderHTTPTrustRootVerification"
+      ],
+      "dependencies": [
+        "config",
+        "credentials"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "config",
+        "credentials"
+      ],
+      "import_activation": [
+        {
+          "package": "config",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "credentials",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/config/connectors_test.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "config",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own connectors test behavior within config; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "TestConnectorBundleDeclaration",
+        "TestConnectorBundleDeclarationRefusals"
+      ],
+      "dependencies": [
+        "config"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "config_test",
+      "assignment_owner": "config",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [
+        "config"
+      ],
+      "import_activation": [
+        {
+          "package": "config",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/contract/scenario.go",
+      "group_id": "N16",
+      "prior_group_id": null,
+      "owner": "contract",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own scenario behavior within contract; bounded role: Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "interfaces": [
+        "Scenario",
+        "ScenarioAssertion",
+        "ScenarioCapture",
+        "ScenarioCleanup",
+        "ScenarioInputBinding",
+        "ScenarioRequirement",
+        "ScenarioStep"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "contract",
+      "assignment_owner": "contract",
+      "group_responsibility": "Composition of generated connector bundles into worker dispatch: admitted operation planning, provider TLS material and the GitHub direct-read proof path through the real client/API/worker route.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/api/artifacts.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "api",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifacts behavior within api; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "ArtifactOperationResponse"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "api",
+      "assignment_owner": "api",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/api/artifacts_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "api",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifacts test behavior within api; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "FuzzArtifactRangesStayWithinObject",
+        "TestDownloadArtifactDetectsLengthAndDigestMismatch",
+        "TestDownloadArtifactPreservesCancellationAndWriteFailureWithoutRetry",
+        "TestDownloadArtifactRejectsSilentRangeMismatch",
+        "TestDownloadArtifactReturnsTypedRangeRefusal",
+        "TestDownloadArtifactStreamsBeyondEnvelopeLimitAndVerifiesDigest",
+        "TestDownloadArtifactValidatesClosedFromAndSuffixRanges",
+        "TestInspectArtifactDecodesStrictMetadata"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "api",
+      "assignment_owner": "api",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/artifact_resources.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifact resources behavior within app; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "ArtifactResources",
+        "OpenArtifactResources"
+      ],
+      "dependencies": [
+        "config",
+        "credentials",
+        "objects",
+        "store"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "config",
+        "credentials",
+        "objects",
+        "store"
+      ],
+      "import_activation": [
+        {
+          "package": "config",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "credentials",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/worker_results.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker results behavior within app; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [],
+      "dependencies": [
+        "contract",
+        "objects",
+        "store"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "contract",
+        "objects",
+        "store"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/worker_results_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker results test behavior within app; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestContinuationArtifactIsNotAPublicResult",
+        "TestWorkerResultPublication"
+      ],
+      "dependencies": [
+        "api",
+        "app",
+        "auth",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "api",
+        "app",
+        "auth",
+        "contract",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "auth",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/worker_runtime_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker runtime test behavior within app; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestWorkerRuntimeCloseClosesSecretsAfterArtifactCleanupFailure"
+      ],
+      "dependencies": [
+        "credentials"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app",
+      "assignment_owner": "app",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "credentials"
+      ],
+      "import_activation": [
+        {
+          "package": "credentials",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/cli/artifacts_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "cli",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifacts test behavior within cli; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestArtifactDownloadFailuresNeverExitSuccess",
+        "TestArtifactDownloadHelpIsOffline",
+        "TestArtifactDownloadWritesExactFullAndRangeBytes",
+        "TestArtifactInspectRendersTypedMetadataAndProblem",
+        "TestArtifactUploadRemainsBodylessAndUnavailable"
+      ],
+      "dependencies": [
+        "api"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "cli",
+      "assignment_owner": "cli",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "api"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/config/artifacts.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "config",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifacts behavior within config; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "ArtifactExecutionConfiguration"
+      ],
+      "dependencies": [],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "config",
+      "assignment_owner": "config",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [],
+      "import_activation": [],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/config/artifacts_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "config",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifacts test behavior within config; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestArtifactExecutionConfigurationRefusals",
+        "TestTypedArtifactExecutionConfiguration"
+      ],
+      "dependencies": [
+        "config"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "config_test",
+      "assignment_owner": "config",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "config"
+      ],
+      "import_activation": [
+        {
+          "package": "config",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/objects/backend_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "objects",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own backend test behavior within objects; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestCorruptObjectNeverBecomesReadable",
+        "TestImmutableObjectAttempts",
+        "TestObjectReadCancellationReleasesCapacity",
+        "TestUnknownObjectUploadRequiresNewAttempt"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "objects",
+      "assignment_owner": "objects",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/store/artifact_metadata_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "store",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifact metadata test behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestArtifactAuthorityBindingIsImmutable",
+        "TestArtifactMetadataCrashWindows",
+        "TestArtifactPurposeIsolationAndImmutability",
+        "TestStoreManifestCommit"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "store",
+      "assignment_owner": "store",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/store/artifact_publication.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "store",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifact publication behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "ArtifactPublicationReceipt",
+        "BindObjectAttempt",
+        "CancelObjectReservation",
+        "CommitObjectPublication",
+        "LoadArtifactPublication",
+        "LoadObjectReservation",
+        "ObjectAttemptBinding",
+        "ObjectCapacityLimits",
+        "ObjectReservation",
+        "ObjectReservationRequest",
+        "ObjectReservationState",
+        "ReserveObjectCapacity"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "store",
+      "assignment_owner": "store",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/store/artifact_publication_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "store",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifact publication test behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestObjectCapacityConcurrentWorkspaces",
+        "TestObjectPublicationTransactionBoundaries",
+        "TestObjectReservationCancellationCannotRacePastBinding",
+        "TestScopedObjectCapacity"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "store",
+      "assignment_owner": "store",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/store/worker_result_artifacts.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "store",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker result artifacts behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "LoadWorkerContinuationOrigin",
+        "WorkerContinuationOrigin"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "store",
+      "assignment_owner": "store",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/store/worker_result_artifacts_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "store",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker result artifacts test behavior within store; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestWorkerContinuationOriginRequiresCanonicalReceiptLineage",
+        "TestWorkerResultArtifactReceiptsControlRunProjection"
+      ],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "store",
+      "assignment_owner": "store",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/testfixture/artifacts.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "testfixture",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifacts behavior within testfixture; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "ArtifactGateway",
+        "OpenArtifacts"
+      ],
+      "dependencies": [
+        "app",
+        "config",
+        "credentials"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "testfixture",
+      "assignment_owner": "testfixture",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "app",
+        "config",
+        "credentials"
+      ],
+      "import_activation": [
+        {
+          "package": "app",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "config",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "credentials",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "tests/client-parity/artifact_test.go",
+      "group_id": "N17",
+      "prior_group_id": null,
+      "owner": "api",
+      "process": "API and worker, scoped PG transactions",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own artifact test behavior within api; bounded role: Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "interfaces": [
+        "TestArtifactCLISharedBytes"
+      ],
+      "dependencies": [
+        "api",
+        "auth",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "clientparity",
+      "assignment_owner": "api",
+      "group_responsibility": "Artifact publication and durable worker results: immutable shared-byte manifests committed with scoped PG transactions, worker result persistence and their API, CLI, config, object-backend and fixture projections.",
+      "allowed_internal_dependencies": [
+        "api",
+        "auth",
+        "httpapi",
+        "objects",
+        "store",
+        "testfixture"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "auth",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "httpapi",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "objects",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "cmd/pmgen/connector.go",
+      "group_id": "F16",
+      "prior_group_id": "F16",
+      "owner": "compile",
+      "process": "Build tools",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own connector behavior within compile; bounded role: Source-to-bundle compiler and explicit shape refusals",
+      "interfaces": [],
+      "dependencies": [
+        "compile",
+        "contract",
+        "proof"
+      ],
+      "test_ids": [
+        "V21",
+        "V22",
+        "V23",
+        "V24",
+        "V55"
+      ],
+      "generator": null,
+      "go_package": "main",
+      "assignment_owner": "compile",
+      "group_responsibility": "Source-to-bundle compiler and explicit shape refusals",
+      "allowed_internal_dependencies": [
+        "compile",
+        "contract",
+        "proof"
+      ],
+      "import_activation": [
+        {
+          "package": "compile",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "proof",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "cmd/pmgen/connector_test.go",
+      "group_id": "F16",
+      "prior_group_id": "F16",
+      "owner": "compile",
+      "process": "Build tools",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own connector test behavior within compile; bounded role: Source-to-bundle compiler and explicit shape refusals",
+      "interfaces": [],
+      "dependencies": [
+        "compile",
+        "contract"
+      ],
+      "test_ids": [
+        "V21",
+        "V22",
+        "V23",
+        "V24",
+        "V55"
+      ],
+      "generator": null,
+      "go_package": "main",
+      "assignment_owner": "compile",
+      "group_responsibility": "Source-to-bundle compiler and explicit shape refusals",
+      "allowed_internal_dependencies": [
+        "compile",
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "compile",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/compile/closure_test.go",
+      "group_id": "F16",
+      "prior_group_id": "F16",
+      "owner": "compile",
+      "process": "Build tools",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own closure test behavior within compile; bounded role: Source-to-bundle compiler and explicit shape refusals",
+      "interfaces": [],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [
+        "V21",
+        "V22",
+        "V23",
+        "V24",
+        "V55"
+      ],
+      "generator": null,
+      "go_package": "compile",
+      "assignment_owner": "compile",
+      "group_responsibility": "Source-to-bundle compiler and explicit shape refusals",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/runtime/response_open_test.go",
+      "group_id": "F20",
+      "prior_group_id": "F20",
+      "owner": "runtime",
+      "process": "Worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own response open test behavior within runtime; bounded role: Shared typed request/response/media/paging/retry/egress semantics",
+      "interfaces": [],
+      "dependencies": [
+        "contract"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "runtime",
+      "assignment_owner": "runtime",
+      "group_responsibility": "Shared typed request/response/media/paging/retry/egress semantics",
+      "allowed_internal_dependencies": [
+        "contract"
+      ],
+      "import_activation": [
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
     }
   ],
   "crosswalk": [
