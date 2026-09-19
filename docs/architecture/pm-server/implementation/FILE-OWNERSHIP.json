@@ -1122,7 +1122,7 @@
         "CommitCursor",
         "CommitPrefix"
       ],
-      "data_owned": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "data_owned": "Fetch→durableartifact→ack/cursor protocol",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
       "imports": [
         "contract",
@@ -1152,7 +1152,7 @@
       "process_owner": "API",
       "public_interfaces": [
         "QueryDataset",
-        "GetSchema"
+        "GetConnectionSchema"
       ],
       "data_owned": "Authorized warehouse/query and schema endpoints.",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
@@ -1182,7 +1182,8 @@
       "process_owner": "CLI",
       "public_interfaces": [
         "QuerySaved",
-        "InspectSchema"
+        "newSchemaCommand",
+        "newSchemaShowCommand"
       ],
       "data_owned": "Read-only query/schema controls",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
@@ -12274,7 +12275,7 @@
       "milestone": "M6",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Actual staged source\u2192delivery\u2192durableack\u2192contiguouscursor with lostack/restart",
+      "responsibility": "Actual staged source→delivery→durableack→contiguouscursor with lostack/restart",
       "interfaces": [
         "ExecuteCase"
       ],
@@ -13041,7 +13042,7 @@
       "milestone": "M7",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Own etl behavior within sync; bounded role: Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "responsibility": "Own etl behavior within sync; bounded role: Fetch→durableartifact→ack/cursor protocol",
       "interfaces": [],
       "dependencies": [
         "contract",
@@ -13058,7 +13059,7 @@
       "generator": null,
       "go_package": "sync",
       "assignment_owner": "sync",
-      "group_responsibility": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "group_responsibility": "Fetch→durableartifact→ack/cursor protocol",
       "allowed_internal_dependencies": [
         "contract",
         "runtime",
@@ -13104,7 +13105,7 @@
       "milestone": "M7",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Own checkpoint behavior within sync; bounded role: Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "responsibility": "Own checkpoint behavior within sync; bounded role: Fetch→durableartifact→ack/cursor protocol",
       "interfaces": [],
       "dependencies": [
         "contract",
@@ -13121,7 +13122,7 @@
       "generator": null,
       "go_package": "sync",
       "assignment_owner": "sync",
-      "group_responsibility": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "group_responsibility": "Fetch→durableartifact→ack/cursor protocol",
       "allowed_internal_dependencies": [
         "contract",
         "runtime",
@@ -23024,7 +23025,7 @@
       "generator": null,
       "go_package": null,
       "assignment_owner": "proof",
-      "group_responsibility": "N13-PG narrow PostgreSQL source\u2192warehouse/query/mapping\u2192separate destination mapped-upsert composition through the common runner; not full #41 closure.",
+      "group_responsibility": "N13-PG narrow PostgreSQL source→warehouse/query/mapping→separate destination mapped-upsert composition through the common runner; not full #41 closure.",
       "allowed_internal_dependencies": [],
       "import_activation": [],
       "subsequent_wiring_milestones": [
