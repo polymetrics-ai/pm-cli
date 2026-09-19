@@ -92,3 +92,95 @@ func TestDecodeResponseOpenObjectRetainsUndeclaredProperties(t *testing.T) {
 		}
 	})
 }
+
+// A composition is open only when every member of it is open. One closed allOf
+// component closes the whole composition, and every declared additional
+// property schema in the composition applies to an undeclared field. The
+// canonical typed-value matcher is the oracle for both directions.
+func TestDecodeResponseCompositionOpennessMatchesCanonicalMatcher(t *testing.T) {
+	composition := func(componentOpen bool, componentAdditional *contract.Schema) contract.Schema {
+		component := contract.Schema{
+			Type:           contract.SchemaTypeObject,
+			OpenProperties: componentOpen,
+			Properties: map[string]contract.Schema{
+				"name": {Type: contract.SchemaTypeString},
+			},
+			Required:             []string{"name"},
+			AdditionalProperties: componentAdditional,
+		}
+		return contract.Schema{
+			Type:           contract.SchemaTypeObject,
+			OpenProperties: true,
+			Properties: map[string]contract.Schema{
+				"id": {Type: contract.SchemaTypeInteger},
+			},
+			Required: []string{"id"},
+			AllOf:    []contract.Schema{component},
+		}
+	}
+	operation := func(schema contract.Schema) contract.Operation {
+		return contract.Operation{
+			SchemaVersion: contract.OperationSchemaVersion,
+			OperationID:   "fixture/open-composition",
+			Transport:     contract.Transport{Kind: contract.TransportKindHTTP, Method: http.MethodGet, Path: "/fixture"},
+			Responses: []contract.Response{{
+				Status: "200", MediaType: "application/json", Schema: &schema,
+			}},
+		}
+	}
+	document := []byte(`{"id":9001,"name":"x","extra":"kept"}`)
+	header := http.Header{"Content-Type": []string{"application/json"}}
+
+	// The oracle: the same document decoded exactly, then matched by the shared
+	// canonical matcher against the same composition.
+	canonicalValue := func(t *testing.T, schema contract.Schema) contract.PresentValue {
+		t.Helper()
+		open := schema
+		open.OpenProperties = true
+		open.AllOf = nil
+		decoded, err := DecodeResponse(operation(open), 200, header, document)
+		if err != nil {
+			t.Fatalf("decode the exact fixture document: %v", err)
+		}
+		return decoded.Result.Data
+	}
+
+	t.Run("a closed component refuses an undeclared field", func(t *testing.T) {
+		schema := composition(false, nil)
+		if err := contract.ValidateValueAgainstSchema(canonicalValue(t, schema), schema); err == nil {
+			t.Fatal("the canonical matcher accepted a document a closed component forbids")
+		}
+		if _, err := DecodeResponse(operation(schema), 200, header, document); err == nil {
+			t.Fatal("an open outer node admitted an undeclared field a closed component forbids")
+		}
+	})
+
+	t.Run("a component additional property schema applies to the undeclared field", func(t *testing.T) {
+		integer := contract.Schema{Type: contract.SchemaTypeInteger}
+		schema := composition(true, &integer)
+		if err := contract.ValidateValueAgainstSchema(canonicalValue(t, schema), schema); err == nil {
+			t.Fatal("the canonical matcher accepted a string where the component declares an integer")
+		}
+		if _, err := DecodeResponse(operation(schema), 200, header, document); err == nil {
+			t.Fatal("an undeclared field ignored the component's declared additional property schema")
+		}
+	})
+
+	t.Run("a fully open composition still retains the undeclared field", func(t *testing.T) {
+		schema := composition(true, nil)
+		if err := contract.ValidateValueAgainstSchema(canonicalValue(t, schema), schema); err != nil {
+			t.Fatalf("the canonical matcher refused a fully open composition: %v", err)
+		}
+		decoded, err := DecodeResponse(operation(schema), 200, header, document)
+		if err != nil {
+			t.Fatalf("decode a fully open composition: %v", err)
+		}
+		fields, ok := decoded.Result.Data.Fields()
+		if !ok {
+			t.Fatalf("decoded data = %#v; want an object", decoded.Result.Data)
+		}
+		if _, present := fields["extra"]; !present {
+			t.Fatalf("a fully open composition dropped the undeclared field: %#v", fields)
+		}
+	})
+}

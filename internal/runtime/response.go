@@ -325,14 +325,16 @@ func typedProviderValue(raw any, schema contract.Schema, depth int) (contract.Pr
 		for name, rawField := range rawFields {
 			property, declared := properties[name]
 			if !declared {
-				// A declared-open object retains properties the pinned source
-				// does not enumerate; a closed object still refuses them.
-				if !schema.OpenProperties {
+				// A declared-open composition retains properties the pinned
+				// source does not enumerate, but one closed component closes the
+				// whole composition, exactly as the canonical value matcher
+				// rules. Every declared additional property schema in the
+				// composition applies to the undeclared field.
+				if !objectCompositionPermitsUnlisted(schema) {
 					return contract.PresentValue{}, fmt.Errorf("%w: undeclared provider object field", ErrInvalidProviderValue)
 				}
-				if schema.AdditionalProperties != nil {
-					property = *schema.AdditionalProperties
-				} else {
+				additional := objectCompositionAdditionalProperties(schema)
+				if len(additional) == 0 {
 					field, fieldErr := exactProviderValue(rawField, depth+1)
 					if fieldErr != nil {
 						return contract.PresentValue{}, fieldErr
@@ -340,6 +342,17 @@ func typedProviderValue(raw any, schema contract.Schema, depth int) (contract.Pr
 					fields[name] = field
 					continue
 				}
+				field, fieldErr := typedProviderValue(rawField, additional[0], depth+1)
+				if fieldErr != nil {
+					return contract.PresentValue{}, fieldErr
+				}
+				for _, declaredSchema := range additional[1:] {
+					if matchErr := contract.ValidateValueAgainstSchema(field, declaredSchema); matchErr != nil {
+						return contract.PresentValue{}, fmt.Errorf("%w: undeclared provider object field does not match a declared additional property schema", ErrInvalidProviderValue)
+					}
+				}
+				fields[name] = field
+				continue
 			}
 			field, fieldErr := typedProviderValue(rawField, property, depth+1)
 			if fieldErr != nil {
@@ -432,6 +445,35 @@ func exactProviderValue(raw any, depth int) (contract.PresentValue, error) {
 	default:
 		return contract.PresentValue{}, typeMismatch()
 	}
+}
+
+// objectCompositionPermitsUnlisted mirrors the canonical value matcher: an
+// object admits properties outside its declared set only when the outer node and
+// every allOf component declare that they are permitted.
+func objectCompositionPermitsUnlisted(schema contract.Schema) bool {
+	if !schema.OpenProperties {
+		return false
+	}
+	for _, component := range schema.AllOf {
+		if !objectCompositionPermitsUnlisted(component) {
+			return false
+		}
+	}
+	return true
+}
+
+// objectCompositionAdditionalProperties collects every declared additional
+// property schema in the composition, outermost first, so an undeclared field is
+// decoded by the outer declaration and checked against the rest.
+func objectCompositionAdditionalProperties(schema contract.Schema) []contract.Schema {
+	declared := make([]contract.Schema, 0, 1)
+	if schema.AdditionalProperties != nil {
+		declared = append(declared, *schema.AdditionalProperties)
+	}
+	for _, component := range schema.AllOf {
+		declared = append(declared, objectCompositionAdditionalProperties(component)...)
+	}
+	return declared
 }
 
 func mergedObjectSchema(schema contract.Schema) (map[string]contract.Schema, map[string]struct{}, error) {

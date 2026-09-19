@@ -41,7 +41,11 @@ func (lease Lease) validate() error {
 
 // ReleaseTaskLease ends one bounded planning lease without granting any
 // authority. It succeeds only for the exact owner and fence that still hold the
-// lease, so a stale planner can never release another worker's claim.
+// lease, so a stale planner can never release another worker's claim. The
+// released expiry is the smallest representable value, so the guard admits a
+// claim whose own expiry is already that value: a one-microsecond claim is
+// releasable, and releasing an already released lease by its exact holder stays
+// idempotent instead of reporting a lost claim.
 func ReleaseTaskLease(ctx context.Context, tx *Transaction, lease Lease) error {
 	scope, err := tx.requireScope()
 	if err != nil {
@@ -58,7 +62,7 @@ func ReleaseTaskLease(ctx context.Context, tx *Transaction, lease Lease) error {
 		SET lease_expires_at = claimed_at + interval '1 microsecond'
 		WHERE org_id = $1 AND workspace_id = $2 AND run_id = $3 AND task_id = $4
 		  AND owner_id = $5 AND fence = $6
-		  AND lease_expires_at > claimed_at + interval '1 microsecond'
+		  AND lease_expires_at >= claimed_at + interval '1 microsecond'
 	`, scope.OrgID, scope.WorkspaceID, lease.Task.RunID, lease.Task.TaskID, lease.OwnerID, lease.Fence)
 	if err != nil {
 		return safeMetadataWriteError("release task lease", err)
