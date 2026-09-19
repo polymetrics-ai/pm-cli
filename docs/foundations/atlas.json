@@ -12,7 +12,7 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/FILE-OWNERSHIP.json",
-      "sha256": "c7b4394f74ae89a21d8e0c6e386178f0065bb5cca06d80cf2ee7937bbc29fa8e"
+      "sha256": "e7cfa58f8400a759241355d55cfe1b3fb10f3049cbce90835e83f2508e5ddccc"
     },
     {
       "path": "docs/architecture/pm-server/implementation/VALIDATION-MATRIX.json",
@@ -20,15 +20,15 @@
     },
     {
       "path": "docs/architecture/pm-server/implementation/PACKET-CONTRACTS.json",
-      "sha256": "06e56af45b296c788bc63e56a315e78e874c199590ae698770d0cdbed6040a82"
+      "sha256": "3dfb94a08495135d0496d00d726ee9724169dfa66afbf4bd5c6e250e731f4668"
     }
   ],
   "counts": {
     "foundations": 20,
     "requirements": 43,
     "packets": 44,
-    "declared_paths": 706,
-    "actual_go_files": 357
+    "declared_paths": 707,
+    "actual_go_files": 358
   },
   "validation": {
     "id": "V80",
@@ -6391,6 +6391,12 @@
       "packet_id": "pm-cli-session-transport",
       "path": "internal/cli/render.go",
       "symbol": "Render",
+      "declaration_state": "present"
+    },
+    {
+      "packet_id": "pm-cli-run-watch",
+      "path": "internal/cli/result_document_test.go",
+      "symbol": "TestRunResultRendersExactPublishedDocument",
       "declaration_state": "present"
     },
     {

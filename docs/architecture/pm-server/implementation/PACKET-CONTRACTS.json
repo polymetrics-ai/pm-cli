@@ -13626,6 +13626,48 @@
           ],
           "subsequent_wiring_milestones": []
         },
+          {
+            "path": "internal/cli/result_document_test.go",
+            "group_id": "T_V30b",
+            "prior_group_id": "T_V30b",
+            "owner": "cli",
+            "process": "CLI",
+            "milestone": "M5",
+            "action": "CREATE",
+            "kind": "authored",
+            "responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+            "interfaces": [
+              "TestRunResultRendersExactPublishedDocument"
+            ],
+            "dependencies": [
+              "api",
+              "contract"
+            ],
+            "test_ids": [
+              "V30"
+            ],
+            "generator": null,
+            "go_package": "cli",
+            "assignment_owner": "cli",
+            "group_responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+            "allowed_internal_dependencies": [
+              "api",
+              "contract"
+            ],
+            "import_activation": [
+              {
+                "package": "api",
+                "earliest_milestone": "M5",
+                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+              },
+              {
+                "package": "contract",
+                "earliest_milestone": "M5",
+                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+              }
+            ],
+            "subsequent_wiring_milestones": []
+          },
         {
           "path": "internal/api/events_test.go",
           "group_id": "T_V30",

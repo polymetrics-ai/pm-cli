@@ -2741,6 +2741,31 @@
       "review_state": "planning_semantics_audited; implementation UNEXECUTED"
     },
     {
+      "id": "T_V30b",
+      "first_milestone": "M5",
+      "action": "CREATE",
+      "paths": [
+        "internal/cli/result_document_test.go"
+      ],
+      "package": "cli",
+      "process_owner": "CLI",
+      "public_interfaces": [
+        "TestRunResultRendersExactPublishedDocument"
+      ],
+      "data_owned": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly. Staging: Contract introduction does not complete later consumer integration.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "api",
+        "contract"
+      ],
+      "test_ids": [
+        "V30"
+      ],
+      "sequence_within_milestone": 1,
+      "prior_group_id": "T_V30b",
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
+    },
+    {
       "id": "T_V24",
       "first_milestone": "M6",
       "action": "CREATE",
