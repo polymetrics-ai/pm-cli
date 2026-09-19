@@ -94,6 +94,11 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if err := validateSecretReference(data.identity.ClientSecretRef, "identity.client_secret_ref"); err != nil {
 		return Configuration{}, err
 	}
+	if data.identity.caTrustRootDeclared {
+		if err := validateSecretReference(data.identity.caTrustRootRef, "identity.ca_ref"); err != nil {
+			return Configuration{}, err
+		}
+	}
 	if data.identity.StepUpMaximumAge < time.Second || data.identity.StepUpMaximumAge > 15*time.Minute {
 		return Configuration{}, diagnostic("identity.step_up_maximum_age", DiagnosticBounds)
 	}

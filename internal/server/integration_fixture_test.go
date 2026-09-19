@@ -36,6 +36,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/credentials"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -599,15 +600,12 @@ func newServerIntegrationFixture(t *testing.T) *serverIntegrationFixture {
 		fixture.configuration,
 		fixture.secretsRoot,
 		io.Discard,
-		func() (*http.Client, *boundedOIDCTransport) {
+		func(trustRoot *x509.CertPool) (*http.Client, *boundedOIDCTransport) {
 			factoryCalled = true
-			client, transport := newOIDCHTTPClient()
-			roots := x509.NewCertPool()
-			roots.AddCert(fixture.oidc.caCertificate)
-			tlsConfiguration := transport.next.TLSClientConfig.Clone()
-			tlsConfiguration.RootCAs = roots
-			transport.next.TLSClientConfig = tlsConfiguration
-			return client, transport
+			if trustRoot == nil {
+				t.Fatal("authenticated server integration did not resolve its declared identity trust root")
+			}
+			return newOIDCHTTPClient(trustRoot)
 		},
 	)
 	if err != nil {
@@ -676,6 +674,10 @@ func (fixture *serverIntegrationFixture) materializeOperatorSecrets(t *testing.T
 	}{
 		{name: "pm-app-endpoint", value: []byte(fixture.runtimeDSN)},
 		{name: oidcClientSecretMember, value: []byte(fixture.oidc.clientSecret)},
+		{name: oidcTrustRootMember, value: pem.EncodeToMemory(&pem.Block{
+			Type:  "CERTIFICATE",
+			Bytes: fixture.oidc.caCertificate.Raw,
+		})},
 		{name: wrappingKeyMember, value: fixture.wrappingKey},
 	}
 	for _, member := range members {
@@ -730,6 +732,7 @@ func (fixture *serverIntegrationFixture) loadConfiguration(t *testing.T, listen 
 			"client_id":           integrationOIDCClientID,
 			"client_secret_ref":   integrationSecretReference,
 			"step_up_maximum_age": "2m",
+			"ca_ref":              integrationSecretReference,
 		},
 		"encryption": map[string]any{
 			"wrapping_key_ref": integrationSecretReference,
@@ -1444,4 +1447,205 @@ func integrationRandomHex(t *testing.T, byteCount int) string {
 		t.Fatalf("generate isolated server integration identity: %T", err)
 	}
 	return hex.EncodeToString(value)
+}
+
+// identityTrustRootDeclaration is the optional operator-owned OIDC issuer trust
+// root declaration; its confined bundle member is ca.pem.
+const identityTrustRootDeclaration = `,"ca_ref":"` + integrationSecretReference + `"`
+
+// identityTrustRootDocument is one complete valid startup document whose
+// identity block optionally declares that trust root. The %s slot takes the
+// raw optional key/value pair, so an empty slot keeps the declaration absent.
+const identityTrustRootDocument = `{
+  "schema_version":"1","deployment_id":"identity-trust-root","public_origin":"https://pm.example.invalid",
+  "postgres":{"ownership":"managed","database":"pm_app","endpoint_ref":"secret://fixture/server"},
+  "temporal":{"ownership":"managed","endpoint":"temporal.example.invalid:7233","namespace":"fixture","client_identity_ref":"secret://fixture/temporal","retention":"720h","task_queues":["pm-control"]},
+  "artifacts":{"ownership":"managed","driver":"s3","endpoint":"https://objects.example.invalid","bucket":"fixture-objects","credential_ref":"secret://fixture/objects","attempt_key_policy":"unique_immutable"},
+  "identity":{"issuer":"https://identity.example.invalid","client_id":"pm-server","client_secret_ref":"secret://fixture/server"%s},
+  "encryption":{"wrapping_key_ref":"secret://fixture/server"},
+  "admission":{"profile":"development"},
+  "limits":{"workspace_active_runs":4,"workflow_payload_bytes":65536,"workflow_fanout":32,"run_lifetime":"1h","event_buffer":128,"query_children":1,"query_child_memory_bytes":4294967296,"query_child_deadline":"5m","request_bytes":1048576,"metadata_deadline":"5s"}
+}`
+
+// identityTrustRootIdentity resolves the identity settings a real startup
+// document produces, so the declaration reaches this composition exactly as
+// operator configuration does.
+func identityTrustRootIdentity(t *testing.T, declaration string) config.IdentityConfiguration {
+	t.Helper()
+	document, err := config.Load(strings.NewReader(fmt.Sprintf(identityTrustRootDocument, declaration)))
+	if err != nil {
+		t.Fatalf("load identity trust root document: %v", err)
+	}
+	configuration, err := config.Validate(document, config.Prelaunch{})
+	if err != nil {
+		t.Fatalf("validate identity trust root document: %v", err)
+	}
+	return configuration.Identity()
+}
+
+// openIdentityTrustRootSecrets materializes one confined operator bundle whose
+// members are the supplied ones. The bundle reference is the fixture reference
+// secret://fixture/server.
+func openIdentityTrustRootSecrets(t *testing.T, members map[string][]byte) *credentials.OperatorSecrets {
+	t.Helper()
+	root := t.TempDir()
+	bundle := filepath.Join(root, "fixture", "server")
+	if err := os.MkdirAll(bundle, 0o700); err != nil {
+		t.Fatalf("create identity trust root bundle: %v", err)
+	}
+	for name, contents := range members {
+		if err := os.WriteFile(filepath.Join(bundle, name), contents, 0o600); err != nil {
+			t.Fatalf("write identity trust root bundle member: %v", err)
+		}
+	}
+	secrets, err := credentials.OpenOperatorSecrets(root)
+	if err != nil {
+		t.Fatalf("open identity trust root secrets: %v", err)
+	}
+	t.Cleanup(func() { _ = secrets.Close() })
+	return secrets
+}
+
+// startIdentityTrustRootPeer serves one HTTPS peer on loopback with the
+// supplied certificate. No network or public authority is involved.
+func startIdentityTrustRootPeer(t *testing.T, certificate tls.Certificate) *httptest.Server {
+	t.Helper()
+	peer := httptest.NewUnstartedServer(http.HandlerFunc(func(response http.ResponseWriter, _ *http.Request) {
+		response.WriteHeader(http.StatusNoContent)
+	}))
+	peer.TLS = &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12}
+	peer.StartTLS()
+	t.Cleanup(peer.Close)
+	return peer
+}
+
+// identityTrustRootTrusted performs one bounded OIDC client request against the
+// controlled loopback peer and reports whether its certificate verified.
+func identityTrustRootTrusted(t *testing.T, client *http.Client, peer *httptest.Server) bool {
+	t.Helper()
+	response, err := client.Get(peer.URL)
+	if err != nil {
+		return false
+	}
+	defer response.Body.Close()
+	_, _ = io.Copy(io.Discard, response.Body)
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("identity trust root peer status = %d; want %d", response.StatusCode, http.StatusNoContent)
+	}
+	return true
+}
+
+// TestIdentityIssuerTrustRootBoundsOIDCClientTrust proves a declared root
+// changes nothing but the OIDC client root store: exactly the declared
+// certificate authority is trusted, an undeclared one is refused, and a client
+// without the declaration stays on the unchanged process system root store.
+func TestIdentityIssuerTrustRootBoundsOIDCClientTrust(t *testing.T) {
+	demoCertificate, demoKey := newIntegrationCertificateAuthority(t)
+	foreignCertificate, foreignKey := newIntegrationCertificateAuthority(t)
+	demoPeer := startIdentityTrustRootPeer(t, issueIntegrationServerCertificate(t, demoCertificate, demoKey))
+	foreignPeer := startIdentityTrustRootPeer(t, issueIntegrationServerCertificate(t, foreignCertificate, foreignKey))
+	secrets := openIdentityTrustRootSecrets(t, map[string][]byte{
+		oidcTrustRootMember: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: demoCertificate.Raw}),
+	})
+
+	roots, err := identityIssuerTrustRoot(secrets, identityTrustRootIdentity(t, identityTrustRootDeclaration))
+	if err != nil || roots == nil {
+		t.Fatalf("declared identity trust root = (pool set %t, %v); want the declared demo pool", roots != nil, err)
+	}
+	client, transport := newOIDCHTTPClient(roots)
+	t.Cleanup(transport.Close)
+	configuration := transport.next.TLSClientConfig
+	if configuration == nil || configuration.RootCAs != roots {
+		t.Fatal("declared identity trust root was not applied as the OIDC client root pool")
+	}
+	if configuration.MinVersion != tls.VersionTLS12 || configuration.InsecureSkipVerify {
+		t.Fatalf(
+			"declared identity trust root client TLS = (MinVersion %d, InsecureSkipVerify %t); want TLS 1.2 with certificate and hostname verification",
+			configuration.MinVersion,
+			configuration.InsecureSkipVerify,
+		)
+	}
+	if !identityTrustRootTrusted(t, client, demoPeer) {
+		t.Fatal("declared identity trust root did not trust the demo certificate authority it declares")
+	}
+	if identityTrustRootTrusted(t, client, foreignPeer) {
+		t.Fatal("declared identity trust root trusted a certificate authority it does not declare")
+	}
+
+	absentClient, absentTransport := newOIDCHTTPClient(nil)
+	t.Cleanup(absentTransport.Close)
+	absentConfiguration := absentTransport.next.TLSClientConfig
+	if absentConfiguration == nil {
+		t.Fatal("client without a declared identity trust root has no TLS configuration")
+	}
+	if absentConfiguration.RootCAs != nil ||
+		absentConfiguration.MinVersion != tls.VersionTLS12 ||
+		absentConfiguration.InsecureSkipVerify {
+		t.Fatalf(
+			"client without a declared identity trust root = (RootCAs set %t, MinVersion %d, InsecureSkipVerify %t); want the unchanged process system root store at TLS 1.2",
+			absentConfiguration.RootCAs != nil,
+			absentConfiguration.MinVersion,
+			absentConfiguration.InsecureSkipVerify,
+		)
+	}
+	if identityTrustRootTrusted(t, absentClient, demoPeer) {
+		t.Fatal("OIDC client without a declared identity trust root trusted a private certificate authority")
+	}
+}
+
+// TestIdentityIssuerTrustRootRequiresDeclaration is the negative control: with
+// no declared reference the confined bundle is never read, so the same code
+// path stays unreachable even when it holds an unusable ca.pem.
+func TestIdentityIssuerTrustRootRequiresDeclaration(t *testing.T) {
+	secrets := openIdentityTrustRootSecrets(t, map[string][]byte{
+		oidcTrustRootMember: []byte("not a certificate"),
+	})
+	identity := identityTrustRootIdentity(t, "")
+	if reference, declared := identity.CATrustRootRef(); declared || reference != "" {
+		t.Fatalf("identity configuration without ca_ref = (%q, %t); want empty, false", reference, declared)
+	}
+	roots, err := identityIssuerTrustRoot(secrets, identity)
+	if err != nil || roots != nil {
+		t.Fatalf("identity trust root without a declared reference = (pool set %t, %v); want no pool and no read", roots != nil, err)
+	}
+	if roots, err := identityIssuerTrustRoot(nil, identity); err != nil || roots != nil {
+		t.Fatalf("identity trust root without a secret root = (pool set %t, %v); want no pool and no error", roots != nil, err)
+	}
+}
+
+// TestIdentityIssuerTrustRootFailsClosed covers every refusal the declared
+// bounded read can produce. Each one must yield no pool and a constant error
+// that carries no certificate material.
+func TestIdentityIssuerTrustRootFailsClosed(t *testing.T) {
+	authority, authorityKey := newIntegrationCertificateAuthority(t)
+	leaf := issueIntegrationServerCertificate(t, authority, authorityKey)
+	authorityPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: authority.Raw})
+	leafPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Certificate[0]})
+	for _, test := range []struct {
+		name    string
+		members map[string][]byte
+		want    error
+	}{
+		{"missing member", nil, errIdentityTrustRootUnavailable},
+		{"empty member", map[string][]byte{oidcTrustRootMember: {}}, errIdentityTrustRootUnavailable},
+		{"oversized member", map[string][]byte{oidcTrustRootMember: bytes.Repeat([]byte("A"), (64<<10)+1)}, errIdentityTrustRootUnavailable},
+		{"non-PEM body", map[string][]byte{oidcTrustRootMember: []byte("not a certificate")}, errIdentityTrustRootInvalid},
+		{"truncated PEM body", map[string][]byte{oidcTrustRootMember: []byte("-----BEGIN CERTIFICATE-----\nAAAA\n")}, errIdentityTrustRootInvalid},
+		{"non-certificate PEM entry", map[string][]byte{
+			oidcTrustRootMember: pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: []byte("synthetic")}),
+		}, errIdentityTrustRootInvalid},
+		{"leaf certificate entry", map[string][]byte{oidcTrustRootMember: leafPEM}, errIdentityTrustRootInvalid},
+		{"leaf entry beside an authority", map[string][]byte{oidcTrustRootMember: append(authorityPEM, leafPEM...)}, errIdentityTrustRootInvalid},
+		{"trailing bytes after an authority", map[string][]byte{
+			oidcTrustRootMember: append(authorityPEM, []byte("trailing text")...),
+		}, errIdentityTrustRootInvalid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			secrets := openIdentityTrustRootSecrets(t, test.members)
+			roots, err := identityIssuerTrustRoot(secrets, identityTrustRootIdentity(t, identityTrustRootDeclaration))
+			if roots != nil || !errors.Is(err, test.want) {
+				t.Fatalf("identity trust root = (pool set %t, %v); want no pool and %v", roots != nil, err, test.want)
+			}
+		})
+	}
 }
