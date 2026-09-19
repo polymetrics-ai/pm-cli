@@ -55,6 +55,12 @@ Two distinct identities are involved and must never be conflated:
    parameters, 3 responses, 1 header, 1 example) and preserves the upstream
    JSON pointers, so every locked source pointer resolves in it.
 
+Both identities are recorded separately in `connectors/github/source.lock.json`:
+identity 1 by `git_blob`, `upstream_byte_length` and `upstream_sha256`, identity 2
+by `byte_length` and `sha256`. The compiler verifies the capture against its own
+pair and refuses a lock that declares a partial upstream triple, so neither
+identity can be read as the other.
+
 The raw 12.9 MB payload is intentionally NOT stored in this repository. Regenerate
 or verify identity 2 from identity 1 with the committed bounded derivation step:
 

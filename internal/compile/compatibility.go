@@ -142,10 +142,14 @@ func lowerSchemaValue(reference *openapi3.SchemaRef, context schemaContext) sche
 			variantContext.propertyBindings = false
 			variant := lowerSchema(&openapi3.SchemaRef{Value: &copy}, variantContext)
 			lowering.Facts = append(lowering.Facts, variant.Facts...)
-			lowering.Diagnostics = append(lowering.Diagnostics, variant.Diagnostics...)
 			if variant.Schema == nil {
-				return lowering
+				// A declared scalar type has no captured node of its own: the
+				// variant pointer is a compiler-local position, so a diagnostic
+				// anchored there could not reference captured bytes. The refusal
+				// is therefore recorded once at the union itself.
+				return refuseUnionMember(lowering, context, "a declared scalar type of the union", index)
 			}
+			lowering.Diagnostics = append(lowering.Diagnostics, variant.Diagnostics...)
 			variants = append(variants, *variant.Schema)
 		}
 		result := contract.Schema{Type: contract.SchemaTypeUnion, Nullable: nullable, OneOf: variants}
@@ -179,7 +183,7 @@ func lowerSchemaValue(reference *openapi3.SchemaRef, context schemaContext) sche
 			lowering.Facts = append(lowering.Facts, variant.Facts...)
 			lowering.Diagnostics = append(lowering.Diagnostics, variant.Diagnostics...)
 			if variant.Schema == nil {
-				return lowering
+				return refuseUnionMember(lowering, context, "a declared "+unionKeyword+" member", index)
 			}
 			variants = append(variants, *variant.Schema)
 		}
@@ -234,7 +238,10 @@ func lowerSchemaValue(reference *openapi3.SchemaRef, context schemaContext) sche
 			lowering.Facts = append(lowering.Facts, property.Facts...)
 			lowering.Diagnostics = append(lowering.Diagnostics, property.Diagnostics...)
 			if property.Schema == nil {
-				continue
+				// A declared property that cannot be lowered refuses the object:
+				// dropping it would either publish a narrowed object or leave the
+				// cloned required list naming an absent property.
+				return lowering
 			}
 			result.Properties[name] = *property.Schema
 		}
@@ -392,6 +399,16 @@ func appendUnsupported(lowering schemaLowering, context schemaContext, code, det
 	unsupported := unsupportedSchema(context, code, detail)
 	lowering.Diagnostics = append(lowering.Diagnostics, unsupported.Diagnostics...)
 	return lowering
+}
+
+// refuseUnionMember refuses a union whose declared member cannot be lowered.
+// The member's own diagnostic stays in place; the union-level diagnostic makes
+// the refusal attributable to the declared alternative set, so an operation
+// becomes unavailable instead of publishing a union reduced to the members that
+// happened to lower.
+func refuseUnionMember(lowering schemaLowering, context schemaContext, member string, index int) schemaLowering {
+	return appendUnsupported(lowering, context, "unsupported_union",
+		member+" at position "+strconv.Itoa(index)+" cannot be lowered, so the union cannot keep every declared alternative")
 }
 
 func schemaTypes(schema *openapi3.Schema) (bool, []string, bool) {

@@ -85,18 +85,25 @@ type SourceSet struct {
 }
 
 type SourceDocument struct {
-	SourceID    string            `json:"source_id"`
-	OfficialURL string            `json:"official_url"`
-	Repository  string            `json:"repository,omitempty"`
-	Revision    string            `json:"revision,omitempty"`
-	Path        string            `json:"path"`
-	CapturedAt  string            `json:"captured_at"`
-	Pointer     string            `json:"pointer,omitempty"`
-	GitBlob     string            `json:"git_blob,omitempty"`
-	ByteLength  int64             `json:"byte_length"`
-	SHA256      string            `json:"sha256"`
-	License     SourceLicense     `json:"license"`
-	References  []SourceReference `json:"references,omitempty"`
+	SourceID    string `json:"source_id"`
+	OfficialURL string `json:"official_url"`
+	Repository  string `json:"repository,omitempty"`
+	Revision    string `json:"revision,omitempty"`
+	Path        string `json:"path"`
+	CapturedAt  string `json:"captured_at"`
+	Pointer     string `json:"pointer,omitempty"`
+	// GitBlob, UpstreamByteLength and UpstreamSHA256 are one explicit triple
+	// recording the accepted upstream document's own identity. ByteLength and
+	// SHA256 below are a different fact: the compiler-verified identity of the
+	// committed capture the compiler lowers, which is never a restatement of
+	// the upstream file when only a reference closure was captured.
+	GitBlob            string            `json:"git_blob,omitempty"`
+	UpstreamByteLength *int64            `json:"upstream_byte_length,omitempty"`
+	UpstreamSHA256     string            `json:"upstream_sha256,omitempty"`
+	ByteLength         int64             `json:"byte_length"`
+	SHA256             string            `json:"sha256"`
+	License            SourceLicense     `json:"license"`
+	References         []SourceReference `json:"references,omitempty"`
 }
 
 type SourceLicense struct {
@@ -273,8 +280,8 @@ func validateSourceDocument(document SourceDocument, pointer string) error {
 	if (document.Repository == "") != (document.Revision == "") {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer, "repository and revision must be declared together")
 	}
-	if document.GitBlob != "" && (document.Repository == "" || !validHex(document.GitBlob, 40)) {
-		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/git_blob", "git blob requires repository/revision and a lowercase SHA-1")
+	if err := validateUpstreamIdentity(document, pointer); err != nil {
+		return err
 	}
 	if document.Path == "" || strings.ContainsRune(document.Path, '\x00') {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/path", "source path must be explicit")
@@ -293,6 +300,36 @@ func validateSourceDocument(document SourceDocument, pointer string) error {
 	}
 	if !validIdentity(document.License.SPDX) || document.License.Path == "" || !validHex(document.License.SHA256, 64) {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/license", "license identity, path and lowercase SHA-256 are required")
+	}
+	return nil
+}
+
+// validateUpstreamIdentity keeps the accepted upstream document's identity in
+// one explicit triple. The compiler lowers the committed capture and verifies
+// it against byte_length/sha256, so a partial triple would let the upstream
+// identity read as the capture identity of a derived closure excerpt: a
+// mismatch that no later step could detect.
+func validateUpstreamIdentity(document SourceDocument, pointer string) error {
+	declared := 0
+	for _, present := range []bool{document.GitBlob != "", document.UpstreamByteLength != nil, document.UpstreamSHA256 != ""} {
+		if present {
+			declared++
+		}
+	}
+	if declared == 0 {
+		return nil
+	}
+	if declared != 3 {
+		return sourceError(ErrInvalidSource, document.SourceID, pointer, "git_blob, upstream_byte_length and upstream_sha256 must be declared together")
+	}
+	if document.Repository == "" || !validHex(document.GitBlob, 40) {
+		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/git_blob", "git blob requires repository/revision and a lowercase SHA-1")
+	}
+	if *document.UpstreamByteLength < 0 {
+		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/upstream_byte_length", "upstream byte length cannot be negative")
+	}
+	if !validHex(document.UpstreamSHA256, 64) {
+		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/upstream_sha256", "must be a lowercase SHA-256")
 	}
 	return nil
 }

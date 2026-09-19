@@ -70,6 +70,8 @@
         "captured_at": {"type": "string", "format": "date-time"},
         "pointer": {"type": "string", "maxLength": 4096},
         "git_blob": {"type": "string", "pattern": "^[0-9a-f]{40}$"},
+        "upstream_byte_length": {"type": "integer", "minimum": 0},
+        "upstream_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "byte_length": {"type": "integer", "minimum": 0},
         "sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         "license": {"$ref": "#/$defs/license"},
@@ -81,7 +83,9 @@
       "dependentRequired": {
         "repository": ["revision"],
         "revision": ["repository"],
-        "git_blob": ["repository", "revision"]
+        "git_blob": ["repository", "revision", "upstream_byte_length", "upstream_sha256"],
+        "upstream_byte_length": ["git_blob", "upstream_sha256"],
+        "upstream_sha256": ["git_blob", "upstream_byte_length"]
       }
     },
     "license": {

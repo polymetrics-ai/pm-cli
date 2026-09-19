@@ -483,6 +483,317 @@ func TestUnknownSchemaKeywordStillBlocksOnlyItsOperation(t *testing.T) {
 	}
 }
 
+// TestUnionWithAnUnsupportedVariantRefusesItsWholeOperation covers the union
+// refusal boundary: when one declared member cannot be lowered, the union is
+// refused as a whole with a diagnostic that isolates the union itself, and no
+// operation publishes the union reduced to the members that happened to lower.
+func TestUnionWithAnUnsupportedVariantRefusesItsWholeOperation(t *testing.T) {
+	document := []byte(`{
+  "openapi": "3.0.3",
+  "info": {"title": "Union variant refusal", "version": "1.0.0"},
+  "servers": [{"url": "https://api.example.test/v3"}],
+  "paths": {
+    "/labels": {
+      "get": {
+        "operationId": "listLabels",
+        "responses": {
+          "200": {
+            "description": "labels",
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/label"}}}}
+          }
+        }
+      }
+    },
+    "/issues": {
+      "get": {
+        "operationId": "listIssues",
+        "responses": {
+          "200": {
+            "description": "issues",
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/issue"}}}}
+          }
+        }
+      }
+    },
+    "/values": {
+      "get": {
+        "operationId": "listValues",
+        "responses": {
+          "200": {
+            "description": "values",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {"type": "string"},
+                    {"type": "object", "properties": {"name": {"type": "string"}}, "not": {"required": ["name"]}}
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/choices": {
+      "get": {
+        "operationId": "listChoices",
+        "responses": {
+          "200": {
+            "description": "choices",
+            "content": {
+              "application/json": {
+                "schema": {"oneOf": [{"type": "string"}, {"type": "integer"}]}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/batches": {
+      "get": {
+        "operationId": "listBatches",
+        "responses": {
+          "200": {
+            "description": "batches",
+            "content": {
+              "application/json": {
+                "schema": {"type": ["string", "array"], "items": {"not": {"type": "string"}}}
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "label": {"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}},
+      "issue": {
+        "type": "object",
+        "required": ["id", "value"],
+        "properties": {
+          "id": {"type": "integer"},
+          "value": {
+            "oneOf": [
+              {"type": "string"},
+              {"type": "object", "properties": {"name": {"type": "string"}}, "not": {"required": ["name"]}}
+            ]
+          }
+        }
+      }
+    }
+  }
+}`)
+	operations := []SourceOperation{
+		testOperation("listLabels", "root", "#/paths/~1labels/get", nil, []VariantRef{{
+			Pointer: "#/paths/~1labels/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
+		}}),
+		testOperation("listIssues", "root", "#/paths/~1issues/get", nil, []VariantRef{{
+			Pointer: "#/paths/~1issues/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
+		}}),
+		testOperation("listValues", "root", "#/paths/~1values/get", nil, []VariantRef{{
+			Pointer: "#/paths/~1values/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
+		}}),
+		testOperation("listChoices", "root", "#/paths/~1choices/get", nil, []VariantRef{{
+			Pointer: "#/paths/~1choices/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
+		}}),
+		testOperation("listBatches", "root", "#/paths/~1batches/get", nil, []VariantRef{{
+			Pointer: "#/paths/~1batches/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
+		}}),
+	}
+	lock, captures := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": document}, nil, operations)
+	captured, err := CaptureSource(lock, captures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	labelsRef := []SourceRef{{SourceID: "root", Pointer: "#/paths/~1labels/get"}}
+	issuesRef := []SourceRef{{SourceID: "root", Pointer: "#/paths/~1issues/get"}}
+	valuesRef := []SourceRef{{SourceID: "root", Pointer: "#/paths/~1values/get"}}
+	choicesRef := []SourceRef{{SourceID: "root", Pointer: "#/paths/~1choices/get"}}
+	batchesRef := []SourceRef{{SourceID: "root", Pointer: "#/paths/~1batches/get"}}
+	semantics, err := json.Marshal(SemanticsDocument{
+		SchemaVersion: SemanticsSchemaVersion,
+		ConnectorID:   lock.ConnectorID,
+		SourceDigest:  captured.Digest,
+		Revision:      lock.SemanticsRevision,
+		Operations: []OperationSemantics{
+			{
+				OperationID: "listLabels", SourceRefs: labelsRef,
+				Lanes: []LaneSemantics{
+					{Lane: contract.LaneDirectRead, Classification: LaneEligible, SourceRefs: labelsRef},
+					{Lane: contract.LaneDirectWrite, Classification: LaneNotApplicable, Reason: "read operation has no write shape", SourceRefs: labelsRef},
+				},
+			},
+			{
+				OperationID: "listIssues", SourceRefs: issuesRef,
+				Lanes: []LaneSemantics{
+					{Lane: contract.LaneDirectRead, Classification: LaneEligible, SourceRefs: issuesRef},
+					{Lane: contract.LaneDirectWrite, Classification: LaneNotApplicable, Reason: "read operation has no write shape", SourceRefs: issuesRef},
+				},
+			},
+			{
+				OperationID: "listValues", SourceRefs: valuesRef,
+				Lanes: []LaneSemantics{
+					{Lane: contract.LaneDirectRead, Classification: LaneEligible, SourceRefs: valuesRef},
+					{Lane: contract.LaneDirectWrite, Classification: LaneNotApplicable, Reason: "read operation has no write shape", SourceRefs: valuesRef},
+				},
+			},
+			{
+				OperationID: "listChoices", SourceRefs: choicesRef,
+				Lanes: []LaneSemantics{
+					{Lane: contract.LaneDirectRead, Classification: LaneEligible, SourceRefs: choicesRef},
+					{Lane: contract.LaneDirectWrite, Classification: LaneNotApplicable, Reason: "read operation has no write shape", SourceRefs: choicesRef},
+				},
+			},
+			{
+				OperationID: "listBatches", SourceRefs: batchesRef,
+				Lanes: []LaneSemantics{
+					{Lane: contract.LaneDirectRead, Classification: LaneEligible, SourceRefs: batchesRef},
+					{Lane: contract.LaneDirectWrite, Classification: LaneNotApplicable, Reason: "read operation has no write shape", SourceRefs: batchesRef},
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockDocument, err := json.Marshal(lock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts, err := Compile(context.Background(), CompilationInput{
+		SourceLock: lockDocument, Captures: captures, Semantics: semantics,
+		TargetFoundations: HTTPCompilationTargetFoundations(),
+	})
+	if err != nil {
+		t.Fatalf("union variant refusal compile: %v", err)
+	}
+	var bundle Bundle
+	if err := json.Unmarshal(artifacts.Bundle, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Operations) != 2 {
+		t.Fatalf("published operations = %#v; want only the unrelated supported operations", bundle.Operations)
+	}
+	published := make(map[string]contract.Operation, len(bundle.Operations))
+	for _, operation := range bundle.Operations {
+		published[operation.OperationID] = operation
+	}
+	if published["listLabels"].OperationID != "listLabels" || published["listChoices"].OperationID != "listChoices" {
+		t.Fatalf("published operations = %#v", bundle.Operations)
+	}
+	if status := emittedLaneStatus(t, published["listLabels"], contract.LaneDirectRead); status != contract.LaneEligible {
+		t.Fatalf("unrelated direct_read status = %q, want eligible", status)
+	}
+	if len(bundle.UnavailableOperations) != 3 {
+		t.Fatalf("unavailable operations = %#v", bundle.UnavailableOperations)
+	}
+	refused := make(map[string]bool, len(bundle.UnavailableOperations))
+	for _, unavailable := range bundle.UnavailableOperations {
+		if !slices.Contains(unavailable.DiagnosticCodes, "unsupported_union") {
+			t.Fatalf("union variant refusal metadata = %#v", unavailable)
+		}
+		refused[unavailable.OperationID] = true
+		for _, lane := range unavailable.LaneEligibility {
+			if lane.Status == contract.LaneEligible {
+				t.Fatalf("unavailable union operation retained an executable lane: %#v", lane)
+			}
+		}
+	}
+	if !refused["listIssues"] || !refused["listValues"] || !refused["listBatches"] {
+		t.Fatalf("refused operations = %#v", refused)
+	}
+	var report CompileReport
+	if err := json.Unmarshal(artifacts.Report, &report); err != nil {
+		t.Fatal(err)
+	}
+	// The captured closure reaches the property union through the `issue`
+	// component, declares the response union inline, and declares one union as
+	// a scalar type list; every diagnostic names the declared node it refuses,
+	// and each failed member stays diagnosed in place.
+	unionPointers := map[string]string{}
+	memberPointers := map[string]string{}
+	for _, diagnostic := range report.Diagnostics {
+		switch diagnostic.Code {
+		case "unsupported_union":
+			if diagnostic.ID == "" || diagnostic.Severity != SeverityError || len(diagnostic.SourceFacts) != 1 {
+				t.Fatalf("union refusal diagnostic = %#v", diagnostic)
+			}
+			unionPointers[diagnostic.OperationID] = diagnostic.SourceFacts[0].SourceRef.Pointer
+		case "unsupported_schema_keyword":
+			if diagnostic.Severity != SeverityError || len(diagnostic.SourceFacts) != 1 {
+				t.Fatalf("refused union member diagnostic = %#v", diagnostic)
+			}
+			memberPointers[diagnostic.OperationID] = diagnostic.SourceFacts[0].SourceRef.Pointer
+		}
+	}
+	wantUnions := map[string]string{
+		"listIssues":  "#/components/schemas/issue/properties/value",
+		"listValues":  "#/paths/~1values/get/responses/200/content/application~1json/schema",
+		"listBatches": "#/paths/~1batches/get/responses/200/content/application~1json/schema",
+	}
+	// A declared oneOf member has a captured node, so the failed member keeps its
+	// own diagnostic there. A declared scalar type does not: the refusal is
+	// recorded once at the union instead of at a compiler-local position.
+	wantMembers := map[string]string{
+		"listIssues":  "#/components/schemas/issue/properties/value/oneOf/1",
+		"listValues":  "#/paths/~1values/get/responses/200/content/application~1json/schema/oneOf/1",
+		"listBatches": "",
+	}
+	for operationID, want := range wantUnions {
+		if unionPointers[operationID] != want {
+			t.Fatalf("union refusal diagnostic pointer = %q for %s; want the declared union", unionPointers[operationID], operationID)
+		}
+		if memberPointers[operationID] != wantMembers[operationID] {
+			t.Fatalf("refused union member pointer = %q for %s; want %q", memberPointers[operationID], operationID, wantMembers[operationID])
+		}
+	}
+	// A fully lowerable declared union still publishes every member; a refused
+	// one publishes nothing at all, reduced or otherwise.
+	var unions []string
+	for _, operation := range bundle.Operations {
+		for _, response := range operation.Responses {
+			if response.Schema == nil {
+				continue
+			}
+			unions = publishedUnions(*response.Schema, operation.OperationID+"/"+response.Status, unions)
+		}
+	}
+	if !slices.Equal(unions, []string{"listChoices/200"}) {
+		t.Fatalf("published unions = %v; want only the fully lowerable declared union", unions)
+	}
+	choices := emittedResponse(t, published["listChoices"], "200").Schema
+	if choices == nil || choices.Type != contract.SchemaTypeUnion || len(choices.OneOf) != 2 ||
+		choices.OneOf[0].Type != contract.SchemaTypeString || choices.OneOf[1].Type != contract.SchemaTypeInteger {
+		t.Fatalf("published union members = %#v", choices)
+	}
+}
+
+// publishedUnions lists every union schema an executable operation publishes. A
+// refused union must never appear there, reduced or otherwise.
+func publishedUnions(schema contract.Schema, path string, found []string) []string {
+	if schema.Type == contract.SchemaTypeUnion {
+		return append(found, path)
+	}
+	for name, property := range schema.Properties {
+		found = publishedUnions(property, path+"/properties/"+name, found)
+	}
+	if schema.AdditionalProperties != nil {
+		found = publishedUnions(*schema.AdditionalProperties, path+"/additionalProperties", found)
+	}
+	if schema.Items != nil {
+		found = publishedUnions(*schema.Items, path+"/items", found)
+	}
+	for _, variant := range schema.OneOf {
+		found = publishedUnions(variant, path+"/oneOf", found)
+	}
+	for _, component := range schema.AllOf {
+		found = publishedUnions(component, path+"/allOf", found)
+	}
+	return found
+}
+
 func TestPinnedGitHubResponseClosureIsDirectReadEligible(t *testing.T) {
 	input, connectorID := pinnedConnectorInput(t, "github")
 	if connectorID != "github" {
@@ -626,6 +937,123 @@ func TestPinnedGitHubResponseClosureIsDirectReadEligible(t *testing.T) {
 		len(notFound.Properties) != 4 {
 		t.Fatalf("pinned github 404 object = %#v", notFound)
 	}
+}
+
+// TestAcceptedUpstreamIdentityStaysSeparateFromItsCapture pins the source lock's
+// two identities: the accepted upstream document (git_blob,
+// upstream_byte_length, upstream_sha256) and the compiler-verified closure
+// capture (byte_length, sha256). A partial upstream triple would let the
+// upstream document read as the capture of a derived excerpt, so it is refused
+// instead of admitted.
+func TestAcceptedUpstreamIdentityStaysSeparateFromItsCapture(t *testing.T) {
+	t.Run("the pinned github lock keeps the accepted upstream identity apart from its capture", func(t *testing.T) {
+		input, _ := pinnedConnectorInput(t, "github")
+		lock, err := DecodeSourceLock(input.SourceLock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(lock.SourceSet.Documents) != 1 {
+			t.Fatalf("pinned github documents = %#v", lock.SourceSet.Documents)
+		}
+		document := lock.SourceSet.Documents[0]
+		upstreamByteLength := document.UpstreamByteLength
+		if document.GitBlob != "ed76b1371e381b078e50c8a698b890911031aeb2" || upstreamByteLength == nil ||
+			*upstreamByteLength != 12939686 ||
+			document.UpstreamSHA256 != "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2" {
+			t.Fatalf("pinned github upstream identity = %#v", document)
+		}
+		if *upstreamByteLength == document.ByteLength || document.UpstreamSHA256 == document.SHA256 {
+			t.Fatalf("pinned github capture identity was recorded as the upstream identity: %#v", document)
+		}
+		if _, err := CaptureSource(lock, input.Captures); err != nil {
+			t.Fatalf("pinned github capture no longer matches its own byte length and SHA-256: %v", err)
+		}
+	})
+
+	t.Run("a partial upstream identity is refused", func(t *testing.T) {
+		document := []byte(`{
+  "openapi": "3.0.3",
+  "info": {"title": "Upstream identity fixture", "version": "1.0.0"},
+  "servers": [{"url": "https://api.example.test"}],
+  "paths": {
+    "/issues": {
+      "get": {
+        "operationId": "listIssues",
+        "responses": {
+          "200": {
+            "description": "records",
+            "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/issue"}}}}
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {"issue": {"type": "object", "required": ["id"], "properties": {"id": {"type": "integer"}}}}
+  }
+}`)
+		operation := testOperation("listIssues", "root", "#/paths/~1issues/get", nil, []VariantRef{{
+			Pointer: "#/paths/~1issues/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json",
+		}})
+		withRepository := func(t *testing.T) (SourceLock, Captures) {
+			t.Helper()
+			lock, captures := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": document}, nil, []SourceOperation{operation})
+			lock.SourceSet.Documents[0].Repository = "https://github.com/github/rest-api-description"
+			lock.SourceSet.Documents[0].Revision = "0a144e030abbe358000f0d32874e197b59a8f7ed"
+			return lock, captures
+		}
+		upstreamByteLength := int64(12939686)
+		upstreamSHA256 := "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2"
+		gitBlob := "ed76b1371e381b078e50c8a698b890911031aeb2"
+		for _, testCase := range []struct {
+			name   string
+			mutate func(*SourceDocument)
+		}{
+			{name: "git blob alone", mutate: func(document *SourceDocument) {
+				document.GitBlob = gitBlob
+			}},
+			{name: "upstream byte length alone", mutate: func(document *SourceDocument) {
+				document.UpstreamByteLength = &upstreamByteLength
+			}},
+			{name: "upstream sha256 alone", mutate: func(document *SourceDocument) {
+				document.UpstreamSHA256 = upstreamSHA256
+			}},
+			{name: "git blob with the upstream digest", mutate: func(document *SourceDocument) {
+				document.GitBlob = gitBlob
+				document.UpstreamSHA256 = upstreamSHA256
+			}},
+			{name: "the upstream triple without a repository", mutate: func(document *SourceDocument) {
+				document.Repository = ""
+				document.Revision = ""
+				document.GitBlob = gitBlob
+				document.UpstreamByteLength = &upstreamByteLength
+				document.UpstreamSHA256 = upstreamSHA256
+			}},
+			{name: "a malformed upstream digest", mutate: func(document *SourceDocument) {
+				document.GitBlob = gitBlob
+				document.UpstreamByteLength = &upstreamByteLength
+				document.UpstreamSHA256 = upstreamSHA256 + "0"
+			}},
+		} {
+			lock, captures := withRepository(t)
+			testCase.mutate(&lock.SourceSet.Documents[0])
+			if _, err := CaptureSource(lock, captures); err == nil || !errors.Is(err, ErrInvalidSource) {
+				t.Fatalf("%s: capture error = %v; want a refused upstream identity", testCase.name, err)
+			}
+		}
+
+		lock, captures := withRepository(t)
+		lock.SourceSet.Documents[0].GitBlob = gitBlob
+		lock.SourceSet.Documents[0].UpstreamByteLength = &upstreamByteLength
+		lock.SourceSet.Documents[0].UpstreamSHA256 = upstreamSHA256
+		captured, err := CaptureSource(lock, captures)
+		if err != nil {
+			t.Fatalf("complete upstream identity was refused: %v", err)
+		}
+		if _, ok := captured.Document("root"); !ok {
+			t.Fatalf("complete upstream identity did not admit its capture: %#v", captured)
+		}
+	})
 }
 
 func emittedResponse(t *testing.T, operation contract.Operation, status string) contract.Response {

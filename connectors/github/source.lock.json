@@ -13,6 +13,8 @@
         "captured_at": "2026-09-14T18:54:21.837Z",
         "pointer": "#/paths/~1repos~1{owner}~1{repo}~1issues/get",
         "git_blob": "ed76b1371e381b078e50c8a698b890911031aeb2",
+        "upstream_byte_length": 12939686,
+        "upstream_sha256": "7c3a4bfa71e850a32992882392db3cf315dcdeca46ba5a62da963dbea6a589a2",
         "byte_length": 82561,
         "sha256": "c3d848d898194a3088180e363192ae7ddd8c7810059de278dad5709c76fece6a",
         "license": {

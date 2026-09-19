@@ -61,8 +61,16 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 			}
 		})
 
-		t.Run("expired login session does not revoke durable grant", func(t *testing.T) {
-			loginSessionExpired := true
+		// The runtime admission seam receives only the durable physical call and
+		// its bounded context, so no login session reaches this path: one cannot
+		// be expired here, and an expired session cannot revoke the grant here
+		// either. Session independence is observed at the application boundary by
+		// TestPhysicalCallBoundaryCurrentSingleUseAndSessionIndependence
+		// (internal/app/physical_boundary_test.go), which expires the real session
+		// rows and still observes exactly one controlled physical call. What this
+		// seam observes is the counter pair: a granted call is admitted once and
+		// sent once.
+		t.Run("a granted call is admitted once and sent once", func(t *testing.T) {
 			admitter := &testAdmitter{}
 			dialer := &mappedDialer{address: server.Listener.Addr().String()}
 			execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
@@ -73,7 +81,7 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ExecuteHTTP: %v", err)
 			}
-			if !loginSessionExpired || execution.Result == nil || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
+			if execution.Result == nil || admitter.calls.Load() != 1 || dialer.calls.Load() != 1 {
 				t.Fatalf("execution=%#v admits=%d dials=%d", execution, admitter.calls.Load(), dialer.calls.Load())
 			}
 		})
