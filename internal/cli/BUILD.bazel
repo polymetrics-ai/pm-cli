@@ -36,6 +36,7 @@ go_test(
         "config_test.go",
         "connections_test.go",
         "dynamic_test.go",
+        "result_document_test.go",
         "tree_test.go",
         "workspaces_test.go",
     ],
@@ -62,6 +63,7 @@ go_test(
         "//internal/contract",
         "//internal/testfixture",
         "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_oapi_codegen_nullable//:nullable",
         "@com_github_spf13_cobra//:cobra",
     ],
 )
