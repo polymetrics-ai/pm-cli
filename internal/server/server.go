@@ -1,6 +1,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/rand"
@@ -8,6 +9,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/hex"
+	"encoding/pem"
 	"errors"
 	"io"
 	"net"
@@ -40,7 +42,13 @@ const (
 const (
 	browserCallbackPath    = "/v1/sessions/browser/callback"
 	oidcClientSecretMember = "oidc-client-secret"
+	oidcTrustRootMember    = "ca.pem"
 	wrappingKeyMember      = "wrapping-key"
+)
+
+var (
+	errIdentityTrustRootUnavailable = errors.New("identity provider trust root is unavailable")
+	errIdentityTrustRootInvalid     = errors.New("identity provider trust root is invalid")
 )
 
 // Application owns the composed HTTP process and every resource opened for it.
@@ -78,7 +86,7 @@ func openWithOIDCFactory(
 	configuration config.Configuration,
 	secretsDirectory string,
 	diagnostics io.Writer,
-	oidcFactory func() (*http.Client, *boundedOIDCTransport),
+	oidcFactory func(*x509.CertPool) (*http.Client, *boundedOIDCTransport),
 ) (*Application, error) {
 	if ctx == nil || configuration.SchemaVersion() != "1" || diagnostics == nil {
 		return nil, errors.New("validated server configuration, context, and diagnostics are required")
@@ -102,11 +110,15 @@ func openWithOIDCFactory(
 	if err != nil {
 		return fail(errors.New("OIDC client secret is unavailable"), nil, nil)
 	}
+	issuerTrustRoot, err := identityIssuerTrustRoot(secrets, identitySettings)
+	if err != nil {
+		return fail(err, nil, nil)
+	}
 	runPolicy, err := app.RunPolicyFromConfiguration(configuration)
 	if err != nil {
 		return fail(errors.New("resolved run admission policy is invalid"), nil, nil)
 	}
-	oidcClient, oidcTransport := oidcFactory()
+	oidcClient, oidcTransport := oidcFactory(issuerTrustRoot)
 	loadWrappingKey := func(ctx context.Context, reference string) ([]byte, error) {
 		if ctx == nil || ctx.Err() != nil || reference != wrappingKeyRef {
 			return nil, errors.New("wrapping key is unavailable")
@@ -413,7 +425,66 @@ func lazyTemporalDial(
 	}
 }
 
-func newOIDCHTTPClient() (*http.Client, *boundedOIDCTransport) {
+// identityIssuerTrustRoot returns the optional operator-owned CA bundle that
+// replaces the process system root store for the identity provider connection.
+// An absent declaration returns nil without any secret access, so login keeps
+// the process system root store. A declared reference is one bounded
+// descriptor-confined ca.pem read whose every entry must be a CA certificate;
+// a missing, empty, oversized, unparsable, non-certificate, or non-CA bundle
+// fails with a constant bounded error that never contains secret material.
+// Only RootCAs comes from that pool: certificate, hostname and token validation
+// stay exactly as they are, and no system or globally installed trust store is
+// changed. The caller owns the supplied operator secret root.
+func identityIssuerTrustRoot(
+	secrets *credentials.OperatorSecrets,
+	configuration config.IdentityConfiguration,
+) (*x509.CertPool, error) {
+	reference, declared := configuration.CATrustRootRef()
+	if !declared {
+		return nil, nil
+	}
+	if secrets == nil {
+		return nil, errIdentityTrustRootUnavailable
+	}
+	bundle, err := secrets.Read(reference, oidcTrustRootMember)
+	if err != nil {
+		return nil, errIdentityTrustRootUnavailable
+	}
+	defer clear(bundle)
+	roots := x509.NewCertPool()
+	entries := 0
+	remaining := bundle
+	for {
+		remaining = bytes.TrimLeft(remaining, " \t\r\n")
+		if len(remaining) == 0 {
+			break
+		}
+		if !bytes.HasPrefix(remaining, []byte("-----BEGIN ")) {
+			return nil, errIdentityTrustRootInvalid
+		}
+		block, rest := pem.Decode(remaining)
+		if block == nil || block.Type != "CERTIFICATE" {
+			return nil, errIdentityTrustRootInvalid
+		}
+		certificate, parseErr := x509.ParseCertificate(block.Bytes)
+		if parseErr != nil || !certificate.IsCA {
+			return nil, errIdentityTrustRootInvalid
+		}
+		roots.AddCert(certificate)
+		entries++
+		remaining = rest
+	}
+	if entries == 0 {
+		return nil, errIdentityTrustRootInvalid
+	}
+	return roots, nil
+}
+
+func newOIDCHTTPClient(trustRoot *x509.CertPool) (*http.Client, *boundedOIDCTransport) {
+	tlsConfiguration := &tls.Config{MinVersion: tls.VersionTLS12}
+	if trustRoot != nil {
+		tlsConfiguration.RootCAs = trustRoot
+	}
 	base := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
@@ -429,9 +500,7 @@ func newOIDCHTTPClient() (*http.Client, *boundedOIDCTransport) {
 		ResponseHeaderTimeout:  10 * time.Second,
 		ExpectContinueTimeout:  time.Second,
 		MaxResponseHeaderBytes: 64 << 10,
-		TLSClientConfig: &tls.Config{
-			MinVersion: tls.VersionTLS12,
-		},
+		TLSClientConfig:        tlsConfiguration,
 	}
 	lifetime, cancel := context.WithCancel(context.Background())
 	transport := &boundedOIDCTransport{
