@@ -105,7 +105,7 @@ func TestProviderPageSizeClamp(t *testing.T) {
 				origin := serverOrigin(t, server.URL)
 				admitter := &testAdmitter{}
 				dialer := &mappedDialer{address: server.Listener.Addr().String()}
-				execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+				execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 					Admitter:      admitter,
 					Continuations: newMemoryContinuationCodec(),
 					Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -206,7 +206,7 @@ func (window *clampedWindow) read(t *testing.T, input, continuation contract.Pre
 	}
 	request := testHTTPRequest(t, operation, window.origin, window.now, input)
 	request.Continuation = continuation
-	execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+	execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 		Admitter:      &testAdmitter{},
 		Continuations: window.codec,
 		Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},

@@ -92,6 +92,9 @@ func (composition *ConnectorComposition) RegisterDirectRead(
 	if !composition.declared {
 		return nil
 	}
+	if err := dependencies.ClientIdentity.Validate(); err != nil {
+		return fmt.Errorf("shared HTTP direct-read requires a provider client identity: %w", err)
+	}
 	if err := handlers.RegisterHTTP(NewHTTPDirectReadRegistration(dependencies)); err != nil {
 		return fmt.Errorf("register shared HTTP direct-read handler: %w", err)
 	}

@@ -11,6 +11,7 @@ import (
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -47,6 +48,10 @@ type ServicesConfig struct {
 	ProviderHTTPTLS   *tls.Config
 	ConnectorBundles  []string
 	Artifacts         ArtifactExecution
+	// ClientIdentity is the bounded product identity this process sends as the
+	// default provider user agent for every operation that declares no
+	// user-agent field of its own.
+	ClientIdentity pmruntime.ClientIdentity
 }
 
 func (ServicesConfig) String() string                 { return "application services configuration [REDACTED]" }
@@ -157,8 +162,9 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 	}
 	handlers := &HandlerRegistry{}
 	if err := composition.RegisterDirectRead(handlers, HTTPDirectReadDependencies{
-		TLSConfig:     configuration.ProviderHTTPTLS,
-		Continuations: continuations,
+		TLSConfig:      configuration.ProviderHTTPTLS,
+		Continuations:  continuations,
+		ClientIdentity: configuration.ClientIdentity,
 	}); err != nil {
 		return nil, errors.Join(errors.New("connector direct-read registration failed"), err)
 	}

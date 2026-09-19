@@ -314,7 +314,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 			}
 			request.Call.Attempt.AttemptID = attemptID
 			request.Call.Attempt.ReceiptRef = fmt.Sprintf("receipt-offset-list-%d", page+1)
-			execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+			execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 				Admitter:      admitter,
 				Continuations: codec,
 				Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -402,7 +402,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		codec := newMemoryContinuationCodec()
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: server.Listener.Addr().String()}
-		dependencies := HTTPDependencies{
+		dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:      admitter,
 			Continuations: codec,
 			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -545,7 +545,7 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 				request := testHTTPRequest(t, operation, origin, time.Now().UTC(), linkInput(t, "open", new(uint64(1)), new(uint64(2))))
 				admitter := &testAdmitter{}
 				dialer := &mappedDialer{address: server.Listener.Addr().String()}
-				execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+				execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 					Admitter:      admitter,
 					Continuations: newMemoryContinuationCodec(),
 					Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},

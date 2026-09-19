@@ -54,7 +54,7 @@ func TestDurableHTTPRetryAcrossTemporalWorkerReplacement(t *testing.T) {
 		t,
 		selection,
 		policy,
-		app.HTTPDirectReadDependencies{
+		app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 			Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 		},
 		func(_ testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
@@ -177,7 +177,7 @@ func TestDefinitiveUnsentHTTPRetryCreatesOneProviderRequest(t *testing.T) {
 	}))
 	dialer := &failFirstHTTPDialer{address: directDialer.address}
 	selection := httpDirectReadSelection("fixture.http.retry.definitive-unsent", origin, http.StatusOK, false)
-	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{
+	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 	}, nil)
 	service := newPermitWorkerService(t, fixture, temporal)
@@ -238,7 +238,7 @@ func TestSourceSafeUnknownHTTPRetryRetainsChargedParentPermit(t *testing.T) {
 		_, _ = io.WriteString(writer, durableHTTPRetryResult)
 	}))
 	selection := durableHTTPRetrySelection("fixture.http.retry.source-safe-unknown", origin)
-	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{
+	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 	}, nil)
 	service := newPermitWorkerService(t, fixture, temporal)
@@ -303,7 +303,7 @@ func TestUnknownHTTPAttemptWithoutUnconditionalSourceSafetyCreatesNoRetry(t *tes
 			retry.Condition = testCase.condition
 			execution.Retry = &retry
 			selection.Operation.Execution = &execution
-			fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{
+			fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 				Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 			}, nil)
 			service := newPermitWorkerService(t, fixture, temporal)
@@ -335,7 +335,7 @@ func TestDurableHTTPRetryStopsAtMaxAttempts(t *testing.T) {
 		_, _ = io.WriteString(writer, durableHTTPRetryResult)
 	}))
 	selection := durableHTTPRetrySelection("fixture.http.retry.max-attempts", origin)
-	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{
+	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 	}, nil)
 	service := newPermitWorkerService(t, fixture, temporal)
@@ -384,7 +384,7 @@ func TestDurableHTTPRetrySuppressesInvalidOrLateRetryAfter(t *testing.T) {
 			selection := durableHTTPRetrySelection("fixture.http.retry.suppressed-"+testCase.name, origin)
 			policy := httpDirectReadPolicy(origin)
 			policy.MaxRetryDelay = testCase.maxDelay
-			fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{
+			fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 				Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 			}, nil)
 			service := newPermitWorkerService(t, fixture, temporal)
@@ -416,7 +416,7 @@ func TestDurableHTTPRetryRechecksRevocationBeforeSecondSend(t *testing.T) {
 		_, _ = io.WriteString(writer, durableHTTPRetryResult)
 	}))
 	selection := durableHTTPRetrySelection("fixture.http.retry.revocation", origin)
-	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{
+	fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 	}, nil)
 	service := newPermitWorkerService(t, fixture, temporal)
@@ -453,7 +453,7 @@ func TestDurableHTTPRetryRechecksChangedAuthorityBeforeSecondSend(t *testing.T) 
 				_, _ = io.WriteString(writer, durableHTTPRetryResult)
 			}))
 			selection := durableHTTPRetrySelection("fixture.http.retry."+change, origin)
-			fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{
+			fixture := newHTTPDirectReadFixture(t, selection, httpDirectReadPolicy(origin), app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 				Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 			}, nil)
 			var sourceChanged atomic.Bool

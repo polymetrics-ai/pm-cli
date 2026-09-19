@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-enumspb "go.temporal.io/api/enums/v1"
+	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
 	sdkclient "go.temporal.io/sdk/client"
 	"go.temporal.io/sdk/converter"
@@ -22,8 +22,8 @@ enumspb "go.temporal.io/api/enums/v1"
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
-	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
 	pmtemporal "github.com/polymetrics-ai/pm-cli/internal/temporal"
+	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
 	"github.com/polymetrics-ai/pm-cli/internal/workflows"
 )
 
@@ -102,7 +102,7 @@ func TestLoadRunBoundaryCarriesTheAdmittedScopeAndTheRealFailure(t *testing.T) {
 		t,
 		selection,
 		policy,
-		app.HTTPDirectReadDependencies{
+		app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 			Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 		},
 		nil,

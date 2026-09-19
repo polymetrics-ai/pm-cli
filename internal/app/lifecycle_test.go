@@ -1111,6 +1111,7 @@ func runLifecycleWorkerChild(
 		SecretsDirectory: request.SecretsDirectory,
 		Registry:         registry,
 		ResolveOperation: resolver,
+		ClientIdentity:   testClientIdentity,
 	})
 	if err != nil {
 		t.Fatalf("open worker child runtime: %v", err)

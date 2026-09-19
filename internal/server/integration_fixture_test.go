@@ -37,6 +37,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/credentials"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -600,6 +601,7 @@ func newServerIntegrationFixture(t *testing.T) *serverIntegrationFixture {
 		fixture.configuration,
 		fixture.secretsRoot,
 		io.Discard,
+		pmruntime.ProductClientIdentity("test-version"),
 		func(trustRoot *x509.CertPool) (*http.Client, *boundedOIDCTransport) {
 			factoryCalled = true
 			if trustRoot == nil {

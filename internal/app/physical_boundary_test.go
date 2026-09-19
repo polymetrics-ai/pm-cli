@@ -471,7 +471,7 @@ func physicalBoundaryHTTPDependencies(
 	admitter pmruntime.PhysicalCallAdmitter,
 	peer *httptest.Server,
 ) pmruntime.HTTPDependencies {
-	return pmruntime.HTTPDependencies{
+	return pmruntime.HTTPDependencies{ClientIdentity: testClientIdentity,
 		Admitter: admitter,
 		Resolver: physicalBoundaryResolver{},
 		Dialer:   physicalBoundaryDialer{address: peer.Listener.Addr().String()},

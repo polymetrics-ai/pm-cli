@@ -25,6 +25,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/credentials"
 	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	pmtemporal "github.com/polymetrics-ai/pm-cli/internal/temporal"
 )
 
@@ -77,8 +78,9 @@ func Open(
 	configuration config.Configuration,
 	secretsDirectory string,
 	diagnostics io.Writer,
+	clientIdentity pmruntime.ClientIdentity,
 ) (*Application, error) {
-	return openWithOIDCFactory(ctx, configuration, secretsDirectory, diagnostics, newOIDCHTTPClient)
+	return openWithOIDCFactory(ctx, configuration, secretsDirectory, diagnostics, clientIdentity, newOIDCHTTPClient)
 }
 
 func openWithOIDCFactory(
@@ -86,6 +88,7 @@ func openWithOIDCFactory(
 	configuration config.Configuration,
 	secretsDirectory string,
 	diagnostics io.Writer,
+	clientIdentity pmruntime.ClientIdentity,
 	oidcFactory func(*x509.CertPool) (*http.Client, *boundedOIDCTransport),
 ) (*Application, error) {
 	if ctx == nil || configuration.SchemaVersion() != "1" || diagnostics == nil {
@@ -165,6 +168,7 @@ func openWithOIDCFactory(
 		ProviderHTTPTLS:   providerHTTPTLS,
 		ConnectorBundles:  configuration.Connectors().BundlePaths(),
 		Artifacts:         artifactExecution,
+		ClientIdentity:    clientIdentity,
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,

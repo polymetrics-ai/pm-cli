@@ -55,7 +55,7 @@ func TestDurableHTTPContinuationAcrossWorkerRestart(t *testing.T) {
 		selection: durableHTTPContinuationSelection("fixture.http.durable-continuation", origin),
 		policy:    httpDirectReadPolicy(origin),
 	}
-	dependencies := app.HTTPDirectReadDependencies{
+	dependencies := app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 	}
 	fixture, producerPublisher := newDurableContinuationFixture(
@@ -377,7 +377,7 @@ func TestDurableHTTPContinuationCapacityRefusalPrecedesProviderIO(t *testing.T) 
 	limits := producer.Limits
 	limits.OrganizationAttempts = 1
 	limits.WorkspaceAttempts = 1
-	fixture, publisher := newDurableContinuationFixture(t, authority, app.HTTPDirectReadDependencies{
+	fixture, publisher := newDurableContinuationFixture(t, authority, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 	}, producer, consumer, limits)
 	service := workerResultService(t, fixture, temporal, publisher, durableContinuationObjectBytes)
@@ -765,7 +765,7 @@ func TestDurableHTTPContinuationUsesReadableEnvelopeBound(t *testing.T) {
 		selection: durableHTTPContinuationSelection("fixture.http.continuation-envelope-bound", origin),
 		policy:    httpDirectReadPolicy(origin),
 	}
-	dependencies := app.HTTPDirectReadDependencies{
+	dependencies := app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 	}
 	limits := producer.Limits

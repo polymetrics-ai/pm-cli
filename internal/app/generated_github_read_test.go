@@ -299,7 +299,7 @@ func runGeneratedGitHubRead(
 			return err
 		}
 		registry = &app.HandlerRegistry{}
-		if err := composition.RegisterDirectRead(registry, app.HTTPDirectReadDependencies{
+		if err := composition.RegisterDirectRead(registry, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 			Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: trust,
 			Continuations: continuations,
 		}); err != nil {

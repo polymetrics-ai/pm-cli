@@ -77,7 +77,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 			WireName: "Authorization", Prefix: "Bearer ", FieldID: "authorization",
 		}
 		resolver := &staticCredentialResolver{secret: []byte(secret), call: request.Call}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:    &testAdmitter{},
 			Credentials: resolver,
 			Resolver:    fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -112,7 +112,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 			WireName: "token", FieldID: "token",
 		}
 		resolver := &staticCredentialResolver{secret: []byte(secret), call: request.Call}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:    &testAdmitter{},
 			Credentials: resolver,
 			Resolver:    fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -158,7 +158,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrInvalidHTTPInput) {
@@ -197,7 +197,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		}
 		dialer := &mappedDialer{address: server.Listener.Addr().String()}
 		credentials := &absentCredentialResolver{}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:    &testAdmitter{},
 			Credentials: credentials,
 			Resolver:    fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -226,7 +226,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
 		credentials := &staticCredentialResolver{secret: []byte("must-not-be-read"), call: request.Call}
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrUnsupportedHTTPTransport) {
@@ -250,7 +250,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrDestinationDenied) {
@@ -270,7 +270,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrUnsupportedHTTPTransport) {
