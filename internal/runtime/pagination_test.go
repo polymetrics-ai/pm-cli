@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -145,6 +146,65 @@ func TestReturnedCountsAndCompleteness(t *testing.T) {
 		message, present := fields["message"].TextValue()
 		if !ok || !present || message != "invalid request" {
 			t.Fatalf("non-record response changed: %#v", result)
+		}
+	})
+
+	t.Run("declared error response that repeats the record pointer is not paginated", func(t *testing.T) {
+		// The compiled connector emits the operation's record extraction pointer
+		// on every response variant, so a declared error response carries the
+		// root pointer while its schema addresses an object, never records. Such
+		// a response is the provider's definitive refusal and must decode as the
+		// declared body instead of being refused as a page.
+		errorSchema := contract.Schema{
+			Type:     contract.SchemaTypeObject,
+			Required: []string{"message"},
+			Properties: map[string]contract.Schema{
+				"message": {Type: contract.SchemaTypeString},
+			},
+		}
+		rootPointer := ""
+		operationWithError := testLinkOperation("link-list-with-error")
+		operationWithError.Responses[0].RecordPointer = &rootPointer
+		operationWithError.Responses = append(operationWithError.Responses, contract.Response{
+			Status: "404", MediaType: "application/json", Schema: &errorSchema,
+			RecordPointer: &rootPointer,
+			SourceRefs:    testSourceRefs("#/responses/404"),
+		})
+		if err := operationWithError.Execution.Pagination.Validate(operationWithError); err != nil {
+			t.Fatalf("pagination fact with a declared error response: %v", err)
+		}
+		var requests atomic.Int64
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			writer.Header().Set("Content-Type", "application/json")
+			writer.WriteHeader(http.StatusNotFound)
+			_, _ = io.WriteString(writer, `{"message":"Not Found"}`)
+		}))
+		defer server.Close()
+		now := time.Now().UTC()
+		request := testHTTPRequest(t, operationWithError, serverOrigin(t, server.URL), now, linkInput(t, "all", new(uint64(1)), new(uint64(2))))
+		request.Continuation = contract.AbsentValue()
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:      &testAdmitter{},
+			Continuations: newMemoryContinuationCodec(),
+			Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:        dialer,
+		}, request)
+		if err != nil {
+			t.Fatalf("declared error response was refused: %v: %v", err, errors.Unwrap(err))
+		}
+		if !execution.PhysicalSend || execution.Disposition != DispositionResponded ||
+			execution.Response.StatusCode != http.StatusNotFound || execution.Result == nil || requests.Load() != 1 {
+			t.Fatalf("execution=%#v requests=%d", execution, requests.Load())
+		}
+		if execution.Result.Pagination != nil {
+			t.Fatalf("error response acquired pagination = %#v", execution.Result.Pagination)
+		}
+		fields, ok := execution.Result.Data.Fields()
+		message, present := fields["message"].TextValue()
+		if !ok || !present || message != "Not Found" {
+			t.Fatalf("declared error body = %#v", execution.Result.Data)
 		}
 	})
 

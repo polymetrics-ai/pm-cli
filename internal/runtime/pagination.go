@@ -1002,8 +1002,7 @@ func responseCarriesPaginatedRecords(operation contract.Operation, decoded Decod
 }
 
 func responseCarriesRecords(response contract.Response, mediaType string) bool {
-	return !response.NoContent && response.Schema != nil && response.MediaType == mediaType &&
-		(response.RecordPointer != nil || response.Schema.Type == contract.SchemaTypeArray)
+	return response.MediaType == mediaType && response.CarriesPaginatedRecords()
 }
 
 func navigationUint64(input contract.PresentValue, fieldID string) (uint64, bool, error) {

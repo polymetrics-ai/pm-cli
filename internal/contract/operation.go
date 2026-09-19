@@ -732,7 +732,7 @@ func paginationQueryBindingHasType(operation Operation, fieldID string, schemaTy
 func responsePointerHasType(operation Operation, pointer string, schemaType SchemaType) bool {
 	parts := decodeJSONPointerParts(pointer)
 	for _, response := range operation.Responses {
-		if !responseHasPaginatedRecords(response) {
+		if !response.CarriesPaginatedRecords() {
 			continue
 		}
 		schema, ok := requestSchemaAtPointer(*response.Schema, parts)
@@ -745,24 +745,30 @@ func responsePointerHasType(operation Operation, pointer string, schemaType Sche
 
 func operationHasPaginatedRecords(operation Operation) bool {
 	for _, response := range operation.Responses {
-		if responseHasPaginatedRecords(response) {
+		if response.CarriesPaginatedRecords() {
 			return true
 		}
 	}
 	return false
 }
 
-func responseHasPaginatedRecords(response Response) bool {
-	if response.NoContent || response.Schema == nil {
+// CarriesPaginatedRecords reports whether one declared response can carry the
+// operation's paginated records. A response without a record extraction pointer
+// carries records only when its whole document is an array; a response with a
+// pointer carries them only when the pointer addresses an array inside that
+// response's own schema. An error response whose document is an object never
+// carries records, even when it repeats the operation's root record pointer.
+func (r Response) CarriesPaginatedRecords() bool {
+	if r.NoContent || r.Schema == nil {
 		return false
 	}
-	if response.RecordPointer == nil {
-		return response.Schema.Type == SchemaTypeArray
+	if r.RecordPointer == nil {
+		return r.Schema.Type == SchemaTypeArray
 	}
-	if len(*response.RecordPointer) > 4096 || !validJSONPointer(*response.RecordPointer) {
+	if len(*r.RecordPointer) > 4096 || !validJSONPointer(*r.RecordPointer) {
 		return false
 	}
-	schema, ok := requestSchemaAtPointer(*response.Schema, decodeJSONPointerParts(*response.RecordPointer))
+	schema, ok := requestSchemaAtPointer(*r.Schema, decodeJSONPointerParts(*r.RecordPointer))
 	return ok && schema.Type == SchemaTypeArray
 }
 
