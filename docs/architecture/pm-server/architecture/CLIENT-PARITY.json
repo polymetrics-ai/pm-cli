@@ -1,6 +1,6 @@
 {
-  "schema_version": "pm.plan.client-parity/v1",
-  "label": "Proposed/Recommended475; synthetic contracts, no implementation or execution",
+  "schema_version": "pm.plan.client-parity/v2",
+  "label": "Canonical client parity with accepted F01/F02/AUTH contracts; implementation and proof UNEXECUTED",
   "canonical_public_schema": "api/pm.openapi.yaml OpenAPI3.1",
   "canonical_info_path": "/v1/info",
   "rows": [
@@ -432,8 +432,8 @@
       "ui_action": "Submit typed action",
       "permission": "operation.invoke and operation-specific effect permission",
       "scope": "workspace",
-      "request_contract": "Invocation with operation/revision/typed fields/lane/approval ref",
-      "response_contract": "202 RunRef for admitted provider read; unapproved write produces typed PlanRef awaiting approval; approved write202 RunRef. No provider I/O runs inline in API.",
+      "request_contract": "Invocation with operation/revision/typed provider fields/lane/approval ref plus optional shared typed output field selection and record filter; provider parameters remain distinct from output filtering.",
+      "response_contract": "Admitted provider read returns 202 RunRef; an unapproved write returns a typed PlanRef awaiting approval; an approved write returns 202 RunRef. Eventual ActionResult is complete by default or explicitly selected while preserving nesting, presence, exact values, source membership, counts, unread tail, completeness and continuation. No provider I/O runs inline in the API.",
       "application_owner": "internal/app/admission.go",
       "first_milestone": "M6",
       "test_ids": [
@@ -441,9 +441,9 @@
         "R09",
         "R14"
       ],
-      "idempotency": "Required for accepted work and mutations; same key+same scope+fingerprint returns same result, changed payload409",
-      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
-      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
+      "idempotency": "F01 scoped durable acceptance: current authorization before replay disclosure; exact key+canonical intent returns original acceptance without capacity reservation or redispatch, changed intent 409, unknown commit reconciled only with the same key.",
+      "client_validation": "UX-only generated typed parsing, explicit workspace and no provider secrets; persist a secret-free key/intent fingerprint before the first client-to-API send. Make at most three same-key sends inside 30s with deterministic 250ms/1s backoff; a server Retry-After must fit the remaining client deadline and never constrains provider/run retry timing. Never mint a replacement key, rebase a stale revision or resubmit 410; the server repeats authorization and contract checks.",
+      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability. Shared typed preflight precedes provider I/O; authorization/scope precedes replay disclosure; run/outbox/pending reservation commits atomically before 202; enforce exact F01 finite count/age decision and ActionResult/pagination fidelity.",
       "status": "planned",
       "ordinary_sdk": true
     },
@@ -480,7 +480,7 @@
       "request_contract": "TypedPlanInput",
       "response_contract": "PlanRevision or202 planning RunRef",
       "application_owner": "internal/httpapi/plans.go",
-      "first_milestone": "M7",
+      "first_milestone": "M8",
       "test_ids": [
         "V40",
         "V42",
@@ -503,7 +503,7 @@
       "request_contract": "none",
       "response_contract": "SealedPlan",
       "application_owner": "internal/httpapi/plans.go",
-      "first_milestone": "M7",
+      "first_milestone": "M8",
       "test_ids": [
         "V40",
         "V42",
@@ -526,7 +526,7 @@
       "request_contract": "Expected plan revision",
       "response_contract": "Preview with exact rows/actions/caps",
       "application_owner": "internal/httpapi/plans.go",
-      "first_milestone": "M7",
+      "first_milestone": "M8",
       "test_ids": [
         "V40",
         "V42",
@@ -549,7 +549,7 @@
       "request_contract": "none",
       "response_contract": "Typed requirement results and blockers",
       "application_owner": "internal/httpapi/plans.go",
-      "first_milestone": "M7",
+      "first_milestone": "M8",
       "test_ids": [
         "V40",
         "V42",
@@ -572,7 +572,7 @@
       "request_contract": "Exact plan/actions/workset hash, expiry/caps",
       "response_contract": "ApprovalRef",
       "application_owner": "internal/httpapi/plans.go",
-      "first_milestone": "M7",
+      "first_milestone": "M8",
       "test_ids": [
         "V40",
         "V42",
@@ -595,7 +595,7 @@
       "request_contract": "Exact approval/plan refs and idempotency key",
       "response_contract": "202 RunRef",
       "application_owner": "internal/httpapi/plans.go",
-      "first_milestone": "M7",
+      "first_milestone": "M8",
       "test_ids": [
         "V40",
         "V42",
@@ -1523,8 +1523,8 @@
       "ui_action": "List memberships",
       "permission": "workspace.access.read",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Authorized scoped list cursor; no mutation key or If-Match. Read metadata exposes the current collection/resource revision for a later explicit mutation.",
+      "response_contract": "Scoped safe identity/grant metadata and read revision; no one-time credential material.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1532,7 +1532,7 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
+      "idempotency": "Read with scoped opaque cursor/ETag; never mutation idempotency authority.",
       "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
       "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
       "status": "planned",
@@ -1546,8 +1546,8 @@
       "ui_action": "Grant memberships",
       "permission": "workspace.access.manage",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Typed principal/resource grant intent including expiry, If-Match for the membership collection revision, and a scoped idempotency key bound to workspace/principal/operation/target.",
+      "response_contract": "Original successful grant/create: HTTP 201 safe scoped identity/grant/revision metadata. Exact replay: HTTP 200 explicit replay plus the original safe result/revision. Never expose a provider credential or one-time PM automation credential.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1555,9 +1555,9 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
-      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
-      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
+      "idempotency": "Current authorization precedes lookup. Exact same scoped key+canonical intent replays original safe result with no effect; changed intent 409. Replay resolves before new revision comparison; mutation/revision/receipt are atomic.",
+      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; persist a secret-free key/intent fingerprint and require the explicit expected revision. Never auto-rebase 409/412/428, mint a replacement key after uncertainty or cache one-time credential material; the server repeats authorization and contract checks.",
+      "server_validation": "Authentication, explicit workspace/resource scope and resource grant, typed schema, bounded bytes and admitted capability; current authorization precedes replay disclosure. Missing If-Match is 428 and stale is 412, both zero-effect; exact replay is 200; concurrent equal requests commit one logical mutation.",
       "status": "planned",
       "ordinary_sdk": true
     },
@@ -1569,8 +1569,8 @@
       "ui_action": "Revoke memberships",
       "permission": "workspace.access.manage",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Typed principal/resource grant revocation intent including the bound grant/expiry scope, If-Match for the target membership control revision, and a scoped idempotency key bound to workspace/principal/operation/target.",
+      "response_contract": "Successful revoke or already-revoked unchanged: HTTP 200 safe scoped identity/grant/revision metadata. Exact replay: HTTP 200 explicit replay plus the original safe result/revision, never current authorization state. Never expose a provider credential or one-time PM automation credential.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1578,9 +1578,9 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
-      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
-      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
+      "idempotency": "Current authorization precedes lookup. Exact same scoped key+canonical intent replays original safe result with no effect; changed intent 409. Replay resolves before new revision comparison; mutation/revision/receipt are atomic.",
+      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; persist a secret-free key/intent fingerprint and require the explicit expected revision. Never auto-rebase 409/412/428, mint a replacement key after uncertainty or cache one-time credential material; the server repeats authorization and contract checks.",
+      "server_validation": "Authentication, explicit workspace/resource scope and resource grant, typed schema, bounded bytes and admitted capability; current authorization precedes replay disclosure. Missing If-Match is 428 and stale is 412, both zero-effect; exact replay is 200; concurrent equal requests commit one logical mutation.",
       "status": "planned",
       "ordinary_sdk": true
     },
@@ -1592,8 +1592,8 @@
       "ui_action": "List service-accounts",
       "permission": "workspace.access.read",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Authorized scoped list cursor; no mutation key or If-Match. Read metadata exposes the current collection/resource revision for a later explicit mutation.",
+      "response_contract": "Scoped safe identity/grant metadata and read revision; no one-time credential material.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1601,7 +1601,7 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
+      "idempotency": "Read with scoped opaque cursor/ETag; never mutation idempotency authority.",
       "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
       "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
       "status": "planned",
@@ -1615,8 +1615,8 @@
       "ui_action": "Create service-accounts",
       "permission": "workspace.access.manage",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Typed principal/resource service-account grant intent including expiry, If-Match for the service-account collection revision, and a scoped idempotency key bound to workspace/principal/operation/target.",
+      "response_contract": "Original successful create: HTTP 201 safe scoped identity/grant/revision metadata plus the one-time PM automation credential. Exact replay: HTTP 200 explicit replay plus original safe metadata/revision with that credential omitted. Never expose a provider credential.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1624,9 +1624,9 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
-      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
-      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
+      "idempotency": "Current authorization precedes lookup. Exact same scoped key+canonical intent replays original safe result with no effect; changed intent 409. Replay resolves before new revision comparison; mutation/revision/receipt are atomic.",
+      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; persist a secret-free key/intent fingerprint and require the explicit expected revision. Never auto-rebase 409/412/428, mint a replacement key after uncertainty or cache one-time credential material; the server repeats authorization and contract checks.",
+      "server_validation": "Authentication, explicit workspace/resource scope and resource grant, typed schema, bounded bytes and admitted capability; current authorization precedes replay disclosure. Missing If-Match is 428 and stale is 412, both zero-effect; exact replay is 200; concurrent equal requests commit one logical mutation. Credential material appears only on the original 201.",
       "status": "planned",
       "ordinary_sdk": true
     },
@@ -1638,8 +1638,8 @@
       "ui_action": "Revoke service-accounts",
       "permission": "workspace.access.manage",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Typed principal/resource service-account revocation intent including the bound grant/expiry scope, If-Match for the target service-account control revision, and a scoped idempotency key bound to workspace/principal/operation/target.",
+      "response_contract": "Successful revoke or already-revoked unchanged: HTTP 200 safe scoped identity/grant/revision metadata. Exact replay: HTTP 200 explicit replay plus the original safe result/revision, never current authorization state. Never expose a provider credential or one-time PM automation credential.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1647,9 +1647,9 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
-      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
-      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
+      "idempotency": "Current authorization precedes lookup. Exact same scoped key+canonical intent replays original safe result with no effect; changed intent 409. Replay resolves before new revision comparison; mutation/revision/receipt are atomic.",
+      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; persist a secret-free key/intent fingerprint and require the explicit expected revision. Never auto-rebase 409/412/428, mint a replacement key after uncertainty or cache one-time credential material; the server repeats authorization and contract checks.",
+      "server_validation": "Authentication, explicit workspace/resource scope and resource grant, typed schema, bounded bytes and admitted capability; current authorization precedes replay disclosure. Missing If-Match is 428 and stale is 412, both zero-effect; exact replay is 200; concurrent equal requests commit one logical mutation.",
       "status": "planned",
       "ordinary_sdk": true
     },
@@ -1661,8 +1661,8 @@
       "ui_action": "List delegations",
       "permission": "workspace.access.read",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Authorized scoped list cursor; no mutation key or If-Match. Read metadata exposes the current collection/resource revision for a later explicit mutation.",
+      "response_contract": "Scoped safe identity/grant metadata and read revision; no one-time credential material.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1670,7 +1670,7 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
+      "idempotency": "Read with scoped opaque cursor/ETag; never mutation idempotency authority.",
       "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
       "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
       "status": "planned",
@@ -1684,8 +1684,8 @@
       "ui_action": "Create delegations",
       "permission": "workspace.access.manage",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Typed delegation grant intent with explicit connection/operation/workspace/time ceilings and expiry, If-Match for the delegation collection revision, and a scoped idempotency key bound to workspace/principal/operation/target.",
+      "response_contract": "Original successful grant/create: HTTP 201 safe scoped identity/grant/revision and distinct actor/effective-actor metadata. Exact replay: HTTP 200 explicit replay plus the original safe result/revision. Never expose a provider credential or one-time PM automation credential.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1693,9 +1693,9 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
-      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
-      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
+      "idempotency": "Current authorization precedes lookup. Exact same scoped key+canonical intent replays original safe result with no effect; changed intent 409. Replay resolves before new revision comparison; mutation/revision/receipt are atomic.",
+      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; persist a secret-free key/intent fingerprint and require the explicit expected revision. Never auto-rebase 409/412/428, mint a replacement key after uncertainty or cache one-time credential material; the server repeats authorization and contract checks.",
+      "server_validation": "Authentication, explicit workspace/resource scope and resource grant, typed schema, bounded bytes and admitted capability; reject ceilings broader than the delegator or an unauthorized second hop, and preserve distinct auditable actor/effective actor. Current authorization precedes replay disclosure; missing If-Match is 428 and stale is 412, both zero-effect; exact replay is 200; concurrent equal requests commit one logical mutation.",
       "status": "planned",
       "ordinary_sdk": true
     },
@@ -1707,8 +1707,8 @@
       "ui_action": "Revoke delegations",
       "permission": "workspace.access.manage",
       "scope": "workspace",
-      "request_contract": "Typed principal/resource grants, expiry, If-Match and idempotency for mutations",
-      "response_contract": "Scoped identity/grant metadata; PM automation credential issued once on creation only, never provider credential",
+      "request_contract": "Typed delegation revocation intent including the bound connection/operation/workspace/time ceilings and expiry, If-Match for the target delegation control revision, and a scoped idempotency key bound to workspace/principal/operation/target.",
+      "response_contract": "Successful revoke or already-revoked unchanged: HTTP 200 safe scoped identity/grant/revision and distinct actor/effective-actor metadata. Exact replay: HTTP 200 explicit replay plus the original safe result/revision, never current authorization state. Never expose a provider credential or one-time PM automation credential.",
       "application_owner": "internal/httpapi/identity.go",
       "first_milestone": "M3",
       "test_ids": [
@@ -1716,9 +1716,9 @@
         "R08",
         "R14"
       ],
-      "idempotency": "Read with scoped opaque cursor/ETag where applicable",
-      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; server repeats authorization and contract checks",
-      "server_validation": "Authentication, explicit scope, resource grant, If-Match where mutable, typed schema, bounded bytes and admitted capability",
+      "idempotency": "Current authorization precedes lookup. Exact same scoped key+canonical intent replays original safe result with no effect; changed intent 409. Replay resolves before new revision comparison; mutation/revision/receipt are atomic.",
+      "client_validation": "UX-only typed parsing, explicit workspace and no provider secrets; persist a secret-free key/intent fingerprint and require the explicit expected revision. Never auto-rebase 409/412/428, mint a replacement key after uncertainty or cache one-time credential material; the server repeats authorization and contract checks.",
+      "server_validation": "Authentication, explicit workspace/resource scope and resource grant, typed schema, bounded bytes and admitted capability; reject ceilings broader than the delegator or an unauthorized second hop, and preserve distinct auditable actor/effective actor. Current authorization precedes replay disclosure; missing If-Match is 428 and stale is 412, both zero-effect; exact replay is 200; concurrent equal requests commit one logical mutation.",
       "status": "planned",
       "ordinary_sdk": true
     }
@@ -1738,7 +1738,7 @@
     "browser": "Same-origin HttpOnly Secure cookie, CSRF token and exact Origin/Host; AbortSignal cancels viewing, not accepted run",
     "cli": "Generated Go client plus PM session handle in OS store; expiry/logout affects new API actions, not accepted run grant",
     "admin": "Separate authenticated ingress schema excluded ordinary generated SDKs",
-    "errors": "RFC9457 application/problem+json with safe code, incident ID, scope-safe detail and retry disposition",
+    "errors": "RFC 9457 application/problem+json plus the exhaustive CONTRACTS AdmissionPolicy status/code/safe_retry_action table; scope-safe detail and incident ID; no resource-existence disclosure or guessed Retry-After.",
     "exit_codes": {
       "0": "read/action succeeded, or accepted submission explicitly shown when not waiting",
       "2": "usage/typed validation",
@@ -1749,7 +1749,12 @@
       "7": "unknown effect / reconciliation required",
       "8": "view wait deadline elapsed; run remains accepted"
     },
-    "pagination": "Opaque signed/scoped keyset cursor binds query/snapshot/filter, finite page_size; direct provider navigation stays operation contract",
-    "events": "PG durable sequence exposed as SSE id; scoped retention gap requires snapshot+cursor, never silent reconnect from current tip"
+    "pagination": "Opaque signed/scoped keyset cursor binds server, workspace, principal, resource, query, snapshot, filter, order and source revision, with finite page_size; direct provider navigation remains in the operation contract. Provider page size differs from total record cap; preserve effective wire limit, unread tail, continuation, provider completeness and fetched/returned/emitted counts. An empty filtered page is not exhaustion.",
+    "events": "PG durable sequence exposed as SSE id; scoped retention gap requires snapshot+cursor, never silent reconnect from current tip",
+    "action_results": "Default action results preserve complete source data, nesting, presence and exact values. Optional typed selection/filtering is shared across Go/CLI/browser; filtering precedes selection and malformed controls cause zero provider I/O.",
+    "admission": "Use CONTRACTS AdmissionPolicy exact status/code/retry table, finite development/standard profiles and workspace count/age refusals before deployment overload when predicates coincide. Authentication/scope checks precede replay disclosure; accepted work is never discarded by age pressure.",
+    "client_recovery": "Persist a secret-free key/intent fingerprint before the first client-to-API send and reuse it for reconnect/restart. At most three such sends occur in one 30-second deadline with deterministic 250ms then 1s backoff. A server Retry-After must fit the remaining client deadline; provider/run-owned Retry-After and durable retry scheduling are independent. Never auto-rebase stale control revisions, auto-resubmit 410 or mint a replacement key after uncertainty.",
+    "mutation_replay": "Service-account and delegation grants retain explicit connection/operation/workspace/time ceilings and distinct auditable actor/effective-actor identities. Six M3 access POST rows require current authorization, If-Match for a new mutation, and workspace/principal/operation/target-scoped idempotency. Exact replay returns HTTP 200 plus the original safe result/revision and explicit replay indication; changed intent is 409; effect/revision/receipt commit atomically.",
+    "receipt_retention": "Retain full safe response at least 7 days after known resolution; unresolved outcomes have no time expiry. Afterwards retain a secret-free namespace-lifetime refusal guard: exact old intent 410, changed intent 409; workspace deletion never recycles the namespace."
   }
 }

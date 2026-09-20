@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.plan.validation/v2",
-  "label": "Proposed/Recommended475 DRAFT; all application validation UNEXECUTED; semantic audit pending",
+  "label": "Canonical validation map for accepted product contracts; every command and application/provider proof remains UNEXECUTED",
   "entries": [
     {
       "id": "V01",
@@ -30,7 +30,7 @@
       "milestone": "M1",
       "owner_file": "internal/contract/value_test.go",
       "symbol": "TestPresencePrecisionAndMedia",
-      "negative_control_and_expected_observation": "Absent, null, false, zero, large integers and fixed decimals remain distinct through encoding; incompatible media is refused.",
+      "negative_control_and_expected_observation": "Absent, null, false, zero, empty values, nested objects/arrays, exact large integers/identifiers and fixed decimals remain distinct through API/worker/result/client encoding; selection preserves selected nested values without flattening or fabricated null; incompatible media is refused.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -41,7 +41,7 @@
       "planned_command": "set -eu\ngo test ./internal/contract -run '^TestPresencePrecisionAndMedia$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestPresencePrecisionAndMedia",
-      "integration_fault": "Absent, null, false, zero, large integers and fixed decimals remain distinct through encoding; incompatible media is refused.",
+      "integration_fault": "Absent, null, false, zero, empty values, nested objects/arrays, exact large integers/identifiers and fixed decimals remain distinct through API/worker/result/client encoding; selection preserves selected nested values without flattening or fabricated null; incompatible media is refused.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -99,7 +99,7 @@
       "milestone": "M1",
       "owner_file": "internal/api/protocol_test.go",
       "symbol": "TestWireVersionAndEnvelope",
-      "negative_control_and_expected_observation": "Reject unsupported protocol major/required features and malformed errors; tolerate safe additive response fields. Accepted is not terminal success.",
+      "negative_control_and_expected_observation": "Reject unsupported protocol major/required features, malformed RFC 9457 errors, incomplete F01 status/code/retry DTOs and lossy ActionResult/control shapes; tolerate safe additive response fields. Accepted/202 is not terminal success.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -109,7 +109,7 @@
       "planned_command": "set -eu\ngo test ./internal/api -run '^TestWireVersionAndEnvelope$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestWireVersionAndEnvelope",
-      "integration_fault": "Reject unsupported protocol major/required features and malformed errors; tolerate safe additive response fields. Accepted is not terminal success.",
+      "integration_fault": "Reject unsupported protocol major/required features, malformed RFC 9457 errors, incomplete F01 status/code/retry DTOs and lossy ActionResult/control shapes; tolerate safe additive response fields. Accepted/202 is not terminal success.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -191,7 +191,7 @@
       "milestone": "M4",
       "owner_file": "internal/store/admission_test.go",
       "symbol": "TestDurableAcceptedBefore202",
-      "negative_control_and_expected_observation": "Crash after DB commit but before response, then resubmit the same key: return the same run. Precommit failure never returns202; changed input with the same key returns409.",
+      "negative_control_and_expected_observation": "Crash after the atomic idempotency/RunSpec/outbox/pending-reservation commit but before 202 response, then resubmit the same authorized key: return the same run with no second reservation, dispatch or capacity check. Precommit failure or refusal never returns 202; changed input with the same key returns 409; unknown commit reconciles only with that same key.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -202,13 +202,13 @@
       "planned_command": "set -eu\ngo test ./internal/store -run '^TestDurableAcceptedBefore202$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestDurableAcceptedBefore202",
-      "integration_fault": "Crash after DB commit but before response, then resubmit the same key: return the same run. Precommit failure never returns202; changed input with the same key returns409.",
+      "integration_fault": "Crash after the atomic idempotency/RunSpec/outbox/pending-reservation commit but before 202 response, then resubmit the same authorized key: return the same run with no second reservation, dispatch or capacity check. Precommit failure or refusal never returns 202; changed input with the same key returns 409; unknown commit reconciles only with that same key.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
       "source_requirement": "Retains prior474 causal invariant with explicit475 state/process ownership.",
       "prior_id": "V09",
-      "staged_coverage": "M2 store commit/idempotency primitive; M4 actual HTTP 202/409/response-loss integration."
+      "staged_coverage": "M2 store primitives; M4 issue #14 proves the actual authenticated HTTP 202/error table, development/standard override/count/age/concurrent-last-slot cases and a controlled durable execution-start transition, plus database refusal/unknown commit and retained receipt/namespace guard cases. Issue #16 later proves actual-worker-start integration, and #19/#21 later prove client recovery; those consumers are not backward prerequisites. Packet-scoped F01 cases use this owner without a new global validation ID."
     },
     {
       "id": "V10",
@@ -285,7 +285,7 @@
       "milestone": "M3",
       "owner_file": "internal/config/server_test.go",
       "symbol": "TestTypedServerStartup",
-      "negative_control_and_expected_observation": "Strict config rejects unknown keys, default secrets, unsupported schema, incompatible dependency identity and impossible budgets; API never forks PostgreSQL/Temporal. Readiness distinguishes admission and dispatch degradation.",
+      "negative_control_and_expected_observation": "Strict config rejects unknown keys, default secrets, unsupported schema, incompatible dependency identity and impossible budgets; API and CLI never fork or autostart PostgreSQL/Temporal, and readiness distinguishes admission from dispatch degradation. It resolves exactly one development (global pending 32, workspace pending 8, workspace age 2m) or standard (256/32/10m) profile and finite positive typed overrides with workspace <= global; rejects zero/negative/obsolete aliases. Replicas share one durable deployment budget; synthetic 3/2/30s and historical 1000/1h are never defaults.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -296,7 +296,7 @@
       "planned_command": "set -eu\ngo test ./internal/config -run '^TestTypedServerStartup$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestTypedServerStartup",
-      "integration_fault": "Strict config rejects unknown keys, default secrets, unsupported schema, incompatible dependency identity and impossible budgets; API never forks PostgreSQL/Temporal. Readiness distinguishes admission and dispatch degradation.",
+      "integration_fault": "Strict config rejects unknown keys, default secrets, unsupported schema, incompatible dependency identity and impossible budgets; API and CLI never fork or autostart PostgreSQL/Temporal, and readiness distinguishes admission from dispatch degradation. It resolves exactly one development (global pending 32, workspace pending 8, workspace age 2m) or standard (256/32/10m) profile and finite positive typed overrides with workspace <= global; rejects zero/negative/obsolete aliases. Replicas share one durable deployment budget; synthetic 3/2/30s and historical 1000/1h are never defaults.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -538,7 +538,7 @@
       "milestone": "M6",
       "owner_file": "internal/connectors/revision_test.go",
       "symbol": "TestAtomicRevisionAndCacheScope",
-      "negative_control_and_expected_observation": "Catalog refresh preserves pinned run meaning and invalidates affected plans. Reject caches from the wrong server/principal/scope.",
+      "negative_control_and_expected_observation": "Catalog refresh preserves pinned run meaning and invalidates affected plans. Reject caches from wrong server/principal/scope and reject GitHub source identity not matching accepted commit/path/pointer/blob/SHA/license or incomplete reference closure.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -549,7 +549,7 @@
       "planned_command": "set -eu\ngo test ./internal/connectors -run '^TestAtomicRevisionAndCacheScope$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestAtomicRevisionAndCacheScope",
-      "integration_fault": "Catalog refresh preserves pinned run meaning and invalidates affected plans. Reject caches from the wrong server/principal/scope.",
+      "integration_fault": "Catalog refresh preserves pinned run meaning and invalidates affected plans. Reject caches from wrong server/principal/scope and reject GitHub source identity not matching accepted commit/path/pointer/blob/SHA/license or incomplete reference closure.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -653,7 +653,7 @@
       "milestone": "M6",
       "owner_file": "internal/runtime/pagination_test.go",
       "symbol": "TestReturnedCountsAndCompleteness",
-      "negative_control_and_expected_observation": "A known larger fixture proves exact page count, sent size and navigation. Unsent size never implies complete; raw/PM navigation conflicts fail.",
+      "negative_control_and_expected_observation": "Across mixed and filtered pages, an independently known larger source fixture proves exact page count, actual wire/sent page size, source continuation, unread tail and fetched/returned/emitted counts. Provider total/completeness remains distinct; zero emitted matches never imply exhaustion; raw/PM navigation conflicts fail.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -664,7 +664,7 @@
       "planned_command": "set -eu\ngo test ./internal/runtime -run '^TestReturnedCountsAndCompleteness$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestReturnedCountsAndCompleteness",
-      "integration_fault": "A known larger fixture proves exact page count, sent size and navigation. Unsent size never implies complete; raw/PM navigation conflicts fail.",
+      "integration_fault": "Across mixed and filtered pages, an independently known larger source fixture proves exact page count, actual wire/sent page size, source continuation, unread tail and fetched/returned/emitted counts. Provider total/completeness remains distinct; zero emitted matches never imply exhaustion; raw/PM navigation conflicts fail.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -722,7 +722,7 @@
       "milestone": "M6",
       "owner_file": "internal/proof/oracle_test.go",
       "symbol": "TestFalseSuccessAndIndependentCases",
-      "negative_control_and_expected_observation": "HTTP200 with the wrong record/effect and credential presence do not prove success. Persist independent passes despite another failure; retain owned cleanup diagnostics.",
+      "negative_control_and_expected_observation": "HTTP 200 with the wrong record/effect, credential presence, count-only success or a six-field subset cannot prove the GitHub action. Independently compare complete mixed issue/PR records, nested/presence/exact values, selection/filter output and destination readback; preserve independent passes despite another failure and retain owned cleanup diagnostics.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -733,7 +733,7 @@
       "planned_command": "set -eu\ngo test ./internal/proof -run '^TestFalseSuccessAndIndependentCases$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestFalseSuccessAndIndependentCases",
-      "integration_fault": "HTTP200 with the wrong record/effect and credential presence do not prove success. Persist independent passes despite another failure; retain owned cleanup diagnostics.",
+      "integration_fault": "HTTP 200 with the wrong record/effect, credential presence, count-only success or a six-field subset cannot prove the GitHub action. Independently compare complete mixed issue/PR records, nested/presence/exact values, selection/filter output and destination readback; preserve independent passes despite another failure and retain owned cleanup diagnostics.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -768,7 +768,7 @@
       "milestone": "M7",
       "owner_file": "internal/runtime/sqltypes_test.go",
       "symbol": "TestLosslessParameterizedSQL",
-      "negative_control_and_expected_observation": "Quoted qualified identifiers and bound values resist injection; numeric/time/null values round-trip exactly. Public input has no raw DSN secret.",
+      "negative_control_and_expected_observation": "Quoted qualified identifiers and bound values resist injection; exact numeric/integer/decimal/time/null values round-trip. The reusable transport admits only bounded keyed/mapped-column plans needed by declared operations, not public DSN secrets or arbitrary SQL.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -779,7 +779,7 @@
       "planned_command": "set -eu\ngo test ./internal/runtime -run '^TestLosslessParameterizedSQL$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestLosslessParameterizedSQL",
-      "integration_fault": "Quoted qualified identifiers and bound values resist injection; numeric/time/null values round-trip exactly. Public input has no raw DSN secret.",
+      "integration_fault": "Quoted qualified identifiers and bound values resist injection; exact numeric/integer/decimal/time/null values round-trip. The reusable transport admits only bounded keyed/mapped-column plans needed by declared operations, not public DSN secrets or arbitrary SQL.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -906,7 +906,7 @@
       "milestone": "M8",
       "owner_file": "internal/sync/approval_test.go",
       "symbol": "TestSealedWorksetAndRecurringCaps",
-      "negative_control_and_expected_observation": "Changed mapping, rows, relevant schema or account invalidates approval. Reserve per-run/window caps atomically; unknown effects retain budget.",
+      "negative_control_and_expected_observation": "Seal destination identity, stable key/verified constraint, writable mappings, mapped values, relevant schema, complete effects and cardinality. Any mapping, row, relevant schema or account change invalidates approval; missing/ambiguous/duplicate keys fail before I/O. Reserve per-run and window caps atomically; unknown effects retain capacity and budget.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -917,7 +917,7 @@
       "planned_command": "set -eu\ngo test ./internal/sync -run '^TestSealedWorksetAndRecurringCaps$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestSealedWorksetAndRecurringCaps",
-      "integration_fault": "Changed mapping, rows, relevant schema or account invalidates approval. Reserve per-run/window caps atomically; unknown effects retain budget.",
+      "integration_fault": "Seal destination identity, stable key/verified constraint, writable mappings, mapped values, relevant schema, complete effects and cardinality. Any mapping, row, relevant schema or account change invalidates approval; missing/ambiguous/duplicate keys fail before I/O. Reserve per-run and window caps atomically; unknown effects retain capacity and budget.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -929,7 +929,7 @@
       "milestone": "M8",
       "owner_file": "internal/sync/identity_test.go",
       "symbol": "TestStableCreateMappingAcrossRevisions",
-      "negative_control_and_expected_observation": "The same logical source key across new worksets/nonidentity revisions creates nothing again. Key/account/generation reset requires explicit approved migration.",
+      "negative_control_and_expected_observation": "The same logical stable source key across new worksets/nonidentity revisions maps to one destination entity and creates nothing again. An absent key inserts once; approved changed mapped values update that entity; exact replay or equal-value repeat creates no row and performs zero destination assignments. Any key, account or generation reset requires an explicit approved migration, and the old mapping remains auditable.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -940,7 +940,7 @@
       "planned_command": "set -eu\ngo test ./internal/sync -run '^TestStableCreateMappingAcrossRevisions$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestStableCreateMappingAcrossRevisions",
-      "integration_fault": "The same logical source key across new worksets/nonidentity revisions creates nothing again. Key/account/generation reset requires explicit approved migration.",
+      "integration_fault": "The same logical stable source key across new worksets/nonidentity revisions maps to one destination entity and creates nothing again. An absent key inserts once; approved changed mapped values update that entity; exact replay or equal-value repeat creates no row and performs zero destination assignments. Any key, account or generation reset requires an explicit approved migration, and the old mapping remains auditable.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -952,7 +952,7 @@
       "milestone": "M8",
       "owner_file": "internal/sync/readback_test.go",
       "symbol": "TestExactRowsAndReadback",
-      "negative_control_and_expected_observation": "Two source rows produce exactly the two intended effects through returned IDs; correct counts with wrong values fail. Per-row failure and unknown remain distinct.",
+      "negative_control_and_expected_observation": "Two source rows produce exactly the two intended effects through returned IDs. Independently read back exact destination keys, typed mapped values and pre-seeded unmapped sentinels for every intended row. Correct counts/SQL exit zero or correct mapped values with altered unmapped fields fail; unrelated rows remain unchanged, and per-row failure/rejection and unknown remain distinct.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -963,7 +963,7 @@
       "planned_command": "set -eu\ngo test ./internal/sync -run '^TestExactRowsAndReadback$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestExactRowsAndReadback",
-      "integration_fault": "Two source rows produce exactly the two intended effects through returned IDs; correct counts with wrong values fail. Per-row failure and unknown remain distinct.",
+      "integration_fault": "Two source rows produce exactly the two intended effects through returned IDs. Independently read back exact destination keys, typed mapped values and pre-seeded unmapped sentinels for every intended row. Correct counts/SQL exit zero or correct mapped values with altered unmapped fields fail; unrelated rows remain unchanged, and per-row failure/rejection and unknown remain distinct.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -975,7 +975,7 @@
       "milestone": "M8",
       "owner_file": "internal/app/reconcile_test.go",
       "symbol": "TestCrashAfterRemoteAccept",
-      "negative_control_and_expected_observation": "Persist intent, let provider act, then crash before acknowledgement: restart reconciles through a declared witness, never blindly recreates or claims zero effect.",
+      "negative_control_and_expected_observation": "Persist exact dispatch/member intent, let the provider act, then lose reply or crash; for PostgreSQL a possibly accepted COMMIT remains unknown and charged. Confirmed rollback permits only safely re-admitted work and is not proof that no physical dispatch occurred. Restart preserves actual dispatch history and reconciles only through a declared sound occurrence witness for this exact intent; desired key/type/mapped/unmapped rows or counts alone cannot identify which occurrence committed. Never blind-retry, recreate or claim zero effect.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -986,7 +986,7 @@
       "planned_command": "set -eu\ngo test ./internal/app -run '^TestCrashAfterRemoteAccept$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestCrashAfterRemoteAccept",
-      "integration_fault": "Persist intent, let provider act, then crash before acknowledgement: restart reconciles through a declared witness, never blindly recreates or claims zero effect.",
+      "integration_fault": "Persist exact dispatch/member intent, let the provider act, then lose reply or crash; for PostgreSQL a possibly accepted COMMIT remains unknown and charged. Confirmed rollback permits only safely re-admitted work and is not proof that no physical dispatch occurred. Restart preserves actual dispatch history and reconciles only through a declared sound occurrence witness for this exact intent; desired key/type/mapped/unmapped rows or counts alone cannot identify which occurrence committed. Never blind-retry, recreate or claim zero effect.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "No certification from this foundation check; exact connector case required",
       "required_for_initial_release": true,
@@ -1253,7 +1253,7 @@
       "owner_file": "internal/proof/runner.go",
       "symbol": "ExecuteCase",
       "kind": "connector_script_proof",
-      "negative_control_and_expected_observation": "Exact provider record and pagecounts/next navigation",
+      "negative_control_and_expected_observation": "Through actual PMCLI/API/worker and the pinned issues/list-for-repo source, independently assert the exact provider records, repository/id/number, complete mixed issue/PR entries, nested/presence/exact values, explicit typed selection/filter behavior, malformed-control zero-send, exact page counts, effective sent wire size, unread tail, next navigation, continuation and truthful counts/completeness.",
       "contexts": [
         "controlled_fake",
         "opt_in_live"
@@ -1277,13 +1277,14 @@
         "reuse_provenance"
       ],
       "unit_contract": "ExecuteCase",
-      "integration_fault": "Exact provider record and pagecounts/next navigation",
+      "integration_fault": "Through actual PMCLI/API/worker and the pinned issues/list-for-repo source, independently assert the exact provider records, repository/id/number, complete mixed issue/PR entries, nested/presence/exact values, explicit typed selection/filter behavior, malformed-control zero-send, exact page counts, effective sent wire size, unread tail, next navigation, continuation and truthful counts/completeness.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "Opt-in real provider/account scope; fake fallback separately labeled",
       "required_for_initial_release": true,
       "source_requirement": "Retains prior474 causal invariant with explicit475 state/process ownership.",
       "prior_id": "P_direct_read",
-      "completion_owner": "pm-github-direct-slice"
+      "completion_owner": "pm-github-direct-slice",
+      "staged_coverage": "F02-COMPLETE-ACTION, F02-OPTIONAL-CONTROLS and F02-PAGINATION are packet-scoped cases through this common runner; controlled fake and separately authorized live evidence remain distinct."
     },
     {
       "id": "P_direct_write",
@@ -1291,7 +1292,7 @@
       "owner_file": "internal/proof/runner.go",
       "symbol": "ExecuteCase",
       "kind": "connector_script_proof",
-      "negative_control_and_expected_observation": "Actual writeeffect plus independentlyexpectedfield/value readback using returnedID",
+      "negative_control_and_expected_observation": "Actual declared write effect plus independently expected exact field/value readback using the returned ID. The PostgreSQL extension uses only the accepted keyed mapped insert-or-update, preserves unmapped fields and unrelated rows, and distinguishes confirmed rollback from unknown COMMIT; the original GitHub proof remains mandatory.",
       "contexts": [
         "controlled_fake",
         "opt_in_live"
@@ -1315,13 +1316,14 @@
         "reuse_provenance"
       ],
       "unit_contract": "ExecuteCase",
-      "integration_fault": "Actual writeeffect plus independentlyexpectedfield/value readback using returnedID",
+      "integration_fault": "Actual declared write effect plus independently expected exact field/value readback using the returned ID. The PostgreSQL extension uses only the accepted keyed mapped insert-or-update, preserves unmapped fields and unrelated rows, and distinguishes confirmed rollback from unknown COMMIT; the original GitHub proof remains mandatory.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "Opt-in real provider/account scope; fake fallback separately labeled",
       "required_for_initial_release": true,
       "source_requirement": "Retains prior474 causal invariant with explicit475 state/process ownership.",
       "prior_id": "P_direct_write",
-      "completion_owner": "pm-reverse-etl-settlement"
+      "completion_owner": "pm-reverse-etl-settlement",
+      "staged_coverage": "PG-MAPPED-UPSERT is additional packet-scoped coverage through the common runner; the existing GitHub command/owner remains intact."
     },
     {
       "id": "P_etl",
@@ -1329,7 +1331,7 @@
       "owner_file": "internal/proof/runner.go",
       "symbol": "ExecuteCase",
       "kind": "connector_script_proof",
-      "negative_control_and_expected_observation": "Actual persistedwarehouse rows and restart/checkpoint behavior",
+      "negative_control_and_expected_observation": "Actual persisted warehouse rows, exact typed values, truthful selection/filter/pagination and interruption checkpoint recovery. For N13-PG, source rows come from the owned PostgreSQL relation through the same registered PMCLI/API/worker path; no demo-specific executor.",
       "contexts": [
         "controlled_fake",
         "opt_in_live"
@@ -1353,13 +1355,14 @@
         "reuse_provenance"
       ],
       "unit_contract": "ExecuteCase",
-      "integration_fault": "Actual persistedwarehouse rows and restart/checkpoint behavior",
+      "integration_fault": "Actual persisted warehouse rows, exact typed values, truthful selection/filter/pagination and interruption checkpoint recovery. For N13-PG, source rows come from the owned PostgreSQL relation through the same registered PMCLI/API/worker path; no demo-specific executor.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "Opt-in real provider/account scope; fake fallback separately labeled",
       "required_for_initial_release": true,
       "source_requirement": "Retains prior474 causal invariant with explicit475 state/process ownership.",
       "prior_id": "P_etl",
-      "completion_owner": "pm-etl-checkpoint-publication"
+      "completion_owner": "pm-etl-checkpoint-publication",
+      "staged_coverage": "Issue #32 remains completion owner. N13-PG consumes its proved PostgreSQL source→warehouse/query behavior after prerequisites; this does not transfer ownership or complete full #41."
     },
     {
       "id": "P_reverse_etl",
@@ -1367,7 +1370,7 @@
       "owner_file": "internal/proof/runner.go",
       "symbol": "ExecuteCase",
       "kind": "connector_script_proof",
-      "negative_control_and_expected_observation": "Savedmapping, sealedcardinality/approval, exactperrow provider effects and readback",
+      "negative_control_and_expected_observation": "Saved mapping, sealed cardinality/approval and exact per-row provider effects/readback remain mandatory. The PostgreSQL extension also seals key/constraint, performs initial insert or changed-mapped update at stable identity, preserves unmapped values on equal repeat and never blindly retries an unknown COMMIT.",
       "contexts": [
         "controlled_fake",
         "opt_in_live"
@@ -1391,13 +1394,14 @@
         "reuse_provenance"
       ],
       "unit_contract": "ExecuteCase",
-      "integration_fault": "Savedmapping, sealedcardinality/approval, exactperrow provider effects and readback",
+      "integration_fault": "Saved mapping, sealed cardinality/approval and exact per-row provider effects/readback remain mandatory. The PostgreSQL extension also seals key/constraint, performs initial insert or changed-mapped update at stable identity, preserves unmapped values on equal repeat and never blindly retries an unknown COMMIT.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "Opt-in real provider/account scope; fake fallback separately labeled",
       "required_for_initial_release": true,
       "source_requirement": "Retains prior474 causal invariant with explicit475 state/process ownership.",
       "prior_id": "P_reverse_etl",
-      "completion_owner": "pm-reverse-etl-settlement"
+      "completion_owner": "pm-reverse-etl-settlement",
+      "staged_coverage": "Issue #34 remains completion owner. PG-MAPPED-UPSERT and N13-PG add PostgreSQL cases without replacing the original GitHub reverse-ETL proof."
     },
     {
       "id": "P_binary_download",
@@ -1511,7 +1515,8 @@
       "required_for_initial_release": true,
       "source_requirement": "Retains prior474 causal invariant with explicit475 state/process ownership.",
       "prior_id": "P_sync_transport",
-      "completion_owner": "pm-initial-five-composition-proof"
+      "completion_owner": "pm-initial-five-composition-proof",
+      "staged_coverage": "N13-PG checkpoint and mapped-upsert evidence is not P_sync_transport. Full durable source→delivery→ack→contiguous-cursor lost-ack/restart proof remains M11 and owned by full #41."
     },
     {
       "id": "V55",
@@ -1633,7 +1638,7 @@
       "milestone": "M6",
       "owner_file": "internal/runtime/limits_test.go",
       "symbol": "TestRecordLimitIsNotPageSize",
-      "negative_control_and_expected_observation": "Gong POST read has no invented limit wire field; a truncated page retains unread rows behind a server continuation rather than losing them or reporting EOF.",
+      "negative_control_and_expected_observation": "The Gong POST read has no invented limit wire field. Provider page size is not total record cap; local truncation retains unread rows behind a server continuation rather than losing them or reporting EOF. Filtering cannot consume or hide source continuation, and provider request parameters remain distinct from output-record filters.",
       "kind": "foundation_regression",
       "readiness_when_passed": "locally_verified_exact_contract",
       "contexts": [
@@ -1644,7 +1649,7 @@
       "planned_command": "set -eu\ngo test ./internal/runtime -run '^TestRecordLimitIsNotPageSize$' -count=1 -timeout 5m",
       "command_status": "UNEXECUTED",
       "unit_contract": "TestRecordLimitIsNotPageSize",
-      "integration_fault": "Gong POST read has no invented limit wire field; a truncated page retains unread rows behind a server continuation rather than losing them or reporting EOF.",
+      "integration_fault": "The Gong POST read has no invented limit wire field. Provider page size is not total record cap; local truncation retains unread rows behind a server continuation rather than losing them or reporting EOF. Filtering cannot consume or hide source continuation, and provider request parameters remain distinct from output-record filters.",
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "Separate signed evidence for exact build/source/schema/account scope",
       "required_for_initial_release": true,
@@ -1809,7 +1814,7 @@
       "execution_evidence": "No475 application test, build, generator, provider or service execution.",
       "live_requirement": "Separate signed evidence for exact build/source/schema/account scope",
       "required_for_initial_release": true,
-      "staged_coverage": "M6 HTTP and retry; M7 SQL Begin/COPY/commit; M11 binary. M11 composition owns the full gate; earlier subsets never complete V74.",
+      "staged_coverage": "M6 HTTP and retry; M7 SQL Begin/COPY/commit; M11 binary and full composition. N13-PG may exercise earlier SQL/ETL/reverse subsets but never completes V74; M11 remains the full gate.",
       "source_requirement": "Retains prior474 causal invariant with explicit475 state/process ownership.",
       "prior_id": "V74"
     },
@@ -2104,7 +2109,7 @@
       "milestone": "M2",
       "owner_file": "internal/store/tenant_keys_test.go",
       "symbol": "TestCompositeTenantReferences",
-      "negative_control_and_expected_observation": "Equal resource IDs in two tenants cannot cross-bind plan, approval, run, task, event, artifact or connection; safe errors do not reveal foreign existence.",
+      "negative_control_and_expected_observation": "Equal resource IDs or idempotency keys in two tenants cannot cross-bind identity mutation, plan, approval, run, task, event, artifact or connection. Safe errors/replay metadata never reveal foreign existence; workspace deletion does not recycle an immutable key namespace.",
       "kind": "foundation_integration",
       "contexts": [
         "same_stack_integration"
@@ -2177,7 +2182,7 @@
       "milestone": "M3",
       "owner_file": "internal/auth/service_test.go",
       "symbol": "TestServiceAndDelegationScope",
-      "negative_control_and_expected_observation": "Service account/delegation cannot exceed explicit connection/operation/workspace/time grant; actor and effective actor remain distinct and auditable.",
+      "negative_control_and_expected_observation": "Service accounts and delegations cannot exceed explicit connection, operation, workspace or time grant ceilings; expired/broader/second-hop delegation is denied, and actor and effective actor remain distinct and auditable. Across the six named membership/service-account/delegation POST rows, current authorization precedes replay disclosure; missing/stale If-Match is 428/412 with zero effect; equal concurrent requests commit one mutation; exact replay is 200 with the original safe result/revision; one-time service-account credential appears only on the original 201.",
       "kind": "foundation_integration",
       "contexts": [
         "same_stack_integration"
@@ -2187,7 +2192,8 @@
       "planned_command": "set -eu\ngo test ./internal/auth -run '^TestServiceAndDelegationScope$' -count=1 -timeout 10m",
       "command_status": "UNEXECUTED",
       "execution_evidence": "No application execution in475",
-      "required_for_initial_release": true
+      "required_for_initial_release": true,
+      "staged_coverage": "AUTH-MUTATION-PARITY packet-scoped cases retain this existing entrypoint and the three GET rows as reads; no read cursor/ETag becomes mutation idempotency authority."
     },
     {
       "id": "R09",
@@ -2285,7 +2291,7 @@
       "milestone": "M5",
       "owner_file": "tests/client-parity/parity_test.go",
       "symbol": "TestCLIAndBrowserEquivalentUseCases",
-      "negative_control_and_expected_observation": "Same principal/workspace/input/idempotency on generated Go CLI and browser harness yields same endpoint, authorization, RunSpec, error and effect; no CLI-only policy or public admin secret route.",
+      "negative_control_and_expected_observation": "For the same authorized principal, workspace, typed input and idempotency key, generated Go CLI and browser yield the same endpoint, authorization, RunSpec, complete/default or selected ActionResult, typed filter/pagination, F01 error/retry behavior, AUTH replay result and eventual effect. No CLI-only parser/policy, replacement key, stale-revision rebase or public admin-secret route.",
       "kind": "foundation_integration",
       "contexts": [
         "same_stack_integration"
@@ -2591,7 +2597,7 @@
     "all",
     "unimplemented"
   ],
-  "test_policy": "Causal generic foundations and real same-stack integration; connector scripts carry operation/lane proof. No provider Go wrappers. All commands are future commands, unexecuted here.",
+  "test_policy": "Causal foundation and real same-stack behavior only; connector scripts carry exact operation/lane proof. F01/F02/AUTH/PG packet-scoped acceptance extends the named existing entrypoints without inventing duplicate global IDs or proof runners. All commands are future commands, unexecuted here.",
   "cache_policy": "Go build cache reused. go test -c compiles only. Cached successful tests are not fresh physical proof. Exact relevant code/schema/assertion/source changes invalidate; unknown dependency closure conservatively invalidates scope.",
   "proof_status": "planned is distinct from implemented, locally_verified, provider_tested and live_certified; fake never live certification."
 }
