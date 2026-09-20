@@ -9,12 +9,38 @@ permissions:
   contents: read
 
 concurrency:
-  group: foundation-${{ github.event.pull_request.number }}
+  group: foundation-${{ github.event.pull_request.number }}-${{ github.event.action == 'edited' && 'metadata' || 'source' }}
   cancel-in-progress: true
 
 jobs:
-  foundation:
+  metadata:
+    name: pull-request-metadata
     if: github.repository == 'polymetrics-ai/pm-cli' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas'
+    runs-on: [self-hosted, Linux, X64, pm-cli-qual-20260911-r8]
+    timeout-minutes: 3
+    steps:
+      - name: Check out the pull request revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+      - name: Validate pull request metadata
+        timeout-minutes: 2
+        run: |
+          set -eu
+          export PATH="/opt/pmcli-tools/venv/bin:/opt/pmcli-tools/bin:$PATH"
+          python3 scripts/install_architecture_docs_dependencies.py \
+            --destination "$RUNNER_TEMP/foundation-metadata-deps"
+          PYTHONPATH="$RUNNER_TEMP/foundation-metadata-deps" \
+            python3 scripts/validate_architecture_docs.py --pr-event "$GITHUB_EVENT_PATH"
+
+  foundation:
+    name: ${{ github.event.action == 'edited' && 'metadata-only (foundation not run)' || 'foundation' }}
+    needs: metadata
+    if: ${{ !cancelled() && github.repository == 'polymetrics-ai/pm-cli' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event.action != 'edited' }}
     runs-on: [self-hosted, Linux, X64, pm-cli-qual-20260911-r8]
     timeout-minutes: 30
     steps:

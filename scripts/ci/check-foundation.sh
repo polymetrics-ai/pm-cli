@@ -42,25 +42,60 @@ python3 tools/bootstrap.py exec clang -- -print-target-triple
 python3 tools/bootstrap.py exec clang -- -print-resource-dir
 python3 tools/bootstrap.py exec clang -- -print-prog-name=ld
 python3 tools/bootstrap.py exec bazelisk -- --batch version
+
+# Fail on cheap source defects before builds, analysis, or shared services.
+goroot=$(python3 tools/bootstrap.py exec go -- env GOROOT)
+export GOROOT="$goroot"
+export GOTOOLCHAIN=local
+export PM_GO="$goroot/bin/go"
+export PATH="$goroot/bin:$PATH"
+unformatted=$(
+  git ls-files -z -- '*.go' |
+    xargs -0 "$goroot/bin/gofmt" -l
+)
+if [ -n "$unformatted" ]; then
+  printf '%s\n' 'Go files require gofmt:' "$unformatted" >&2
+  exit 1
+fi
+
 mkdir -p .cache/bin
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate
 CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- build -o .cache/bin/nativeprobe ./build/nativeprobe
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-dependency-check ./cmd/pm-dependency-check
-CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack ./cmd/pm-stack
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-stack-fixture ./cmd/pm-stack-fixture
-sh scripts/generate.sh --check
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/oapi-codegen github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/staticcheck honnef.co/go/tools/cmd/staticcheck
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/govulncheck golang.org/x/vuln/cmd/govulncheck
-CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools test . -run '^TestResolvedDependencyPolicy$' -count=1 -timeout 5m
+sh scripts/generate.sh --check
+
+# Compilation and focused tests cover both Go modules without starting services.
+CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- test -mod=readonly -run '^$' -count=1 -timeout 10m ./...
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools test -mod=readonly -run '^$' -count=1 -timeout 10m ./...
+CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- test -race -mod=readonly -count=1 -timeout 10m ./internal/api ./internal/contract
+CGO_ENABLED=0 PM_REPO_ROOT="$repo_root" python3 tools/bootstrap.py exec go -- -C tools test -mod=readonly -count=1 -timeout 5m ./...
 CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- test ./build/nativeprobe -count=1 -timeout 3m
-CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- vet ./...
-CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools vet ./...
+
+# Tool versions record identity; the following commands perform the analysis.
 .cache/bin/oapi-codegen -version
 .cache/bin/staticcheck -version
 .cache/bin/govulncheck -version
+CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- vet ./...
+CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools vet ./...
+CGO_ENABLED=1 .cache/bin/staticcheck ./...
+(
+  cd tools
+  CGO_ENABLED=0 ../.cache/bin/staticcheck ./...
+)
+CGO_ENABLED=1 .cache/bin/govulncheck ./...
+(
+  cd tools
+  CGO_ENABLED=0 ../.cache/bin/govulncheck ./...
+)
 python3 scripts/ci/check-native.py
 sh scripts/check-boundaries.sh
+
+# Expensive Bazel and physical checks run only after fast source qualification.
 python3 tools/bootstrap.py exec bazelisk -- --batch build //...
 # Physical targets declare exclusive execution for their shared schema/roles.
 python3 scripts/ci/with-stack-fixture.py \

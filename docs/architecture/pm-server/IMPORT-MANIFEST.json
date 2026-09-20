@@ -310,8 +310,8 @@
     {
       "target": "docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md",
       "source": "Authored preparation disclosure/policy; see output digest manifest",
-      "sha256": "14e0f343195f606e468a216eef222f6ccd5fd4ecf2700ab81bb53e0027a114e4",
-      "transformation": "Activated the single model-neutral engineering policy under OMP-only ownership, coherent grouped candidates and independent Standards/Spec review; preserved real CI, security, dependency and separate merge gates."
+      "sha256": "0db426b26acdbc553ab5c11e7de1a6eb1f36bc0b17f5fe198ec140d6bb21383f",
+      "transformation": "Activated the single model-neutral engineering policy under OMP-only ownership, coherent grouped candidates and independent Standards/Spec review; preserved real CI, security, dependency and separate merge gates. Clarified meaningful-checkpoint normal PRs, author validation, serialized shared-service checks, continuous CI inspection, and final-revision acceptance."
     }
   ],
   "exclusions": [

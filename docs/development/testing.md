@@ -27,21 +27,21 @@ Keep fake and live evidence separately labeled. Preserve exact component, source
 
 For every claimed check, retain the exact command or action, selected test/case IDs, repository and commit/head, environment and architecture, relevant dependency/fixture identities, start and finish time, exit state, skips, and sanitized output or receipt location. Never record secrets, raw provider credentials, private operator routing, or mutable local paths as product evidence.
 
-Run focused checks before integration. Broad suites and genuine CI run once at the coherent candidate boundary, with affected checks and targeted review after material fixes. Independent Standards and Spec review is separate from testing and cannot turn a missing check into green.
+Run focused author checks before handoff or push. Shared-service and broad local suites run at coherent checkpoints rather than after every edit. Once the normal non-draft pull request is open, CI may qualify each small coherent push while unrelated implementation continues; inspect each result promptly and fix regressions before extending a failing boundary. Independent Standards and Spec review still occurs once at completed-candidate scope, targeted review covers material fixes, and only required checks on the final revision can support delivery.
 
 ## Build and toolchain entry points
 
 The issue #3 foundation commands are source-present. From the repository root, use the pinned entry points below. The all-target Bazel test command also selects the physical stack checks: prepare and export their [explicitly owned fixture inputs](setup.md#explicit-dependency-operator-and-physical-qualification) first. Missing inputs fail rather than skip.
 
 ```sh
-make build test vet boundaries
+make check-fast
 python3 scripts/ci/check-native.py
 make bazel-build bazel-test
 python3 scripts/ci/check-dependencies.py --evidence-dir .cache/foundation-sboms
 make benchmark
 ```
 
-`make test` includes `TestResolvedDependencyPolicy`, which checks both real module graphs and its fail-closed synthetic SBOM controls. Without `PM_SBOMS`, that invocation does not claim full external-tool inventory qualification. `check-dependencies.py` generates current-platform inventories, invokes the real `pm-dependency-check` CLI, supplies those SBOMs through `PM_SBOMS`, and reruns the named test. The command is no longer planned or unavailable.
+`make check-fast` refuses formatting and generated-output drift, compiles every package and test in both Go modules, runs the focused API/contract, tools-module and native tests, and performs real vet, Staticcheck and govulncheck analysis across both modules before fixture work. Version output identifies a pin but is not analysis. `make test` includes `TestResolvedDependencyPolicy`, which checks both real module graphs and its fail-closed synthetic SBOM controls. Without `PM_SBOMS`, that invocation does not claim full external-tool inventory qualification. `check-dependencies.py` generates current-platform inventories, invokes the real `pm-dependency-check` CLI, supplies those SBOMs through `PM_SBOMS`, and reruns the named test.
 
 ### API generation and PostgreSQL control-store checks
 

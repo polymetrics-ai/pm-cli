@@ -264,26 +264,70 @@ def workflow_check(path, actionlint):
             "types": ["opened", "synchronize", "reopened", "edited"]}},
             "unapproved workflow triggers")
     require(obj["permissions"] == {"contents": "read"}, "excess workflow permissions")
-    require(obj["concurrency"] == {"group": "foundation-${{ github.event.pull_request.number }}",
-            "cancel-in-progress": "true"}, "unapproved workflow concurrency")
-    require(set(obj["jobs"]) == {"foundation"}, "unapproved job membership")
+    require(obj["concurrency"] == {
+        "group": "foundation-${{ github.event.pull_request.number }}-"
+                 "${{ github.event.action == 'edited' && 'metadata' || 'source' }}",
+        "cancel-in-progress": "true",
+    }, "unapproved workflow concurrency")
+    require(set(obj["jobs"]) == {"metadata", "foundation"}, "unapproved job membership")
+
+    trust = (
+        "github.repository == 'polymetrics-ai/pm-cli' && "
+        "github.event.pull_request.head.repo.full_name == github.repository && "
+        "github.actor == 'karthik-sivadas' && "
+        "github.triggering_actor == 'karthik-sivadas'"
+    )
+    runner = ["self-hosted", "Linux", "X64", "pm-cli-qual-20260911-r8"]
+
+    def checkout_check(step):
+        require(set(step) == {"name", "uses", "with"}, "unapproved checkout capability")
+        require(step["uses"] ==
+                "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+                "checkout is not the reviewed full action pin")
+        require(step["with"] == {"persist-credentials": "false", "fetch-depth": "1",
+                "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
+                "checkout capabilities changed")
+
+    metadata = obj["jobs"]["metadata"]
+    require(set(metadata) == {"name", "if", "runs-on", "timeout-minutes", "steps"},
+            "unapproved metadata job capability")
+    require(metadata["name"] == "pull-request-metadata", "metadata check identity changed")
+    require(metadata["if"] == trust, "unapproved metadata trust boundary")
+    require(metadata["runs-on"] == runner, "metadata runner routing changed")
+    require(metadata["timeout-minutes"] == "3", "metadata timeout changed")
+    metadata_steps = metadata["steps"]
+    require(isinstance(metadata_steps, list) and len(metadata_steps) == 2,
+            "unexpected metadata step membership")
+    checkout_check(metadata_steps[0])
+    require(metadata_steps[1] == {
+        "name": "Validate pull request metadata",
+        "timeout-minutes": "2",
+        "run": 'set -eu\n'
+               'export PATH="/opt/pmcli-tools/venv/bin:/opt/pmcli-tools/bin:$PATH"\n'
+               'python3 scripts/install_architecture_docs_dependencies.py \\\n'
+               '  --destination "$RUNNER_TEMP/foundation-metadata-deps"\n'
+               'PYTHONPATH="$RUNNER_TEMP/foundation-metadata-deps" \\\n'
+               '  python3 scripts/validate_architecture_docs.py '
+               '--pr-event "$GITHUB_EVENT_PATH"\n',
+    }, "unapproved metadata validation step")
+
     job = obj["jobs"]["foundation"]
-    require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"},
-            "unapproved job capability")
-    require(job["if"] == "github.repository == 'polymetrics-ai/pm-cli' && github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas'",
-            "unapproved workflow trust boundary")
-    require(job["runs-on"] == ["self-hosted", "Linux", "X64", "pm-cli-qual-20260911-r8"],
-            "runner routing changed")
+    require(set(job) == {"name", "needs", "if", "runs-on", "timeout-minutes", "steps"},
+            "unapproved source job capability")
+    require(job["name"] ==
+            "${{ github.event.action == 'edited' && "
+            "'metadata-only (foundation not run)' || 'foundation' }}",
+            "metadata-only execution can replace the source gate")
+    require(job["needs"] == "metadata", "source qualification does not follow metadata")
+    require(job["if"] ==
+            "${{ !cancelled() && " + trust + " && github.event.action != 'edited' }}",
+            "unapproved source trust or event boundary")
+    require(job["runs-on"] == runner, "runner routing changed")
     require(job["timeout-minutes"] == "30", "job timeout changed")
     steps = job["steps"]
     require(isinstance(steps, list) and len(steps) == 3, "unexpected step membership")
     checkout, check, cleanup = steps
-    require(set(checkout) == {"name", "uses", "with"}, "unapproved checkout capability")
-    require(checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            "checkout is not the reviewed full action pin")
-    require(checkout["with"] == {"persist-credentials": "false", "fetch-depth": "1",
-            "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
-            "checkout capabilities changed")
+    checkout_check(checkout)
     require(check == {"name": "Build and test the foundation", "timeout-minutes": "25",
             "run": "sh scripts/ci/check-foundation.sh"}, "unapproved executable step")
     require(cleanup == {

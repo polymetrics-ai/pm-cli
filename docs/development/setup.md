@@ -48,12 +48,20 @@ These Make targets are source-present:
 
 | Command | Boundary exercised |
 | --- | --- |
+| `make format` | Formats both Go modules with the formatter from the pinned Go toolchain |
+| `make check-format` | Refuses tracked Go source that the pinned `gofmt` would change |
 | `make build` | Builds the cgo native probe and the isolated dependency-policy, oapi-codegen, Staticcheck, and govulncheck binaries with pinned Go |
-| `make test` | Runs the resolved-dependency policy test and the native DuckDB behavioral test |
+| `make compile` | Compiles every package and test in the application and tools modules without treating zero selected tests as behavioral evidence |
+| `make test` | Runs focused API/contract race checks, every tools-module test, and the native DuckDB behavioral test |
 | `make vet` | Vets the application module with cgo and the tools module without cgo |
+| `make staticcheck` | Runs the pinned Staticcheck binary against both Go modules |
+| `make govulncheck` | Runs the pinned govulncheck analysis against both Go modules |
 | `make boundaries` | Checks native-linkage and module ownership boundaries |
+| `make check-fast` | Runs setup/docs, format and generation validation, compilation, focused tests, vet, Staticcheck, govulncheck, and boundaries before fixture/Bazel work |
 | `make bazel-build` | Runs `bazelisk --batch build //...` through the bootstrap |
 | `make bazel-test` | Runs `bazelisk --batch test //...` with test-result caching disabled |
+
+Before handoff or push, format the affected source with `make format`, then run the scoped compile and focused tests selected by the changed ownership boundary. `make check-fast` is the complete non-fixture checkpoint. These commands use the existing Go 1.27.1, Staticcheck 2026.2.1 (module v0.8.1), and govulncheck v1.8.0 pins; they do not install or select a newer tool stack.
 
 Bazel uses two action jobs, two loading/analysis threads, two filesystem-checking threads, and a JVM processor count of two. Analysis and execution run separately: Bazel 9.2's Skymeld mode creates a fixed 200-thread symlink pool independent of `--jobs`, which exceeds the available headroom under the existing runner's 256-task limit.
 
@@ -138,6 +146,10 @@ The Bazel target `//tests/stack:stack_test` includes these physical checks. Its 
 ### Job-owned CI dependency fixture
 
 The [foundation job](../../scripts/ci/check-foundation.sh) builds the dependency operator and [fixture generator](../../tools/cmd/pm-stack-fixture/main.go), then runs the complete Bazel test set through [the fixture wrapper](../../scripts/ci/with-stack-fixture.py). It requires an existing local Docker Unix socket, a Linux engine and the already-cached pinned Compose executable. Local Docker Desktop development uses the same wrapper. Missing prerequisites fail; the wrapper does not install or reconfigure an engine, register a runner, or borrow another project's services.
+
+The workflow runs a distinct `pull-request-metadata` job for `opened`, `synchronize`, `reopened`, and `edited` events. Source qualification waits for that fast check and runs only for the first three source-bearing actions. If metadata fails on a source event, the `foundation` job still starts and repeats validation before source work; the dependency failure cannot turn the source check into a successful skip. The workflow-level concurrency key separates metadata-only edits from source events, so an edited title or body cannot cancel an in-progress source run. The skipped edited-event job also has a different check identity and cannot report metadata validation as a passing `foundation` source gate. Both paths retain the exact owner/same-repository admission and read-only token; draft state is not a CI condition.
+
+Within source qualification, pinned formatting, generation, compilation, focused tests, vet, Staticcheck, and govulncheck cover both Go modules before native qualification, Bazel, the job-owned fixture, dependency/image inspection, and the benchmark. Version output records identity but never substitutes for analysis. The existing `GOMAXPROCS`, memory, Go build parallelism, Bazel resource controls, job timeout, action SHA pin, and cancellation cleanup remain bounded.
 
 `with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND...` creates a unique private project, bounded containers, loopback-only published ports, fresh synthetic credentials and test certificates. It uses the admitted image pins, removes inherited Docker/Compose overrides, isolates Docker authentication, and passes the generated fixture references to the requested command. No real provider credentials are needed.
 
