@@ -155,8 +155,23 @@ func TestThinBinaryDependencyBoundary(t *testing.T) {
 	if !filepath.IsAbs(root) {
 		t.Fatal("thin binary qualification requires the explicit owned-fixture checkout")
 	}
+	parentEnvironment := os.Environ()
+	nestedBootstrapEnvironment := make([]string, 0, len(parentEnvironment))
+	for _, entry := range parentEnvironment {
+		name, _, _ := strings.Cut(entry, "=")
+		switch name {
+		case "CGO_CFLAGS", "CGO_CPPFLAGS", "CGO_CXXFLAGS", "CGO_LDFLAGS":
+			// The outer bootstrap derives these for its child. A nested
+			// bootstrap must recompute them instead of treating them as
+			// caller-owned Linux native overrides.
+			continue
+		default:
+			nestedBootstrapEnvironment = append(nestedBootstrapEnvironment, entry)
+		}
+	}
 	command := exec.CommandContext(t.Context(), "python3", filepath.Join(root, "tools", "bootstrap.py"), "exec", "go", "--", "list", "-mod=readonly", "-deps", "-f", "{{.ImportPath}}", "./cmd/pm")
 	command.Dir = root
+	command.Env = nestedBootstrapEnvironment
 	output, err := command.CombinedOutput()
 	if err != nil {
 		t.Fatalf("list thin binary dependencies: %v output %q", err, output)
@@ -201,6 +216,7 @@ func TestThinBinaryDependencyBoundary(t *testing.T) {
 	}
 	fault := exec.CommandContext(t.Context(), "python3", filepath.Join(root, "tools", "bootstrap.py"), "exec", "go", "--", "list", "-mod=readonly", "-overlay", overlayPath, "-deps", "-f", "{{.ImportPath}}", "./cmd/pm")
 	fault.Dir = root
+	fault.Env = nestedBootstrapEnvironment
 	faultOutput, err := fault.CombinedOutput()
 	if err != nil {
 		t.Fatalf("resolve forbidden dependency probe: %v output %q", err, faultOutput)

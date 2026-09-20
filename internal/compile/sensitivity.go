@@ -92,103 +92,102 @@ func classifyParameterSensitivity(parameter *openapi3.Parameter, schema *openapi
 	if parameter == nil {
 		return SensitivityUnknown
 	}
-	if schema != nil {
-		if strings.EqualFold(schema.Format, "password") {
-			return SensitivitySecret
-		}
-	}
 	if _, secret := policy.secretParameters[parameter.In+"\x00"+strings.ToLower(parameter.Name)]; secret {
 		return SensitivitySecret
 	}
 	if credentialLikeName(parameter.Name) {
 		return SensitivitySecret
 	}
-	if classification, explicit := explicitSensitivity(parameter.Extensions); explicit {
+	classification := SensitivityPublic
+	if explicit, present := explicitSensitivity(parameter.Extensions); present {
+		classification = explicit
+	}
+	if schema == nil {
 		return classification
 	}
-	if schema != nil {
-		if classification, explicit := explicitSensitivity(schema.Extensions); explicit {
-			return classification
-		}
-	}
-	return SensitivityPublic
+	return aggregateSensitivity(classification, schemaSensitivity(schema, make(map[*openapi3.Schema]struct{})))
 }
 
 func classifyPropertySensitivity(name string, schema *openapi3.Schema) SensitivityClass {
 	if schema == nil {
 		return SensitivityUnknown
 	}
-	if strings.EqualFold(schema.Format, "password") || credentialLikeName(name) {
-		return SensitivitySecret
+	classification := SensitivityPublic
+	if credentialLikeName(name) {
+		classification = SensitivitySecret
 	}
-	if classification, explicit := explicitSensitivity(schema.Extensions); explicit {
-		return classification
-	}
-	return SensitivityPublic
+	return aggregateSensitivity(classification, schemaSensitivity(schema, make(map[*openapi3.Schema]struct{})))
 }
 
 func schemaSensitivity(schema *openapi3.Schema, seen map[*openapi3.Schema]struct{}) SensitivityClass {
 	if schema == nil {
 		return SensitivityUnknown
 	}
+	if seen == nil {
+		seen = make(map[*openapi3.Schema]struct{})
+	}
 	if _, recursive := seen[schema]; recursive {
 		return SensitivityUnknown
 	}
 	seen[schema] = struct{}{}
 	defer delete(seen, schema)
-	if strings.EqualFold(schema.Format, "password") {
-		return SensitivitySecret
-	}
+
 	result := SensitivityPublic
+	if strings.EqualFold(schema.Format, "password") {
+		result = SensitivitySecret
+	}
 	if classification, explicit := explicitSensitivity(schema.Extensions); explicit {
-		result = classification
+		result = aggregateSensitivity(result, classification)
 	}
 	for name, reference := range schema.Properties {
+		if credentialLikeName(name) {
+			return SensitivitySecret
+		}
 		if reference == nil || reference.Value == nil {
-			return SensitivityUnknown
+			result = aggregateSensitivity(result, SensitivityUnknown)
+			continue
 		}
-		classification := classifyPropertySensitivity(name, reference.Value)
-		if classification == SensitivitySecret {
-			return SensitivitySecret
-		}
-		if classification == SensitivityUnknown {
-			result = SensitivityUnknown
-		}
-		child := schemaSensitivity(reference.Value, seen)
-		if child == SensitivitySecret {
-			return SensitivitySecret
-		}
-		if child == SensitivityUnknown {
-			result = SensitivityUnknown
+		result = aggregateSensitivity(result, schemaSensitivity(reference.Value, seen))
+		if result == SensitivitySecret {
+			return result
 		}
 	}
 	if schema.Items != nil {
 		if schema.Items.Value == nil {
-			return SensitivityUnknown
+			result = aggregateSensitivity(result, SensitivityUnknown)
+		} else {
+			result = aggregateSensitivity(result, schemaSensitivity(schema.Items.Value, seen))
 		}
-		child := schemaSensitivity(schema.Items.Value, seen)
-		if child == SensitivitySecret {
-			return SensitivitySecret
-		}
-		if child == SensitivityUnknown {
-			result = SensitivityUnknown
+		if result == SensitivitySecret {
+			return result
 		}
 	}
 	for _, collection := range []openapi3.SchemaRefs{schema.OneOf, schema.AnyOf, schema.AllOf} {
 		for _, reference := range collection {
 			if reference == nil || reference.Value == nil {
-				return SensitivityUnknown
+				result = aggregateSensitivity(result, SensitivityUnknown)
+				continue
 			}
-			child := schemaSensitivity(reference.Value, seen)
-			if child == SensitivitySecret {
-				return SensitivitySecret
-			}
-			if child == SensitivityUnknown {
-				result = SensitivityUnknown
+			result = aggregateSensitivity(result, schemaSensitivity(reference.Value, seen))
+			if result == SensitivitySecret {
+				return result
 			}
 		}
 	}
 	return result
+}
+
+func aggregateSensitivity(left, right SensitivityClass) SensitivityClass {
+	if left == SensitivitySecret || right == SensitivitySecret {
+		return SensitivitySecret
+	}
+	if left == SensitivityUnknown || right == SensitivityUnknown {
+		return SensitivityUnknown
+	}
+	if left == SensitivityPublic && right == SensitivityPublic {
+		return SensitivityPublic
+	}
+	return SensitivityUnknown
 }
 
 func explicitSensitivity(extensions map[string]any) (SensitivityClass, bool) {

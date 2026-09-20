@@ -105,6 +105,7 @@ func commandSnapshot(fields []pmapi.CommandFieldDescriptor) pmapi.CatalogSnapsho
 			OperationRevision: testOperationRevision,
 			CatalogRevision:   testCatalogRevision,
 			Fields:            fields,
+			RequestBody:       contract.OperationRequestProjection{Variants: []contract.RequestVariantProjection{}},
 			AvailableLanes:    []pmapi.CommandDescriptorAvailableLanes{pmapi.CommandDescriptorAvailableLanes(contract.LaneDirectRead)},
 		}},
 	}
