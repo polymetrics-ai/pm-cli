@@ -1,6 +1,6 @@
 # GitHub read binding — accepted decision record
 
-Status: F02/F03 ACCEPTED; SOURCE LOCK, COMPILER OUTPUT, APPLICATION IMPLEMENTATION AND PROVIDER PROOF UNEXECUTED.
+Status: F02/F03 ACCEPTED; SOURCE LOCK, COMPILER OUTPUT AND APPLICATION IMPLEMENTATION LANDED (merged PR #53); LIVE PROVIDER PROOF UNEXECUTED.
 
 The former proposal is resolved by the accepted [F02/F03 decision](https://github.com/polymetrics-ai/pm-cli/issues/27#issuecomment-5669069268). [CONTRACTS](../architecture/CONTRACTS.json), [FOUNDATION-MAPPINGS](../architecture/FOUNDATION-MAPPINGS.json) and the issue #27 record in [PACKET-CONTRACTS](../implementation/PACKET-CONTRACTS.json) are normative.
 
@@ -18,4 +18,4 @@ Use the official [`github/rest-api-description`](https://github.com/github/rest-
 
 The same-commit [`LICENSE.md`](https://github.com/github/rest-api-description/blob/0a144e030abbe358000f0d32874e197b59a8f7ed/LICENSE.md) is MIT, Copyright (c) 2020 GitHub, Git blob `b50625eb63949013cae604b1cadd42cfa1eaf825`, 1,063 bytes and SHA-256 `3243761cbac07e6d169a5a2f4e7c25cc544da85248e735df74c3672e055cc87b`. Its exact text is retained in [github-source-LICENSE](github-source-LICENSE.md).
 
-The [operation closure](github-operation-closure.json) retains bounded normalized facts and the accepted full-source identity. The raw 12.9 MB source is intentionally not duplicated in this docs tree, and the closure is not a compiler input. Issue #27 still first-owns `source.lock`, complete recursive reference capture, NOTICE, compiler fidelity/generated inventories, authored lifecycle cases, common-runner controlled proof and separately authorized live provider proof. Only exact `direct_read` is activated in M6; later GitHub lanes and the aggregate composition remain with their existing owners.
+The [operation closure](github-operation-closure.json) retains bounded normalized facts and the accepted full-source identity. The raw 12.9 MB source is intentionally not duplicated in this docs tree, and this docs-tree closure is evidence only and is never a compiler input; the compiler input is the committed closure capture recorded in `connectors/github/source.lock.json` and described in `connectors/github/NOTICE`. Issue #27's remaining unexecuted obligation is separately authorized live provider proof. Only exact `direct_read` is activated in M6; later GitHub lanes and the aggregate composition remain with their existing owners.

@@ -28,7 +28,7 @@ Initial RPO 24h and RTO 4h values are qualification targets until measured by th
 
 ## Release evidence and delivery
 
-Follow [testing and evidence guidance](testing.md) and the single [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md). Preserve the accepted base, merge base, reviewed/final heads, exact artifact manifest, focused and same-stack results, independent Standards and Spec reports, genuine final-head CI, and explicit unresolved targets. OMP owns integration; merge requires separate approval.
+Follow [testing and evidence guidance](testing.md) and the single [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md). Preserve the accepted base, merge base, reviewed/final heads, exact artifact manifest, focused and same-stack results, independent Standards and Spec reports, genuine final-head CI, and explicit unresolved targets. OMP owns integration; merge proceeds under the owner's standing, account-based conditional merge authority recorded in the engineering and review policy — declared scope implemented, agreed acceptance tests passing, independent review findings resolved and genuine final-candidate CI green — with no additional routine human approval.
 
 A build or toolchain pass does not by itself qualify packaging, services, migrations, native targets, upgrade, backup, restore, or provider behavior. The selected dependency fixture and its scoped checks are documented in [setup](setup.md#explicit-dependency-operator-and-physical-qualification); they are not installation, recovery, or application/provider proof. Record only what the actual candidate exercises.
 
