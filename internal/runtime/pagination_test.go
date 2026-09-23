@@ -1021,6 +1021,259 @@ func TestLinkProviderNavigationBoundary(t *testing.T) {
 	})
 }
 
+// firstRecordedCursor and secondRecordedCursor are two distinct opaque cursors
+// of the recorded GitHub navigation shape: a provider that paginates by cursor
+// issues a fresh cursor for every page, so each followed hop replaces the
+// cursor the runtime replayed from the sealed target before it.
+const (
+	firstRecordedCursor  = `Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D`
+	secondRecordedCursor = `Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhcnVi%3D`
+)
+
+// linkRotationHop is one page of a scripted provider sequence: the records the
+// page carries and, unless the provider ends the source at that page, the next
+// target it declares.
+type linkRotationHop struct {
+	records string
+	link    string
+}
+
+// linkRotationWindow serves a scripted multi-hop Link sequence to one read:
+// every requested page answers with its scripted records and next target, and
+// the window records the wire query of every request it received, in order.
+type linkRotationWindow struct {
+	server    *httptest.Server
+	origin    string
+	operation contract.Operation
+	codec     *memoryContinuationCodec
+	binding   ContinuationBinding
+	admitter  *testAdmitter
+	dialer    *mappedDialer
+
+	mu      sync.Mutex
+	queries []string
+}
+
+func startLinkRotationWindow(t *testing.T, script map[string]linkRotationHop) *linkRotationWindow {
+	t.Helper()
+	operation := testLinkOperation("link-provider-cursor-rotation")
+	if err := operation.Execution.Pagination.Validate(operation); err != nil {
+		t.Fatalf("Link pagination fact: %v", err)
+	}
+	window := &linkRotationWindow{
+		operation: operation,
+		codec:     newMemoryContinuationCodec(),
+		binding:   linkTestBinding(operation.OperationID),
+		admitter:  &testAdmitter{},
+	}
+	window.server = httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		window.mu.Lock()
+		window.queries = append(window.queries, request.URL.RawQuery)
+		window.mu.Unlock()
+		writer.Header().Set("Content-Type", "application/json")
+		hop, scripted := script[request.URL.Query().Get("page")]
+		if !scripted {
+			t.Errorf("unscripted cursor rotation page %q", request.URL.RawQuery)
+			writer.WriteHeader(http.StatusBadRequest)
+			return
+		}
+		if hop.link != "" {
+			writer.Header().Set("Link", hop.link)
+		}
+		_, _ = io.WriteString(writer, hop.records)
+	}))
+	t.Cleanup(window.server.Close)
+	window.origin = serverOrigin(t, window.server.URL)
+	window.dialer = &mappedDialer{address: window.server.Listener.Addr().String()}
+	return window
+}
+
+// attempt performs one admitted attempt against the scripted sequence.
+func (window *linkRotationWindow) attempt(t *testing.T, input, continuation contract.PresentValue) (HTTPExecution, error) {
+	t.Helper()
+	request := testHTTPRequest(t, window.operation, window.origin, time.Now().UTC(), input)
+	request.Continuation = continuation
+	return ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+		Admitter:      window.admitter,
+		Continuations: window.codec,
+		Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+		Dialer:        window.dialer,
+	}, request)
+}
+
+// follow performs the hop that must publish its page and returns the
+// continuation the next hop resumes from together with its sealed state.
+func (window *linkRotationWindow) follow(t *testing.T, hop int, ids string, input, continuation contract.PresentValue) (contract.PresentValue, ContinuationState) {
+	t.Helper()
+	page := window.served(t, hop, ids, input, continuation)
+	if page.SourceExhausted || page.Continuation.Presence() != contract.PresenceValue {
+		t.Fatalf("cursor rotation hop %d pagination = %#v", hop, page)
+	}
+	return page.Continuation, window.codec.mustState(t, window.binding, page.Continuation)
+}
+
+// exhaust performs the hop that must end the source without a continuation.
+func (window *linkRotationWindow) exhaust(t *testing.T, hop int, ids string, input, continuation contract.PresentValue) {
+	t.Helper()
+	page := window.served(t, hop, ids, input, continuation)
+	if !page.SourceExhausted || page.Continuation.Presence() != contract.PresenceAbsent {
+		t.Fatalf("cursor rotation hop %d pagination = %#v", hop, page)
+	}
+}
+
+// served performs the hop that must answer with a published page and returns
+// that page.
+func (window *linkRotationWindow) served(t *testing.T, hop int, ids string, input, continuation contract.PresentValue) *contract.ResultPagination {
+	t.Helper()
+	execution, err := window.attempt(t, input, continuation)
+	if err != nil {
+		t.Fatalf("cursor rotation hop %d: %v (cause %v)", hop, err, errors.Unwrap(err))
+	}
+	if execution.Result == nil || execution.Result.Pagination == nil {
+		t.Fatalf("cursor rotation hop %d published no pagination fact", hop)
+	}
+	rows, _ := execution.Result.Data.Elements()
+	if got := linkRecordIDs(rows); got != ids {
+		t.Fatalf("cursor rotation hop %d records = %q; want %q", hop, got, ids)
+	}
+	return execution.Result.Pagination
+}
+
+// observed returns the wire queries the scripted sequence received, in order.
+func (window *linkRotationWindow) observed() string {
+	window.mu.Lock()
+	defer window.mu.Unlock()
+	return strings.Join(window.queries, "|")
+}
+
+// requireLinkRotationHop pins one hop's sealed navigation and provider target.
+func requireLinkRotationHop(t *testing.T, hop int, state ContinuationState, page, target string) {
+	t.Helper()
+	next, present := state.NextInputs["page"].ExactNumber()
+	if !present || next.Text != page || len(state.NextInputs) != 1 {
+		t.Fatalf("cursor rotation hop %d sealed navigation = %#v; want page %s", hop, state.NextInputs, page)
+	}
+	if state.NextTarget == nil || state.NextTarget.RawQuery != target {
+		t.Fatalf("cursor rotation hop %d sealed target = %#v; want query %q", hop, state.NextTarget, target)
+	}
+}
+
+// linkRotationTarget renders one relative provider next target on the declared
+// operation path, carrying the given query exactly as the provider wrote it.
+func linkRotationTarget(query string) string {
+	return `</items?` + query + `>; rel="next"`
+}
+
+// TestLinkProviderCursorRotation pins the boundary between the two query
+// namespaces of one Link continuation. The declared query an accepted request
+// carried is caller authority and every later provider target must keep it
+// unchanged, but the opaque cursor namespace is the provider's own state: this
+// runtime replays the cursor of the sealed target, and the provider's next
+// target names the cursor of the page after that one. Each hop of such a
+// sequence must therefore publish its page with a usable continuation and the
+// last hop must end the source truthfully, while a target that changes a
+// declared parameter, drops the sent page size or makes no navigation progress
+// stays refused.
+func TestLinkProviderCursorRotation(t *testing.T) {
+	const firstPageQuery = "state=open&page=1&per_page=2"
+	const firstHopRecords = `[{"id":1,"open":true,"title":"one"},{"id":2,"open":true,"title":"two"}]`
+	firstHop := func(link string) linkRotationHop {
+		return linkRotationHop{records: firstHopRecords, link: link}
+	}
+	// The sealed target keeps the provider's own parameter order; the request
+	// that follows it is rendered in the declared field order with the
+	// provider's opaque cursors appended verbatim.
+	const (
+		firstHopTarget   = "state=open&per_page=2&page=2&after=" + firstRecordedCursor
+		firstHopQuery    = "state=open&page=2&per_page=2&after=" + firstRecordedCursor
+		secondHopTarget  = "state=open&per_page=2&page=3&after=" + secondRecordedCursor
+		secondHopQuery   = "state=open&page=3&per_page=2&after=" + secondRecordedCursor
+		droppedHopTarget = "state=open&per_page=2&page=3"
+		droppedHopQuery  = "state=open&page=3&per_page=2"
+	)
+
+	t.Run("a replaced opaque cursor is followed on every hop", func(t *testing.T) {
+		window := startLinkRotationWindow(t, map[string]linkRotationHop{
+			"1": firstHop(linkRotationTarget(firstHopTarget)),
+			"2": {records: `[{"id":3,"open":true,"title":"three"}]`,
+				link: linkRotationTarget(secondHopTarget)},
+			"3": {records: `[{"id":4,"open":true,"title":"four"}]`},
+		})
+		continuation, state := window.follow(t, 1, "1,2", linkInput(t, "open", new(uint64(1)), new(uint64(2))), contract.AbsentValue())
+		requireLinkRotationHop(t, 1, state, "2", firstHopTarget)
+
+		continuation, state = window.follow(t, 2, "3", linkInput(t, "open", nil, nil), continuation)
+		requireLinkRotationHop(t, 2, state, "3", secondHopTarget)
+
+		window.exhaust(t, 3, "4", linkInput(t, "open", nil, nil), continuation)
+
+		want := firstPageQuery + "|" + firstHopQuery + "|" + secondHopQuery
+		if got := window.observed(); got != want {
+			t.Fatalf("cursor rotation queried %q; want %q", got, want)
+		}
+		if window.admitter.calls.Load() != 3 || window.dialer.calls.Load() != 3 {
+			t.Fatalf("cursor rotation admits=%d dials=%d", window.admitter.calls.Load(), window.dialer.calls.Load())
+		}
+	})
+
+	t.Run("a dropped opaque cursor is never replayed", func(t *testing.T) {
+		window := startLinkRotationWindow(t, map[string]linkRotationHop{
+			"1": firstHop(linkRotationTarget(firstHopTarget)),
+			"2": {records: `[{"id":3,"open":true,"title":"three"}]`,
+				link: linkRotationTarget(droppedHopTarget)},
+			"3": {records: `[{"id":4,"open":true,"title":"four"}]`},
+		})
+		continuation, state := window.follow(t, 1, "1,2", linkInput(t, "open", new(uint64(1)), new(uint64(2))), contract.AbsentValue())
+		requireLinkRotationHop(t, 1, state, "2", firstHopTarget)
+
+		continuation, state = window.follow(t, 2, "3", linkInput(t, "open", nil, nil), continuation)
+		requireLinkRotationHop(t, 2, state, "3", droppedHopTarget)
+
+		window.exhaust(t, 3, "4", linkInput(t, "open", nil, nil), continuation)
+
+		want := firstPageQuery + "|" + firstHopQuery + "|" + droppedHopQuery
+		if got := window.observed(); got != want {
+			t.Fatalf("dropped cursor queried %q; want %q", got, want)
+		}
+	})
+
+	t.Run("a rotating cursor never admits a declared change", func(t *testing.T) {
+		for _, testCase := range []struct {
+			name string
+			link string
+		}{
+			{name: "changed accepted filter",
+				link: linkRotationTarget("state=closed&per_page=2&page=3&after=" + secondRecordedCursor)},
+			{name: "dropped sent page size",
+				link: linkRotationTarget("state=open&page=3&after=" + secondRecordedCursor)},
+			{name: "no navigation progress",
+				link: linkRotationTarget("state=open&per_page=2&page=2&after=" + secondRecordedCursor)},
+		} {
+			t.Run(testCase.name, func(t *testing.T) {
+				window := startLinkRotationWindow(t, map[string]linkRotationHop{
+					"1": firstHop(linkRotationTarget(firstHopTarget)),
+					"2": {records: `[{"id":3,"open":true,"title":"three"}]`, link: testCase.link},
+				})
+				continuation, _ := window.follow(t, 1, "1,2", linkInput(t, "open", new(uint64(1)), new(uint64(2))), contract.AbsentValue())
+				execution, err := window.attempt(t, linkInput(t, "open", nil, nil), continuation)
+				if !errors.Is(err, ErrNavigationConflict) || !execution.PhysicalSend {
+					t.Fatalf("rotating cursor execution=%#v error=%v", execution, err)
+				}
+				if execution.Result != nil && execution.Result.Pagination != nil {
+					t.Fatalf("rotating cursor published %#v", execution.Result.Pagination)
+				}
+				want := firstPageQuery + "|" + firstHopQuery
+				if got := window.observed(); got != want {
+					t.Fatalf("rotating cursor queried %q; want %q", got, want)
+				}
+				if window.admitter.calls.Load() != 2 || window.dialer.calls.Load() != 2 {
+					t.Fatalf("rotating cursor admits=%d dials=%d", window.admitter.calls.Load(), window.dialer.calls.Load())
+				}
+			})
+		}
+	})
+}
+
 // recordedGitHubCanonicalNextTarget is the provider navigation recorded from a
 // credential-free read of
 // https://api.github.com/repos/golang/go/issues?per_page=2&page=1 observed on

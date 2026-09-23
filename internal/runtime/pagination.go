@@ -805,11 +805,19 @@ func sealLinkContinuationTarget(
 		delete(currentQuery, limitBinding.WireName)
 		delete(nextQuery, limitBinding.WireName)
 	}
-	// Every parameter the request carried must survive the provider target
-	// unchanged; the target may only add parameters the admitted source does
-	// not declare, which are the provider's opaque cursor namespace. A declared
-	// parameter the request did not carry is a semantic change, not navigation.
+	// The request PM sends carries two query namespaces. A parameter that names
+	// a declared input field is caller authority, so it must survive the
+	// provider target unchanged. A parameter that names no declared field is the
+	// provider's opaque cursor namespace, which this runtime replayed from the
+	// sealed target of the previous hop: the provider owns it, so its next
+	// target may replace, change or drop it, and a provider that paginates by
+	// cursor issues a new one for every page. A declared parameter the request
+	// did not carry is a semantic change, not navigation; anything a target
+	// still carries after this loop is validated as the opaque cursor it is.
 	for name, sentValues := range currentQuery {
+		if !declaredQueryWireName(operation, name) {
+			continue
+		}
 		targetValues, carried := nextQuery[name]
 		if !carried || !slices.Equal(sentValues, targetValues) {
 			return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes unrelated query authority", ErrNavigationConflict)

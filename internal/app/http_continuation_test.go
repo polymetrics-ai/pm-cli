@@ -369,8 +369,15 @@ func TestDurableHTTPContinuationAcrossWorkerRestart(t *testing.T) {
 // provider-issued canonical-route target and its cursor survive a worker
 // restart inside the server-owned continuation, the next request is issued
 // against the provider's path with the cursor preserved verbatim, and the
-// records of every page must identify the same resource.
+// records of every page must identify the same resource. The provider issues a
+// fresh opaque cursor for the page every target names, so following the
+// continuation replaces the cursor this runtime replayed and the sealed target
+// of each hop carries only the declared query the accepted request must keep.
 func TestDurableLinkContinuationFollowsTheSealedProviderTarget(t *testing.T) {
+	const (
+		firstCursor  = `Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D`
+		secondCursor = `Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhcnVi%3D`
+	)
 	temporal := newPermitTemporalHarness(t)
 	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
 	consumer := testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway)
@@ -383,14 +390,19 @@ func TestDurableLinkContinuationFollowsTheSealedProviderTarget(t *testing.T) {
 		requests = append(requests, request.URL.EscapedPath()+"?"+request.URL.RawQuery)
 		mu.Unlock()
 		writer.Header().Set("Content-Type", "application/json")
-		if request.URL.Query().Get("page") == "1" {
+		switch request.URL.Query().Get("page") {
+		case "1":
 			writer.Header().Set("Link",
-				`</repositories/23096959/issues?project=chain&per_page=2&page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D>; rel="next"`)
+				`</repositories/23096959/issues?project=chain&per_page=2&page=2&after=`+firstCursor+`>; rel="next"`)
 			_, _ = io.WriteString(writer,
 				`{"records":[{"id":1,"repo":"golang/go"},{"id":2,"repo":"golang/go"}]}`)
-			return
+		case "2":
+			writer.Header().Set("Link",
+				`</repositories/23096959/issues?project=chain&per_page=2&page=3&after=`+secondCursor+`>; rel="next"`)
+			_, _ = io.WriteString(writer, `{"records":[{"id":3,"repo":"golang/go"}]}`)
+		default:
+			_, _ = io.WriteString(writer, `{"records":[{"id":4,"repo":"golang/go"}]}`)
 		}
-		_, _ = io.WriteString(writer, `{"records":[{"id":3,"repo":"golang/go"}]}`)
 	}))
 	authority := &durableContinuationAuthority{
 		selection: durableLinkContinuationSelection("fixture.http.link-continuation", origin),
@@ -440,15 +452,30 @@ func TestDurableLinkContinuationFollowsTheSealedProviderTarget(t *testing.T) {
 	}
 	secondResult := loadDurableContinuationResult(t, fixture, second.RunRef)
 	assertDurableContinuationIDs(t, secondResult, 3)
-	if secondResult.Pagination == nil || !secondResult.Pagination.SourceExhausted ||
-		secondResult.Pagination.Continuation.Presence() != contract.PresenceAbsent {
-		t.Fatalf("link continuation final pagination = %#v", secondResult.Pagination)
+	secondToken := requireDurableContinuationToken(t, secondResult)
+
+	third := admitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope,
+		fixture.Connection.ConnectionID, "durable-link-continuation-third",
+		contract.NewObjectValue(map[string]contract.PresentValue{}), continuationControls(secondToken),
+	)
+	thirdRun := preparePermitWorkerRun(t, fixture, consumerService, temporal, fixture.Scope, fixture.Actor, third)
+	thirdUnit, err := executePermitWorkerUnit(t, consumerService, thirdRun)
+	if err != nil || thirdUnit.State != contract.RunStateSucceeded {
+		t.Fatalf("link continuation third unit = %#v error=%v", thirdUnit, err)
+	}
+	thirdResult := loadDurableContinuationResult(t, fixture, third.RunRef)
+	assertDurableContinuationIDs(t, thirdResult, 4)
+	if thirdResult.Pagination == nil || !thirdResult.Pagination.SourceExhausted ||
+		thirdResult.Pagination.Continuation.Presence() != contract.PresenceAbsent {
+		t.Fatalf("link continuation final pagination = %#v", thirdResult.Pagination)
 	}
 	mu.Lock()
 	got := strings.Join(requests, "|")
 	mu.Unlock()
 	want := "/fixture?project=chain&page=1&per_page=2|" +
-		"/repositories/23096959/issues?project=chain&page=2&per_page=2&after=Y3Vyc29yOnYyOpLPAAABoLjpTwjPAAAAAUhclFY%3D"
+		"/repositories/23096959/issues?project=chain&page=2&per_page=2&after=" + firstCursor + "|" +
+		"/repositories/23096959/issues?project=chain&page=3&per_page=2&after=" + secondCursor
 	if got != want {
 		t.Fatalf("link continuation requests = %q; want %q", got, want)
 	}
