@@ -27,8 +27,8 @@
       "target": "docs/architecture/pm-server/architecture/PLAN.md",
       "source": "data/pm-cli/architecture/PLAN.md",
       "source_sha256": "6d153d808841269207a7a4c840551ebbfce8649a118b92a7b8eb0d4b353925e3",
-      "sha256": "7d522516ee494c7f6d7c138f435ef084a725665e6f1bb40bafe9a68ff8ee5dde",
-      "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; imported planning state does not certify implementation. Applied accepted issue #3 TD27 development-native host-identity amendment (issuecomment-5687998290); immutable build-image qualification remains required before image-based or release-native builds. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled the M3 tree with physical ownership; this projection is not implementation, review or CI evidence. Recorded required explicit run_lifetime for the immutable admission budget policy."
+      "sha256": "1bb40b0dd3d7d58d65605cc41e6b5675dbf47f837246046245fc645e1a7db9f4",
+      "transformation": "Integrated accepted F01/F02/F03/AUTH/PostgreSQL decisions, exact source identity, ownership ordering, milestones and planned evidence; imported planning state does not certify implementation. Applied accepted issue #3 TD27 development-native host-identity amendment (issuecomment-5687998290); immutable build-image qualification remains required before image-based or release-native builds. Registered M3 identity/credential migrations 0003/0004 before the unimplemented later migration ordinals; preserved existing owners, requirements, cases and dependencies. Reconciled the M3 tree with physical ownership; this projection is not implementation, review or CI evidence. Recorded required explicit run_lifetime for the immutable admission budget policy. Corrected the publication-era paused/unexecuted status statements to the landed candidate's actual state; the recorded digest covers that corrected text."
     },
     {
       "target": "docs/architecture/pm-server/architecture/ADRS.md",
@@ -266,8 +266,8 @@
       "target": "docs/architecture/pm-server/proposals/github-binding-proposal.md",
       "source": "data/setup-evidence/bdd-preparation/references/github-binding-proposal.md",
       "source_sha256": "a117c758f02f7da82c82bc43b1b2b121d62dabdd5fa583bf304642d6f0cb787f",
-      "sha256": "95886e0466fed117e501ee333fc12b43f9d63ef79790997b32320047c0c4ec78",
-      "transformation": "Retained as a closed historical proposal pointing to accepted F02/F03 authority and remaining implementation proof."
+      "sha256": "658e0450547acaafb69f3119ad7492d4c035fc45c55069c5ad5c38bc7893777d",
+      "transformation": "Retained as a closed historical proposal pointing to accepted F02/F03 authority and remaining implementation proof. Status corrected to the landed implementation; live provider proof and the declared-source ownership remain unexecuted."
     },
     {
       "target": "docs/architecture/pm-server/proposals/github-operation-closure.json",
