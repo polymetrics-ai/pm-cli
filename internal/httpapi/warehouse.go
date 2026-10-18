@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"net/http"
@@ -165,7 +166,7 @@ func (service *Service) RunWarehouseQuery(
 		Actor:               state.identity.Actor,
 		Scope:               scope,
 		Layout:              layout,
-		QueryID:             "warehouse-query",
+		QueryID:             warehouseQueryID(),
 		SnapshotID:          snapshotID,
 		Query:               query,
 		Bindings:            bindings,
@@ -180,6 +181,14 @@ func (service *Service) RunWarehouseQuery(
 		return asProblemResponse(err, nil), nil
 	}
 	return RunWarehouseQuery200JSONResponse(projected), nil
+}
+
+// warehouseQueryID derives one fresh, unguessable identity for a single query
+// execution. The query service stages each execution's registered objects in a
+// private directory named by this identity, so concurrent queries never share
+// or collide on one staging directory.
+func warehouseQueryID() string {
+	return "warehouse-query-" + rand.Text()
 }
 
 // concealedWarehouseSelector translates the query service's refusals about the

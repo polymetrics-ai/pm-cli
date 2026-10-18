@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -755,6 +756,8 @@ func TestETLQueryPublicPath(t *testing.T) {
 	published := harness.starts.count()
 	workspace := harness.fixture.Scope.WorkspaceID
 	client := harness.fixture.Client
+	// concurrent is the number of authorized typed queries raced at once.
+	const concurrent = 4
 
 	t.Run("connection_schema_read_answers_the_promoted_snapshot", func(t *testing.T) {
 		before := harness.starts.count()
@@ -885,6 +888,72 @@ func TestETLQueryPublicPath(t *testing.T) {
 		harness.requireStartDelta(t, before, acknowledgedPages, "the typed query")
 	})
 
+	t.Run("concurrent_typed_queries_stage_privately", func(t *testing.T) {
+		before := harness.starts.count()
+		staged := func() []string {
+			entries, err := os.ReadDir(harness.staging)
+			if err != nil {
+				t.Fatalf("read the query staging root: %v", err)
+			}
+			names := make([]string, 0, len(entries))
+			for _, entry := range entries {
+				names = append(names, entry.Name())
+			}
+			return names
+		}
+		retained := staged()
+		encoded, err := json.Marshal(harness.queryDocument(etlDatasetName, int64(acknowledgedPages*etlPageRows)+1))
+		if err != nil {
+			t.Fatalf("encode the declared query: %v", err)
+		}
+		endpoint := harness.queryRoutePath(workspace)
+		type answer struct {
+			response warehouseRouteResponse
+			err      error
+		}
+		answers := make(chan answer, concurrent)
+		start := make(chan struct{})
+		for range concurrent {
+			go func() {
+				<-start
+				ctx, cancel := context.WithTimeout(context.Background(), etlHTTPTimeout)
+				defer cancel()
+				request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(encoded))
+				if err != nil {
+					answers <- answer{err: err}
+					return
+				}
+				request.Header.Set("Content-Type", "application/json")
+				response, err := client.Do(request)
+				if err != nil {
+					answers <- answer{err: err}
+					return
+				}
+				defer func() { _ = response.Body.Close() }()
+				document, err := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+				answers <- answer{response: warehouseRouteResponse{status: response.StatusCode, document: document}, err: err}
+			}()
+		}
+		close(start)
+		wantRows := acknowledgedPages * etlPageRows
+		for range concurrent {
+			got := <-answers
+			if got.err != nil {
+				t.Fatalf("concurrent authorized query failed to complete: %v", got.err)
+			}
+			result := decodeWarehouseRoute[api.WarehouseQueryResult](t, got.response, http.StatusOK)
+			if result.Truncated || len(result.Rows) != wantRows {
+				t.Fatalf("concurrent query answered %d rows (truncated=%t); want the %d acknowledged rows",
+					len(result.Rows), result.Truncated, wantRows)
+			}
+		}
+		harness.requireStartDelta(t, before, concurrent*acknowledgedPages, "the concurrent typed queries")
+		// Every execution's private staging directory is removed once it answers.
+		if after := staged(); !slices.Equal(after, retained) {
+			t.Fatalf("query staging root holds %v after every query answered; want only the prior %v", after, retained)
+		}
+	})
+
 	t.Run("a_wrong_workspace_or_another_callers_authority_is_concealed", func(t *testing.T) {
 		before := harness.starts.count()
 		foreignWorkspace := harness.fixture.ForeignScope.WorkspaceID
@@ -968,10 +1037,11 @@ func TestETLQueryPublicPath(t *testing.T) {
 	})
 
 	// Across every route above, the only child processes that ran are the ones
-	// the answered typed query needs, one per registered segment. Every
-	// concealed and every refused request ran none; the pages this case
-	// acknowledged are excluded by the count taken after them.
-	harness.requireStartDelta(t, published, acknowledgedPages, "the public read path")
+	// the answered typed queries need, one per registered segment for the single
+	// query and for each concurrent one. Every concealed and every refused
+	// request ran none; the pages this case acknowledged are excluded by the
+	// count taken after them.
+	harness.requireStartDelta(t, published, (1+concurrent)*acknowledgedPages, "the public read path")
 }
 
 // requireConnectionIdentity asserts that one answered read reports the exact
