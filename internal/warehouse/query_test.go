@@ -425,6 +425,104 @@ func warehouseRows(t *testing.T, ids ...int64) [][]warehouse.QueryValue {
 	return rows
 }
 
+// TestCrossSegmentReadMatchesSingleSegment requires a read merged across
+// registered segments to return exactly what the restricted child returns for
+// the same rows held in one segment: ordering names the relation's own columns,
+// never an output alias. Every read is real: the segments are published, staged and executed
+// through the restricted child against the owned stack.
+func TestCrossSegmentReadMatchesSingleSegment(t *testing.T) {
+	harness := newWarehouseHarness(t)
+	ctx := context.Background()
+	service := harness.newService(t)
+	// rows[0] is id 1 in region north and rows[3] is id 4 in region east, so
+	// ordering by the relation's id and ordering by the region text disagree.
+	low, high := harness.rows[0], harness.rows[3]
+	harness.publishSegment(t, "cross-high", [][]warehouse.QueryValue{high})
+	harness.publishSegment(t, "cross-low", [][]warehouse.QueryValue{low})
+	harness.publishSegment(t, "cross-both", [][]warehouse.QueryValue{low, high})
+	snapshot, err := service.Snapshot(ctx, harness.fixture.Actor, harness.fixture.Scope,
+		warehouse.SnapshotReadRequest{Layout: harness.layout})
+	if err != nil {
+		t.Fatalf("resolve the published segments: %v", err)
+	}
+	if len(snapshot.Segments) != 3 {
+		t.Fatalf("published read view holds %d segments; want 3", len(snapshot.Segments))
+	}
+	split, single := snapshot.Segments[:2], snapshot.Segments[2:]
+	read := func(t *testing.T, queryID string, segments []warehouse.QuerySnapshotSegment,
+		selection warehouse.QuerySelect, bounds warehouse.QueryBounds) warehouse.QueryResponse {
+		t.Helper()
+		response, err := service.Read(ctx, warehouse.ReadRequest{
+			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope, Layout: harness.layout,
+			QueryID: queryID, Select: selection, Segments: segments,
+			MaximumSegmentBytes: warehouseMaximumSegment, Bounds: bounds,
+		})
+		if err != nil {
+			t.Fatalf("read %s: %v", queryID, err)
+		}
+		return response
+	}
+	requireSameResult := func(t *testing.T, merged, reference warehouse.QueryResponse) {
+		t.Helper()
+		if !reflect.DeepEqual(merged.Columns, reference.Columns) {
+			t.Fatalf("merged columns differ from the single-segment columns:\n got %s\nwant %s",
+				describeColumns(merged.Columns), describeColumns(reference.Columns))
+		}
+		if !reflect.DeepEqual(merged.Rows, reference.Rows) || merged.Truncated != reference.Truncated {
+			t.Fatalf("merged read differs from the single-segment read:\n got %s (truncated %t)\nwant %s (truncated %t)",
+				describeRows(merged.Rows), merged.Truncated, describeRows(reference.Rows), reference.Truncated)
+		}
+	}
+
+	t.Run("ordering_names_relation_columns_not_output_aliases", func(t *testing.T) {
+		// id is projected as shown, and region is projected under the name id.
+		// The ordering still names the relation's id column.
+		for _, descending := range []bool{false, true} {
+			selection := warehouse.QuerySelect{
+				From: harness.layout.RelationName(),
+				Project: []warehouse.QueryProjection{
+					{Column: "id", Alias: "shown"},
+					{Column: "region", Alias: "id"},
+				},
+				Order: []warehouse.QueryOrder{{Column: "id", Descending: descending}},
+				Limit: 1,
+			}
+			suffix := fmt.Sprintf("%t", descending)
+			reference := read(t, "alias-single-"+suffix, single, selection, harness.bounds)
+			wanted := low
+			if descending {
+				wanted = high
+			}
+			if len(reference.Rows) != 1 || !reflect.DeepEqual(reference.Rows[0][0], wanted[0]) {
+				t.Fatalf("single-segment ORDER BY id (descending %t) LIMIT 1 = %s; want relation id %s",
+					descending, describeRows(reference.Rows), describeRows([][]warehouse.QueryValue{{wanted[0]}}))
+			}
+			requireSameResult(t, read(t, "alias-merged-"+suffix, split, selection, harness.bounds), reference)
+		}
+	})
+
+	t.Run("an_ordering_column_that_is_not_projected_is_refused_across_segments", func(t *testing.T) {
+		// Only region is projected, under the relation column name id: the
+		// relation's id cannot be compared across segments from the output.
+		_, err := service.Read(ctx, warehouse.ReadRequest{
+			Actor: harness.fixture.Actor, Scope: harness.fixture.Scope, Layout: harness.layout,
+			QueryID: "alias-unprojected",
+			Select: warehouse.QuerySelect{
+				From:    harness.layout.RelationName(),
+				Project: []warehouse.QueryProjection{{Column: "region", Alias: "id"}},
+				Order:   []warehouse.QueryOrder{{Column: "id"}},
+				Limit:   1,
+			},
+			Segments: split, MaximumSegmentBytes: warehouseMaximumSegment, Bounds: harness.bounds,
+		})
+		var refused *warehouse.Refusal
+		if !errors.As(err, &refused) || refused.Code != warehouse.RefusalUnknownColumn {
+			t.Fatalf("cross-segment ordering by an unprojected relation column = %v; want an unknown-column refusal", err)
+		}
+	})
+
+}
+
 // TestQueryReturnsRowsAndRejectsWrites is the V37 acceptance case. It reads
 // registered immutable segments through the real restricted child, binds typed
 // saved-query parameters, and observes that statement text, write shapes, file

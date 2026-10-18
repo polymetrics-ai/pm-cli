@@ -387,7 +387,7 @@ func (service *QueryService) Read(ctx context.Context, request ReadRequest) (Que
 		}
 		responses = append(responses, segmentResponse)
 	}
-	rows, truncated, err := mergeSegmentResponses(request.Select.Order, responses, request.Select.Limit)
+	rows, truncated, err := mergeSegmentResponses(request.Select.Order, request.Select.Project, responses, request.Select.Limit)
 	if err != nil {
 		return QueryResponse{}, err
 	}
@@ -619,8 +619,18 @@ func validateWarehouseRequestID(value string) error {
 // segments. A declared ordering is applied across segments only when every
 // ordering key is present in every row: the protocol declares no null placement,
 // so a merge over a nullable ordering key is refused rather than guessed.
+//
+// An ordering names a relation column, never an output alias. That is the
+// namespace QuerySelect.Validate admits an ordering in and the namespace the
+// restricted child orders one segment in: its statement projects unaliased
+// expressions and orders by the relation's own column identifier, so with id
+// projected as shown and other projected as id, ORDER BY id orders by the
+// relation's id. The merge therefore locates each ordering key through the
+// projection that reads that relation column, and refuses an ordering whose
+// relation column is not projected, because the merged rows cannot compare it.
 func mergeSegmentResponses(
 	order []QueryOrder,
+	project []QueryProjection,
 	responses []QueryResponse,
 	limit int64,
 ) ([][]QueryValue, bool, error) {
@@ -639,15 +649,20 @@ func mergeSegmentResponses(
 			}
 		}
 		position := make(map[string]int, len(order))
-		for index, column := range responses[0].Columns {
-			position[column.Name] = index
+		for index, projection := range project {
+			if _, seen := position[projection.Column]; !seen && index < len(responses[0].Columns) {
+				position[projection.Column] = index
+			}
+		}
+		for _, decision := range order {
+			if _, declared := position[decision.Column]; !declared {
+				return nil, false, refusal(RefusalUnknownColumn,
+					"the ordering names relation column %q, which is not projected", decision.Column)
+			}
 		}
 		for _, row := range rows {
 			for _, decision := range order {
-				index, declared := position[decision.Column]
-				if !declared {
-					return nil, false, refusal(RefusalUnknownColumn, "the ordering names column %q, which is not projected", decision.Column)
-				}
+				index := position[decision.Column]
 				if row[index].IsNull() {
 					return nil, false, refusal(RefusalProtocol,
 						"a cross-segment ordering over the nullable column %q has no declared null placement", decision.Column)
