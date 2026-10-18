@@ -68,11 +68,16 @@ const (
 	sqlExecutionMetadataNameColumn = "column_name"
 	sqlExecutionMetadataTypeColumn = "data_type"
 
-	sqlExecutionKeyText     = "9007199254740993"
-	sqlExecutionAmountText  = "12345.6700"
-	sqlExecutionInstantText = "2026-09-19T06:00:00.123456+02:00"
-	sqlExecutionLocalText   = "2026-09-19T06:00:00.123456"
-	sqlExecutionInstantUTC  = "2026-09-19T04:00:00.123456Z"
+	sqlExecutionKeyText = "9007199254740993"
+	// sqlExecutionAmountText is an exact decimal whose own precision (five
+	// digits) is below the numeric(9,4) column's, with trailing zeros: the
+	// column, not the value's digit count, decides whether it fits, and the
+	// exact text survives both the bound write and the published read.
+	sqlExecutionAmountText      = "1.2300"
+	sqlExecutionAmountPrecision = 5
+	sqlExecutionInstantText     = "2026-09-19T06:00:00.123456+02:00"
+	sqlExecutionLocalText       = "2026-09-19T06:00:00.123456"
+	sqlExecutionInstantUTC      = "2026-09-19T04:00:00.123456Z"
 
 	sqlExecutionUpsertNote = "declared mapped upsert"
 	sqlExecutionSelectNote = "seeded bounded select row"
@@ -302,7 +307,7 @@ func sqlExecutionUpsertInput(t *testing.T) contract.PresentValue {
 	t.Helper()
 	return contract.NewObjectValue(map[string]contract.PresentValue{
 		sqlExecutionFieldID("record_id"):   sqlExecutionInteger(t, sqlExecutionKeyText),
-		sqlExecutionFieldID("amount"):      sqlExecutionDecimal(t, sqlExecutionAmountText, 9, 4),
+		sqlExecutionFieldID("amount"):      sqlExecutionDecimal(t, sqlExecutionAmountText, sqlExecutionAmountPrecision, 4),
 		sqlExecutionFieldID("flagged"):     contract.NewBooleanValue(true),
 		sqlExecutionFieldID("note"):        contract.NewStringValue(sqlExecutionUpsertNote),
 		sqlExecutionFieldID("observed_at"): sqlExecutionInstant(t, sqlExecutionInstantText),
@@ -364,8 +369,9 @@ func assertSQLExecutionExactRow(t *testing.T, row contract.PresentValue, note st
 		t.Fatalf("published record_id = %#v; want exact %s", fields["record_id"], sqlExecutionKeyText)
 	}
 	amount, ok := fields["amount"].ExactNumber()
-	if !ok || amount.Text != sqlExecutionAmountText || amount.Precision != 9 || amount.Scale != 4 {
-		t.Fatalf("published amount = %#v; want exact %s(9,4)", fields["amount"], sqlExecutionAmountText)
+	if !ok || amount.Text != sqlExecutionAmountText || amount.Precision != sqlExecutionAmountPrecision || amount.Scale != 4 {
+		t.Fatalf("published amount = %#v; want exact %s(%d,4) from the numeric(9,4) column",
+			fields["amount"], sqlExecutionAmountText, sqlExecutionAmountPrecision)
 	}
 	if flagged, ok := fields["flagged"].Boolean(); !ok || !flagged {
 		t.Fatalf("published flagged = %#v; want true", fields["flagged"])

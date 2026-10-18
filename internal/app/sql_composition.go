@@ -634,8 +634,13 @@ func sqlColumnValue(column pmruntime.SQLColumn, value contract.PresentValue) (pm
 		}
 		return converted, nil
 	case pmruntime.SQLNumeric:
+		// The column's declared numeric(precision, scale) decides whether an
+		// exact number fits, never the value's own digit count: 1.2300 carries
+		// precision 5 and fits numeric(9,4). The runtime admits the exact text
+		// only when the column holds it without rounding or overflow, so the
+		// bound text is the caller's exact decimal.
 		number, ok := value.ExactNumber()
-		if !ok || number.Precision != column.Precision || number.Scale != column.Scale {
+		if !ok || number.Scale > column.Scale {
 			return pmruntime.SQLValue{}, sqlValueTypeError(column)
 		}
 		converted, err := pmruntime.SQLNumericValue(number.Text, column.Precision, column.Scale)
@@ -809,11 +814,16 @@ func sqlRowValue(value pmruntime.SQLValue) (contract.PresentValue, error) {
 		}
 		return converted, nil
 	case pmruntime.SQLNumeric:
+		// The transport number carries the column's declared numeric(precision,
+		// scale); the published decimal carries the exact returned text with
+		// that text's own precision and scale, which is what a typed decimal
+		// value declares.
 		number, ok := value.Number()
 		if !ok {
 			return contract.PresentValue{}, sqlRowValueError(value)
 		}
-		converted, err := contract.NewDecimalValue(number.Text, number.Precision, number.Scale)
+		precision, scale := sqlDecimalTextShape(number.Text)
+		converted, err := contract.NewDecimalValue(number.Text, precision, scale)
 		if err != nil {
 			return contract.PresentValue{}, fmt.Errorf("%w: %v", ErrSQLStatementUnavailable, err)
 		}
@@ -853,6 +863,25 @@ func sqlRowValue(value pmruntime.SQLValue) (contract.PresentValue, error) {
 	default:
 		return contract.PresentValue{}, sqlRowValueError(value)
 	}
+}
+
+// sqlDecimalTextShape reports the precision and scale one exact decimal text
+// itself carries: every digit, and the digits after its point. The contract
+// decimal constructor still validates the whole rendering.
+func sqlDecimalTextShape(text string) (int, int) {
+	digits, scale, fractional := 0, 0, false
+	for _, character := range text {
+		switch {
+		case character == '.':
+			fractional = true
+		case character >= '0' && character <= '9':
+			digits++
+			if fractional {
+				scale++
+			}
+		}
+	}
+	return digits, scale
 }
 
 func sqlRowValueError(value pmruntime.SQLValue) error {

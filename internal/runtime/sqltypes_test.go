@@ -392,6 +392,58 @@ func TestLosslessParameterizedSQL(t *testing.T) {
 	})
 }
 
+// TestSQLNumericFitsDeclaredPrecisionAndScale admits a decimal by the column's
+// declared numeric(precision, scale), never by the value's own digit count: at
+// most precision-scale significant integer digits and at most scale fractional
+// digits, with trailing zeros admitted and the exact text retained. A value the
+// column would round or overflow is refused.
+func TestSQLNumericFitsDeclaredPrecisionAndScale(t *testing.T) {
+	for _, admitted := range []struct {
+		exact            string
+		precision, scale int
+	}{
+		{"1.2300", 9, 4},
+		{"12345.6700", 9, 4},
+		{"-1.2300", 9, 4},
+		{"1.23", 9, 4},
+		{"0.1234", 4, 4},
+		{"-0.5000", 4, 4},
+		{"0", 4, 0},
+		{"9999", 4, 0},
+	} {
+		value, err := SQLNumericValue(admitted.exact, admitted.precision, admitted.scale)
+		if err != nil {
+			t.Fatalf("SQLNumericValue(%q, %d, %d) refused a value its column holds exactly: %v",
+				admitted.exact, admitted.precision, admitted.scale, err)
+		}
+		number, ok := value.Number()
+		if !ok || number.Text != admitted.exact {
+			t.Fatalf("SQLNumericValue(%q, %d, %d) retained %#v; want the exact text",
+				admitted.exact, admitted.precision, admitted.scale, number)
+		}
+		if encoded, err := value.parameterBytes(); err != nil || string(encoded) != admitted.exact {
+			t.Fatalf("SQLNumericValue(%q, %d, %d) bound %q, %v; want the exact text",
+				admitted.exact, admitted.precision, admitted.scale, encoded, err)
+		}
+	}
+	for _, refused := range []struct {
+		exact            string
+		precision, scale int
+	}{
+		{"1.23456", 9, 4},
+		{"123456.0000", 9, 4},
+		{"1.0000", 4, 4},
+		{"10000", 4, 0},
+		{"01.2300", 9, 4},
+		{"-0.0000", 9, 4},
+	} {
+		if _, err := SQLNumericValue(refused.exact, refused.precision, refused.scale); !errors.Is(err, ErrSQLValue) {
+			t.Fatalf("SQLNumericValue(%q, %d, %d) = %v; want a refusal the column cannot hold exactly",
+				refused.exact, refused.precision, refused.scale, err)
+		}
+	}
+}
+
 // TestSQLTimestampPrecisionIsNeverSilentlyLost refuses a timestamp whose
 // fraction carries a non-zero digit below the microsecond PostgreSQL timestamp
 // and timestamptz store, instead of binding a different instant or wall clock.

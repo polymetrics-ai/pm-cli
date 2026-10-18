@@ -149,9 +149,18 @@ func SQLNumericValue(exact string, precision, scale int) (SQLValue, error) {
 	if _, err := SQLNumeric.sqlTypeName(precision, scale); err != nil {
 		return SQLValue{}, err
 	}
+	// The declared numeric(precision, scale) holds at most precision-scale
+	// significant integer digits and at most scale fractional digits. A lone
+	// zero integer part is no significant digit, so 0.1234 fits numeric(4,4),
+	// and trailing fractional zeros are digits the column holds exactly. A value
+	// the column would round or overflow is refused, and the exact text is kept.
 	integerDigits, fractionDigits, ok := sqlDecimalShape(exact)
-	if !ok || fractionDigits != scale || integerDigits > precision-scale {
-		return SQLValue{}, fmt.Errorf("%w: numeric(%d,%d) text must carry exactly the declared scale", ErrSQLValue, precision, scale)
+	if ok && strings.HasPrefix(strings.TrimPrefix(exact, "-"), "0") {
+		integerDigits = 0
+	}
+	if !ok || fractionDigits > scale || integerDigits > precision-scale {
+		return SQLValue{}, fmt.Errorf("%w: numeric(%d,%d) cannot hold the exact value without rounding or overflow",
+			ErrSQLValue, precision, scale)
 	}
 	return SQLValue{kind: SQLNumeric, presence: contract.PresenceValue, text: exact, precision: precision, scale: scale}, nil
 }
