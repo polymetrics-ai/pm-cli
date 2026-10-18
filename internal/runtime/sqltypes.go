@@ -995,6 +995,8 @@ func sqlMappedUpsertStatement(
 	insertColumns := make([]string, 0, len(mapped))
 	valueExpressions := make([]string, 0, len(mapped))
 	updates := make([]string, 0, len(mapped))
+	retained := make([]string, 0, len(mapped))
+	proposed := make([]string, 0, len(mapped))
 	keys := make([]string, 0, len(relation.Columns))
 	for _, column := range relation.Columns {
 		quoted, err := QuoteSQLIdentifier(column.Name)
@@ -1025,23 +1027,42 @@ func sqlMappedUpsertStatement(
 		valueExpressions = append(valueExpressions, "CAST($"+strconv.Itoa(len(parameters))+" AS "+typeName+")")
 		if !column.Key {
 			updates = append(updates, quoted+" = EXCLUDED."+quoted)
+			retained = append(retained, sqlUpsertComparable(column.Kind, sqlUpsertTargetAlias+"."+quoted))
+			proposed = append(proposed, sqlUpsertComparable(column.Kind, "EXCLUDED."+quoted))
 		}
 	}
 	if len(insertColumns) == 0 {
 		return SQLStatement{}, fmt.Errorf("%w: mapped upsert requires at least one mapped column", ErrSQLStatement)
 	}
-	text := "INSERT INTO " + qualified + " (" + strings.Join(insertColumns, ", ") + ") VALUES (" +
-		strings.Join(valueExpressions, ", ") + ") ON CONFLICT (" + strings.Join(keys, ", ") + ")"
+	text := "INSERT INTO " + qualified + " AS " + sqlUpsertTargetAlias + " (" + strings.Join(insertColumns, ", ") +
+		") VALUES (" + strings.Join(valueExpressions, ", ") + ") ON CONFLICT (" + strings.Join(keys, ", ") + ")"
 	if len(updates) == 0 {
 		text += " DO NOTHING"
 	} else {
-		text += " DO UPDATE SET " + strings.Join(updates, ", ")
+		// A retained row whose mapped values already equal the proposed ones is
+		// never assigned: the conflict arm makes no physical update and returns
+		// no row, which the caller settles as unchanged.
+		text += " DO UPDATE SET " + strings.Join(updates, ", ") +
+			" WHERE ROW(" + strings.Join(retained, ", ") + ") IS DISTINCT FROM ROW(" + strings.Join(proposed, ", ") + ")"
 	}
 	text += " RETURNING " + projection
 	return SQLStatement{
 		Kind: contract.PostgreSQLStatementMappedUpsert, Text: text,
 		Parameters: parameters, Columns: relation.Columns,
 	}, nil
+}
+
+// sqlUpsertTargetAlias names the retained row of a mapped upsert's conflict arm.
+const sqlUpsertTargetAlias = "pm_target"
+
+// sqlUpsertComparable renders one mapped column for the unchanged-row guard.
+// json has no equality operator, so its exact stored text is compared; every
+// other declared kind compares by its own type equality.
+func sqlUpsertComparable(kind SQLValueKind, reference string) string {
+	if kind == SQLJSON {
+		return reference + "::text"
+	}
+	return reference
 }
 
 // sqlProjection renders every declared column as exactly one text-format

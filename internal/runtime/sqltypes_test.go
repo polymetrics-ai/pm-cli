@@ -164,6 +164,68 @@ func TestLosslessParameterizedSQL(t *testing.T) {
 		fixture.adminExec(t, ctx, `SET timezone = 'UTC'`)
 	})
 
+	t.Run("identical_repeat_makes_no_assignment", func(t *testing.T) {
+		const key = "41"
+		const jsonDocument = `{"z": 2, "a": [3, 1]}`
+		payload := []byte{0xca, 0xfe}
+		mapped := func(note string) []SQLColumnValue {
+			return []SQLColumnValue{
+				{Column: "record_id", Value: mustSQLInt8(t, key)},
+				{Column: "amount", Value: mustSQLNumeric(t, "7.5000", 9, 4)},
+				{Column: "flagged", Value: SQLBooleanValue(false)},
+				{Column: "note", Value: SQLTextValue(note)},
+				{Column: "optional_note", Value: SQLNullValue(SQLText)},
+				{Column: "observed_at", Value: mustSQLInstant(t, "2026-09-19T05:00:00.5+02:00")},
+				{Column: "local_wall", Value: mustSQLLocalTimestamp(t, "2026-09-19 05:00:00.5")},
+				{Column: "token", Value: mustSQLUUID(t, "3f2504e0-4f89-11d3-9a0c-0305e82c3302")},
+				{Column: "document_json", Value: mustSQLJSON(t, SQLJSON, jsonDocument)},
+				{Column: "document", Value: mustSQLJSON(t, SQLJSONB, jsonDocument)},
+				// An explicit probe value keeps every attempt, including a
+				// conflicting one, from advancing the declared default sequence.
+				{Column: "probe_id", Value: mustSQLInt8(t, "900")},
+			}
+		}
+		version := func() string {
+			row := fixture.adminRow(t, ctx, `SELECT xmin::text AS version, encode("payload", 'hex') AS payload, "note" FROM "customer"."records" WHERE "record_id" = 41`)
+			if row["version"] == nil || row["payload"] == nil || *row["payload"] != hex.EncodeToString(payload) {
+				t.Fatalf("row 41 lost its unmapped payload or version: %v", row)
+			}
+			return *row["version"]
+		}
+		seed := append(mapped("unchanged repeat"), SQLColumnValue{Column: "payload", Value: SQLByteaValue(payload)})
+		observation, err := fixture.execute(t, ctx, sqlTestCall(t, upsert, connection, fixture.relation, seed, sqlTestLimits(), now))
+		if err != nil || observation.Outcome != SQLOutcomeKnownCommit || len(observation.Rows) != 1 {
+			t.Fatalf("seeding upsert observation=%#v error=%v; want one inserted row", observation, err)
+		}
+		inserted := version()
+
+		// The repeat omits the unmapped payload and carries exactly the stored
+		// mapped values: it commits with no assignment and returns no row.
+		observation, err = fixture.execute(t, ctx, sqlTestCall(t, upsert, connection, fixture.relation, mapped("unchanged repeat"), sqlTestLimits(), now))
+		if err != nil || observation.Outcome != SQLOutcomeKnownCommit {
+			t.Fatalf("identical repeat observation=%#v error=%v", observation, err)
+		}
+		if len(observation.Rows) != 0 {
+			t.Fatalf("identical repeat returned %d assigned rows; want none", len(observation.Rows))
+		}
+		if repeated := version(); repeated != inserted {
+			t.Fatalf("identical mapped values physically updated the row: xmin changed from %s to %s", inserted, repeated)
+		}
+
+		// One changed mapped value is assigned, returned, and still preserves
+		// the unmapped payload.
+		observation, err = fixture.execute(t, ctx, sqlTestCall(t, upsert, connection, fixture.relation, mapped("changed repeat"), sqlTestLimits(), now))
+		if err != nil || observation.Outcome != SQLOutcomeKnownCommit || len(observation.Rows) != 1 {
+			t.Fatalf("changed repeat observation=%#v error=%v; want one assigned row", observation, err)
+		}
+		if note, ok := sqlValueOf(t, observation.Rows[0], "note").Text(); !ok || note != "changed repeat" {
+			t.Fatalf("changed repeat returned note %q; want the assigned value", note)
+		}
+		if changed := version(); changed == inserted {
+			t.Fatalf("a changed mapped value was not assigned: xmin stayed %s", changed)
+		}
+	})
+
 	t.Run("injection_cannot_alter_declared_query_or_scope", func(t *testing.T) {
 		const payload = `'; DROP TABLE "customer"."unrelated"; --`
 		before := fixture.adminRow(t, ctx, `SELECT count(*)::text AS rows, min("note") AS note FROM "customer"."unrelated"`)

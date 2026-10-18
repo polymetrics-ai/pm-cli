@@ -726,6 +726,13 @@ func (bound sqlBoundOperation) project(
 			break
 		}
 		state = contract.OutcomeSucceeded
+		if request.Operation.Transport.StatementKind == contract.PostgreSQLStatementMappedUpsert &&
+			len(observation.Rows) == 0 {
+			// A committed mapped upsert returns its row only when it inserted or
+			// assigned one; a conflict whose mapped values were already equal
+			// made no assignment and settles as unchanged.
+			state = contract.OutcomeUnchanged
+		}
 	case pmruntime.SQLOutcomeUnknownCommit:
 		state = contract.OutcomeUnknown
 	default:

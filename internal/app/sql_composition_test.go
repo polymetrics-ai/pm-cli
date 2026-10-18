@@ -175,6 +175,19 @@ func TestSQLExecutionCompositionWorkerBehavior(t *testing.T) {
 			run.outcome != contract.OutcomeSucceeded || run.attempts != 1 || run.dials != 1 {
 			t.Fatalf("upsert settlement = %#v; want one committed admitted attempt", run)
 		}
+		committed := harness.customer.rowVersion(t)
+		// An exact repeat of the same mapped values commits with no assignment
+		// and settles unchanged rather than as a second applied effect.
+		repeat := harness.executeOperation(
+			t, temporal, sqlExecutionUpsertID, contract.LaneDirectWrite, sqlExecutionUpsertInput(t), "sql-execution-upsert-repeat",
+		)
+		if repeat.state != contract.RunStateSucceeded || repeat.unknownEffects != 0 ||
+			repeat.outcome != contract.OutcomeUnchanged || repeat.attempts != 1 || repeat.dials != 1 {
+			t.Fatalf("identical upsert repeat settlement = %#v; want one unchanged admitted attempt", repeat)
+		}
+		if version := harness.customer.rowVersion(t); version != committed {
+			t.Fatalf("identical upsert repeat physically updated the row: xmin changed from %s to %s", committed, version)
+		}
 		rows := harness.publishedRows(t, run)
 		if len(rows) != 1 {
 			t.Fatalf("upsert returned rows = %d; want the one committed returning row", len(rows))
@@ -1007,6 +1020,21 @@ func (customer *sqlCustomerDatabase) seedRow(t *testing.T) {
 		`("record_id", "amount", "flagged", "note", "optional_note", "observed_at", "local_wall") VALUES (`+
 		sqlExecutionKeyText+`, `+sqlExecutionAmountText+`, true, '`+sqlExecutionSelectNote+`', NULL, `+
 		`'`+sqlExecutionInstantText+`'::timestamptz, '`+sqlExecutionLocalText+`'::timestamp)`)
+}
+
+// rowVersion reports the physical row version of the declared key through the
+// customer relation's own owner connection.
+func (customer *sqlCustomerDatabase) rowVersion(t *testing.T) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	results, readErr := customer.owner.Exec(ctx, `SELECT xmin::text FROM "`+sqlExecutionSchema+`"."`+
+		sqlExecutionRelation+`" WHERE "record_id" = `+sqlExecutionKeyText).ReadAll()
+	if readErr != nil || len(results) != 1 || results[0].Err != nil || len(results[0].Rows) != 1 ||
+		len(results[0].Rows[0]) != 1 || results[0].Rows[0][0] == nil {
+		t.Fatalf("independent customer row version observation = %#v error %v", results, readErr)
+	}
+	return string(results[0].Rows[0][0])
 }
 
 // requireCommittedUpsertRow observes the committed row through the customer
