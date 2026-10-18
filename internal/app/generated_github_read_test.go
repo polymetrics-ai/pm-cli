@@ -331,11 +331,14 @@ func runGeneratedGitHubRead(
 		t.Fatal("controlled composition did not construct its actual registry, resolver and publisher")
 	}
 	// The fixture seeds its own connection identity; the committed bundle's
-	// connector is what the real resolver must find on that durable row.
+	// connector is what the real resolver must find on that durable row. This
+	// case is credential-free: the connection binds no credential, so the
+	// optional GitHub Bearer channel sends no Authorization header. A connection
+	// that names a credential which is missing or stale still refuses.
 	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
 		tag, err := tx.Exec(ctx, `
 			UPDATE pm.connections
-			SET connector_id = $4
+			SET connector_id = $4, credential_ref = ''
 			WHERE org_id = $1 AND workspace_id = $2 AND connection_id = $3
 		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, fixture.Connection.ConnectionID, facts.bundle.ConnectorID)
 		if err != nil {
