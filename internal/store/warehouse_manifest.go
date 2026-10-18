@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"time"
 
@@ -556,7 +557,9 @@ func AdvanceWarehouseCursor(
 
 // RetainWarehouseSegment records one durable holder of one registered segment.
 // Exact replay returns the stored row; a different holder identity for the same
-// position is a conflict.
+// position is a conflict. A caller that retains several segments in one
+// transaction retains them in ascending ordinal order, which is the order every
+// retention and retirement locks segment rows in.
 func RetainWarehouseSegment(ctx context.Context, tx *Transaction, retention WarehouseRetention) (WarehouseRetention, error) {
 	scope, err := tx.requireScope()
 	if err != nil {
@@ -565,6 +568,13 @@ func RetainWarehouseSegment(ctx context.Context, tx *Transaction, retention Ware
 	if retention.Scope != scope || !validStoreID(retention.DatasetID) || retention.Ordinal == 0 ||
 		!retention.Kind.Valid() || !validStoreID(retention.HolderID) {
 		return WarehouseRetention{}, errors.New("warehouse retention request is invalid")
+	}
+	// The share lock serializes this holder against a concurrent collection
+	// of the same segment: a collection that committed first is observed as
+	// collected here, and a collection that has not yet committed waits for
+	// this transaction and then observes this holder.
+	if err := lockWarehouseSegment(ctx, tx, retention.DatasetID, retention.Ordinal, warehouseSegmentShareLock); err != nil {
+		return WarehouseRetention{}, err
 	}
 	segment, err := LoadWarehouseSegmentAt(ctx, tx, retention.DatasetID, retention.Ordinal)
 	if err != nil {
@@ -653,6 +663,13 @@ func CreateWarehouseSnapshot(ctx context.Context, tx *Transaction, snapshot Ware
 	}
 	if snapshot.ManifestRevision > manifest.Revision {
 		return WarehouseSnapshot{}, ErrImmutableConflict
+	}
+	// Every candidate member is share-locked, in ascending ordinal order,
+	// before membership is computed, so a concurrent retirement either
+	// committed first and is observed below, or waits for this snapshot and
+	// then observes it as a holder.
+	if err := lockWarehouseSegmentsThrough(ctx, tx, snapshot.DatasetID, snapshot.ManifestRevision); err != nil {
+		return WarehouseSnapshot{}, err
 	}
 	segments, err := LoadWarehouseSegments(ctx, tx, snapshot.DatasetID)
 	if err != nil {
@@ -825,11 +842,25 @@ func RetireWarehouseSegments(
 		return retirement, err
 	}
 	retiredRevision := manifest.Revision
-	seen := make(map[uint64]struct{}, len(ordinals))
 	for _, ordinal := range ordinals {
 		if ordinal == 0 || ordinal >= retiredRevision {
 			return retirement, errors.New("warehouse retirement request is invalid")
 		}
+	}
+	// Every named segment is locked for update, in ascending ordinal order,
+	// before its holders are read. A retention holder share-locks the same
+	// row before it is recorded, so a holder that committed first is observed
+	// below, and a holder still being recorded makes this retirement wait for
+	// it; a segment a committed holder names is therefore never collected.
+	locked := append([]uint64(nil), ordinals...)
+	slices.Sort(locked)
+	for _, ordinal := range locked {
+		if err := lockWarehouseSegment(ctx, tx, datasetID, ordinal, warehouseSegmentUpdateLock); err != nil {
+			return retirement, err
+		}
+	}
+	seen := make(map[uint64]struct{}, len(ordinals))
+	for _, ordinal := range ordinals {
 		if _, duplicate := seen[ordinal]; duplicate {
 			continue
 		}
@@ -881,6 +912,64 @@ func RetireWarehouseSegments(
 
 // maximumWarehouseRetirementOrdinals bounds one retirement request.
 const maximumWarehouseRetirementOrdinals = 4096
+
+// warehouseSegmentLock is the row lock strength one segment path takes. A
+// retention holder takes the share lock and a retirement takes the update
+// lock, so holders never wait for each other but a holder and a retirement of
+// the same segment always serialize.
+type warehouseSegmentLock string
+
+const (
+	warehouseSegmentShareLock  warehouseSegmentLock = "FOR SHARE"
+	warehouseSegmentUpdateLock warehouseSegmentLock = "FOR UPDATE"
+)
+
+// lockWarehouseSegment locks one registered segment row until the transaction
+// ends. A missing row takes no lock; the caller's own load reports it.
+func lockWarehouseSegment(
+	ctx context.Context,
+	tx *Transaction,
+	datasetID string,
+	ordinal uint64,
+	strength warehouseSegmentLock,
+) error {
+	scope, err := tx.requireScope()
+	if err != nil {
+		return err
+	}
+	if !validStoreID(datasetID) || ordinal == 0 ||
+		strength != warehouseSegmentShareLock && strength != warehouseSegmentUpdateLock {
+		return errors.New("warehouse segment lock request is invalid")
+	}
+	if _, err := tx.exec(ctx, `
+		SELECT segment_ordinal
+		FROM pm.warehouse_segments
+		WHERE org_id = $1 AND workspace_id = $2 AND dataset_id = $3 AND segment_ordinal = $4
+		`+string(strength), scope.OrgID, scope.WorkspaceID, datasetID, int64(ordinal)); err != nil {
+		return fmt.Errorf("lock warehouse segment: %w", err)
+	}
+	return nil
+}
+
+// lockWarehouseSegmentsThrough share-locks every registered segment of one
+// dataset at or below one revision, in ascending ordinal order, which is the
+// order a retirement takes its update locks in.
+func lockWarehouseSegmentsThrough(ctx context.Context, tx *Transaction, datasetID string, revision uint64) error {
+	scope, err := tx.requireScope()
+	if err != nil {
+		return err
+	}
+	if _, err := tx.exec(ctx, `
+		SELECT segment_ordinal
+		FROM pm.warehouse_segments
+		WHERE org_id = $1 AND workspace_id = $2 AND dataset_id = $3 AND segment_ordinal <= $4
+		ORDER BY segment_ordinal
+		FOR SHARE
+	`, scope.OrgID, scope.WorkspaceID, datasetID, int64(revision)); err != nil {
+		return fmt.Errorf("lock warehouse snapshot segments: %w", err)
+	}
+	return nil
+}
 
 func validColumnFingerprint(value string) bool {
 	return len(value) == len("sha256:")+64 && value[:len("sha256:")] == "sha256:" && validLowerHex(value[len("sha256:"):])

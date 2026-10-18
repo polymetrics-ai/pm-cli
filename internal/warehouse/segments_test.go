@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
@@ -452,6 +453,173 @@ func TestSnapshotMembershipFollowsCompaction(t *testing.T) {
 		if !reflect.DeepEqual(response.Rows, pinned.rows) {
 			t.Fatalf("snapshot %s rows differ:\n got %s\nwant %s", pinned.id, describeRows(response.Rows), describeRows(pinned.rows))
 		}
+	}
+}
+
+// TestConcurrentSnapshotPinAndCollection races a snapshot pin against the
+// collection of a segment the pin names, many times and in every interleaving:
+// the pin held open while collection runs, collection held open while the pin
+// runs, and both released together. Exactly one may win. A committed holder
+// keeps its segment retained, a lost pin is refused as a conflict, and a
+// segment is never collected while a committed snapshot names it, so every
+// committed snapshot stays readable through the restricted child.
+func TestConcurrentSnapshotPinAndCollection(t *testing.T) {
+	harness := newWarehouseHarness(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	datasetID := harness.layout.DatasetID()
+	within := func(ctx context.Context, operation func(context.Context, *store.Transaction) error) error {
+		return store.WithinScope(ctx, harness.fixture.Pool, harness.fixture.Scope, harness.fixture.Actor, operation)
+	}
+	// hold runs one transaction, reports its operation's outcome before
+	// commit, and keeps the transaction open until release is closed.
+	hold := func(operation func(context.Context, *store.Transaction) error, ready chan<- error, release <-chan struct{}) error {
+		return within(ctx, func(ctx context.Context, tx *store.Transaction) error {
+			err := operation(ctx, tx)
+			ready <- err
+			if err != nil {
+				return err
+			}
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		})
+	}
+	// A second operation either finishes on its own or is still waiting on
+	// the held transaction when it is released; both are legal, and only the
+	// committed state decides the case.
+	await := func(done <-chan error, into chan<- error) {
+		select {
+		case err := <-done:
+			into <- err
+		case <-time.After(300 * time.Millisecond):
+			go func() { into <- <-done }()
+		}
+	}
+	lostRace := func(err error) bool {
+		return errors.Is(err, store.ErrImmutableConflict) || errors.Is(err, store.ErrCASConflict)
+	}
+	const rounds = 8
+	var lastSnapshot string
+	var lastRows int64
+	for round := range rounds {
+		for index, mode := range []string{"pin-first", "collect-first", "together"} {
+			label := fmt.Sprintf("%s-%d", mode, round)
+			base := int64(10_000 + round*10 + index*2)
+			target := harness.publishSegment(t, "race-target-"+label, warehouseRows(t, base))
+			filler := harness.publishSegment(t, "race-filler-"+label, warehouseRows(t, base+1))
+			ordinal := target.Segment.Ordinal
+			snapshotID := "race-snapshot-" + label
+			pin := func(ctx context.Context, tx *store.Transaction) error {
+				_, err := store.CreateWarehouseSnapshot(ctx, tx, store.WarehouseSnapshot{
+					Scope: harness.fixture.Scope, SnapshotID: snapshotID, DatasetID: datasetID,
+					ManifestRevision: filler.Segment.Ordinal,
+				})
+				return err
+			}
+			collect := func(ctx context.Context, tx *store.Transaction) error {
+				_, err := store.RetireWarehouseSegments(ctx, tx, datasetID, []uint64{ordinal})
+				return err
+			}
+			pinned, collected := make(chan error, 1), make(chan error, 1)
+			ready := make(chan error, 1)
+			release := make(chan struct{})
+			switch mode {
+			case "pin-first":
+				go func() { pinned <- hold(pin, ready, release) }()
+				if err := <-ready; err != nil {
+					t.Fatalf("%s: pin the snapshot: %v", label, err)
+				}
+				waiting := make(chan error, 1)
+				go func() { waiting <- within(ctx, collect) }()
+				await(waiting, collected)
+				close(release)
+			case "collect-first":
+				go func() { collected <- hold(collect, ready, release) }()
+				if err := <-ready; err != nil {
+					t.Fatalf("%s: collect the segment: %v", label, err)
+				}
+				waiting := make(chan error, 1)
+				go func() { waiting <- within(ctx, pin) }()
+				await(waiting, pinned)
+				close(release)
+			default:
+				start := make(chan struct{})
+				go func() { <-start; pinned <- within(ctx, pin) }()
+				go func() { <-start; collected <- within(ctx, collect) }()
+				close(start)
+			}
+			pinErr, collectErr := <-pinned, <-collected
+			if pinErr != nil && !lostRace(pinErr) {
+				t.Fatalf("%s: the snapshot pin failed without a conflict: %v", label, pinErr)
+			}
+			if collectErr != nil && !lostRace(collectErr) {
+				t.Fatalf("%s: the collection failed without a conflict: %v", label, collectErr)
+			}
+			if pinErr != nil && collectErr != nil {
+				t.Fatalf("%s: neither the pin nor the collection committed: %v; %v", label, pinErr, collectErr)
+			}
+
+			var segment store.WarehouseSegment
+			var holders []store.WarehouseRetention
+			if err := within(ctx, func(ctx context.Context, tx *store.Transaction) error {
+				var err error
+				if segment, err = store.LoadWarehouseSegmentAt(ctx, tx, datasetID, ordinal); err != nil {
+					return err
+				}
+				holders, err = store.LoadWarehouseRetention(ctx, tx, datasetID, ordinal)
+				return err
+			}); err != nil {
+				t.Fatalf("%s: load the raced segment: %v", label, err)
+			}
+			if segment.State == store.WarehouseSegmentCollected && len(holders) > 0 {
+				t.Fatalf("%s: segment %d was collected while a committed holder exists: %d holders",
+					label, ordinal, len(holders))
+			}
+			t.Logf("%s: pin error %v, collection error %v, segment %d %s with %d holders",
+				label, pinErr, collectErr, ordinal, segment.State, len(holders))
+			if pinErr != nil {
+				continue
+			}
+			snapshot, err := harness.manifest.LoadSnapshot(ctx, harness.fixture.Actor, harness.fixture.Scope, snapshotID)
+			if err != nil {
+				t.Fatalf("%s: load the committed snapshot: %v", label, err)
+			}
+			var rows int64
+			for _, member := range snapshot.Segments {
+				retained, err := harness.manifest.SegmentAt(ctx, harness.fixture.Actor, harness.fixture.Scope, member)
+				if err != nil {
+					t.Fatalf("%s: load snapshot member %d: %v", label, member, err)
+				}
+				if retained.State == store.WarehouseSegmentCollected {
+					t.Fatalf("%s: segment %d was collected while committed snapshot %s names it", label, member, snapshotID)
+				}
+				if err := harness.consumer.Backend.Verify(ctx, retained.Object); err != nil {
+					t.Fatalf("%s: snapshot member %d is unreadable: %v", label, member, err)
+				}
+				rows += retained.RowCount
+			}
+			lastSnapshot, lastRows = snapshotID, rows
+		}
+	}
+	if lastSnapshot == "" {
+		t.Fatal("no snapshot pin committed in any round")
+	}
+	// The last committed snapshot still reads every row it pinned.
+	response, err := harness.newService(t).Query(ctx, harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
+		request.QueryID = "race-snapshot-read"
+		request.SnapshotID = lastSnapshot
+		request.Query.Limit = lastRows + 1
+	}))
+	if err != nil {
+		t.Fatalf("query the committed snapshot %s: %v", lastSnapshot, err)
+	}
+	if int64(len(response.Rows)) != lastRows || response.Truncated {
+		t.Fatalf("committed snapshot %s read %d rows (truncated %t); want its %d pinned rows",
+			lastSnapshot, len(response.Rows), response.Truncated, lastRows)
 	}
 }
 

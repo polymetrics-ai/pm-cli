@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
@@ -525,8 +526,13 @@ func (manifest *DatasetManifest) RetainSegments(
 	if !request.Kind.Valid() || request.HolderID == "" || len(request.Ordinals) == 0 {
 		return refusal(RefusalProtocol, "a retention request requires a kind, a holder identity, and at least one segment")
 	}
+	// Segments are retained in ascending ordinal order, the order every
+	// retention and retirement locks segment rows in, so two holders and a
+	// retirement never wait on each other in a cycle.
+	ordinals := append([]uint64(nil), request.Ordinals...)
+	slices.Sort(ordinals)
 	return store.WithinScope(ctx, manifest.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
-		for _, ordinal := range request.Ordinals {
+		for _, ordinal := range ordinals {
 			if _, err := store.RetainWarehouseSegment(ctx, tx, store.WarehouseRetention{
 				Scope: scope, DatasetID: manifest.layout.DatasetID(), Ordinal: ordinal,
 				Kind: request.Kind, HolderID: request.HolderID,
