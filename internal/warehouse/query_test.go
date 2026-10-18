@@ -428,7 +428,8 @@ func warehouseRows(t *testing.T, ids ...int64) [][]warehouse.QueryValue {
 // TestCrossSegmentReadMatchesSingleSegment requires a read merged across
 // registered segments to return exactly what the restricted child returns for
 // the same rows held in one segment: ordering names the relation's own columns,
-// never an output alias. Every read is real: the segments are published, staged and executed
+// never an output alias, and the merged result never exceeds the declared row
+// bound. Every read is real: the segments are published, staged and executed
 // through the restricted child against the owned stack.
 func TestCrossSegmentReadMatchesSingleSegment(t *testing.T) {
 	harness := newWarehouseHarness(t)
@@ -521,6 +522,26 @@ func TestCrossSegmentReadMatchesSingleSegment(t *testing.T) {
 		}
 	})
 
+	t.Run("the_merged_result_never_exceeds_the_declared_row_bound", func(t *testing.T) {
+		bounds := harness.bounds
+		bounds.Rows = 1
+		selection := warehouse.QuerySelect{
+			From:    harness.layout.RelationName(),
+			Project: allColumnProjections(harness.columns),
+			Order:   []warehouse.QueryOrder{{Column: "id"}},
+			Limit:   2,
+		}
+		reference := read(t, "bound-single", single, selection, bounds)
+		if len(reference.Rows) != 1 || !reference.Truncated {
+			t.Fatalf("single-segment read under a one-row bound = %d rows (truncated %t); want one truncated row",
+				len(reference.Rows), reference.Truncated)
+		}
+		merged := read(t, "bound-merged", split, selection, bounds)
+		if int64(len(merged.Rows)) > bounds.Rows {
+			t.Fatalf("merged read returned %d rows despite the declared row bound %d", len(merged.Rows), bounds.Rows)
+		}
+		requireSameResult(t, merged, reference)
+	})
 }
 
 // TestQueryReturnsRowsAndRejectsWrites is the V37 acceptance case. It reads

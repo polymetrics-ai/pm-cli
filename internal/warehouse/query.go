@@ -368,13 +368,17 @@ func (service *QueryService) Read(ctx context.Context, request ReadRequest) (Que
 		}
 	}
 
+	// The merged result is bounded exactly as one segment's result is: by the
+	// smaller of the declared limit and the declared row bound. Each segment
+	// may return up to that same bound, which is all a correct cross-segment
+	// ordering needs, and the merge cuts the union back to it and reports the
+	// cut through the existing truncated flag.
+	rowBound := min(request.Select.Limit, request.Bounds.Rows)
 	responses := make([]QueryResponse, 0, len(relations))
 	for _, relation := range relations {
 		segmentSelect := request.Select
 		segmentBounds := request.Bounds
-		if segmentBounds.Rows > segmentSelect.Limit {
-			segmentBounds.Rows = segmentSelect.Limit
-		}
+		segmentBounds.Rows = rowBound
 		segmentResponse, err := service.child.Execute(ctx, QueryRequest{
 			RequestID:           request.QueryID,
 			AdmittedDirectories: []string{directory},
@@ -387,7 +391,7 @@ func (service *QueryService) Read(ctx context.Context, request ReadRequest) (Que
 		}
 		responses = append(responses, segmentResponse)
 	}
-	rows, truncated, err := mergeSegmentResponses(request.Select.Order, request.Select.Project, responses, request.Select.Limit)
+	rows, truncated, err := mergeSegmentResponses(request.Select.Order, request.Select.Project, responses, rowBound)
 	if err != nil {
 		return QueryResponse{}, err
 	}
