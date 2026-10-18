@@ -35,6 +35,7 @@ go_test(
         "closure_test.go",
         "dialect_test.go",
         "fidelity_test.go",
+        "link_policy_test.go",
         "sensitivity_test.go",
     ],
     data = glob(["testdata/**"]),

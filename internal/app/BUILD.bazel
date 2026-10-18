@@ -59,6 +59,7 @@ go_test(
         "http_execution_test.go",
         "http_retry_test.go",
         "lifecycle_test.go",
+        "load_boundary_test.go",
         "physical_boundary_test.go",
         "provider_http_tls_test.go",
         "worker_plan_test.go",

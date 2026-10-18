@@ -145,7 +145,8 @@
         "internal/contract/value.go",
         "internal/contract/digest.go",
         "internal/contract/compatibility.go",
-        "internal/contract/operation_input.go"
+        "internal/contract/operation_input.go",
+        "internal/contract/link_policy_test.go"
       ],
       "package": "contract",
       "process_owner": "All processes, pure values",
@@ -547,7 +548,8 @@
         "internal/compile/sensitivity.go",
         "cmd/pmgen/connector.go",
         "cmd/pmgen/connector_test.go",
-        "internal/compile/closure_test.go"
+        "internal/compile/closure_test.go",
+        "internal/compile/link_policy_test.go"
       ],
       "package": "compile",
       "process_owner": "Build tools",
