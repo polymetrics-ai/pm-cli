@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
@@ -27,6 +28,7 @@ const (
 	snapshotDirectoryName        = "schema"
 	snapshotPayloadDirectoryName = "snapshots"
 	selectionFileName            = "config.json"
+	selectionLockFileName        = "selection.lock"
 	selectionMemberName          = "schema_ref"
 
 	privateFileMode     = os.FileMode(0o600)
@@ -563,6 +565,14 @@ func (store *Store) Promote(binding Binding, candidate Candidate, expected contr
 			return Snapshot{}, errorf(ErrSelectionConflict, "expected", "must be a declared content digest")
 		}
 	}
+	// The expected-selection comparison and the replacement are one critical
+	// section across every store and process bound to this connection state, so
+	// competing promotions of the same expected selection admit exactly one.
+	unlock, err := store.lockSelection()
+	if err != nil {
+		return Snapshot{}, err
+	}
+	defer unlock()
 	selected, present, err := store.Selection()
 	if err != nil {
 		return Snapshot{}, err
@@ -580,6 +590,47 @@ func (store *Store) Promote(binding Binding, candidate Candidate, expected contr
 		return Snapshot{}, err
 	}
 	return snapshot, nil
+}
+
+// lockSelection takes the connection's exclusive selection lock. The lock is an
+// advisory lock on a private regular file below the snapshot directory, so it
+// excludes every other open of the same connection state, in this process or
+// another, until the returned release runs.
+func (store *Store) lockSelection() (func(), error) {
+	directory := filepath.Join(store.directory, snapshotDirectoryName)
+	if err := os.MkdirAll(directory, snapshotPrivateMode); err != nil {
+		return nil, errorf(ErrSelectionUnavailable, "selection lock", "directory is unavailable")
+	}
+	information, err := os.Lstat(directory)
+	if err != nil || information.Mode()&os.ModeSymlink != 0 || !information.IsDir() || information.Mode().Perm()&0o077 != 0 {
+		return nil, errorf(ErrSelectionUnavailable, "selection lock", "directory must be private")
+	}
+	lock, err := os.OpenFile(
+		filepath.Join(directory, selectionLockFileName),
+		os.O_RDWR|os.O_CREATE|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, privateFileMode,
+	)
+	if err != nil {
+		return nil, errorf(ErrSelectionUnavailable, "selection lock", "could not be opened")
+	}
+	held, err := lock.Stat()
+	if err != nil || !held.Mode().IsRegular() || held.Mode().Perm()&0o077 != 0 {
+		lock.Close()
+		return nil, errorf(ErrSelectionUnavailable, "selection lock", "must be a private regular file")
+	}
+	for {
+		err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX)
+		if !errors.Is(err, syscall.EINTR) {
+			break
+		}
+	}
+	if err != nil {
+		lock.Close()
+		return nil, errorf(ErrSelectionUnavailable, "selection lock", "could not be acquired")
+	}
+	return func() {
+		_ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+		_ = lock.Close()
+	}, nil
 }
 
 func validBoundedIdentity(value string) bool {

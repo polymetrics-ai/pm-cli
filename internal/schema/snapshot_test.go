@@ -474,3 +474,58 @@ func decodeConfigDocument(t *testing.T, directory string) map[string]json.RawMes
 	}
 	return members
 }
+
+// TestSchemaPromotionCompareAndSwapAdmitsOneWriter races competing promotions
+// of one expected selection through independently opened stores over the same
+// connection state, as separate processes would. Exactly one replacement is
+// admitted; every other writer observes the selection conflict.
+func TestSchemaPromotionCompareAndSwapAdmitsOneWriter(t *testing.T) {
+	const writers = 20
+	binding := testBinding(testAccountID)
+	store := testStore(t, binding)
+	active := promoteComplete(t, store, binding)
+
+	candidates := make([]Candidate, writers)
+	for index := range candidates {
+		fields := append(testFields(), Field{
+			Name: "variant_" + strings.Repeat("v", index+1), Pointer: "/properties/variant_" + strings.Repeat("v", index+1),
+			Schema: contract.Schema{Type: contract.SchemaTypeString},
+		})
+		candidates[index] = testCandidate(t, binding, fields)
+	}
+	start := make(chan struct{})
+	results := make(chan error, writers)
+	for index := range candidates {
+		writer, err := NewStore(store.directory)
+		if err != nil {
+			t.Fatalf("NewStore for writer %d: %v", index, err)
+		}
+		go func(writer *Store, candidate Candidate) {
+			<-start
+			_, err := writer.Promote(binding, candidate, active.Fingerprint)
+			results <- err
+		}(writer, candidates[index])
+	}
+	close(start)
+	admitted := 0
+	for range writers {
+		err := <-results
+		switch {
+		case err == nil:
+			admitted++
+		case errors.Is(err, ErrSelectionConflict):
+		default:
+			t.Errorf("competing promotion failed with %v; want success or %v", err, ErrSelectionConflict)
+		}
+	}
+	if admitted != 1 {
+		t.Fatalf("compare-and-swap admitted %d competing replacements of the same expected snapshot; want exactly 1", admitted)
+	}
+	selected, present, err := store.Selection()
+	if err != nil || !present || selected == active.Fingerprint {
+		t.Fatalf("selection after the race = %q present=%t err=%v; want the one admitted replacement", selected, present, err)
+	}
+	if !slices.Equal(stateEntryNames(t, store.directory), []string{selectionFileName, snapshotDirectoryName}) {
+		t.Fatalf("connection state entries = %v; want the config and the snapshot directory only", stateEntryNames(t, store.directory))
+	}
+}
