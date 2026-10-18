@@ -393,6 +393,68 @@ func segmentPath(left, right warehouse.SegmentBytes, attemptID string) string {
 	return right.Path
 }
 
+// TestSnapshotMembershipFollowsCompaction pins snapshots on both sides of a
+// compaction. A compaction retires its sources at the revision that publishes
+// their replacement, so a snapshot of that revision or a later one holds the
+// replacement alone, never the retained sources beside it, while a snapshot of
+// an earlier revision still holds exactly the sources that revision served.
+func TestSnapshotMembershipFollowsCompaction(t *testing.T) {
+	harness := newWarehouseHarness(t)
+	ctx := context.Background()
+	harness.publishSegment(t, "source-one", harness.rows[:2])
+	harness.publishSegment(t, "source-two", harness.rows[2:4])
+	// A snapshot of the sources keeps them retained, so compaction cannot
+	// collect them: they stay in the ledger as retired segments.
+	if _, err := harness.manifest.TakeSnapshot(ctx, harness.fixture.Actor, harness.fixture.Scope,
+		warehouse.SnapshotRequest{SnapshotID: "before-compaction", Revision: 2}); err != nil {
+		t.Fatalf("pin the source revision: %v", err)
+	}
+	compacted, err := warehouse.CompactDatasetSegments(ctx, harness.manifest, harness.newService(t), warehouse.CompactionRequest{
+		Actor: harness.fixture.Actor, Scope: harness.fixture.Scope,
+		ThroughRevision: 2, AttemptID: "compaction", Bounds: harness.bounds,
+	})
+	if err != nil {
+		t.Fatalf("compact the source segments: %v", err)
+	}
+	replacement := compacted.Published.Ordinal
+	if replacement != 3 || len(compacted.Retained) != 2 {
+		t.Fatalf("compaction published ordinal %d and retained %d sources; want ordinal 3 retaining both sources",
+			replacement, len(compacted.Retained))
+	}
+	harness.publishSegment(t, "after-compaction", harness.rows[4:6])
+
+	for _, pinned := range []struct {
+		id       string
+		revision uint64
+		want     []uint64
+		rows     [][]warehouse.QueryValue
+	}{
+		{"at-compaction", replacement, []uint64{replacement}, harness.rows[:4]},
+		{"after-compaction", replacement + 1, []uint64{replacement, replacement + 1}, harness.rows[:6]},
+		{"source-revision-again", 2, []uint64{1, 2}, harness.rows[:4]},
+	} {
+		snapshot, err := harness.manifest.TakeSnapshot(ctx, harness.fixture.Actor, harness.fixture.Scope,
+			warehouse.SnapshotRequest{SnapshotID: pinned.id, Revision: pinned.revision})
+		if err != nil {
+			t.Fatalf("pin revision %d as %s: %v", pinned.revision, pinned.id, err)
+		}
+		if !reflect.DeepEqual(snapshot.Segments, pinned.want) {
+			t.Fatalf("snapshot %s of revision %d holds segments %v; want exactly %v",
+				pinned.id, pinned.revision, snapshot.Segments, pinned.want)
+		}
+		response, err := harness.newService(t).Query(ctx, harness.datasetQuery(t, func(request *warehouse.DatasetQueryRequest) {
+			request.QueryID = "snapshot-" + pinned.id
+			request.SnapshotID = pinned.id
+		}))
+		if err != nil {
+			t.Fatalf("query snapshot %s: %v", pinned.id, err)
+		}
+		if !reflect.DeepEqual(response.Rows, pinned.rows) {
+			t.Fatalf("snapshot %s rows differ:\n got %s\nwant %s", pinned.id, describeRows(response.Rows), describeRows(pinned.rows))
+		}
+	}
+}
+
 // segmentDigestOf renders the canonical digest of a local byte payload.
 func segmentDigestOf(payload []byte) string {
 	digest := sha256.Sum256(payload)

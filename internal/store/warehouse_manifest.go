@@ -658,9 +658,20 @@ func CreateWarehouseSnapshot(ctx context.Context, tx *Transaction, snapshot Ware
 	if err != nil {
 		return WarehouseSnapshot{}, err
 	}
+	superseded, err := loadWarehouseRetirementsThrough(ctx, tx, snapshot.DatasetID, snapshot.ManifestRevision)
+	if err != nil {
+		return WarehouseSnapshot{}, err
+	}
 	retained := make([]uint64, 0, len(segments))
 	for _, segment := range segments {
+		// Membership at the revision is every ordinal registered by then that
+		// was not already retired by then: a compacted source is not a member
+		// beside the replacement that superseded it, even while a retention
+		// holder keeps its bytes.
 		if segment.Ordinal > snapshot.ManifestRevision {
+			continue
+		}
+		if _, retired := superseded[segment.Ordinal]; retired {
 			continue
 		}
 		if segment.State == WarehouseSegmentCollected {
@@ -696,6 +707,42 @@ func CreateWarehouseSnapshot(ctx context.Context, tx *Transaction, snapshot Ware
 	snapshot.Segments = retained
 	snapshot.CreatedAt = createdAt
 	return snapshot, nil
+}
+
+// loadWarehouseRetirementsThrough reports every ordinal of one dataset that a
+// manifest revision at or before the given revision retired.
+func loadWarehouseRetirementsThrough(
+	ctx context.Context,
+	tx *Transaction,
+	datasetID string,
+	revision uint64,
+) (map[uint64]struct{}, error) {
+	scope, err := tx.requireScope()
+	if err != nil {
+		return nil, err
+	}
+	rows, err := tx.query(ctx, `
+		SELECT segment_ordinal
+		FROM pm.warehouse_segments
+		WHERE org_id = $1 AND workspace_id = $2 AND dataset_id = $3
+		  AND retired_revision IS NOT NULL AND retired_revision <= $4
+	`, scope.OrgID, scope.WorkspaceID, datasetID, int64(revision))
+	if err != nil {
+		return nil, fmt.Errorf("load warehouse segment retirements: %w", err)
+	}
+	defer rows.Close()
+	retired := make(map[uint64]struct{}, 8)
+	for rows.Next() {
+		var ordinal int64
+		if err := rows.Scan(&ordinal); err != nil {
+			return nil, fmt.Errorf("scan warehouse segment retirement: %w", err)
+		}
+		retired[uint64(ordinal)] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate warehouse segment retirements: %w", err)
+	}
+	return retired, nil
 }
 
 // LoadWarehouseSnapshot loads one retained snapshot and its exact segment set.
@@ -747,7 +794,10 @@ func LoadWarehouseSnapshot(ctx context.Context, tx *Transaction, snapshotID stri
 // RetireWarehouseSegments supersedes a set of registered segments. A segment
 // named by any retention holder is never collected: it moves to the retained
 // state and is reported with the holders that keep it. Only a segment that no
-// snapshot, plan, proof, backup or reservation names is collected.
+// snapshot, plan, proof, backup or reservation names is collected. The
+// retirement is recorded at the dataset's committed manifest revision in this
+// transaction, so a caller retires a segment in the same transaction that
+// advanced the manifest past it, and only an ordinal below that revision.
 func RetireWarehouseSegments(
 	ctx context.Context,
 	tx *Transaction,
@@ -766,9 +816,18 @@ func RetireWarehouseSegments(
 	if err != nil {
 		return retirement, err
 	}
+	// A segment retires at the manifest revision of the transaction that
+	// retires it: a compaction retires its sources in the transaction that
+	// registers their replacement, so that replacement's revision is the first
+	// revision whose membership no longer holds them.
+	manifest, err := LoadManifest(ctx, tx, datasetID)
+	if err != nil {
+		return retirement, err
+	}
+	retiredRevision := manifest.Revision
 	seen := make(map[uint64]struct{}, len(ordinals))
 	for _, ordinal := range ordinals {
-		if ordinal == 0 {
+		if ordinal == 0 || ordinal >= retiredRevision {
 			return retirement, errors.New("warehouse retirement request is invalid")
 		}
 		if _, duplicate := seen[ordinal]; duplicate {
@@ -796,9 +855,9 @@ func RetireWarehouseSegments(
 			if segment.State == WarehouseSegmentLive {
 				if _, err := tx.exec(ctx, `
 					UPDATE pm.warehouse_segments
-					SET state = 'retired', retired_at = $4
+					SET state = 'retired', retired_at = $4, retired_revision = $6
 					WHERE org_id = $1 AND workspace_id = $2 AND dataset_id = $3 AND segment_ordinal = $5
-				`, scope.OrgID, scope.WorkspaceID, datasetID, retiredAt, int64(ordinal)); err != nil {
+				`, scope.OrgID, scope.WorkspaceID, datasetID, retiredAt, int64(ordinal), int64(retiredRevision)); err != nil {
 					return retirement, warehouseWriteError("retire retained warehouse segment", err)
 				}
 			}
@@ -806,9 +865,10 @@ func RetireWarehouseSegments(
 		}
 		if _, err := tx.exec(ctx, `
 			UPDATE pm.warehouse_segments
-			SET state = 'collected', retired_at = $4, collected_at = $4
+			SET state = 'collected', retired_at = $4, collected_at = $4,
+			    retired_revision = COALESCE(retired_revision, $6)
 			WHERE org_id = $1 AND workspace_id = $2 AND dataset_id = $3 AND segment_ordinal = $5
-		`, scope.OrgID, scope.WorkspaceID, datasetID, retiredAt, int64(ordinal)); err != nil {
+		`, scope.OrgID, scope.WorkspaceID, datasetID, retiredAt, int64(ordinal), int64(retiredRevision)); err != nil {
 			return retirement, warehouseWriteError("collect warehouse segment", err)
 		}
 		retirement.Collected = append(retirement.Collected, ordinal)

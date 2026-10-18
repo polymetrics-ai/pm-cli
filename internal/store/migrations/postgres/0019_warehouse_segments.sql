@@ -57,11 +57,17 @@ CREATE TABLE pm.warehouse_segments (
     published_at timestamptz NOT NULL,
     retired_at timestamptz,
     collected_at timestamptz,
+    -- The manifest revision whose transaction retired the segment. Membership
+    -- at a revision is every registered ordinal up to it that was not retired
+    -- by then, so a compacted source never sits beside its replacement.
+    retired_revision bigint,
     PRIMARY KEY (org_id, workspace_id, dataset_id, segment_ordinal),
     UNIQUE (org_id, workspace_id, artifact_id),
     CHECK (manifest_revision = segment_ordinal),
     CHECK ((state = 'live') = (retired_at IS NULL AND collected_at IS NULL)),
     CHECK ((state = 'collected') = (collected_at IS NOT NULL)),
+    CHECK ((state = 'live') = (retired_revision IS NULL)),
+    CHECK (retired_revision IS NULL OR retired_revision > segment_ordinal),
     FOREIGN KEY (org_id, workspace_id, dataset_id)
         REFERENCES pm.warehouse_datasets (org_id, workspace_id, dataset_id) ON DELETE CASCADE,
     FOREIGN KEY (org_id, workspace_id, artifact_id, object_attempt_key)
@@ -80,6 +86,9 @@ BEGIN
            OLD.manifest_revision, OLD.artifact_id, OLD.object_attempt_key,
            OLD.row_count, OLD.column_fingerprint, OLD.schema_document, OLD.published_at) THEN
         RAISE EXCEPTION 'warehouse segment identity is immutable';
+    END IF;
+    IF OLD.retired_revision IS NOT NULL AND NEW.retired_revision IS DISTINCT FROM OLD.retired_revision THEN
+        RAISE EXCEPTION 'warehouse segment retirement revision is immutable';
     END IF;
     IF OLD.state = NEW.state THEN
         RETURN NEW;
@@ -173,7 +182,7 @@ GRANT INSERT (org_id, workspace_id, dataset_id, connector_id, connection_id)
 GRANT INSERT (org_id, workspace_id, dataset_id, segment_ordinal, manifest_revision, artifact_id,
               object_attempt_key, row_count, column_fingerprint, schema_document, state, published_at)
     ON pm.warehouse_segments TO pm_app_runtime;
-GRANT UPDATE (state, retired_at, collected_at) ON pm.warehouse_segments TO pm_app_runtime;
+GRANT UPDATE (state, retired_at, collected_at, retired_revision) ON pm.warehouse_segments TO pm_app_runtime;
 GRANT INSERT (org_id, workspace_id, dataset_id, cursor_ordinal, manifest_revision, advanced_at)
     ON pm.warehouse_dataset_cursors TO pm_app_runtime;
 GRANT UPDATE (cursor_ordinal, manifest_revision, advanced_at)
