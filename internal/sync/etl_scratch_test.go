@@ -1,12 +1,18 @@
 package sync_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5"
+
+	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
 
@@ -126,6 +132,125 @@ func TestPageAcknowledgedAfterCrashedAttemptScratch(t *testing.T) {
 		}
 		harness.assertPrefix(t, position)
 		requirePageArtifact(t, harness, position)
+	})
+}
+
+// TestPageAcknowledgedAfterUploadedUncommittedAttempt is the crash window after
+// a page's verified bytes reached the shared store but before its manifest
+// transaction committed. The dead attempt leaves a reservation permanently bound
+// to its own physical upload, so the next attempt at the same page must
+// supersede it under its own upload identity rather than collide with that
+// binding, while the cursor stays at the committed prefix until the retry
+// commits and the page is still published exactly once under its
+// position-derived identity.
+//
+// The window is driven for real: the dead attempt runs the whole protocol
+// through materialization, reservation, binding, upload and readback
+// verification, and only its manifest transaction is refused by a trigger
+// scoped to this dataset, so the retained bytes are exactly the ones a process
+// that died before COMMIT leaves behind.
+func TestPageAcknowledgedAfterUploadedUncommittedAttempt(t *testing.T) {
+	harness := newETLHarness(t)
+	harness.commit(t, harness.page(1))
+
+	fault := installUncommittedPublicationFault(t, harness)
+	dead := harness.page(2)
+	dead.RequestID = "page-2-uncommitted"
+	_, err := harness.attempt(dead)
+	var refused *warehouse.PublicationRefusedError
+	if !errors.As(err, &refused) {
+		t.Fatalf("attempt whose manifest transaction is refused = %v; want verified bytes retained unregistered", err)
+	}
+	if err := harness.consumer.Backend.Verify(context.Background(), refused.Object); err != nil {
+		t.Fatalf("the dead attempt's uploaded bytes are not verified in the shared store: %v", err)
+	}
+	// Nothing about the dead attempt is visible: the cursor and the ledger are
+	// the committed prefix.
+	harness.assertPrefix(t, 1)
+	fault.remove(t)
+
+	retried := harness.commit(t, harness.page(2))
+	if retried.Position != 2 || retried.Rows != etlPageRows {
+		t.Fatalf("retry after an uploaded but uncommitted attempt = position %d over %d rows; want position 2 over %d rows",
+			retried.Position, retried.Rows, etlPageRows)
+	}
+	harness.assertPrefix(t, 2)
+	requirePageArtifact(t, harness, 2)
+
+	// The acknowledgement stays replayable: the same page resolves to the one
+	// registered occurrence and registers nothing a second time.
+	replayed := harness.commit(t, harness.page(2))
+	if replayed.Position != 2 || replayed.Digest != retried.Digest {
+		t.Fatalf("replay after recovery = position %d at %q; want the registered position 2 at %q",
+			replayed.Position, replayed.Digest, retried.Digest)
+	}
+	harness.assertPrefix(t, 2)
+	requirePageArtifact(t, harness, 2)
+}
+
+// uncommittedPublicationFault is one installed refusal of the manifest
+// transaction that registers a segment of the harness dataset.
+type uncommittedPublicationFault struct {
+	harness  *etlHarness
+	function string
+	trigger  string
+}
+
+// installUncommittedPublicationFault refuses, inside its own transaction, every
+// segment registration of the harness dataset. The publication has already
+// reserved, bound, uploaded and verified its bytes when the registration runs,
+// so the refusal leaves exactly the state of a worker that died before COMMIT.
+func installUncommittedPublicationFault(t *testing.T, harness *etlHarness) *uncommittedPublicationFault {
+	t.Helper()
+	suffix := strconv.FormatInt(time.Now().UnixNano(), 36)
+	fault := &uncommittedPublicationFault{
+		harness:  harness,
+		function: "pm.fixture_uncommitted_publication_" + suffix,
+		trigger:  "fixture_uncommitted_publication_" + suffix,
+	}
+	// Every component of the dataset identity is a validated layout component,
+	// so the rendered identity carries no text that a literal could escape.
+	datasetID := harness.layout.DatasetID()
+	harness.fixture.SetupSQL(t, harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		for _, statement := range []string{
+			`CREATE FUNCTION ` + fault.function + `() RETURNS trigger
+				LANGUAGE plpgsql SECURITY INVOKER SET search_path = pg_catalog AS $$
+			BEGIN
+				IF NEW.dataset_id = '` + datasetID + `' THEN
+					RAISE EXCEPTION 'fixture: the manifest transaction died before COMMIT';
+				END IF;
+				RETURN NEW;
+			END
+			$$`,
+			`REVOKE ALL ON FUNCTION ` + fault.function + `() FROM PUBLIC`,
+			`GRANT EXECUTE ON FUNCTION ` + fault.function + `() TO ` + store.RuntimeRole,
+			`CREATE TRIGGER ` + fault.trigger + ` AFTER INSERT ON pm.warehouse_segments
+				FOR EACH ROW EXECUTE FUNCTION ` + fault.function + `()`,
+		} {
+			if _, err := tx.Exec(ctx, statement); err != nil {
+				return fmt.Errorf("install the uncommitted-publication fault: %w", err)
+			}
+		}
+		return nil
+	})
+	t.Cleanup(func() { fault.remove(t) })
+	return fault
+}
+
+// remove drops the installed fault again. It is idempotent, so the case can
+// remove it before the retry and the cleanup can remove it once more.
+func (fault *uncommittedPublicationFault) remove(t *testing.T) {
+	t.Helper()
+	fault.harness.fixture.SetupSQL(t, fault.harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		for _, statement := range []string{
+			`DROP TRIGGER IF EXISTS ` + fault.trigger + ` ON pm.warehouse_segments`,
+			`DROP FUNCTION IF EXISTS ` + fault.function + `()`,
+		} {
+			if _, err := tx.Exec(ctx, statement); err != nil {
+				return fmt.Errorf("remove the uncommitted-publication fault: %w", err)
+			}
+		}
+		return nil
 	})
 }
 

@@ -128,8 +128,19 @@ type PublishSegmentRequest struct {
 	// the same artifact identity, so an exact replay returns the committed row
 	// instead of publishing the same rows twice.
 	AttemptID string
-	Segment   SegmentBytes
-	RowCount  int64
+	// UploadID names this request's one physical upload when a publication
+	// attempt may be driven more than once. The artifact identity stays derived
+	// from AttemptID alone, so an exact replay still resolves to the one
+	// registered occurrence. The capacity reservation is derived from AttemptID
+	// and UploadID, and a reservation is permanently bound to the first physical
+	// upload made under it: a later drive of the same attempt whose earlier
+	// upload was bound or verified but never committed therefore supersedes that
+	// dead upload under its own reservation instead of colliding with its
+	// binding. The dead upload stays retained and unregistered. Empty means
+	// AttemptID alone names the upload.
+	UploadID string
+	Segment  SegmentBytes
+	RowCount int64
 	// BaseRevision advances the manifest only from that exact committed
 	// revision. Zero advances from whatever revision is committed, which is
 	// what a first publication uses.
@@ -204,7 +215,7 @@ func (manifest *DatasetManifest) PublishSegment(
 	if err != nil {
 		return store.WarehouseSegment{}, err
 	}
-	reservationID, err := manifest.layout.SegmentReservationID(request.AttemptID)
+	reservationID, err := manifest.uploadReservationID(request)
 	if err != nil {
 		return store.WarehouseSegment{}, err
 	}
@@ -328,6 +339,23 @@ func (manifest *DatasetManifest) PublishSegment(
 		}
 	}
 	return registered, nil
+}
+
+// uploadReservationID is the scoped capacity reservation of one publication's
+// physical upload. Without an upload identity it is the attempt's own
+// reservation. With one, the upload identity is appended as one more structural
+// component, which no attempt-only reservation identity can carry, so two
+// uploads of one attempt never share a reservation and never share one with a
+// different attempt.
+func (manifest *DatasetManifest) uploadReservationID(request PublishSegmentRequest) (string, error) {
+	reservationID, err := manifest.layout.SegmentReservationID(request.AttemptID)
+	if err != nil || request.UploadID == "" {
+		return reservationID, err
+	}
+	if err := validateWarehouseComponent(request.UploadID); err != nil {
+		return "", fmt.Errorf("%w: segment upload %s", ErrObjectLayout, err)
+	}
+	return reservationID + warehouseComponentSeparator + request.UploadID, nil
 }
 
 // resolution reports the revision one publication must advance from and whether

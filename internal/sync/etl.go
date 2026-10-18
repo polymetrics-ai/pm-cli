@@ -20,10 +20,11 @@ import (
 // acknowledged after its exact bytes are durably readable through the shared
 // object store, and the cursor only ever moves to a registered revision. A
 // crash before the transaction leaves the previous checkpoint and, at most, an
-// unregistered retained object plus the admitted scratch of the attempt that
-// died; that scratch names the attempt that wrote it, so a newer attempt at the
-// same page is never refused by it, and a crash after the transaction leaves the
-// complete next checkpoint. Nothing in between is observable.
+// unregistered retained object, the reservation bound to it, and the admitted
+// scratch of the attempt that died; the scratch and the reservation both name
+// the attempt that made them, so a newer attempt at the same page is never
+// refused by either, and a crash after the transaction leaves the complete next
+// checkpoint. Nothing in between is observable.
 type ETLCheckpoint struct {
 	pool                *store.Pool
 	manifest            *warehouse.DatasetManifest
@@ -91,8 +92,9 @@ type PageRequest struct {
 	// otherwise advance the checkpoint over rows that were never published.
 	DeclaredRows int64
 	// RequestID names this materialization attempt. It is unique per attempt:
-	// it is the attempt's own admitted scratch identity, and an immutable
-	// admitted segment is never overwritten by a second attempt. A page
+	// it is the attempt's own admitted scratch identity and physical upload
+	// identity, an immutable admitted segment is never overwritten by a second
+	// attempt, and a reservation is never bound to a second upload. A page
 	// re-driven after a crash therefore declares a new identity of its own
 	// rather than reusing the dead attempt's.
 	RequestID string
@@ -178,9 +180,14 @@ func (checkpoint *ETLCheckpoint) CommitPage(ctx context.Context, request PageReq
 //
 // The admitted scratch file carries this attempt's own identity, so the file a
 // process that died after materializing left behind refuses nothing the next
-// attempt at the same page does. The registered segment identity stays
-// position-derived, so a replay of the page still resolves to the one
-// registered occurrence.
+// attempt at the same page does. The physical upload carries the same attempt
+// identity: a reservation stays bound to the first upload made under it, so a
+// process that died after its upload was bound or verified but before the
+// manifest transaction committed leaves a reservation the next attempt never
+// reuses. That attempt uploads under its own reservation and supersedes the
+// dead upload, which stays retained and unregistered. The registered segment
+// identity stays position-derived, so a replay of the page still resolves to
+// the one registered occurrence and the page is published at most once.
 func (checkpoint *ETLCheckpoint) publish(
 	ctx context.Context,
 	request PageRequest,
@@ -210,6 +217,7 @@ func (checkpoint *ETLCheckpoint) publish(
 		Actor:        request.Actor,
 		Scope:        request.Scope,
 		AttemptID:    pageAttemptID(request.Position),
+		UploadID:     pageUploadID(request.RequestID),
 		Segment:      segment,
 		RowCount:     int64(len(request.Rows)),
 		BaseRevision: baseRevision,
@@ -244,6 +252,15 @@ const (
 	// attempt declares.
 	scratchDigestSeparator = "+"
 )
+
+// pageUploadID is the physical upload identity of one materialization attempt:
+// a bounded digest of the attempt's own identity in the structural alphabet the
+// warehouse layout admits, so two attempts at one page never share a
+// reservation whatever identities they declare.
+func pageUploadID(requestID string) string {
+	digest := sha256.Sum256([]byte(requestID))
+	return "u" + hex.EncodeToString(digest[:scratchDigestBytes])
+}
 
 // pageScratchName is the admitted scratch identity of one materialization
 // attempt: the page position this attempt materializes plus the attempt's own
