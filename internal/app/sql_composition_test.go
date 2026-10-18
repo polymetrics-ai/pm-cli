@@ -198,6 +198,25 @@ func TestSQLExecutionCompositionWorkerBehavior(t *testing.T) {
 		harness.customer.requireCommittedUpsertRow(t)
 	})
 
+	t.Run("a select beyond the declared row bound is refused rather than published partially", func(t *testing.T) {
+		harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, sqlExecutionTuning{declared: true})
+		harness.customer.seedRows(t, sqlExecutionMaxRows+1)
+		run := harness.executeOperation(
+			t, temporal, sqlExecutionSelectID, contract.LaneDirectRead, sqlExecutionEmptyInput(), "sql-execution-select-over-bound",
+		)
+		if run.state == contract.RunStateSucceeded || run.outcome == contract.OutcomeSucceeded ||
+			run.outcome != contract.OutcomeRejected || run.unknownEffects != 0 || run.attempts != 1 || run.dials != 1 {
+			t.Fatalf("over-bound select settlement = %#v; want one rejected attempt, never a complete success", run)
+		}
+		// A run with no published result answers the shared unavailable result
+		// read; no bounded prefix is reachable as its answer.
+		workerResultGET(
+			t, harness.fixture,
+			"/v1/workspaces/"+harness.fixture.Scope.WorkspaceID+"/runs/"+run.reference+"/result",
+			http.StatusServiceUnavailable,
+		)
+	})
+
 	t.Run("removing the SQL registration refuses the capability with zero sends", func(t *testing.T) {
 		harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, sqlExecutionTuning{})
 		problem := harness.admitProblem(t, sqlExecutionMetadataID, contract.LaneDirectRead, "sql-execution-unregistered")
@@ -1020,6 +1039,19 @@ func (customer *sqlCustomerDatabase) seedRow(t *testing.T) {
 		`("record_id", "amount", "flagged", "note", "optional_note", "observed_at", "local_wall") VALUES (`+
 		sqlExecutionKeyText+`, `+sqlExecutionAmountText+`, true, '`+sqlExecutionSelectNote+`', NULL, `+
 		`'`+sqlExecutionInstantText+`'::timestamptz, '`+sqlExecutionLocalText+`'::timestamp)`)
+}
+
+// seedRows writes count distinct rows, so a bounded select can observe more
+// matching rows than its declared row bound.
+func (customer *sqlCustomerDatabase) seedRows(t *testing.T, count int) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	customer.ownerExec(t, ctx, `INSERT INTO "`+sqlExecutionSchema+`"."`+sqlExecutionRelation+`" `+
+		`("record_id", "amount", "flagged", "note", "optional_note", "observed_at", "local_wall") `+
+		`SELECT series, `+sqlExecutionAmountText+`, true, '`+sqlExecutionSelectNote+`', NULL, `+
+		`'`+sqlExecutionInstantText+`'::timestamptz, '`+sqlExecutionLocalText+`'::timestamp `+
+		`FROM generate_series(1, `+strconv.Itoa(count)+`) AS series`)
 }
 
 // rowVersion reports the physical row version of the declared key through the

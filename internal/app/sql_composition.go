@@ -29,6 +29,10 @@ var (
 	// ErrSQLStatementUnavailable reports that the declared operation's statement
 	// input does not bind the declared relation as declared.
 	ErrSQLStatementUnavailable = errors.New("declared customer SQL statement input is unavailable")
+	// ErrSQLRowBoundExceeded reports that a committed statement matched more
+	// rows than the connection's declared row bound. A bounded prefix is never
+	// published as the complete answer, and no continuation exists to resume it.
+	ErrSQLRowBoundExceeded = errors.New("declared customer SQL statement exceeded its declared row bound")
 )
 
 // sqlTrustAnchorMember is the operator secret member carrying one declared
@@ -713,6 +717,13 @@ func (bound sqlBoundOperation) project(
 	var projectionErr error
 	switch observation.Outcome {
 	case pmruntime.SQLOutcomeKnownCommit:
+		if observation.Truncated {
+			// The transport stopped at the declared row bound with more rows
+			// pending; the observed prefix is not the statement's answer.
+			state = contract.OutcomeRejected
+			projectionErr = ErrSQLRowBoundExceeded
+			break
+		}
 		if request.Operation.Transport.StatementKind == contract.PostgreSQLStatementMetadata {
 			if err := pmruntime.VerifySQLRelation(bound.relation, observation.Rows); err != nil {
 				state = contract.OutcomeRejected
