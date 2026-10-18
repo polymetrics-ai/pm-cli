@@ -2,11 +2,13 @@ package warehouse_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -429,8 +431,8 @@ func warehouseRows(t *testing.T, ids ...int64) [][]warehouse.QueryValue {
 // registered segments to return exactly what the restricted child returns for
 // the same rows held in one segment: ordering names the relation's own columns,
 // never an output alias, and the merged result never exceeds the declared row
-// bound. Every read is real: the segments are published, staged and executed
-// through the restricted child against the owned stack.
+// or byte bound. Every read is real: the segments are published, staged and
+// executed through the restricted child against the owned stack.
 func TestCrossSegmentReadMatchesSingleSegment(t *testing.T) {
 	harness := newWarehouseHarness(t)
 	ctx := context.Background()
@@ -541,6 +543,93 @@ func TestCrossSegmentReadMatchesSingleSegment(t *testing.T) {
 			t.Fatalf("merged read returned %d rows despite the declared row bound %d", len(merged.Rows), bounds.Rows)
 		}
 		requireSameResult(t, merged, reference)
+	})
+
+	t.Run("the_merged_result_never_exceeds_the_declared_byte_bound", func(t *testing.T) {
+		// Every row carries a wide note, so the declared byte bound, not the
+		// row bound, cuts each segment and the union. Each segment alone fits
+		// the bound only partially, and the merged read must cut the union by
+		// the same encoded measure, at the same row, as one segment holding
+		// the same rows does.
+		wide := func(ids []int64) [][]warehouse.QueryValue {
+			rows := warehouseRows(t, ids...)
+			for _, row := range rows {
+				row[5] = warehouse.TextQueryValue(strings.Repeat("x", 1000))
+			}
+			return rows
+		}
+		span := func(first, last, step int64) []int64 {
+			ids := make([]int64, 0, (last-first)/step+1)
+			for id := first; id <= last; id += step {
+				ids = append(ids, id)
+			}
+			return ids
+		}
+		encodedBytes := func(t *testing.T, rows [][]warehouse.QueryValue) int64 {
+			t.Helper()
+			var total int64
+			for _, row := range rows {
+				for _, value := range row {
+					encoded, err := json.Marshal(value)
+					if err != nil {
+						t.Fatalf("encode a returned value: %v", err)
+					}
+					total += int64(len(encoded))
+				}
+			}
+			return total
+		}
+		bounds := harness.bounds
+		bounds.Bytes = 25_000
+		for _, layout := range []struct {
+			name        string
+			first, last []int64
+		}{
+			// The first segment holds every lower id, so the cut falls inside
+			// it and nothing from the second segment may follow its withheld
+			// rows.
+			{"contiguous", span(101, 140, 1), span(141, 180, 1)},
+			// The segments alternate ids, so the cut takes rows from both.
+			{"interleaved", span(202, 280, 2), span(201, 279, 2)},
+		} {
+			t.Run(layout.name, func(t *testing.T) {
+				union := wide(append(append([]int64{}, layout.first...), layout.last...))
+				sort.Slice(union, func(left, right int) bool {
+					leftID, _ := union[left][0].Int64()
+					rightID, _ := union[right][0].Int64()
+					return leftID < rightID
+				})
+				harness.publishSegment(t, "bytes-first-"+layout.name, wide(layout.first))
+				harness.publishSegment(t, "bytes-last-"+layout.name, wide(layout.last))
+				harness.publishSegment(t, "bytes-union-"+layout.name, union)
+				view, err := service.Snapshot(ctx, harness.fixture.Actor, harness.fixture.Scope,
+					warehouse.SnapshotReadRequest{Layout: harness.layout})
+				if err != nil {
+					t.Fatalf("resolve the published segments: %v", err)
+				}
+				published := view.Segments[len(view.Segments)-3:]
+				selection := warehouse.QuerySelect{
+					From:    harness.layout.RelationName(),
+					Project: allColumnProjections(harness.columns),
+					Order:   []warehouse.QueryOrder{{Column: "id"}},
+					Limit:   int64(len(union)),
+				}
+				reference := read(t, "bytes-single-"+layout.name, published[2:], selection, bounds)
+				if !reference.Truncated || len(reference.Rows) == 0 || len(reference.Rows) >= len(layout.first) {
+					t.Fatalf("single-segment read under a %d-byte bound = %d rows (truncated %t); want a truncated cut inside one segment's rows",
+						bounds.Bytes, len(reference.Rows), reference.Truncated)
+				}
+				if used := encodedBytes(t, reference.Rows); used > bounds.Bytes {
+					t.Fatalf("single-segment read returned %d encoded value bytes beyond the declared byte bound %d", used, bounds.Bytes)
+				}
+				merged := read(t, "bytes-merged-"+layout.name, published[:2], selection, bounds)
+				if used := encodedBytes(t, merged.Rows); used > bounds.Bytes {
+					t.Fatalf("merged read returned %d rows with %d encoded value bytes beyond the declared byte bound %d (truncated %t)",
+						len(merged.Rows), used, bounds.Bytes, merged.Truncated)
+				}
+				requireSameResult(t, merged, reference)
+			})
+		}
 	})
 }
 

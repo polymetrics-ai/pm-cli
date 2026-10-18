@@ -369,10 +369,11 @@ func (service *QueryService) Read(ctx context.Context, request ReadRequest) (Que
 	}
 
 	// The merged result is bounded exactly as one segment's result is: by the
-	// smaller of the declared limit and the declared row bound. Each segment
-	// may return up to that same bound, which is all a correct cross-segment
-	// ordering needs, and the merge cuts the union back to it and reports the
-	// cut through the existing truncated flag.
+	// smaller of the declared limit and the declared row bound, and by the
+	// declared byte bound over the same encoded value measure the restricted
+	// child applies. Each segment may return up to those same bounds, which is
+	// all a correct cross-segment ordering needs, and the merge cuts the union
+	// back to them and reports the cut through the existing truncated flag.
 	rowBound := min(request.Select.Limit, request.Bounds.Rows)
 	responses := make([]QueryResponse, 0, len(relations))
 	for _, relation := range relations {
@@ -391,7 +392,9 @@ func (service *QueryService) Read(ctx context.Context, request ReadRequest) (Que
 		}
 		responses = append(responses, segmentResponse)
 	}
-	rows, truncated, err := mergeSegmentResponses(request.Select.Order, request.Select.Project, responses, rowBound)
+	rows, truncated, err := mergeSegmentResponses(
+		request.Select.Order, request.Select.Project, responses, rowBound, request.Bounds.Bytes,
+	)
 	if err != nil {
 		return QueryResponse{}, err
 	}
@@ -632,19 +635,28 @@ func validateWarehouseRequestID(value string) error {
 // relation's id. The merge therefore locates each ordering key through the
 // projection that reads that relation column, and refuses an ordering whose
 // relation column is not projected, because the merged rows cannot compare it.
+//
+// The merged rows are then cut exactly as the restricted child cuts one
+// segment: at the row bound, or before the first row whose encoded values
+// would take the result past the byte bound. A segment that was itself cut
+// withheld rows that may order before any row of another segment, so the
+// merged result also stops once every row such a segment returned is used.
 func mergeSegmentResponses(
 	order []QueryOrder,
 	project []QueryProjection,
 	responses []QueryResponse,
 	limit int64,
+	byteBudget int64,
 ) ([][]QueryValue, bool, error) {
 	truncated := false
-	rows := make([][]QueryValue, 0, len(responses))
-	for _, response := range responses {
+	rows := make([]mergedRow, 0, len(responses))
+	for index, response := range responses {
 		if response.Truncated {
 			truncated = true
 		}
-		rows = append(rows, response.Rows...)
+		for _, values := range response.Rows {
+			rows = append(rows, mergedRow{values: values, segment: index})
+		}
 	}
 	if len(order) > 0 && len(responses) > 1 {
 		for _, decision := range order {
@@ -667,7 +679,7 @@ func mergeSegmentResponses(
 		for _, row := range rows {
 			for _, decision := range order {
 				index := position[decision.Column]
-				if row[index].IsNull() {
+				if row.values[index].IsNull() {
 					return nil, false, refusal(RefusalProtocol,
 						"a cross-segment ordering over the nullable column %q has no declared null placement", decision.Column)
 				}
@@ -678,7 +690,7 @@ func mergeSegmentResponses(
 			if compareErr != nil {
 				return false
 			}
-			comparison, err := compareOrderedRows(order, responses[0].Columns, position, rows[left], rows[right])
+			comparison, err := compareOrderedRows(order, responses[0].Columns, position, rows[left].values, rows[right].values)
 			if err != nil {
 				compareErr = err
 				return false
@@ -689,11 +701,68 @@ func mergeSegmentResponses(
 			return nil, false, compareErr
 		}
 	}
-	if int64(len(rows)) > limit {
-		rows = rows[:limit]
-		truncated = true
+	return cutMergedRows(rows, responses, limit, byteBudget, truncated)
+}
+
+// mergedRow is one returned row beside the segment response that returned it.
+type mergedRow struct {
+	values  []QueryValue
+	segment int
+}
+
+// cutMergedRows bounds the ordered merged rows by the declared row and byte
+// bounds, measured as the restricted child measures one segment's rows, and
+// stops at the frontier of any segment whose own result was cut.
+func cutMergedRows(
+	rows []mergedRow,
+	responses []QueryResponse,
+	limit int64,
+	byteBudget int64,
+	truncated bool,
+) ([][]QueryValue, bool, error) {
+	unused := make([]int, len(responses))
+	frontier := false
+	for index, response := range responses {
+		unused[index] = len(response.Rows)
+		if response.Truncated && unused[index] == 0 {
+			frontier = true
+		}
 	}
-	return rows, truncated, nil
+	var usedBytes int64
+	cut := make([][]QueryValue, 0, min(int64(len(rows)), limit))
+	for _, row := range rows {
+		if frontier || int64(len(cut)) >= limit {
+			return cut, true, nil
+		}
+		rowBytes, err := encodedRowBytes(row.values)
+		if err != nil {
+			return nil, false, err
+		}
+		if usedBytes+rowBytes > byteBudget {
+			return cut, true, nil
+		}
+		usedBytes += rowBytes
+		cut = append(cut, row.values)
+		unused[row.segment]--
+		if unused[row.segment] == 0 && responses[row.segment].Truncated {
+			frontier = true
+		}
+	}
+	return cut, truncated, nil
+}
+
+// encodedRowBytes is the byte measure the restricted child bounds a result by:
+// the total length of every value's typed wire encoding.
+func encodedRowBytes(values []QueryValue) (int64, error) {
+	var total int64
+	for _, value := range values {
+		encoded, err := encodeQueryValue(value)
+		if err != nil {
+			return 0, err
+		}
+		total += int64(len(encoded))
+	}
+	return total, nil
 }
 
 // compareOrderedRows compares two exact typed rows by the declared ordering.
