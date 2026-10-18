@@ -50,7 +50,7 @@ func TestConnectorCompositionWithoutDeclaredBundles(t *testing.T) {
 		t.Fatalf("empty connector declaration projected %d connectors", len(catalog.Connectors))
 	}
 	handlers := &app.HandlerRegistry{}
-	if err := composition.RegisterDirectRead(handlers, app.HTTPDirectReadDependencies{}); err != nil {
+	if err := composition.RegisterDirectRead(handlers, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity}); err != nil {
 		t.Fatalf("register direct read without declared bundles: %v", err)
 	}
 	if manifest := app.BuildHandlerManifest(handlers); len(manifest.Handlers) != 0 {
@@ -355,7 +355,7 @@ func TestConnectorCompositionServesDirectReadCatalogAndAdmission(t *testing.T) {
 			return err
 		}
 		handlers := &app.HandlerRegistry{}
-		if err := composition.RegisterDirectRead(handlers, app.HTTPDirectReadDependencies{}); err != nil {
+		if err := composition.RegisterDirectRead(handlers, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity}); err != nil {
 			return err
 		}
 		catalog, err = app.ServeCatalog(app.CatalogServiceConfig{

@@ -25,6 +25,11 @@ var (
 	ErrHTTPTransport            = errors.New("HTTP transport failed")
 	ErrRequestTooLarge          = errors.New("encoded HTTP request exceeds its server-owned bound")
 	ErrResponseTooLarge         = errors.New("HTTP response exceeds its server-owned bound")
+	// ErrClientIdentityRequired reports that a provider request cannot be
+	// identified: the operation declares no user-agent input of its own and the
+	// process has no configured client identity. The request is refused instead
+	// of being sent with an empty value.
+	ErrClientIdentityRequired = errors.New("provider client identity is required")
 )
 
 func validateHTTPSourceFacts(
@@ -84,6 +89,12 @@ type HTTPDependencies struct {
 	Dialer        ContextDialer
 	TLSConfig     *tls.Config
 	Now           func() time.Time
+	// ClientIdentity is the bounded product identity this process sends as the
+	// default provider user agent. An operation that declares its own
+	// user-agent input keeps ownership of that field and needs no identity here;
+	// every other operation requires one, so a process that cannot identify
+	// itself refuses the request instead of sending an empty value.
+	ClientIdentity ClientIdentity
 }
 
 type HTTPRequest struct {
@@ -227,9 +238,35 @@ func ExecuteHTTP(ctx context.Context, dependencies HTTPDependencies, request HTT
 			Wire:                WireObservation{Method: request.Operation.Transport.Method, EffectiveWireLimit: cloneUint64(wireLimit)},
 		}, nil
 	}
+	// The client identity is resolved before any credential resolution, request
+	// construction, admission or provider I/O. A verified continuation tail
+	// served above never reaches this point, so no identity is needed to answer a
+	// local result without a provider round trip.
+	clientIdentity, appliesClientIdentity, err := resolveClientIdentity(request.Operation, dependencies.ClientIdentity)
+	if err != nil {
+		return HTTPExecution{}, err
+	}
 	encoded, err := EncodeInputs(request.Operation, prepared.input)
 	if err != nil {
 		return HTTPExecution{}, err
+	}
+	// A sealed provider continuation target is re-validated against the admitted
+	// destination and the request PM is about to send before the credential
+	// channel is validated, so the credential can never be appended to a query
+	// the provider target changed and the target can never widen what the
+	// accepted request authorizes.
+	if prepared.state != nil {
+		if err := applyContinuationTarget(
+			&encoded,
+			request.Operation,
+			activePagination,
+			*prepared.state,
+			origin,
+			request.Egress.RequireTLS,
+			httpFacts.Authorization,
+		); err != nil {
+			return HTTPExecution{}, err
+		}
 	}
 	if httpFacts.Authorization != nil {
 		if err := validateAuthorizationChannel(&encoded, *httpFacts.Authorization); err != nil {
@@ -274,6 +311,11 @@ func ExecuteHTTP(ctx context.Context, dependencies HTTPDependencies, request HTT
 					return HTTPExecution{}, err
 				}
 			}
+		}
+	}
+	if appliesClientIdentity {
+		if err := applyClientIdentity(&encoded, clientIdentity); err != nil {
+			return HTTPExecution{}, err
 		}
 	}
 	encoded.EncodedBytes, err = encodedInputSize(encoded)
@@ -451,6 +493,9 @@ func ExecuteHTTP(ctx context.Context, dependencies HTTPDependencies, request HTT
 				RequestURL:     target,
 				ResponseHeader: response.Header,
 				Authorization:  httpFacts.Authorization,
+				BasePath:       origin.EscapedPath(),
+				RequireTLS:     request.Egress.RequireTLS,
+				RecordIdentity: continuationRecordIdentity(prepared.state),
 			},
 		)
 		if pageErr != nil {
@@ -471,6 +516,11 @@ func newOneShotRequest(ctx context.Context, method string, target *url.URL, enco
 		return nil, fmt.Errorf("%w: request construction failed", ErrInvalidHTTPInput)
 	}
 	request.Header = encoded.Header.Clone()
+	// The encoded request already carries the effective client identity: either
+	// a caller-supplied source-declared user-agent field or the runtime's own
+	// bounded product identity. A declared field that stayed absent is left
+	// empty so the Go transport default never stands in for a provider field the
+	// source declared.
 	if _, declared := request.Header["User-Agent"]; !declared {
 		request.Header["User-Agent"] = []string{""}
 	}

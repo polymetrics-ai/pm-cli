@@ -15,6 +15,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/activities"
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/config"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	pmtemporal "github.com/polymetrics-ai/pm-cli/internal/temporal"
 	"github.com/polymetrics-ai/pm-cli/internal/workflows"
 	"github.com/spf13/cobra"
@@ -103,6 +104,7 @@ func serve(ctx context.Context, configurationPath, secretsDirectory string) (res
 	runtime, err := app.OpenWorkerRuntime(ctx, app.WorkerRuntimeConfig{
 		Configuration:    configuration,
 		SecretsDirectory: secretsDirectory,
+		ClientIdentity:   pmruntime.ProductClientIdentity(version),
 	})
 	if err != nil {
 		return err

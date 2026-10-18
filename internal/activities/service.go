@@ -51,79 +51,101 @@ func RegisterActivities(registry worker.Registry, service *Service) error {
 	return nil
 }
 
+// Every activity below reports its result as a pointer that stays nil when the
+// activity fails. The SDK serializes the declared result value even when the
+// function returns an error, and the closed safe-reference converter refuses a
+// zero-valued contract (its identity is empty by construction), so a struct
+// zero value would replace the real, correctly classified failure before the
+// workflow ever observes it. An activity emits either the admitted payload of a
+// completed activity or the exact error it hit, never a fabricated identity.
 func (service *Service) LoadWorkflow(
 	ctx context.Context,
 	reference contract.WorkflowRunRef,
-) (contract.WorkflowRunSnapshot, error) {
+) (*contract.WorkflowRunSnapshot, error) {
 	execution, err := currentExecution(ctx, contract.RunWorkflowType, contract.ScheduledWorkflowType)
 	if err != nil {
-		return contract.WorkflowRunSnapshot{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	result, err := service.worker.LoadWorkflow(ctx, execution, reference)
-	return result, temporalWorkerError(err)
+	if err != nil {
+		return nil, temporalWorkerError(err)
+	}
+	return &result, nil
 }
 
 func (service *Service) ExecuteUnit(
 	ctx context.Context,
 	request contract.WorkflowUnitRequest,
-) (contract.WorkflowUnitResult, error) {
+) (*contract.WorkflowUnitResult, error) {
 	execution, err := currentExecution(ctx, contract.RunWorkflowType, contract.ScheduledWorkflowType)
 	if err != nil {
-		return contract.WorkflowUnitResult{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	if err := request.Validate(); err != nil {
-		return contract.WorkflowUnitResult{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	bootstrapProgress := contract.WorkflowProgress{
 		RunID: request.Run.RunID, TaskID: request.Unit.TaskID, ProgressRef: request.Unit.TaskID,
 	}
 	if err := bootstrapProgress.Validate(); err != nil {
-		return contract.WorkflowUnitResult{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	heartbeatTimeout := activity.GetInfo(ctx).HeartbeatTimeout
 	if heartbeatTimeout <= 0 {
-		return contract.WorkflowUnitResult{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	updateHeartbeat, stopHeartbeats := startActivityHeartbeats(ctx, bootstrapProgress, heartbeatTimeout)
 	defer stopHeartbeats()
 	result, err := service.worker.ExecuteUnit(ctx, execution, request, updateHeartbeat)
-	return result, temporalWorkerError(err)
+	if err != nil {
+		return nil, temporalWorkerError(err)
+	}
+	return &result, nil
 }
 
 func (service *Service) ApplyCommand(
 	ctx context.Context,
 	request contract.WorkflowCommandRequest,
-) (contract.WorkflowCommandResult, error) {
+) (*contract.WorkflowCommandResult, error) {
 	execution, err := currentExecution(ctx, contract.RunWorkflowType, contract.ScheduledWorkflowType)
 	if err != nil {
-		return contract.WorkflowCommandResult{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	result, err := service.worker.ApplyCommand(ctx, execution, request)
-	return result, temporalWorkerError(err)
+	if err != nil {
+		return nil, temporalWorkerError(err)
+	}
+	return &result, nil
 }
 
 func (service *Service) FinalizeRunProjection(
 	ctx context.Context,
 	request contract.WorkflowProjectionRequest,
-) (contract.WorkflowProjectionResult, error) {
+) (*contract.WorkflowProjectionResult, error) {
 	execution, err := currentExecution(ctx, contract.RunWorkflowType, contract.ScheduledWorkflowType)
 	if err != nil {
-		return contract.WorkflowProjectionResult{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	result, err := service.worker.FinalizeRunProjection(ctx, execution, request)
-	return result, temporalWorkerError(err)
+	if err != nil {
+		return nil, temporalWorkerError(err)
+	}
+	return &result, nil
 }
 
 func (service *Service) AdmitScheduledRun(
 	ctx context.Context,
 	input contract.ScheduledRunInput,
-) (contract.StartRunInput, error) {
+) (*contract.StartRunInput, error) {
 	execution, err := currentExecution(ctx, contract.ScheduledWorkflowType)
 	if err != nil {
-		return contract.StartRunInput{}, nonRetryableInvalidRequest()
+		return nil, nonRetryableInvalidRequest()
 	}
 	result, err := service.worker.AdmitScheduledRun(ctx, execution, input)
-	return result, temporalWorkerError(err)
+	if err != nil {
+		return nil, temporalWorkerError(err)
+	}
+	return &result, nil
 }
 
 func currentExecution(ctx context.Context, expectedWorkflowTypes ...string) (contract.WorkflowExecution, error) {

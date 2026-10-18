@@ -51,7 +51,7 @@ func TestRetryRequiresKnownReplaySafety(t *testing.T) {
 			"body": contract.NewObjectValue(map[string]contract.PresentValue{"enabled": contract.NewBooleanValue(false)}),
 		}))
 		dialer := &mappedDialer{address: server.Listener.Addr().String()}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: &testAdmitter{},
 			Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:   dialer,
@@ -100,7 +100,7 @@ func TestRetryRequiresKnownReplaySafety(t *testing.T) {
 		request := testHTTPRequest(t, operation, origin, now, contract.NewObjectValue(nil))
 		request.Egress.RequireTLS = true
 		dialer := &mappedDialer{address: listener.Addr().String()}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: &testAdmitter{},
 			Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:   dialer,
@@ -177,7 +177,7 @@ func TestRetryRequiresKnownReplaySafety(t *testing.T) {
 		request := testHTTPRequest(t, operation, serverOrigin(t, server.URL), now, contract.NewObjectValue(nil))
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: server.Listener.Addr().String()}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter,
 			Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:   dialer,
@@ -295,7 +295,7 @@ func TestRetryRequiresKnownReplaySafety(t *testing.T) {
 		if !ok || clientTransport.TLSClientConfig == nil {
 			t.Fatal("TLS client fixture is absent")
 		}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:  &testAdmitter{},
 			Resolver:  fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:    &mappedDialer{address: server.Listener.Addr().String()},

@@ -105,7 +105,7 @@ func TestProviderPageSizeClamp(t *testing.T) {
 				origin := serverOrigin(t, server.URL)
 				admitter := &testAdmitter{}
 				dialer := &mappedDialer{address: server.Listener.Addr().String()}
-				execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+				execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 					Admitter:      admitter,
 					Continuations: newMemoryContinuationCodec(),
 					Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -136,16 +136,17 @@ func TestProviderPageSizeClamp(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		_, declared, err := linkNavigationValue(
+		_, _, declared, err := sealLinkContinuationTarget(
 			operation,
 			operation.Execution.Pagination,
-			"page",
-			"/items?state=open&per_page=2&page=2&token=attacker",
 			linkInput(t, "open", new(uint64(1)), new(uint64(5))),
-			requestURL,
-			&contract.OperationAuthorization{
-				Required: true, Audience: "https://provider.test", Placement: contract.FieldLocationQuery,
-				WireName: "token", FieldID: "token",
+			"/items?state=open&per_page=2&page=2&token=attacker",
+			pageHTTPContext{
+				RequestURL: requestURL,
+				Authorization: &contract.OperationAuthorization{
+					Required: true, Audience: "https://provider.test", Placement: contract.FieldLocationQuery,
+					WireName: "token", FieldID: "token",
+				},
 			},
 		)
 		if !errors.Is(err, ErrNavigationConflict) || declared != nil {
@@ -206,7 +207,7 @@ func (window *clampedWindow) read(t *testing.T, input, continuation contract.Pre
 	}
 	request := testHTTPRequest(t, operation, window.origin, window.now, input)
 	request.Continuation = continuation
-	execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+	execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 		Admitter:      &testAdmitter{},
 		Continuations: window.codec,
 		Resolver:      fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},

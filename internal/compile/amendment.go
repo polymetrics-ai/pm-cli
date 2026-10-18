@@ -145,8 +145,14 @@ func ApplyAmendments(
 			if err := validateAmendmentSourceRefs(source, amendment.HTTP.Witness.SourceRefs); err != nil {
 				return err
 			}
-			if err := validateHTTPAmendment(operation.HTTP, amendment.HTTP); err != nil {
+			created, err := validateHTTPAmendment(source, operation.HTTP, amendment.HTTP)
+			if err != nil {
 				return err
+			}
+			if created != nil {
+				if err := admitCreatedAuthorization(operation, source, *created, amendment.HTTP.Witness); err != nil {
+					return err
+				}
 			}
 		}
 		if amendment.RecordExtraction != nil {
@@ -191,7 +197,14 @@ func validateAmendmentSourceRefs(source *ResolvedSource, references []contract.S
 	seen := make(map[string]struct{}, len(references))
 	for _, reference := range references {
 		pointer := strings.TrimPrefix(reference.Pointer, "#")
-		if !validIdentity(reference.SourceID) || !validJSONPointer(pointer) || reference.Pointer == "" {
+		if !validIdentity(reference.SourceID) || reference.Pointer == "" {
+			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source reference is malformed")
+		}
+		if source.Documentation(reference.SourceID) {
+			if _, ok := contract.ParseSourceByteRange(pointer); !ok {
+				return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "documentation source reference must be an exact byte range")
+			}
+		} else if !validJSONPointer(pointer) {
 			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source reference is malformed")
 		}
 		if _, ok := source.RawValue(reference.SourceID, pointer); !ok {
@@ -206,26 +219,65 @@ func validateAmendmentSourceRefs(source *ResolvedSource, references []contract.S
 	return nil
 }
 
-func validateHTTPAmendment(sourceHTTP, amendmentHTTP *HTTPSemantics) error {
+// admitCreatedAuthorization admits the exact secret input binding of a created
+// credential channel. The binding carries the amendment's own documentation
+// witness as its source facts, so the channel stays source-linked and every
+// binding hash is recomputable from the retained documentation bytes. The
+// binding is secret and never projects to a public command, catalog or flag.
+func admitCreatedAuthorization(
+	operation *NormalizedOperation,
+	source *ResolvedSource,
+	authorization contract.OperationAuthorization,
+	witness Witness,
+) error {
+	for _, binding := range operation.CommonBindings {
+		if binding.FieldID == authorization.FieldID {
+			return sourceError(ErrUnsafeAmendment, authorization.FieldID, "/http/authorization", "a created credential channel field identity collides with a normalized request field")
+		}
+	}
+	fact := authorizationBinding(authorization)
+	if fact.Normalized == nil {
+		return sourceError(ErrUnsafeAmendment, authorization.FieldID, "/http/authorization", "a created credential channel produced no admitted field binding")
+	}
+	fact.SourceFacts = sourceFacts(source, witness.SourceRefs)
+	fact.NormalizedSHA256 = hashJSON(*fact.Normalized)
+	operation.CommonBindings = append(operation.CommonBindings, fact)
+	slices.SortFunc(operation.CommonBindings, func(left, right BindingFact) int {
+		return strings.Compare(left.FieldID, right.FieldID)
+	})
+	return nil
+}
+
+// validateHTTPAmendment admits one HTTP amendment against the independently
+// normalized HTTP facts of the same operation and returns the credential
+// channel the amendment creates, if it creates one.
+func validateHTTPAmendment(
+	source *ResolvedSource,
+	sourceHTTP, amendmentHTTP *HTTPSemantics,
+) (*contract.OperationAuthorization, error) {
 	if sourceHTTP == nil {
-		return sourceError(ErrUnsafeAmendment, "", "/http", "HTTP amendment cannot create authority absent from independently normalized source facts")
+		return nil, sourceError(ErrUnsafeAmendment, "", "/http", "HTTP amendment cannot create authority absent from independently normalized source facts")
 	}
 	for _, origin := range amendmentHTTP.Origins {
 		if !slices.Contains(sourceHTTP.Origins, origin) {
-			return sourceError(ErrUnsafeAmendment, "", "/http/origins", "HTTP amendment cannot add or rewrite a source-admitted origin")
+			return nil, sourceError(ErrUnsafeAmendment, "", "/http/origins", "HTTP amendment cannot add or rewrite a source-admitted origin")
 		}
 	}
+	var created *contract.OperationAuthorization
 	switch {
 	case sourceHTTP.Authorization == nil && amendmentHTTP.Authorization != nil:
-		return sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment cannot create a credential channel absent from source")
+		if err := validateCreatedAuthorizationChannel(source, sourceHTTP, amendmentHTTP); err != nil {
+			return nil, err
+		}
+		created = amendmentHTTP.Authorization
 	case sourceHTTP.Authorization != nil && sourceHTTP.Authorization.Required && amendmentHTTP.Authorization == nil:
-		return sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment cannot remove source-required authorization")
+		return nil, sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment cannot remove source-required authorization")
 	case amendmentHTTP.Authorization != nil && (sourceHTTP.Authorization == nil ||
 		*amendmentHTTP.Authorization != *sourceHTTP.Authorization):
-		return sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment authorization must exactly match independently normalized source facts")
+		return nil, sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment authorization must exactly match independently normalized source facts")
 	}
 	if len(amendmentHTTP.Headers) != len(sourceHTTP.Headers) {
-		return sourceError(ErrUnsafeAmendment, "", "/http/headers", "HTTP amendment cannot add or remove source-required fixed headers")
+		return nil, sourceError(ErrUnsafeAmendment, "", "/http/headers", "HTTP amendment cannot add or remove source-required fixed headers")
 	}
 	sourceHeaders := make(map[string]string, len(sourceHTTP.Headers))
 	for _, header := range sourceHTTP.Headers {
@@ -234,17 +286,85 @@ func validateHTTPAmendment(sourceHTTP, amendmentHTTP *HTTPSemantics) error {
 	for _, header := range amendmentHTTP.Headers {
 		value, admitted := sourceHeaders[strings.ToLower(header.Name)]
 		if !admitted || value != header.Value {
-			return sourceError(ErrUnsafeAmendment, "", "/http/headers", "HTTP amendment cannot add or rewrite a source-required fixed header")
+			return nil, sourceError(ErrUnsafeAmendment, "", "/http/headers", "HTTP amendment cannot add or rewrite a source-required fixed header")
 		}
 	}
-	sourceReferences := make(map[string]struct{}, len(sourceHTTP.Witness.SourceRefs))
-	for _, reference := range sourceHTTP.Witness.SourceRefs {
-		sourceReferences[reference.SourceID+"\x00"+reference.Pointer] = struct{}{}
+	// A created channel is witnessed by the documentation bytes that name it, so
+	// the OpenAPI-sourced witness requirement applies to every other witness
+	// reference of the same amendment.
+	if created == nil {
+		sourceReferences := make(map[string]struct{}, len(sourceHTTP.Witness.SourceRefs))
+		for _, reference := range sourceHTTP.Witness.SourceRefs {
+			sourceReferences[reference.SourceID+"\x00"+reference.Pointer] = struct{}{}
+		}
+		for _, reference := range amendmentHTTP.Witness.SourceRefs {
+			if _, admitted := sourceReferences[reference.SourceID+"\x00"+reference.Pointer]; !admitted {
+				return nil, sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "HTTP amendment witness is outside independently normalized HTTP source facts")
+			}
+		}
 	}
+	return created, nil
+}
+
+// validateCreatedAuthorizationChannel admits a credential channel that the
+// OpenAPI description does not declare, and only when the channel is witnessed
+// by an admitted official-documentation capture: every witness reference must
+// resolve inside such a capture, one cited range must itself name the declared
+// wire name and credential scheme, and the declaration must be exact. A
+// supplemental fact may add an optional channel; it can never mandate one,
+// widen the admitted origin, or name a header or scheme its own bytes do not
+// state.
+func validateCreatedAuthorizationChannel(
+	source *ResolvedSource,
+	sourceHTTP, amendmentHTTP *HTTPSemantics,
+) error {
+	absent := sourceError(ErrUnsafeAmendment, "", "/http/authorization", "HTTP amendment cannot create a credential channel absent from source")
+	refuse := func(detail string) error {
+		return sourceError(ErrUnsafeAmendment, "", "/http/authorization", detail)
+	}
+	authorization := amendmentHTTP.Authorization
+	if !validIdentity(authorization.Audience) || !validIdentity(authorization.FieldID) ||
+		authorization.WireName == "" || authorization.Prefix == "" {
+		return refuse("a created credential channel must declare its audience, field identity, wire name and prefix exactly")
+	}
+	if authorization.Required {
+		return refuse("a supplemental credential channel cannot be mandatory; it may only add an optional channel")
+	}
+	if authorization.Placement != contract.FieldLocationHeader {
+		return refuse("a created credential channel must declare header placement")
+	}
+	audience, err := commonHTTPAudience(sourceHTTP.Origins)
+	if err != nil {
+		return refuse("a created credential channel requires exactly one source-admitted HTTP audience")
+	}
+	if !strings.EqualFold(authorization.Audience, audience) {
+		return refuse("a created credential channel audience must be exactly the source-admitted audience " + audience)
+	}
+	scheme := strings.TrimSuffix(authorization.Prefix, " ")
+	if scheme == "" || scheme == authorization.Prefix || strings.ContainsAny(scheme, " \t\r\n") {
+		return refuse("a created credential channel prefix must be exactly one scheme token followed by one space")
+	}
+	if len(amendmentHTTP.Witness.SourceRefs) == 0 {
+		return absent
+	}
+	namesChannel := false
 	for _, reference := range amendmentHTTP.Witness.SourceRefs {
-		if _, admitted := sourceReferences[reference.SourceID+"\x00"+reference.Pointer]; !admitted {
-			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "HTTP amendment witness is outside independently normalized HTTP source facts")
+		if source == nil || !source.Documentation(reference.SourceID) {
+			return absent
 		}
+		cited, ok := source.RawValue(reference.SourceID, strings.TrimPrefix(reference.Pointer, "#"))
+		if !ok {
+			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "a created credential channel witness does not resolve inside its documentation capture")
+		}
+		text, ok := cited.(string)
+		if !ok {
+			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "a created credential channel witness is not documentation text")
+		}
+		namesChannel = namesChannel ||
+			(strings.Contains(text, authorization.WireName) && strings.Contains(text, scheme))
+	}
+	if !namesChannel {
+		return refuse("no cited documentation range names both the declared wire name and the declared credential scheme")
 	}
 	return nil
 }

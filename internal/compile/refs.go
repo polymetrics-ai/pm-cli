@@ -9,8 +9,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"go.yaml.in/yaml/v3"
+
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
 const (
@@ -51,6 +54,12 @@ type parsedDocument struct {
 	canonical []byte
 	nodes     map[string]*yaml.Node
 	refs      []rawReference
+	// documentation retains the exact bytes of a supplemental
+	// official-documentation capture. Such a document is never parsed: it has no
+	// YAML tree, no nodes and no $ref scan, and its only addressing is an exact
+	// byte range.
+	documentation bool
+	bytes         []byte
 }
 
 type rawReference struct {
@@ -144,6 +153,19 @@ func ResolveRefs(source *CapturedSource) (*ResolvedSource, error) {
 	resolved.Documents = make([]ResolvedDocument, 0, len(ids))
 	for _, sourceID := range ids {
 		document := resolved.byID[sourceID]
+		if document.documentation {
+			// Nothing in a documentation capture is rewritten: it has no
+			// references, so its exact bytes are both its canonical and its
+			// rewritten form.
+			resolved.Documents = append(resolved.Documents, ResolvedDocument{
+				Metadata:      document.metadata,
+				CanonicalJSON: bytes.Clone(document.canonical),
+				RewrittenJSON: bytes.Clone(document.canonical),
+				Root:          false,
+				References:    []ReferenceIdentity{},
+			})
+			continue
+		}
 		rewritten, err := rewriteExternalReferences(document.root, sourceID, "", resolved.refs)
 		if err != nil {
 			return nil, err
@@ -170,6 +192,18 @@ func ResolveRefs(source *CapturedSource) (*ResolvedSource, error) {
 }
 
 func parseCapturedDocument(document CapturedDocument) (*parsedDocument, error) {
+	if document.Metadata.Dialect == DialectOfficialDocumentation {
+		// A documentation capture is retained byte-for-byte and is never parsed
+		// as YAML or JSON: an admitted document must not be able to change
+		// meaning through a parser, and documentation bytes are not structured
+		// data to begin with.
+		return &parsedDocument{
+			metadata:      document.Metadata,
+			canonical:     bytes.Clone(document.Bytes),
+			documentation: true,
+			bytes:         bytes.Clone(document.Bytes),
+		}, nil
+	}
 	decoder := yaml.NewDecoder(bytes.NewReader(document.Bytes))
 	var tree yaml.Node
 	if err := decoder.Decode(&tree); err != nil {
@@ -458,6 +492,36 @@ func (source *ResolvedSource) ReferenceAt(sourceID, fromPointer string) (Referen
 	return ReferenceIdentity{}, false
 }
 
+// DocumentationPointerPrefix introduces an exact byte range of a
+// documentation capture. The form is deliberately not a JSON pointer: a
+// documentation fact can never silently resolve against OpenAPI data, and an
+// OpenAPI fact can never silently resolve against documentation bytes. The
+// contract owns the grammar of the form.
+const DocumentationPointerPrefix = "bytes:"
+
+// Documentation reports whether sourceID names an admitted supplemental
+// official-documentation capture.
+func (source *ResolvedSource) Documentation(sourceID string) bool {
+	if source == nil {
+		return false
+	}
+	document := source.byID[sourceID]
+	return document != nil && document.documentation
+}
+
+// cite resolves one byte-range pointer against the retained documentation bytes.
+func (document *parsedDocument) cite(pointer string) ([]byte, bool) {
+	byteRange, ok := contract.ParseSourceByteRange(pointer)
+	if !ok || byteRange.End > len(document.bytes) {
+		return nil, false
+	}
+	cited := document.bytes[byteRange.Start:byteRange.End]
+	if !utf8.Valid(cited) {
+		return nil, false
+	}
+	return cited, true
+}
+
 func (source *ResolvedSource) RawValue(sourceID, pointer string) (any, bool) {
 	if source == nil {
 		return nil, false
@@ -465,6 +529,13 @@ func (source *ResolvedSource) RawValue(sourceID, pointer string) (any, bool) {
 	document := source.byID[sourceID]
 	if document == nil {
 		return nil, false
+	}
+	if document.documentation {
+		cited, ok := document.cite(strings.TrimPrefix(pointer, "#"))
+		if !ok {
+			return nil, false
+		}
+		return string(cited), true
 	}
 	node, ok := document.nodes[strings.TrimPrefix(pointer, "#")]
 	if !ok {
@@ -477,6 +548,10 @@ func (source *ResolvedSource) RawValue(sourceID, pointer string) (any, bool) {
 	return value, true
 }
 
+// PointerHash returns the exact digest of the value a source pointer addresses.
+// A JSON pointer hashes the canonical JSON of the addressed OpenAPI node; a
+// documentation byte-range pointer hashes the exact cited bytes, so a consumer
+// can recompute either digest from the retained capture alone.
 func (source *ResolvedSource) PointerHash(sourceID, pointer string) (string, bool) {
 	if source == nil {
 		return "", false
@@ -484,6 +559,13 @@ func (source *ResolvedSource) PointerHash(sourceID, pointer string) (string, boo
 	document := source.byID[sourceID]
 	if document == nil {
 		return "", false
+	}
+	if document.documentation {
+		cited, ok := document.cite(strings.TrimPrefix(pointer, "#"))
+		if !ok {
+			return "", false
+		}
+		return "sha256:" + digestHex(cited), true
 	}
 	node, ok := document.nodes[strings.TrimPrefix(pointer, "#")]
 	if !ok {

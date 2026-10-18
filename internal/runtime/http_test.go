@@ -17,6 +17,11 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
+// testClientIdentity is the bounded product identity the runtime tests configure
+// for operations that declare no user-agent field of their own. The identity
+// contract itself is exercised by TestProviderClientIdentity.
+const testClientIdentity = ClientIdentity("pm-cli/test-fixture")
+
 func TestTypedRequestAndResponseVariants(t *testing.T) {
 	t.Run("exact typed provider wire preserves presence", func(t *testing.T) {
 		root := contract.Schema{
@@ -140,8 +145,8 @@ func TestTypedRequestAndResponseVariants(t *testing.T) {
 				request.Header.Get("X-GitHub-Api-Version") != "2022-11-28" {
 				t.Errorf("constant source headers = %#v", request.Header)
 			}
-			if request.UserAgent() != "" {
-				t.Errorf("runtime synthesized User-Agent %q", request.UserAgent())
+			if request.UserAgent() != string(testClientIdentity) {
+				t.Errorf("provider client identity = %q, want %q", request.UserAgent(), testClientIdentity)
 			}
 			writer.Header().Set("Content-Type", "application/json")
 			_, _ = io.WriteString(writer, `[{"id":9007199254740993,"open":false,"title":""}]`)
@@ -157,7 +162,7 @@ func TestTypedRequestAndResponseVariants(t *testing.T) {
 			{Name: "Accept", Value: "application/vnd.github+json"},
 			{Name: "X-GitHub-Api-Version", Value: "2022-11-28"},
 		}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter,
 			Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:   dialer,
@@ -192,7 +197,7 @@ func TestTypedRequestAndResponseVariants(t *testing.T) {
 		request.Operation.Execution.HTTP.Headers = []contract.OperationHTTPHeader{{Name: "X-GitHub-Api-Version", Value: "source-version"}}
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{Admitter: admitter, Dialer: dialer}, request)
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity, Admitter: admitter, Dialer: dialer}, request)
 		if !errors.Is(err, ErrUnsupportedHTTPTransport) && !errors.Is(err, ErrInvalidHTTPInput) {
 			t.Fatalf("error = %v", err)
 		}
@@ -215,7 +220,7 @@ func TestTypedRequestAndResponseVariants(t *testing.T) {
 		origin := serverOrigin(t, server.URL) + "/api/v3"
 		request := testHTTPRequest(t, testListOperation("base-path", http.MethodGet, "/items"), origin, time.Now().UTC(), contract.NewObjectValue(nil))
 		dialer := &mappedDialer{address: server.Listener.Addr().String()}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: &testAdmitter{},
 			Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:   dialer,
@@ -231,7 +236,7 @@ func TestTypedRequestAndResponseVariants(t *testing.T) {
 		now := time.Now().UTC()
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter,
 			Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 			Dialer:   dialer,
@@ -241,6 +246,155 @@ func TestTypedRequestAndResponseVariants(t *testing.T) {
 		}
 		if admitter.calls.Load() != 0 || dialer.calls.Load() != 0 {
 			t.Fatalf("admits=%d dials=%d", admitter.calls.Load(), dialer.calls.Load())
+		}
+	})
+}
+
+// TestProviderClientIdentity pins the runtime's client identity contract against
+// a controlled peer. A provider that requires a client identity is answered by
+// the process's own bounded product identity when, and only when, the operation
+// declares no user-agent field of its own; a declared user-agent field always
+// wins; and a process without a usable identity fails closed instead of sending
+// an empty value.
+func TestProviderClientIdentity(t *testing.T) {
+	type observation struct {
+		agent   string
+		present bool
+	}
+	newPeer := func(t *testing.T) (*httptest.Server, <-chan observation) {
+		t.Helper()
+		observed := make(chan observation, 1)
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			_, present := request.Header["User-Agent"]
+			observed <- observation{agent: request.UserAgent(), present: present}
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = io.WriteString(writer, `[]`)
+		}))
+		t.Cleanup(server.Close)
+		return server, observed
+	}
+	run := func(t *testing.T, dependencies HTTPDependencies, operation contract.Operation, origin string, input contract.PresentValue) (HTTPExecution, error) {
+		t.Helper()
+		return ExecuteHTTP(context.Background(), dependencies, testHTTPRequest(t, operation, origin, time.Now().UTC(), input))
+	}
+
+	t.Run("configured product identity reaches the peer exactly", func(t *testing.T) {
+		server, observed := newPeer(t)
+		identity := ProductClientIdentity("test-version")
+		if identity != "pm-cli/test-version" {
+			t.Fatalf("product identity = %q", identity)
+		}
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		execution, err := run(t, HTTPDependencies{
+			ClientIdentity: identity,
+			Admitter:       admitter,
+			Resolver:       fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:         dialer,
+		}, testListOperation("client-identity-default", http.MethodGet, "/items"), serverOrigin(t, server.URL), contract.NewObjectValue(nil))
+		if err != nil || !execution.PhysicalSend || dialer.calls.Load() != 1 {
+			t.Fatalf("execution=%#v dials=%d error=%v", execution, dialer.calls.Load(), err)
+		}
+		if got := <-observed; !got.present || got.agent != "pm-cli/test-version" {
+			t.Fatalf("peer observed client identity = %#v, want %q", got, identity)
+		}
+	})
+
+	t.Run("declared user agent field wins over the runtime identity", func(t *testing.T) {
+		server, observed := newPeer(t)
+		operation := testListOperation("client-identity-declared", http.MethodGet, "/items")
+		operation.Inputs = []contract.FieldBinding{
+			testBinding("header.user-agent", "User-Agent", contract.FieldLocationHeader, true, contract.Schema{Type: contract.SchemaTypeString}, "simple", false),
+		}
+		execution, err := run(t, HTTPDependencies{
+			ClientIdentity: ProductClientIdentity("test-version"),
+			Admitter:       &testAdmitter{},
+			Resolver:       fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:         &mappedDialer{address: server.Listener.Addr().String()},
+		}, operation, serverOrigin(t, server.URL), contract.NewObjectValue(map[string]contract.PresentValue{
+			"header.user-agent": contract.NewStringValue("caller-agent/1"),
+		}))
+		if err != nil || !execution.PhysicalSend {
+			t.Fatalf("execution=%#v error=%v", execution, err)
+		}
+		if got := <-observed; !got.present || got.agent != "caller-agent/1" {
+			t.Fatalf("peer observed declared client identity = %#v, want %q", got, "caller-agent/1")
+		}
+	})
+
+	t.Run("declared user agent field that stayed absent is never substituted", func(t *testing.T) {
+		server, observed := newPeer(t)
+		operation := testListOperation("client-identity-absent", http.MethodGet, "/items")
+		operation.Inputs = []contract.FieldBinding{
+			testBinding("header.user-agent", "User-Agent", contract.FieldLocationHeader, false, contract.Schema{Type: contract.SchemaTypeString}, "simple", false),
+		}
+		execution, err := run(t, HTTPDependencies{
+			ClientIdentity: ProductClientIdentity("test-version"),
+			Admitter:       &testAdmitter{},
+			Resolver:       fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:         &mappedDialer{address: server.Listener.Addr().String()},
+		}, operation, serverOrigin(t, server.URL), contract.NewObjectValue(nil))
+		if err != nil || !execution.PhysicalSend {
+			t.Fatalf("execution=%#v error=%v", execution, err)
+		}
+		if got := <-observed; got.present || got.agent != "" {
+			t.Fatalf("peer observed substituted client identity = %#v, want an absent field", got)
+		}
+	})
+
+	t.Run("unconfigured identity fails closed without provider IO", func(t *testing.T) {
+		server, observed := newPeer(t)
+		admitter := &testAdmitter{}
+		dialer := &mappedDialer{address: server.Listener.Addr().String()}
+		_, err := run(t, HTTPDependencies{
+			Admitter: admitter,
+			Dialer:   dialer,
+		}, testListOperation("client-identity-unconfigured", http.MethodGet, "/items"), serverOrigin(t, server.URL), contract.NewObjectValue(nil))
+		if !errors.Is(err, ErrClientIdentityRequired) {
+			t.Fatalf("error = %v", err)
+		}
+		if admitter.calls.Load() != 0 || dialer.calls.Load() != 0 {
+			t.Fatalf("admits=%d dials=%d", admitter.calls.Load(), dialer.calls.Load())
+		}
+		select {
+		case got := <-observed:
+			t.Fatalf("peer observed %#v", got)
+		default:
+		}
+	})
+
+	t.Run("malformed identity fails closed without provider IO", func(t *testing.T) {
+		cases := []struct {
+			name     string
+			identity ClientIdentity
+		}{
+			{name: "padded", identity: ClientIdentity("pm-cli/test-version ")},
+			{name: "control", identity: ClientIdentity("pm-cli/test-version\r\nx-injected: 1")},
+			{name: "oversized", identity: ProductClientIdentity(strings.Repeat("version-", 40))},
+			{name: "empty", identity: ClientIdentity("")},
+		}
+		for _, testCase := range cases {
+			t.Run(testCase.name, func(t *testing.T) {
+				server, observed := newPeer(t)
+				admitter := &testAdmitter{}
+				dialer := &mappedDialer{address: server.Listener.Addr().String()}
+				_, err := run(t, HTTPDependencies{
+					ClientIdentity: testCase.identity,
+					Admitter:       admitter,
+					Dialer:         dialer,
+				}, testListOperation("client-identity-malformed", http.MethodGet, "/items"), serverOrigin(t, server.URL), contract.NewObjectValue(nil))
+				if !errors.Is(err, ErrClientIdentityRequired) {
+					t.Fatalf("error = %v", err)
+				}
+				if admitter.calls.Load() != 0 || dialer.calls.Load() != 0 {
+					t.Fatalf("admits=%d dials=%d", admitter.calls.Load(), dialer.calls.Load())
+				}
+				select {
+				case got := <-observed:
+					t.Fatalf("peer observed %#v", got)
+				default:
+				}
+			})
 		}
 	})
 }

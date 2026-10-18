@@ -142,13 +142,26 @@ func foundationsFor(operation contract.Operation) []contract.FoundationContract 
 }
 
 func validateCommandProjection(command contract.Command, operation contract.Operation) error {
+	// The declared credential channel is resolved by the credential boundary and
+	// is never a public command field, so the safe projection of an operation is
+	// its exact public input inventory without that one secret binding.
+	credentialField := ""
+	if operation.Execution != nil && operation.Execution.HTTP != nil && operation.Execution.HTTP.Authorization != nil {
+		credentialField = operation.Execution.HTTP.Authorization.FieldID
+	}
 	bindings := make(map[string]contract.FieldBinding, len(operation.Inputs))
-	for _, binding := range operation.Inputs {
+	appendBinding := func(binding contract.FieldBinding) {
+		if binding.FieldID == credentialField && binding.Sensitivity == contract.SensitivitySecret {
+			return
+		}
 		bindings[binding.FieldID] = binding
+	}
+	for _, binding := range operation.Inputs {
+		appendBinding(binding)
 	}
 	for _, variant := range operation.RequestVariants {
 		for _, binding := range variant.Inputs {
-			bindings[binding.FieldID] = binding
+			appendBinding(binding)
 		}
 	}
 	if len(command.Fields) != len(bindings) {

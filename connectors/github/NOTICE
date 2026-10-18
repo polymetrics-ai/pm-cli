@@ -87,3 +87,88 @@ runtime facts about the provider's interface. They are not execution evidence,
 not account-scope evidence and not live provider certification. Controlled
 GitHub-compatible responses remain fake evidence; live account evidence
 requires separate authorization and its own receipts.
+
+Supplemental official documentation capture
+-------------------------------------------
+
+The pinned OpenAPI capture above declares no `security` scheme and no
+`securitySchemes` at all, so the compiled operation was unauthenticated *by
+declaration*. Missing OpenAPI metadata is not evidence of anonymous-only
+operation, so the `issues/list-for-repo` operation admits one separately
+provenanced official documentation capture as a second, non-OpenAPI document:
+
+  source_id:    github-docs-rest-authentication
+  dialect:      official-documentation   (never parsed as YAML or JSON, no
+                                         closure, addressable only by an exact
+                                         byte range "#bytes:<start>-<end>")
+  url:          https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api
+  retrieved:    2026-09-19T12:43:59Z
+  byte length:  345525
+  sha256:       24bf2e4f9e61946a68e52f5436ef7310aaaca390a22ada441dd1f4ed38bd9d66
+  retained at:  connectors/github/official-documentation/documents/authenticating-to-the-rest-api.html
+  capture copy: connectors/github/captures/github-docs-rest-authentication (byte-identical)
+  license:      Creative Commons Attribution 4.0 International (CC BY 4.0),
+                (c) GitHub, Inc. / GitHub Docs, retained at
+                connectors/github/official-documentation/documents/github-docs-LICENSE.txt
+                (18,620 bytes, SHA-256 12d3a82a7d1378e6f597ec23d63a081aeb6ec4bc8de2a76ee9dc96c34c6d7a1b)
+
+Only the admitted operation may cite it, and only for the credential channel
+that the description does not declare. The three witness ranges, each resolved
+against the retained bytes with `python3 verify.py` locators, are:
+
+  #bytes:226676-226922  "sending the token in the Authorization header of
+                        your request" (documented request-header placement)
+  #bytes:227630-227854  "you can use Authorization: Bearer or Authorization:
+                        token to pass a token ... a JSON web token (JWT) must
+                        use Authorization: Bearer"
+  #bytes:226923-227157  the documented code sample that sends
+                        --header "Authorization: Bearer YOUR-TOKEN" to
+                        https://api.github.com
+
+The admitted channel is `authorization` (header `Authorization`, prefix
+`Bearer `, audience `https://api.github.com`). It is declared **optional**,
+because the retained operation page states that the endpoint "can be used
+without authentication ... if only public resources are requested"; a
+supplemental fact may add a credential channel, never mandate one, and the
+requirement that *this* private connection present a server-held credential is
+PM connection policy, not a provider protocol fact. The channel is resolved by
+the credential boundary: its binding is secret and never appears in a public
+command, catalog entry or CLI flag.
+
+Precedence, refusal and scope
+-----------------------------
+
+OpenAPI remains authoritative for everything it declares, and the supplemental
+fact may only add what it does not declare. Refused by construction: a channel
+created from OpenAPI description bytes (even bytes that contain the channel
+words), a witness that does not resolve to retained bytes, a range that names
+neither the declared header nor the declared scheme, a mandatory created
+channel, a widened or rewritten origin, a rewritten fixed header, and any
+operation other than `issues/list-for-repo`. The capture, its manifest, its
+retrieval script and its verifier under
+`connectors/github/official-documentation/` are untouched by this admission and
+remain the evidence of record.
+
+Digest chain for this admission
+-------------------------------
+
+Admitting the second document changed both derived identities, and they are
+recomputed as one set (a compiler that reads them only compares equality and
+never re-derives them):
+
+  source_digest       sha256:929ed77ea46b5f0430aa9b03fad1141729ddf8fe4261fb627c8218f0eb577c59
+      Canonical JSON digest of `connectors/github/source.lock.json`
+      (`json.Marshal` of the decoded lock). It changed because the lock now
+      declares the per-document dialects and the documentation capture entry,
+      and because `semantics_revision` below changed with it.
+  semantics_revision  sha256:b9038179be91c5cdb97d2152524904a8dd185f501e8ef521da8e2cf9afb221e8
+      Content address of the amendment facts alone (`json.Marshal` of the
+      decoded `operations` of `connectors/github/semantics.json`), pinned
+      identically as `revision` in that document and as `semantics_revision`
+      in the source lock. It changed because the operation's `http` facts now
+      declare the credential channel and cite the documentation witness.
+
+The earlier values (`source_digest` 06795527..., `semantics_revision`
+c08e7945...) described a declaration with a single OpenAPI document and no
+credential channel; neither was derived by a rule recorded in this repository,
+so this admission pins the two derivations above and records them here.

@@ -2,8 +2,8 @@
   "schema_version": "pm.lane-inventory/v1",
   "connector_id": "github",
   "lane": "binary_download",
-  "source_digest": "sha256:06795527ee448f84a979d8925331dfb3eb8ea601d7fa1a3bed4f80f708633ece",
-  "bundle_hash": "sha256:8a5b91aaa88be2ce639221c748486723c99f4173d753eb43e5e6835d65e42b9d",
+  "source_digest": "sha256:2523e86196299cc22ea96d57a9dea0e9a759886fc5219f8b3c10b4e67be7844f",
+  "bundle_hash": "sha256:3174da795f305ca7a5431e3ae6fdf047a2a16df68ed75f6240aac558fe49221e",
   "operations": [
     {
       "operation_id": "issues/list-for-repo",

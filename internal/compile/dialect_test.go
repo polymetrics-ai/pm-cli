@@ -199,7 +199,7 @@ func testSourceInput(t *testing.T, dialect Dialect, documents map[string][]byte,
 		data := documents[id]
 		digest := sha256.Sum256(data)
 		lock.SourceSet.Documents = append(lock.SourceSet.Documents, SourceDocument{
-			SourceID: id, OfficialURL: "https://example.invalid/" + id, Path: id,
+			SourceID: id, Dialect: dialect, OfficialURL: "https://example.invalid/" + id, Path: id,
 			CapturedAt: "2026-09-18T00:00:00Z", ByteLength: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
 			License:    SourceLicense{SPDX: "MIT", Path: "LICENSE.txt", SHA256: hex.EncodeToString(licenseHash[:])},
 			References: slices.Clone(references[id]),

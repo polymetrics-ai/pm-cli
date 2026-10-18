@@ -325,6 +325,10 @@
           "$ref": "#/$defs/duration",
           "default": "5m",
           "description": "Maximum age of a verified signed OIDC auth_time for privileged secret ingress; 1s through 15m. Login/session issuance time never qualifies."
+        },
+        "ca_ref": {
+          "$ref": "#/$defs/secretReference",
+          "description": "Optional operator-owned certificate authority bundle for the identity provider connection, read once as the confined bundle member ca.pem under the same bounded regular-file rules as every other operator secret. Every entry in the bundle must be a CA certificate: an empty, oversized, unparsable, non-CA, or non-certificate body fails composition instead of degrading to a smaller root set. Absence keeps the process system root store, a declared reference never falls back to it, and certificate, hostname and token validation stay enabled, so no insecure TLS mode and no system or global trust store change is implied."
         }
       }
     },

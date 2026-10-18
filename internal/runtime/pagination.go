@@ -7,6 +7,7 @@ import (
 	"math/big"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -78,7 +79,63 @@ type ContinuationState struct {
 	ProviderTotal      *contract.ExactNumber            `json:"provider_total,omitempty"`
 	UnreadTail         []contract.PresentValue          `json:"unread_tail"`
 	NextInputs         map[string]contract.PresentValue `json:"next_inputs"`
-	SourceExhausted    bool                             `json:"source_exhausted"`
+	// NextTarget is the sealed provider-issued continuation target of a link
+	// strategy: the origin, path and query the provider returned for the
+	// authorized request, including any opaque cursor parameter the admitted
+	// source does not declare. No caller value ever reaches it and it is
+	// re-validated against the admitted destination before every reuse.
+	NextTarget *LinkContinuationTarget `json:"next_target,omitempty"`
+	// RecordIdentity is the accepted resource identity observed at the
+	// declared record identity pointer on the records that produced this
+	// continuation. Every later continuation response must repeat it.
+	RecordIdentity  *contract.PresentValue `json:"record_identity,omitempty"`
+	SourceExhausted bool                   `json:"source_exhausted"`
+}
+
+// LinkContinuationTarget is one sealed provider-issued continuation target. It
+// is bounded opaque server state: the path is stored relative to the admitted
+// destination's base path, and the query is preserved verbatim so a provider
+// cursor such as `after` survives without ever becoming a typed input.
+type LinkContinuationTarget struct {
+	Origin      string `json:"origin"`
+	EscapedPath string `json:"escaped_path"`
+	RawQuery    string `json:"raw_query"`
+}
+
+const (
+	maxLinkTargetPathBytes  = 2048
+	maxLinkTargetQueryBytes = 4096
+	maxLinkTargetCursors    = 16
+	maxLinkIdentityBytes    = 4096
+)
+
+// ValidateLinkContinuationTarget validates the bounded shape of one sealed
+// provider continuation target. It is the structural half of reuse validation;
+// the origin, path and query are additionally re-checked against the admitted
+// destination and the accepted request before any request is built.
+func ValidateLinkContinuationTarget(target LinkContinuationTarget) error {
+	if target.Origin == "" || len(target.Origin) > 512 {
+		return fmt.Errorf("%w: sealed provider target origin is invalid", ErrNavigationConflict)
+	}
+	if _, err := canonicalOrigin(target.Origin); err != nil {
+		return fmt.Errorf("%w: sealed provider target origin is invalid", ErrNavigationConflict)
+	}
+	if target.EscapedPath == "" || len(target.EscapedPath) > maxLinkTargetPathBytes {
+		return fmt.Errorf("%w: sealed provider target path is invalid", ErrNavigationConflict)
+	}
+	parsed, err := url.Parse(target.EscapedPath)
+	if err != nil || parsed.IsAbs() || parsed.Host != "" || parsed.User != nil || parsed.Opaque != "" ||
+		parsed.RawQuery != "" || parsed.Fragment != "" || !strings.HasPrefix(parsed.Path, "/") ||
+		unsafeHTTPPath(parsed.Path) {
+		return fmt.Errorf("%w: sealed provider target path is invalid", ErrNavigationConflict)
+	}
+	if len(target.RawQuery) > maxLinkTargetQueryBytes || strings.ContainsRune(target.RawQuery, '#') {
+		return fmt.Errorf("%w: sealed provider target query is invalid", ErrNavigationConflict)
+	}
+	if _, err := url.ParseQuery(target.RawQuery); err != nil {
+		return fmt.Errorf("%w: sealed provider target query is invalid", ErrNavigationConflict)
+	}
+	return nil
 }
 
 // ContinuationCodec owns opaque authenticated continuation state. Runtime code
@@ -96,6 +153,14 @@ type pageHTTPContext struct {
 	RequestURL     *url.URL
 	ResponseHeader http.Header
 	Authorization  *contract.OperationAuthorization
+	// BasePath is the admitted destination's base path. Provider-issued target
+	// paths are validated and sealed relative to it.
+	BasePath string
+	// RequireTLS repeats the server policy that admitted the destination.
+	RequireTLS bool
+	// RecordIdentity is the accepted resource identity a continuation response
+	// must repeat through the declared record identity pointer.
+	RecordIdentity *contract.PresentValue
 }
 
 func preparePagination(
@@ -265,6 +330,29 @@ func validateContinuationState(
 		default:
 			return fmt.Errorf("%w: continuation navigation schema is unsupported", ErrNavigationConflict)
 		}
+	}
+	linkStrategy := pagination != nil && pagination.Kind == contract.OperationPaginationLink
+	if state.NextTarget != nil {
+		if !linkStrategy || state.SourceExhausted {
+			return fmt.Errorf("%w: continuation carries provider navigation without an admitted link strategy", ErrNavigationConflict)
+		}
+		if err := ValidateLinkContinuationTarget(*state.NextTarget); err != nil {
+			return err
+		}
+	} else if linkStrategy && !state.SourceExhausted {
+		return fmt.Errorf("%w: link continuation lacks its sealed provider target", ErrNavigationConflict)
+	}
+	identityDeclared := linkStrategy && pagination.LinkRecordIdentityPointer != ""
+	if identityDeclared {
+		if state.RecordIdentity != nil {
+			if err := validateLinkRecordIdentity(*state.RecordIdentity); err != nil {
+				return err
+			}
+		} else if state.NextTarget != nil {
+			return fmt.Errorf("%w: link continuation lacks its accepted record identity", ErrNavigationConflict)
+		}
+	} else if state.RecordIdentity != nil {
+		return fmt.Errorf("%w: continuation carries an undeclared record identity", ErrNavigationConflict)
 	}
 	if state.SourceExhausted && len(state.NextInputs) != 0 {
 		return fmt.Errorf("%w: exhausted continuation retains provider navigation", ErrNavigationConflict)
@@ -537,7 +625,7 @@ func nextPaginationStateForOperation(
 		state.NextInputs[pagination.PageRequestField], _ = contract.NewIntegerValue(strconv.FormatUint(page+1, 10))
 		return nil, state, false, nil, nil
 	case contract.OperationPaginationLink:
-		return nextLinkPaginationState(operation, pagination, input, httpContext)
+		return nextLinkPaginationState(operation, pagination, input, decoded, httpContext)
 	default:
 		return nil, state, false, nil, ErrInvalidPaginationFact
 	}
@@ -553,19 +641,48 @@ func nextLinkPaginationState(
 	operation contract.Operation,
 	pagination *contract.OperationPagination,
 	input contract.PresentValue,
+	decoded DecodedResponse,
 	httpContext pageHTTPContext,
 ) (*contract.ExactNumber, ContinuationState, bool, *uint64, error) {
 	state := ContinuationState{UnreadTail: []contract.PresentValue{}, NextInputs: map[string]contract.PresentValue{}}
 	if pagination == nil || httpContext.RequestURL == nil || httpContext.ResponseHeader == nil {
 		return nil, state, false, nil, ErrInvalidPaginationFact
 	}
-	values := httpContext.ResponseHeader.Values(pagination.LinkResponseHeader)
-	if len(values) == 0 {
+	next, err := nextRFC8288Relation(httpContext.ResponseHeader.Values(pagination.LinkResponseHeader), pagination.LinkResponseHeader)
+	if err != nil {
+		return nil, state, false, nil, err
+	}
+	if next == nil {
+		if _, err := linkRecordIdentity(pagination, decoded, httpContext, false); err != nil {
+			return nil, state, false, nil, err
+		}
 		return nil, state, true, nil, nil
+	}
+	target, navigation, declaredLimit, err := sealLinkContinuationTarget(operation, pagination, input, next.target, httpContext)
+	if err != nil {
+		return nil, state, false, nil, err
+	}
+	identity, err := linkRecordIdentity(pagination, decoded, httpContext, true)
+	if err != nil {
+		return nil, state, false, nil, err
+	}
+	state.NextInputs[pagination.LinkRequestField] = navigation
+	state.NextTarget = target
+	state.RecordIdentity = identity
+	return nil, state, false, declaredLimit, nil
+}
+
+// nextRFC8288Relation returns the one unanchored next relation of a Link
+// response header, nil when the response carries no next relation, and an
+// error for a malformed or ambiguous header. A second next relation or an
+// anchored one is never resolved by preference.
+func nextRFC8288Relation(values []string, headerName string) (*rfc8288Link, error) {
+	if len(values) == 0 {
+		return nil, nil
 	}
 	links, err := parseRFC8288Links(values)
 	if err != nil {
-		return nil, state, false, nil, fmt.Errorf("%w: Link response is malformed", ErrNavigationConflict)
+		return nil, fmt.Errorf("%w: %s response is malformed", ErrNavigationConflict, headerName)
 	}
 	var next *rfc8288Link
 	for index := range links {
@@ -573,104 +690,150 @@ func nextLinkPaginationState(
 			continue
 		}
 		if next != nil || links[index].anchor {
-			return nil, state, false, nil, fmt.Errorf("%w: Link next relation is ambiguous", ErrNavigationConflict)
+			return nil, fmt.Errorf("%w: %s next relation is ambiguous", ErrNavigationConflict, headerName)
 		}
 		next = &links[index]
 	}
-	if next == nil {
-		return nil, state, true, nil, nil
-	}
-	value, declaredLimit, err := linkNavigationValue(
-		operation,
-		pagination,
-		pagination.LinkRequestField,
-		next.target,
-		input,
-		httpContext.RequestURL,
-		httpContext.Authorization,
-	)
-	if err != nil {
-		return nil, state, false, nil, err
-	}
-	state.NextInputs[pagination.LinkRequestField] = value
-	return nil, state, false, declaredLimit, nil
+	return next, nil
 }
 
-func linkNavigationValue(
+// sealLinkContinuationTarget validates one provider-issued next target against
+// the authorized request and returns the bounded opaque state that carries it:
+// the admitted origin, the path rebased onto the admitted base path and the
+// query verbatim. The declared navigation value is extracted as a typed
+// continuation input and the page size the provider declared for the pages it
+// serves is reported. A target that leaves the declared routes, changes an
+// accepted parameter, embeds a credential, carries an undeclared declared
+// field or makes no progress is refused instead of followed.
+func sealLinkContinuationTarget(
 	operation contract.Operation,
 	pagination *contract.OperationPagination,
-	fieldID string,
-	rawTarget string,
 	input contract.PresentValue,
-	requestURL *url.URL,
-	authorization *contract.OperationAuthorization,
-) (contract.PresentValue, *uint64, error) {
-	binding, found := findOperationBinding(operation, fieldID)
+	rawTarget string,
+	httpContext pageHTTPContext,
+) (*LinkContinuationTarget, contract.PresentValue, *uint64, error) {
+	binding, found := findOperationBinding(operation, pagination.LinkRequestField)
 	if !found || binding.Location != contract.FieldLocationQuery ||
 		binding.Sensitivity != contract.SensitivityPublic ||
 		(binding.Schema.Type != contract.SchemaTypeString && binding.Schema.Type != contract.SchemaTypeInteger) {
-		return contract.PresentValue{}, nil, ErrInvalidPaginationFact
+		return nil, contract.PresentValue{}, nil, ErrInvalidPaginationFact
 	}
 	if rawTarget == "" || strings.Contains(rawTarget, "#") {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target has a fragment or is empty", ErrNavigationConflict)
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target has a fragment or is empty", ErrNavigationConflict)
 	}
 	reference, err := url.Parse(rawTarget)
 	if err != nil || reference.User != nil || reference.Opaque != "" || reference.Fragment != "" {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target is invalid", ErrNavigationConflict)
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target is invalid", ErrNavigationConflict)
 	}
-	target := requestURL.ResolveReference(reference)
-	if !sameOriginURL(target, requestURL) || target.EscapedPath() != requestURL.EscapedPath() {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes origin or path", ErrNavigationConflict)
+	target := httpContext.RequestURL.ResolveReference(reference)
+	if !sameOriginURL(target, httpContext.RequestURL) {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes origin", ErrNavigationConflict)
 	}
-	currentQuery, err := url.ParseQuery(requestURL.RawQuery)
+	if httpContext.RequireTLS && !strings.EqualFold(target.Scheme, "https") {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target is not HTTPS", ErrNavigationConflict)
+	}
+	origin, err := canonicalOrigin(target.Scheme + "://" + target.Host)
 	if err != nil {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: sent query is malformed", ErrNavigationConflict)
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next origin is invalid", ErrNavigationConflict)
+	}
+	relativePath, err := rebaseContinuationPath(target.EscapedPath(), httpContext.BasePath)
+	if err != nil {
+		return nil, contract.PresentValue{}, nil, err
+	}
+	sentPath, err := rebaseContinuationPath(httpContext.RequestURL.EscapedPath(), httpContext.BasePath)
+	if err != nil {
+		return nil, contract.PresentValue{}, nil, err
+	}
+	// The admitted route set is the declared operation path rendered with the
+	// accepted path bindings plus every declared additional route template. A
+	// provider target that returns to the operation path after a route-template
+	// continuation is admitted, and any other path is refused exactly as before.
+	renderedPath := ""
+	if encoded, encodeErr := EncodeInputs(operation, input); encodeErr == nil {
+		renderedPath, _ = rebaseContinuationPath(encoded.EscapedPath, httpContext.BasePath)
+	}
+	if relativePath != sentPath && relativePath != renderedPath &&
+		!linkRouteAdmitsPath(relativePath, pagination.LinkRoutes) {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes the operation path", ErrNavigationConflict)
+	}
+	if len(target.RawQuery) > maxLinkTargetQueryBytes {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next query exceeds its bound", ErrNavigationConflict)
+	}
+	currentQuery, err := url.ParseQuery(httpContext.RequestURL.RawQuery)
+	if err != nil {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: sent query is malformed", ErrNavigationConflict)
 	}
 	nextQuery, err := url.ParseQuery(target.RawQuery)
 	if err != nil {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next query is malformed", ErrNavigationConflict)
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next query is malformed", ErrNavigationConflict)
 	}
-	navigation, present := nextQuery[binding.WireName]
-	if !present || len(navigation) != 1 {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation is absent or duplicated", ErrNavigationConflict)
-	}
-	if current := currentQuery[binding.WireName]; len(current) > 1 {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: sent navigation is duplicated", ErrNavigationConflict)
-	}
-	delete(currentQuery, binding.WireName)
-	delete(nextQuery, binding.WireName)
-	if authorization != nil && authorization.Placement == contract.FieldLocationQuery {
+	if authorization := httpContext.Authorization; authorization != nil && authorization.Placement == contract.FieldLocationQuery {
 		if strings.EqualFold(authorization.WireName, binding.WireName) {
-			return contract.PresentValue{}, nil, ErrInvalidPaginationFact
+			return nil, contract.PresentValue{}, nil, ErrInvalidPaginationFact
 		}
 		if _, embedded := nextQuery[authorization.WireName]; embedded {
-			return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target embeds a credential channel", ErrNavigationConflict)
+			return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target embeds a credential channel", ErrNavigationConflict)
 		}
 		delete(currentQuery, authorization.WireName)
 	}
+	navigation, present := nextQuery[binding.WireName]
+	if !present || len(navigation) != 1 {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation is absent or duplicated", ErrNavigationConflict)
+	}
+	if current := currentQuery[binding.WireName]; len(current) > 1 {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: sent navigation is duplicated", ErrNavigationConflict)
+	}
+	delete(currentQuery, binding.WireName)
+	delete(nextQuery, binding.WireName)
 	// A provider may clamp the page size it was sent. The target then names a
 	// positive integer strictly smaller than the size actually sent for the
-	// declared page-size field, and that is the only admitted query difference:
-	// the declared field is compared separately here, so every other parameter
-	// still has to match the sent query exactly.
+	// declared page-size field, and that is the only admitted change of a
+	// declared parameter besides navigation.
 	var declaredLimit *uint64
 	if limitField := PaginationLimitField(pagination); limitField != "" {
 		limitBinding, declared := findOperationBinding(operation, limitField)
 		if !declared || limitBinding.Location != contract.FieldLocationQuery || limitBinding.WireName == "" {
-			return contract.PresentValue{}, nil, ErrInvalidPaginationFact
+			return nil, contract.PresentValue{}, nil, ErrInvalidPaginationFact
 		}
 		declaredLimit, err = declaredPageSize(
 			currentQuery[limitBinding.WireName],
 			nextQuery[limitBinding.WireName],
 		)
 		if err != nil {
-			return contract.PresentValue{}, nil, err
+			return nil, contract.PresentValue{}, nil, err
 		}
 		delete(currentQuery, limitBinding.WireName)
 		delete(nextQuery, limitBinding.WireName)
 	}
-	if currentQuery.Encode() != nextQuery.Encode() {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes unrelated query authority", ErrNavigationConflict)
+	// The request PM sends carries two query namespaces. A parameter that names
+	// a declared input field is caller authority, so it must survive the
+	// provider target unchanged. A parameter that names no declared field is the
+	// provider's opaque cursor namespace, which this runtime replayed from the
+	// sealed target of the previous hop: the provider owns it, so its next
+	// target may replace, change or drop it, and a provider that paginates by
+	// cursor issues a new one for every page. A declared parameter the request
+	// did not carry is a semantic change, not navigation; anything a target
+	// still carries after this loop is validated as the opaque cursor it is.
+	for name, sentValues := range currentQuery {
+		if !declaredQueryWireName(operation, name) {
+			continue
+		}
+		targetValues, carried := nextQuery[name]
+		if !carried || !slices.Equal(sentValues, targetValues) {
+			return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target changes unrelated query authority", ErrNavigationConflict)
+		}
+		delete(nextQuery, name)
+	}
+	for name := range nextQuery {
+		if declaredQueryWireName(operation, name) {
+			return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target adds an unsent declared query field", ErrNavigationConflict)
+		}
+		if !validLinkCursorName(name) {
+			return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target carries an invalid cursor parameter", ErrNavigationConflict)
+		}
+	}
+	if len(nextQuery) > maxLinkTargetCursors {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target carries too many cursor parameters", ErrNavigationConflict)
 	}
 	var value contract.PresentValue
 	switch binding.Schema.Type {
@@ -679,27 +842,291 @@ func linkNavigationValue(
 	case contract.SchemaTypeInteger:
 		value, err = contract.NewIntegerValue(navigation[0])
 		if err != nil {
-			return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next integer is invalid", ErrNavigationConflict)
+			return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next integer is invalid", ErrNavigationConflict)
 		}
-	default:
-		return contract.PresentValue{}, nil, ErrInvalidPaginationFact
 	}
 	pairs, err := encodeParameter(binding, value)
 	if err != nil || len(pairs) != 1 {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation cannot be encoded as one query value", ErrNavigationConflict)
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation cannot be encoded as one query value", ErrNavigationConflict)
 	}
 	pairs[0].allowReserved = binding.AllowReserved
 	futureQuery, err := url.ParseQuery(encodeQueryPairs(pairs))
 	futureNavigation := futureQuery[binding.WireName]
 	if err != nil || len(futureQuery) != 1 || len(futureNavigation) != 1 ||
 		futureNavigation[0] != navigation[0] {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation changes authority when re-encoded", ErrNavigationConflict)
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation changes authority when re-encoded", ErrNavigationConflict)
 	}
 	fields, _ := input.Fields()
-	if current, supplied := fields[fieldID]; supplied && current.Presence() != contract.PresenceAbsent && current.Equal(value) {
-		return contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation makes no progress", ErrNavigationConflict)
+	if current, supplied := fields[pagination.LinkRequestField]; supplied &&
+		current.Presence() != contract.PresenceAbsent && current.Equal(value) {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next navigation makes no progress", ErrNavigationConflict)
 	}
-	return value, declaredLimit, nil
+	if relativePath == sentPath && target.RawQuery == httpContext.RequestURL.RawQuery {
+		return nil, contract.PresentValue{}, nil, fmt.Errorf("%w: Link next target makes no progress", ErrNavigationConflict)
+	}
+	sealed := &LinkContinuationTarget{Origin: origin.String(), EscapedPath: relativePath, RawQuery: target.RawQuery}
+	if err := ValidateLinkContinuationTarget(*sealed); err != nil {
+		return nil, contract.PresentValue{}, nil, err
+	}
+	return sealed, value, declaredLimit, nil
+}
+
+// continuationRecordIdentity returns the accepted resource identity one
+// continuation response must repeat through the declared record identity
+// pointer, or nil when this request is not a continuation.
+func continuationRecordIdentity(state *ContinuationState) *contract.PresentValue {
+	if state == nil {
+		return nil
+	}
+	return state.RecordIdentity
+}
+
+// applyContinuationTarget re-validates one sealed provider target against the
+// admitted destination and the request PM is about to send, then applies it:
+// the provider's path replaces the rendered operation path and the provider's
+// opaque cursor parameters are appended verbatim. Every parameter PM would send
+// must survive the target unchanged, so a tampered sealed target can never
+// change an accepted query, leave the admitted origin, or address a route the
+// admitted source does not declare.
+func applyContinuationTarget(
+	encoded *EncodedInputs,
+	operation contract.Operation,
+	pagination *contract.OperationPagination,
+	state ContinuationState,
+	origin *url.URL,
+	requireTLS bool,
+	authorization *contract.OperationAuthorization,
+) error {
+	target := state.NextTarget
+	if target == nil {
+		return nil
+	}
+	if encoded == nil || pagination == nil || pagination.Kind != contract.OperationPaginationLink {
+		return fmt.Errorf("%w: sealed provider target has no admitted link strategy", ErrNavigationConflict)
+	}
+	if err := ValidateLinkContinuationTarget(*target); err != nil {
+		return err
+	}
+	sealed, err := canonicalOrigin(target.Origin)
+	if err != nil || origin == nil || !sameOrigin(sealed, origin) {
+		return fmt.Errorf("%w: sealed provider target is not on the admitted origin", ErrNavigationConflict)
+	}
+	if requireTLS && !strings.EqualFold(sealed.Scheme, "https") {
+		return fmt.Errorf("%w: sealed provider target is not HTTPS", ErrNavigationConflict)
+	}
+	if target.EscapedPath != encoded.EscapedPath && !linkRouteAdmitsPath(target.EscapedPath, pagination.LinkRoutes) {
+		return fmt.Errorf("%w: sealed provider target changes the operation path", ErrNavigationConflict)
+	}
+	targetQuery, err := url.ParseQuery(target.RawQuery)
+	if err != nil {
+		return fmt.Errorf("%w: sealed provider target query is malformed", ErrNavigationConflict)
+	}
+	encodedQuery, err := url.ParseQuery(encoded.RawQuery)
+	if err != nil {
+		return fmt.Errorf("%w: encoded request query is malformed", ErrNavigationConflict)
+	}
+	for name, values := range encodedQuery {
+		targetValues, carried := targetQuery[name]
+		if !carried || !slices.Equal(values, targetValues) {
+			return fmt.Errorf("%w: sealed provider target changes the accepted query", ErrNavigationConflict)
+		}
+	}
+	for name := range targetQuery {
+		if !declaredQueryWireName(operation, name) {
+			continue
+		}
+		if _, accepted := encodedQuery[name]; !accepted {
+			return fmt.Errorf("%w: sealed provider target adds an unaccepted declared query field", ErrNavigationConflict)
+		}
+	}
+	cursors, err := linkTargetCursorPairs(operation, target.RawQuery, authorization)
+	if err != nil {
+		return err
+	}
+	encoded.EscapedPath = target.EscapedPath
+	if len(cursors) != 0 {
+		joined := strings.Join(cursors, "&")
+		if encoded.RawQuery == "" {
+			encoded.RawQuery = joined
+		} else {
+			encoded.RawQuery += "&" + joined
+		}
+	}
+	return nil
+}
+
+// linkTargetCursorPairs returns the provider-issued query parameters that name
+// no declared input field, verbatim and in their issued order. They are the
+// provider's opaque cursor namespace: a cursor such as `after` survives exactly
+// as the provider wrote it and never becomes a typed input.
+func linkTargetCursorPairs(
+	operation contract.Operation,
+	rawQuery string,
+	authorization *contract.OperationAuthorization,
+) ([]string, error) {
+	if rawQuery == "" {
+		return nil, nil
+	}
+	cursors := make([]string, 0, maxLinkTargetCursors)
+	for _, pair := range strings.Split(rawQuery, "&") {
+		name, _, _ := strings.Cut(pair, "=")
+		decoded, err := url.QueryUnescape(name)
+		if err != nil || decoded == "" {
+			return nil, fmt.Errorf("%w: sealed provider target query is malformed", ErrNavigationConflict)
+		}
+		if authorization != nil && authorization.Placement == contract.FieldLocationQuery &&
+			decoded == authorization.WireName {
+			return nil, fmt.Errorf("%w: sealed provider target embeds a credential channel", ErrNavigationConflict)
+		}
+		if declaredQueryWireName(operation, decoded) {
+			continue
+		}
+		if !validLinkCursorName(decoded) {
+			return nil, fmt.Errorf("%w: sealed provider target carries an invalid cursor parameter", ErrNavigationConflict)
+		}
+		if len(cursors) == maxLinkTargetCursors {
+			return nil, fmt.Errorf("%w: sealed provider target carries too many cursor parameters", ErrNavigationConflict)
+		}
+		cursors = append(cursors, pair)
+	}
+	return cursors, nil
+}
+
+// linkRecordIdentity resolves the declared resource identity of one page from
+// the records the provider returned. Every record must carry the declared
+// field, all records of one page must agree, and a continuation response must
+// repeat the identity an earlier page sealed. An empty page carries no new
+// evidence: it keeps the accepted identity, and a page that must produce a
+// continuation without any identity evidence is refused.
+func linkRecordIdentity(
+	pagination *contract.OperationPagination,
+	decoded DecodedResponse,
+	httpContext pageHTTPContext,
+	required bool,
+) (*contract.PresentValue, error) {
+	if pagination.LinkRecordIdentityPointer == "" {
+		return nil, nil
+	}
+	var records []contract.PresentValue
+	if decoded.Result != nil {
+		if elements, ok := decoded.Result.Data.Elements(); ok {
+			records = elements
+		}
+	}
+	var observed *contract.PresentValue
+	for _, record := range records {
+		value, present, err := optionalValueAtJSONPointer(record, pagination.LinkRecordIdentityPointer)
+		if err != nil || !present || value.Presence() != contract.PresenceValue {
+			return nil, fmt.Errorf("%w: continuation record does not identify its resource", ErrNavigationConflict)
+		}
+		if err := validateLinkRecordIdentity(value); err != nil {
+			return nil, err
+		}
+		if observed == nil {
+			observed = &value
+			continue
+		}
+		if !observed.Equal(value) {
+			return nil, fmt.Errorf("%w: continuation page records identify different resources", ErrNavigationConflict)
+		}
+	}
+	if observed == nil {
+		if httpContext.RecordIdentity != nil {
+			return clonePresentValue(httpContext.RecordIdentity), nil
+		}
+		if required {
+			return nil, fmt.Errorf("%w: link continuation has no accepted record identity", ErrNavigationConflict)
+		}
+		return nil, nil
+	}
+	if httpContext.RecordIdentity != nil && !observed.Equal(*httpContext.RecordIdentity) {
+		return nil, fmt.Errorf("%w: continuation records identify a different resource", ErrNavigationConflict)
+	}
+	return observed, nil
+}
+
+func validateLinkRecordIdentity(value contract.PresentValue) error {
+	switch value.Kind() {
+	case contract.ValueKindString:
+		text, ok := value.TextValue()
+		if !ok || text == "" || len(text) > maxLinkIdentityBytes {
+			return fmt.Errorf("%w: continuation record identity is invalid", ErrNavigationConflict)
+		}
+	case contract.ValueKindInteger:
+		number, ok := value.ExactNumber()
+		if !ok || len(number.Text) > maxLinkIdentityBytes {
+			return fmt.Errorf("%w: continuation record identity is invalid", ErrNavigationConflict)
+		}
+	default:
+		return fmt.Errorf("%w: continuation record identity is not a string or integer", ErrNavigationConflict)
+	}
+	return nil
+}
+
+// rebaseContinuationPath strips the admitted destination's base path from one
+// admitted request path. Provider targets are sealed relative to that base, so
+// a sealed path can never address a prefix outside the admitted destination.
+func rebaseContinuationPath(escapedPath, basePath string) (string, error) {
+	if escapedPath == "" || escapedPath[0] != '/' {
+		return "", fmt.Errorf("%w: continuation target path is invalid", ErrNavigationConflict)
+	}
+	if basePath == "" || basePath == "/" {
+		return escapedPath, nil
+	}
+	if escapedPath != basePath && !strings.HasPrefix(escapedPath, basePath+"/") {
+		return "", fmt.Errorf("%w: continuation target leaves the admitted base path", ErrNavigationConflict)
+	}
+	relative := strings.TrimPrefix(escapedPath, basePath)
+	if relative == "" {
+		relative = "/"
+	}
+	return relative, nil
+}
+
+// linkRouteAdmitsPath reports whether one rebased provider path matches an
+// additional route template the admitted source declares for the same resource.
+func linkRouteAdmitsPath(escapedPath string, routes []string) bool {
+	for _, route := range routes {
+		if contract.LinkRouteMatches(escapedPath, route) {
+			return true
+		}
+	}
+	return false
+}
+
+// declaredQueryWireName reports whether one wire name belongs to a declared
+// query binding of the operation, including its request variants.
+func declaredQueryWireName(operation contract.Operation, name string) bool {
+	for _, binding := range operation.Inputs {
+		if binding.Location == contract.FieldLocationQuery && binding.WireName == name {
+			return true
+		}
+	}
+	for _, variant := range operation.RequestVariants {
+		for _, binding := range variant.Inputs {
+			if binding.Location == contract.FieldLocationQuery && binding.WireName == name {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// validLinkCursorName bounds one provider cursor parameter name to printable
+// ASCII that cannot re-parse as a query separator.
+func validLinkCursorName(name string) bool {
+	if name == "" {
+		return false
+	}
+	for index := range len(name) {
+		character := name[index]
+		if character <= 0x20 || character >= 0x7f ||
+			character == '&' || character == '=' || character == '#' ||
+			character == '%' || character == '+' || character == '?' || character == '\\' {
+			return false
+		}
+	}
+	return true
 }
 
 // declaredPageSize compares the sent and the declared values of one page-size
@@ -1002,8 +1429,7 @@ func responseCarriesPaginatedRecords(operation contract.Operation, decoded Decod
 }
 
 func responseCarriesRecords(response contract.Response, mediaType string) bool {
-	return !response.NoContent && response.Schema != nil && response.MediaType == mediaType &&
-		(response.RecordPointer != nil || response.Schema.Type == contract.SchemaTypeArray)
+	return response.MediaType == mediaType && response.CarriesPaginatedRecords()
 }
 
 func navigationUint64(input contract.PresentValue, fieldID string) (uint64, bool, error) {
@@ -1081,4 +1507,11 @@ func clonePresentValues(values []contract.PresentValue) []contract.PresentValue 
 	cloned := make([]contract.PresentValue, len(values))
 	copy(cloned, values)
 	return cloned
+}
+
+func clonePresentValue(value *contract.PresentValue) *contract.PresentValue {
+	if value == nil {
+		return nil
+	}
+	return new(*value)
 }

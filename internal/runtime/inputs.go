@@ -335,6 +335,86 @@ func applyConstantHeaders(encoded *EncodedInputs, operation contract.Operation, 
 	return nil
 }
 
+// clientIdentityWireName is the request field the shared runtime reserves for
+// its own bounded product identity. It is a client identity and never a
+// provider-specific behavior: an operation that declares this field keeps
+// ownership of it, and the runtime writes nothing over it.
+const clientIdentityWireName = "User-Agent"
+
+// maximumClientIdentityBytes bounds the identity one process may send, so a
+// build-reported version can never carry an unbounded value onto the wire.
+const maximumClientIdentityBytes = 256
+
+// ProductClientIdentityPrefix names the product every PM process uses when it
+// identifies itself to a provider destination.
+const ProductClientIdentityPrefix = "pm-cli/"
+
+// ClientIdentity is the bounded product identity one process sends as the
+// default provider user agent. Its zero value is invalid: a process that sends
+// provider requests must be able to identify itself, and the runtime refuses a
+// request it cannot identify instead of sending an empty value.
+type ClientIdentity string
+
+// ProductClientIdentity composes the product identity for one build-reported
+// version string, for example "pm-cli/development". The composed value is
+// validated by the runtime, so a build that reports an unusable version fails
+// closed rather than sending a malformed identity.
+func ProductClientIdentity(version string) ClientIdentity {
+	return ClientIdentity(ProductClientIdentityPrefix + version)
+}
+
+// Validate accepts exactly one bounded printable-ASCII identity. An empty,
+// padded, oversized or control-bearing value is refused: an unconfigured
+// identity must fail closed, and a configured identity must reach the peer
+// exactly as it was configured.
+func (identity ClientIdentity) Validate() error {
+	value := string(identity)
+	if value == "" || len(value) > maximumClientIdentityBytes || strings.TrimSpace(value) != value {
+		return ErrClientIdentityRequired
+	}
+	for index := range len(value) {
+		if character := value[index]; character < 0x20 || character > 0x7e {
+			return ErrClientIdentityRequired
+		}
+	}
+	return nil
+}
+
+// resolveClientIdentity reports the default client identity this request must
+// send and whether the runtime owns that field for the request. An operation
+// that declares its own user-agent input owns the field: the runtime never
+// writes, replaces or augments it, and needs no identity of its own. Every
+// other operation requires a configured identity, so a process that cannot
+// identify itself refuses the request before any credential resolution,
+// request construction, admission or provider I/O.
+func resolveClientIdentity(operation contract.Operation, configured ClientIdentity) (ClientIdentity, bool, error) {
+	if declaresHeader(operation, clientIdentityWireName) {
+		return "", false, nil
+	}
+	if err := configured.Validate(); err != nil {
+		return "", false, err
+	}
+	return configured, true, nil
+}
+
+// applyClientIdentity writes the process client identity onto the encoded
+// request. It never overwrites an already encoded header: a wire field the
+// source declared is reported as a conflict instead of being replaced.
+func applyClientIdentity(encoded *EncodedInputs, identity ClientIdentity) error {
+	if encoded == nil {
+		return fmt.Errorf("%w: encoded request is absent", ErrInvalidHTTPInput)
+	}
+	if err := identity.Validate(); err != nil {
+		return err
+	}
+	canonical := http.CanonicalHeaderKey(clientIdentityWireName)
+	if _, present := encoded.Header[canonical]; present {
+		return fmt.Errorf("%w: the runtime client identity would replace an encoded provider field", ErrInvalidHTTPInput)
+	}
+	encoded.Header[canonical] = []string{string(identity)}
+	return nil
+}
+
 func operationDeclaresHeaderBinding(operation contract.Operation, name string) bool {
 	for _, binding := range operation.Inputs {
 		if binding.Location == contract.FieldLocationHeader && strings.EqualFold(binding.WireName, name) {

@@ -21,6 +21,12 @@ type HTTPDirectReadDependencies struct {
 	Continuations *ContinuationService
 	Objects       pmruntime.ObjectReader
 	Now           func() time.Time
+	// ClientIdentity is the bounded product identity this process sends as the
+	// default provider user agent for every operation that declares no
+	// user-agent field of its own. Registering a declared connector slice
+	// without it is refused, so a process that can reach a provider always
+	// identifies itself.
+	ClientIdentity pmruntime.ClientIdentity
 }
 
 // NewHTTPDirectReadRegistration constructs the shared HTTP direct-read handler.
@@ -28,11 +34,12 @@ type HTTPDirectReadDependencies struct {
 func NewHTTPDirectReadRegistration(dependencies HTTPDirectReadDependencies) HandlerRegistration {
 	capabilities := httpDirectReadCapabilities(dependencies.Continuations != nil)
 	runtimeDependencies := pmruntime.HTTPDependencies{
-		Objects:   dependencies.Objects,
-		Resolver:  dependencies.Resolver,
-		Dialer:    dependencies.Dialer,
-		TLSConfig: dependencies.TLSConfig,
-		Now:       dependencies.Now,
+		Objects:        dependencies.Objects,
+		Resolver:       dependencies.Resolver,
+		Dialer:         dependencies.Dialer,
+		TLSConfig:      dependencies.TLSConfig,
+		Now:            dependencies.Now,
+		ClientIdentity: dependencies.ClientIdentity,
 	}
 	return HandlerRegistration{
 		Lanes:         []contract.Lane{contract.LaneDirectRead},
