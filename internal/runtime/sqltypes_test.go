@@ -392,6 +392,46 @@ func TestLosslessParameterizedSQL(t *testing.T) {
 	})
 }
 
+// TestSQLTimestampPrecisionIsNeverSilentlyLost refuses a timestamp whose
+// fraction carries a non-zero digit below the microsecond PostgreSQL timestamp
+// and timestamptz store, instead of binding a different instant or wall clock.
+// Zero digits below the microsecond change nothing and stay admitted.
+func TestSQLTimestampPrecisionIsNeverSilentlyLost(t *testing.T) {
+	for _, exact := range []string{
+		"2026-09-19T05:00:00.123456789Z",
+		"2026-09-19T05:00:00.0000001+02:00",
+		"2026-09-19 05:00:00.1234561Z",
+	} {
+		if value, err := SQLInstantValue(exact); !errors.Is(err, ErrSQLValue) {
+			encoded, _ := value.parameterBytes()
+			t.Fatalf("SQLInstantValue(%q) = %q, %v; want an unrepresentable-precision refusal", exact, encoded, err)
+		}
+	}
+	for _, exact := range []string{"2026-09-19 05:00:00.123456789", "2026-09-19 05:00:00.0000001"} {
+		if value, err := SQLLocalTimestampValue(exact); !errors.Is(err, ErrSQLValue) {
+			encoded, _ := value.parameterBytes()
+			t.Fatalf("SQLLocalTimestampValue(%q) = %q, %v; want an unrepresentable-precision refusal", exact, encoded, err)
+		}
+	}
+	for exact, bound := range map[string]string{
+		"2026-09-19T05:00:00.123456Z":    "2026-09-19T05:00:00.123456Z",
+		"2026-09-19T05:00:00.123456000Z": "2026-09-19T05:00:00.123456Z",
+		"2026-09-19T07:00:00.5+02:00":    "2026-09-19T05:00:00.5Z",
+	} {
+		value := mustSQLInstant(t, exact)
+		encoded, err := value.parameterBytes()
+		if err != nil || string(encoded) != bound {
+			t.Fatalf("SQLInstantValue(%q) bound %q, %v; want %q", exact, encoded, err, bound)
+		}
+	}
+	for _, exact := range []string{"2026-09-19 05:00:00.123456", "2026-09-19 05:00:00.123456000"} {
+		value := mustSQLLocalTimestamp(t, exact)
+		if encoded, err := value.parameterBytes(); err != nil || string(encoded) != exact {
+			t.Fatalf("SQLLocalTimestampValue(%q) bound %q, %v; want the exact wall clock", exact, encoded, err)
+		}
+	}
+}
+
 // verifyScopeForStrictTLS asserts that the isolated customer role keeps only
 // the declared relation privileges inside its own isolated database.
 func verifyScopeForStrictTLS(t *testing.T, ctx context.Context, fixture *sqlFixture, customer *pgconn.PgConn) {

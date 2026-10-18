@@ -191,6 +191,9 @@ func SQLLocalTimestampValue(exact string) (SQLValue, error) {
 	if _, err := time.Parse("2006-01-02 15:04:05.999999", exact); err != nil {
 		return SQLValue{}, fmt.Errorf("%w: timestamp must be an exact local wall clock", ErrSQLValue)
 	}
+	if err := requireSQLMicrosecondFraction(exact[len("2006-01-02 15:04:05"):]); err != nil {
+		return SQLValue{}, err
+	}
 	return SQLValue{kind: SQLTimestamp, presence: contract.PresenceValue, text: exact}, nil
 }
 
@@ -553,6 +556,28 @@ func parseSQLInstantText(text string) (time.Time, string, error) {
 	return instant, canonical, nil
 }
 
+// requireSQLMicrosecondFraction refuses a fractional-second rendering that
+// carries a non-zero digit below the microsecond. PostgreSQL timestamp and
+// timestamptz store microseconds, so such a value has no exact representation:
+// binding it would silently round or truncate it to a different instant or wall
+// clock. Zero digits below the microsecond change nothing and are admitted. The
+// fraction is the text after the whole seconds, with its leading dot.
+func requireSQLMicrosecondFraction(fraction string) error {
+	if !strings.HasPrefix(fraction, ".") {
+		return nil
+	}
+	digits := fraction[1:]
+	if len(digits) > sqlMicrosecondDigits && strings.Trim(digits[sqlMicrosecondDigits:], "0") != "" {
+		return fmt.Errorf("%w: timestamp fraction .%s is finer than the microsecond PostgreSQL can represent",
+			ErrSQLValue, digits)
+	}
+	return nil
+}
+
+// sqlMicrosecondDigits is the fractional-second precision PostgreSQL timestamp
+// and timestamptz store.
+const sqlMicrosecondDigits = 6
+
 func canonicalSQLInstantText(text string) (string, error) {
 	if len(text) < 20 {
 		return "", fmt.Errorf("%w: instant %q is too short to carry an offset", ErrSQLValue, text)
@@ -579,6 +604,9 @@ func canonicalSQLInstantText(text string) (string, error) {
 		return "", fmt.Errorf("%w: instant %q is not a supported timestamp rendering", ErrSQLValue, text)
 	}
 	body = body[:10] + "T" + body[11:]
+	if err := requireSQLMicrosecondFraction(body[19:]); err != nil {
+		return "", err
+	}
 	canonicalOffset, err := canonicalSQLOffset(offset)
 	if err != nil {
 		return "", err
