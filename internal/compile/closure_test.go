@@ -951,8 +951,30 @@ func TestAcceptedUpstreamIdentityStaysSeparateFromItsCapture(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(lock.SourceSet.Documents) != 1 {
+		if len(lock.SourceSet.Documents) != 4 ||
+			lock.SourceSet.Documents[0].Dialect != DialectOpenAPI30 {
 			t.Fatalf("pinned github documents = %#v", lock.SourceSet.Documents)
+		}
+		documentationCaptures := map[string]struct {
+			byteLength int64
+			sha256     string
+		}{
+			"github-docs-rest-authentication": {byteLength: 345525, sha256: "24bf2e4f9e61946a68e52f5436ef7310aaaca390a22ada441dd1f4ed38bd9d66"},
+			"github-docs-rest-pagination":     {byteLength: 352329, sha256: "835a376afe5971b03ab9efb2692ca8edd420bb8fce6528b6374028467063677f"},
+			"github-docs-rest-best-practices": {byteLength: 330277, sha256: "209c4b090e2c4edc0490837b5a9368359db3ea1c83a2922c6ddac1cd395338ef"},
+		}
+		for _, candidate := range lock.SourceSet.Documents[1:] {
+			if candidate.Dialect != DialectOfficialDocumentation {
+				t.Fatalf("supplemental github document is not declared as documentation = %#v", candidate)
+			}
+			expected, known := documentationCaptures[candidate.SourceID]
+			if !known {
+				t.Fatalf("unexpected supplemental github document = %#v", candidate)
+			}
+			if candidate.ByteLength != expected.byteLength || candidate.SHA256 != expected.sha256 ||
+				candidate.License.SPDX != "CC-BY-4.0" {
+				t.Fatalf("pinned github documentation capture identity = %#v", candidate)
+			}
 		}
 		document := lock.SourceSet.Documents[0]
 		upstreamByteLength := document.UpstreamByteLength

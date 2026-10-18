@@ -29,15 +29,21 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
 )
+
+// testClientIdentity is the bounded product identity the HTTP direct-read tests
+// configure. A process that registers a declared connector slice must identify
+// itself; the identity contract itself is exercised by the runtime package.
+const testClientIdentity = pmruntime.ClientIdentity("pm-cli/test-fixture")
 
 func TestHTTPDirectReadRegistrationRequiresSealedPolicyAndPhysicalAuthority(t *testing.T) {
 	selection := httpDirectReadSelection("fixture.http.direct-read.requirements", "https://provider.test", http.StatusOK, false)
 	policy := httpDirectReadPolicy("https://provider.test")
 	dialer := &httpDirectReadDialer{address: "127.0.0.1:1"}
-	registration := app.NewHTTPDirectReadRegistration(app.HTTPDirectReadDependencies{
+	registration := app.NewHTTPDirectReadRegistration(app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{},
 		Dialer:   dialer,
 	})
@@ -79,7 +85,7 @@ func TestHTTPDirectReadRegistrationWorkerBehavior(t *testing.T) {
 			t,
 			selection,
 			policy,
-			app.HTTPDirectReadDependencies{
+			app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 				Resolver:  httpDirectReadResolver{},
 				Dialer:    dialer,
 				TLSConfig: tlsConfig,
@@ -147,7 +153,7 @@ func TestHTTPDirectReadRegistrationWorkerBehavior(t *testing.T) {
 		}
 		selection := httpDirectReadSelection("fixture.http.direct-read.denied", origin, http.StatusOK, false)
 		policy := httpDirectReadPolicy(origin)
-		fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{
+		fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 			Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig, Now: clock,
 		}, nil)
 		service := newPermitWorkerService(t, fixture, temporal)
@@ -206,7 +212,7 @@ func TestHTTPDirectReadRegistrationWorkerBehavior(t *testing.T) {
 		}))
 		selection := httpDirectReadSelection("fixture.http.direct-read.unknown", origin, http.StatusOK, false)
 		policy := httpDirectReadPolicy(origin)
-		fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{
+		fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 			Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 		}, nil)
 		service := newPermitWorkerService(t, fixture, temporal)
@@ -265,7 +271,7 @@ func TestHTTPDirectReadRegistrationWorkerBehavior(t *testing.T) {
 			}))
 			selection := httpDirectReadSelection("fixture.http.direct-read.cooldown", origin, http.StatusTooManyRequests, true)
 			policy := httpDirectReadPolicy(origin)
-			fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{
+			fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 				Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
 			}, nil)
 			service := newPermitWorkerService(t, fixture, temporal)

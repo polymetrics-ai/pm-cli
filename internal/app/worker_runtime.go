@@ -15,6 +15,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/credentials"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -31,6 +32,10 @@ type WorkerRuntimeConfig struct {
 	ResolveOperation     OperationResolver
 	Authorization        auth.ResourceAuthorization
 	ScheduledRunAdmitter ScheduledRunAdmitter
+	// ClientIdentity is the bounded product identity this worker sends as the
+	// default provider user agent for every operation that declares no
+	// user-agent field of its own.
+	ClientIdentity pmruntime.ClientIdentity
 }
 
 // WorkerRuntime owns the prepared dependencies shared by the standalone
@@ -137,8 +142,9 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 		registry = &HandlerRegistry{}
 	}
 	if err := composition.RegisterDirectRead(registry, HTTPDirectReadDependencies{
-		TLSConfig:     providerHTTPTLS,
-		Continuations: continuationService,
+		TLSConfig:      providerHTTPTLS,
+		Continuations:  continuationService,
+		ClientIdentity: configuration.ClientIdentity,
 	}); err != nil {
 		return fail(errors.Join(errors.New("worker connector direct-read registration failed"), err))
 	}

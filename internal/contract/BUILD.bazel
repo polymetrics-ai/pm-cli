@@ -45,6 +45,7 @@ go_test(
     srcs = [
         "digest_test.go",
         "http_policy_test.go",
+        "link_policy_test.go",
         "operation_input_test.go",
         "proof_contract_test.go",
         "schema_test.go",

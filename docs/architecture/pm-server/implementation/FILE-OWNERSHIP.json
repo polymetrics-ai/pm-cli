@@ -145,7 +145,8 @@
         "internal/contract/value.go",
         "internal/contract/digest.go",
         "internal/contract/compatibility.go",
-        "internal/contract/operation_input.go"
+        "internal/contract/operation_input.go",
+        "internal/contract/link_policy_test.go"
       ],
       "package": "contract",
       "process_owner": "All processes, pure values",
@@ -548,7 +549,8 @@
         "internal/compile/sensitivity.go",
         "cmd/pmgen/connector.go",
         "cmd/pmgen/connector_test.go",
-        "internal/compile/closure_test.go"
+        "internal/compile/closure_test.go",
+        "internal/compile/link_policy_test.go"
       ],
       "package": "compile",
       "process_owner": "Build tools",
@@ -6063,6 +6065,7 @@
         "TestHTTPExecutionPolicyStrictDecoding",
         "TestHTTPExecutionPolicyValidatesSourceOriginSelection",
         "TestHTTPExecutionPolicyValidationBoundaries",
+        "TestLoadRunBoundaryCarriesTheAdmittedScopeAndTheRealFailure",
         "TestPhysicalCallBoundaryCurrentSingleUseAndSessionIndependence",
         "TestPhysicalCallBoundaryDeniesRevokedExpiredAndFencedAuthorityBeforeKeyOrSend",
         "TestProviderHTTPConfigurationRefusals",
@@ -6116,6 +6119,7 @@
         "internal/app/http_observation.go",
         "internal/app/http_retry.go",
         "internal/app/http_retry_test.go",
+        "internal/app/load_boundary_test.go",
         "internal/app/http_continuation_test.go",
         "internal/app/physical_boundary_test.go",
         "internal/app/continuations.go",
@@ -31010,6 +31014,81 @@
         },
         {
           "package": "store",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "testfixture",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "workflows",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/app/load_boundary_test.go",
+      "group_id": "N14",
+      "prior_group_id": null,
+      "owner": "app",
+      "process": "API and worker",
+      "milestone": "M6",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "Own worker load boundary test behavior within app; bounded role: Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "interfaces": [
+        "TestLoadRunBoundaryCarriesTheAdmittedScopeAndTheRealFailure"
+      ],
+      "dependencies": [
+        "activities",
+        "app",
+        "config",
+        "contract",
+        "temporal",
+        "testfixture",
+        "workflows"
+      ],
+      "test_ids": [],
+      "generator": null,
+      "go_package": "app_test",
+      "assignment_owner": "app",
+      "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+      "allowed_internal_dependencies": [
+        "activities",
+        "app",
+        "config",
+        "contract",
+        "temporal",
+        "testfixture",
+        "workflows"
+      ],
+      "import_activation": [
+        {
+          "package": "activities",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "app",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "config",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "temporal",
           "earliest_milestone": "M6",
           "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
         },

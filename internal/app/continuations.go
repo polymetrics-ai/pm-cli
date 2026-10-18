@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"net/url"
+	"strings"
 	"sync"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
@@ -190,6 +192,16 @@ func (codec *boundContinuationCodec) SealContinuation(
 			return contract.PresentValue{}, fmt.Errorf("%w: invalid continuation navigation", ErrContinuationInvalid)
 		}
 	}
+	if state.NextTarget != nil {
+		if err := pmruntime.ValidateLinkContinuationTarget(*state.NextTarget); err != nil {
+			return contract.PresentValue{}, fmt.Errorf("%w: invalid continuation target", ErrContinuationInvalid)
+		}
+	}
+	if state.RecordIdentity != nil {
+		if err := state.RecordIdentity.Validate(); err != nil {
+			return contract.PresentValue{}, fmt.Errorf("%w: invalid continuation record identity", ErrContinuationInvalid)
+		}
+	}
 	envelope := continuationEnvelope{
 		Schema:        continuationEnvelopeSchema,
 		ProducerRunID: binding.RunID,
@@ -353,7 +365,32 @@ func (codec *boundContinuationCodec) validateEnvelope(envelope continuationEnvel
 		authority.consumerBudget.Policy.HTTP.SelectedOrigin != envelope.Producer.SelectedHTTPOrigin {
 		return fmt.Errorf("%w: continuation lineage no longer matches current durable authority", ErrContinuationInvalid)
 	}
+	// A sealed provider continuation target is bound to the durable selected
+	// origin at rest: the runtime re-checks it against the admitted destination
+	// before any request is built, and here the envelope must already name the
+	// same origin the producing run was admitted to.
+	if envelope.State.NextTarget != nil {
+		if err := pmruntime.ValidateLinkContinuationTarget(*envelope.State.NextTarget); err != nil {
+			return fmt.Errorf("%w: continuation target is invalid", ErrContinuationInvalid)
+		}
+		if !sameContinuationTargetOrigin(envelope.State.NextTarget.Origin, envelope.Producer.SelectedHTTPOrigin) {
+			return fmt.Errorf("%w: continuation target origin is not the admitted selected origin", ErrContinuationInvalid)
+		}
+	}
 	return nil
+}
+
+// sameContinuationTargetOrigin reports whether one sealed provider target origin
+// names the same scheme and host as the durable selected HTTP origin, which may
+// carry a base path the target origin never repeats.
+func sameContinuationTargetOrigin(target, selected string) bool {
+	targetURL, targetErr := url.Parse(target)
+	selectedURL, selectedErr := url.Parse(selected)
+	if targetErr != nil || selectedErr != nil || targetURL.Host == "" || selectedURL.Host == "" {
+		return false
+	}
+	return strings.EqualFold(targetURL.Scheme, selectedURL.Scheme) &&
+		strings.EqualFold(targetURL.Host, selectedURL.Host)
 }
 
 func continuationBindingsEqual(left, right pmruntime.ContinuationBinding) bool {

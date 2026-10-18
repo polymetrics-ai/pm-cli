@@ -288,7 +288,7 @@ func TestWorkerDispatchPlanningRefusals(t *testing.T) {
 		fixture := newPlanningFixture(
 			t, selection,
 			func(registry *app.HandlerRegistry) error {
-				registration := app.NewHTTPDirectReadRegistration(app.HTTPDirectReadDependencies{
+				registration := app.NewHTTPDirectReadRegistration(app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 					Resolver: httpDirectReadResolver{}, Dialer: &httpDirectReadDialer{address: "127.0.0.1:1"},
 				})
 				registration.Lanes = append(registration.Lanes, contract.LaneDirectWrite)
@@ -361,7 +361,7 @@ func newPlannableDirectReadFixture(
 	t.Helper()
 	selection := httpDirectReadSelection(operationID, "https://provider.test", http.StatusOK, false)
 	policy := httpDirectReadPolicy("https://provider.test")
-	fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{
+	fixture := newHTTPDirectReadFixture(t, selection, policy, app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 		Resolver: httpDirectReadResolver{}, Dialer: &httpDirectReadDialer{address: "127.0.0.1:1"},
 	}, nil)
 	return fixture, selection, policy
@@ -381,7 +381,7 @@ func newControlledDirectReadFixture(
 	fixture := newPlanningFixture(
 		t, selection,
 		func(registry *app.HandlerRegistry) error {
-			return registry.RegisterHTTP(app.NewHTTPDirectReadRegistration(app.HTTPDirectReadDependencies{
+			return registry.RegisterHTTP(app.NewHTTPDirectReadRegistration(app.HTTPDirectReadDependencies{ClientIdentity: testClientIdentity,
 				Resolver: httpDirectReadResolver{}, Dialer: &httpDirectReadDialer{address: "127.0.0.1:1"},
 			}))
 		},

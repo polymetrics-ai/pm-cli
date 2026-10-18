@@ -38,7 +38,7 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 		} {
 			admitter := &testAdmitter{err: testCase.err}
 			dialer := &mappedDialer{address: server.Listener.Addr().String()}
-			_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+			_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 				Admitter: admitter,
 				Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 				Dialer:   dialer,
@@ -53,7 +53,7 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 
 		t.Run("absent handler fails before IO", func(t *testing.T) {
 			dialer := &mappedDialer{address: server.Listener.Addr().String()}
-			_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+			_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 				Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 				Dialer:   dialer,
 			}, base)
@@ -74,7 +74,7 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 		t.Run("a granted call is admitted once and sent once", func(t *testing.T) {
 			admitter := &testAdmitter{}
 			dialer := &mappedDialer{address: server.Listener.Addr().String()}
-			execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+			execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 				Admitter: admitter,
 				Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 				Dialer:   dialer,
@@ -92,7 +92,7 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 			cancel()
 			admitter := &testAdmitter{}
 			dialer := &mappedDialer{address: server.Listener.Addr().String()}
-			_, err := ExecuteHTTP(ctx, HTTPDependencies{
+			_, err := ExecuteHTTP(ctx, HTTPDependencies{ClientIdentity: testClientIdentity,
 				Admitter: admitter,
 				Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 				Dialer:   dialer,
@@ -105,7 +105,7 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 		t.Run("each later physical attempt is freshly admitted", func(t *testing.T) {
 			admitter := &testAdmitter{}
 			dialer := &mappedDialer{err: errors.New("dial refused")}
-			dependencies := HTTPDependencies{
+			dependencies := HTTPDependencies{ClientIdentity: testClientIdentity,
 				Admitter: admitter,
 				Resolver: fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
 				Dialer:   dialer,

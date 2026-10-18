@@ -54,6 +54,7 @@
       "additionalProperties": false,
       "required": [
         "source_id",
+        "dialect",
         "official_url",
         "path",
         "captured_at",
@@ -63,6 +64,10 @@
       ],
       "properties": {
         "source_id": {"$ref": "#/$defs/identity"},
+        "dialect": {
+          "description": "The exact dialect of this document: the source set dialect for the one description that supplies operations (and for the declared fragments of its reference closure), or official-documentation for a supplemental capture that is never parsed as OpenAPI data and is addressable only by an exact byte range.",
+          "enum": ["openapi-3.0", "openapi-3.1", "swagger-2.0", "official-documentation"]
+        },
         "official_url": {"type": "string", "format": "uri", "maxLength": 4096},
         "repository": {"type": "string", "format": "uri", "maxLength": 4096},
         "revision": {"$ref": "#/$defs/identity"},

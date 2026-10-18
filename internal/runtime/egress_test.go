@@ -77,7 +77,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 			WireName: "Authorization", Prefix: "Bearer ", FieldID: "authorization",
 		}
 		resolver := &staticCredentialResolver{secret: []byte(secret), call: request.Call}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:    &testAdmitter{},
 			Credentials: resolver,
 			Resolver:    fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -92,6 +92,47 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		}
 		if firstRequests.Load() != 1 || secondRequests.Load() != 0 || resolver.calls.Load() != 1 {
 			t.Fatalf("first=%d second=%d credentials=%d", firstRequests.Load(), secondRequests.Load(), resolver.calls.Load())
+		}
+	})
+
+	t.Run("foreign-scope credential binding is refused before use or send", func(t *testing.T) {
+		const secret = "foreign-scope-credential-canary"
+		var requests atomic.Int64
+		var observedHeader atomic.Value
+		observedHeader.Store("")
+		server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+			requests.Add(1)
+			observedHeader.Store(request.Header.Get("Authorization"))
+			writer.Header().Set("Content-Type", "application/json")
+			_, _ = writer.Write([]byte(`"ok"`))
+		}))
+		defer server.Close()
+		operation := testOperation("foreign-scope", http.MethodGet, "/items", contract.Schema{Type: contract.SchemaTypeString})
+		operation.Inputs = []contract.FieldBinding{testSecretHeaderBinding("authorization", "Authorization")}
+		origin := serverOrigin(t, server.URL)
+		request := testHTTPRequest(t, operation, origin, time.Now().UTC(), contract.NewObjectValue(nil))
+		request.Operation.Execution.HTTP.Authorization = &contract.OperationAuthorization{
+			Required: true, Audience: origin, Placement: contract.FieldLocationHeader,
+			WireName: "Authorization", Prefix: "Bearer ", FieldID: "authorization",
+		}
+		resolver := &foreignScopeCredentialResolver{secret: []byte(secret), call: request.Call}
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
+			Admitter:    &testAdmitter{},
+			Credentials: resolver,
+			Resolver:    fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
+			Dialer:      &mappedDialer{address: server.Listener.Addr().String()},
+		}, request)
+		if !errors.Is(err, ErrCredentialRequired) {
+			assertNoSecret(t, err, secret)
+			t.Fatalf("foreign-scope credential error = %v; want ErrCredentialRequired", err)
+		}
+		if requests.Load() != 0 || execution.PhysicalSend || observedHeader.Load() != "" ||
+			resolver.calls.Load() != 1 || resolver.last == nil || !resolver.last.destroyed {
+			t.Fatalf(
+				"requests=%d send=%t header=%v resolves=%d material=%#v",
+				requests.Load(), execution.PhysicalSend, observedHeader.Load(),
+				resolver.calls.Load(), resolver.last,
+			)
 		}
 	})
 
@@ -112,7 +153,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 			WireName: "token", FieldID: "token",
 		}
 		resolver := &staticCredentialResolver{secret: []byte(secret), call: request.Call}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:    &testAdmitter{},
 			Credentials: resolver,
 			Resolver:    fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -158,7 +199,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrInvalidHTTPInput) {
@@ -197,7 +238,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		}
 		dialer := &mappedDialer{address: server.Listener.Addr().String()}
 		credentials := &absentCredentialResolver{}
-		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		execution, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter:    &testAdmitter{},
 			Credentials: credentials,
 			Resolver:    fixedResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}},
@@ -226,7 +267,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
 		credentials := &staticCredentialResolver{secret: []byte("must-not-be-read"), call: request.Call}
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrUnsupportedHTTPTransport) {
@@ -250,7 +291,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrDestinationDenied) {
@@ -270,7 +311,7 @@ func TestDestinationDNSRedirectAuthAudience(t *testing.T) {
 		dns := &countingResolver{addresses: []netip.Addr{netip.MustParseAddr("93.184.216.34")}}
 		admitter := &testAdmitter{}
 		dialer := &mappedDialer{address: "127.0.0.1:1"}
-		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{
+		_, err := ExecuteHTTP(context.Background(), HTTPDependencies{ClientIdentity: testClientIdentity,
 			Admitter: admitter, Credentials: credentials, Resolver: dns, Dialer: dialer,
 		}, request)
 		if !errors.Is(err, ErrUnsupportedHTTPTransport) {
@@ -339,6 +380,29 @@ type testCredentialMaterial struct {
 	secret    []byte
 	binding   contract.CredentialRef
 	destroyed bool
+}
+
+// foreignScopeCredentialResolver answers with a material whose binding belongs
+// to another workspace and connection: the server-held reference exists but is
+// not the one this admitted call may use.
+type foreignScopeCredentialResolver struct {
+	secret []byte
+	call   PhysicalCall
+	calls  atomic.Int64
+	last   *testCredentialMaterial
+}
+
+func (r *foreignScopeCredentialResolver) ResolveCredential(context.Context, PhysicalCall) (credentials.CredentialMaterial, error) {
+	r.calls.Add(1)
+	r.last = &testCredentialMaterial{
+		secret: append([]byte(nil), r.secret...),
+		binding: contract.CredentialRef{
+			CredentialRef: "credential-fixture-foreign", WorkspaceID: r.call.Scope.WorkspaceID + "-foreign",
+			ConnectionID: r.call.ConnectionID + "-foreign", ProviderAccountWitness: r.call.AccountWitness,
+			CiphertextVersion: 1, KeyRef: "key-fixture", Scopes: []string{}, AuthEpoch: 1,
+		},
+	}
+	return r.last, nil
 }
 
 func (m *testCredentialMaterial) CredentialBinding() contract.CredentialRef { return m.binding }

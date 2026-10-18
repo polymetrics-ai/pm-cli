@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"slices"
 	"strings"
@@ -627,7 +628,7 @@ func testSourceInput(t *testing.T, dialect Dialect, documents map[string][]byte,
 		data := documents[id]
 		digest := sha256.Sum256(data)
 		lock.SourceSet.Documents = append(lock.SourceSet.Documents, SourceDocument{
-			SourceID: id, OfficialURL: "https://example.invalid/" + id, Path: id,
+			SourceID: id, Dialect: dialect, OfficialURL: "https://example.invalid/" + id, Path: id,
 			CapturedAt: "2026-09-18T00:00:00Z", ByteLength: int64(len(data)), SHA256: hex.EncodeToString(digest[:]),
 			License:    SourceLicense{SPDX: "MIT", Path: "LICENSE.txt", SHA256: hex.EncodeToString(licenseHash[:])},
 			References: slices.Clone(references[id]),
@@ -695,6 +696,63 @@ func FuzzSourceCanonicalization(f *testing.F) {
 		}
 		if !bytes.Equal(first.canonical, second.canonical) {
 			t.Fatal("canonical source changed exact values after reparsing")
+		}
+	})
+}
+
+// TestDocumentationGrammarsStayDisjoint keeps the two documentation grammars
+// apart: a documentation dialect source set addresses its pages only by
+// declared anchors, an interface-description source set addresses supplemental
+// official-documentation captures only by exact byte ranges, and neither
+// selector form resolves against the other kind of source.
+func TestDocumentationGrammarsStayDisjoint(t *testing.T) {
+	documentationLock := func(t *testing.T, selector string) SourceLock {
+		t.Helper()
+		operation := documentationOperation("relation-select", "pg-select", selector, contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		lock, _ := testSourceInput(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil, []SourceOperation{operation})
+		return lock
+	}
+	t.Run("documentation set documents omit or repeat the set dialect", func(t *testing.T) {
+		lock := documentationLock(t, "#SQL-WHERE")
+		if err := lock.Validate(); err != nil {
+			t.Fatalf("declared set dialect: %v", err)
+		}
+		lock.SourceSet.Documents[0].Dialect = ""
+		if err := lock.Validate(); err != nil {
+			t.Fatalf("omitted document dialect: %v", err)
+		}
+		lock.SourceSet.Documents[0].Dialect = DialectOfficialDocumentation
+		if err := lock.Validate(); !errors.Is(err, ErrUnsupportedDialect) {
+			t.Fatalf("supplemental capture inside a documentation set error = %v", err)
+		}
+	})
+	t.Run("documentation set refuses byte ranges", func(t *testing.T) {
+		for _, selector := range []string{"bytes:0-10", "#bytes:0-10"} {
+			if err := documentationLock(t, selector).Validate(); !errors.Is(err, ErrInvalidSource) {
+				t.Fatalf("byte range %q in a documentation set error = %v", selector, err)
+			}
+		}
+		resolved := testResolve(t, testCapturedSource(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil,
+			[]SourceOperation{documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")}))
+		if resolved.SupplementalDocumentation("pg-select") || resolved.HasFact("pg-select", "bytes:0-10") {
+			t.Fatal("a documentation set page resolved as a supplemental byte-range capture")
+		}
+	})
+	t.Run("interface-description set refuses documentation anchors", func(t *testing.T) {
+		operation := testOperation("getWidgets", "root", "#/paths/~1widgets/get", nil, []VariantRef{
+			{Pointer: "#/paths/~1widgets/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json"},
+		})
+		lock, _ := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": testFixture(t, "complete-openapi.yaml")}, nil, []SourceOperation{operation})
+		if err := lock.Validate(); err != nil {
+			t.Fatalf("baseline interface-description lock: %v", err)
+		}
+		for _, selector := range []string{"#SQL-WHERE", "bytes:0-10"} {
+			candidate := lock
+			candidate.Operations = slices.Clone(lock.Operations)
+			candidate.Operations[0].SourceRefs = []SourceRef{{SourceID: "root", Pointer: selector}}
+			if err := candidate.Validate(); !errors.Is(err, ErrInvalidSource) {
+				t.Fatalf("selector %q in an interface-description set error = %v", selector, err)
+			}
 		}
 	})
 }

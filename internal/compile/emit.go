@@ -621,16 +621,18 @@ func emitOperationExecution(normalized NormalizedOperation) *contract.OperationE
 	if pagination != nil {
 		source := pagination
 		execution.Pagination = &contract.OperationPagination{
-			Kind:                    contract.OperationPaginationKind(source.Kind),
-			CursorRequestField:      source.CursorRequestField,
-			CursorResponsePointer:   source.CursorResponsePointer,
-			OffsetRequestField:      source.OffsetRequestField,
-			LimitRequestField:       source.LimitRequestField,
-			TotalResponsePointer:    source.TotalResponsePointer,
-			PageRequestField:        source.PageRequestField,
-			LastPageResponsePointer: source.LastPageResponsePointer,
-			LinkRequestField:        source.LinkRequestField,
-			LinkResponseHeader:      source.LinkResponseHeader,
+			Kind:                      contract.OperationPaginationKind(source.Kind),
+			CursorRequestField:        source.CursorRequestField,
+			CursorResponsePointer:     source.CursorResponsePointer,
+			OffsetRequestField:        source.OffsetRequestField,
+			LimitRequestField:         source.LimitRequestField,
+			TotalResponsePointer:      source.TotalResponsePointer,
+			PageRequestField:          source.PageRequestField,
+			LastPageResponsePointer:   source.LastPageResponsePointer,
+			LinkRequestField:          source.LinkRequestField,
+			LinkResponseHeader:        source.LinkResponseHeader,
+			LinkRoutes:                slices.Clone(source.LinkRoutes),
+			LinkRecordIdentityPointer: source.LinkRecordIdentityPointer,
 			Witness: contract.ExecutionWitness{
 				ProofID:    source.Witness.ProofID,
 				SourceRefs: slices.Clone(source.Witness.SourceRefs),

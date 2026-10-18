@@ -43,7 +43,7 @@ func projectCommand(operation NormalizedOperation, usedNames map[string]struct{}
 		return nil, commandDiagnostic(operation, "", facts, "credential-issuing operation cannot be projected as a public command")
 	}
 	for _, binding := range operation.CommonBindings {
-		if isSourceAuthorizationBinding(operation, binding) {
+		if isAuthorizationBinding(operation, binding) {
 			continue
 		}
 		if binding.Sensitivity != SensitivityPublic {
@@ -101,7 +101,7 @@ func projectCommand(operation NormalizedOperation, usedNames map[string]struct{}
 		})
 	}
 	for _, binding := range operation.CommonBindings {
-		if isSourceAuthorizationBinding(operation, binding) {
+		if isAuthorizationBinding(operation, binding) {
 			continue
 		}
 		appendField(binding)
@@ -121,11 +121,23 @@ func projectCommand(operation NormalizedOperation, usedNames map[string]struct{}
 	return &command, nil
 }
 
-func isSourceAuthorizationBinding(operation NormalizedOperation, binding BindingFact) bool {
-	return operation.HTTP != nil &&
-		operation.HTTP.Authorization != nil &&
-		binding.FieldID == operation.HTTP.Authorization.FieldID &&
-		binding.Sensitivity == SensitivitySecret
+// isAuthorizationBinding reports whether one common binding is the credential
+// channel of the operation, whether that channel comes from the OpenAPI
+// description or from a documentation-witnessed amendment. Such a binding is
+// never a public command field: it is resolved by the credential boundary.
+func isAuthorizationBinding(operation NormalizedOperation, binding BindingFact) bool {
+	if binding.Sensitivity != SensitivitySecret {
+		return false
+	}
+	for _, httpSemantics := range []*HTTPSemantics{operation.HTTP, effectiveOperationHTTP(operation)} {
+		if httpSemantics == nil || httpSemantics.Authorization == nil {
+			continue
+		}
+		if binding.FieldID == httpSemantics.Authorization.FieldID {
+			return true
+		}
+	}
+	return false
 }
 
 func commandDiagnostic(operation NormalizedOperation, fieldID string, facts []SourceFact, message string) *Diagnostic {

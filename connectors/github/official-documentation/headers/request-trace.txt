@@ -1,0 +1,14 @@
+Request shape used for every retained fetch (captured by tracing a repeat
+invocation of the same command; the retained documents were fetched with the
+identical invocation). Trace captured 2026-09-19T12:46Z for
+https://docs.github.com/en/rest/authentication/authenticating-to-the-rest-api.
+
+GET /en/rest/authentication/authenticating-to-the-rest-api HTTP/2
+Host: docs.github.com
+user-agent: pm-cli-connector-evidence/1.0
+accept: */*
+
+No Accept-Encoding header is sent and --compressed is not used, so the retained
+bytes are the identity-encoded response body as received. The response varies by
+`x-user-version`, `accept` and `Accept-Encoding` (see the vary header), so a
+re-retrieval with a different accept header may return different bytes.

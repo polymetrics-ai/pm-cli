@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
@@ -23,7 +25,36 @@ type workerRetryStoreFixture struct {
 	rootAttempt contract.Attempt
 }
 
-func newWorkerRetryStoreFixture(t *testing.T, maxAttempts uint32) *workerRetryStoreFixture {
+// recordAttempt commits the physical attempt of one prepared dispatch through
+// the production transition.
+func (fixture *workerRetryStoreFixture) recordAttempt(t *testing.T, dispatch contract.Dispatch, label string) contract.Attempt {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	attemptReceipt := testReceipt(label, "dispatch_attempt", fixture.request.Spec.RunID)
+	attempt := contract.Attempt{
+		AttemptID:  dispatch.AttemptID,
+		DispatchID: dispatch.DispatchID,
+		ReceiptRef: attemptReceipt.ReceiptID,
+		RecordedAt: time.Now().UTC(),
+	}
+	if err := WithinScope(ctx, fixture.pool, fixture.scope, testActor(fixture.scope), func(ctx context.Context, tx *Transaction) error {
+		_, err := RecordDispatchAttempt(ctx, tx, DispatchAttemptCommit{
+			Task:    fixture.lease.Task,
+			Attempt: attempt,
+			Receipt: attemptReceipt,
+			Audit:   testAudit(label+"-audit", "dispatch_possibly_sent", fixture.request.Spec.RunID),
+			Event:   testEvent(label+"-event", "dispatch_possibly_sent", fixture.request.Spec.RunID),
+			Outbox:  testOutbox(label+"-outbox", "reconcile_dispatch", fixture.request.Spec.RunID),
+		})
+		return err
+	}); err != nil {
+		t.Fatalf("record retry root attempt: %v", err)
+	}
+	return attempt
+}
+
+func newPreparedWorkerRetryFixture(t *testing.T, maxAttempts uint32) *workerRetryStoreFixture {
 	t.Helper()
 	credentials, pool := prepareTestStore(t, 4)
 	scope := newTestScope(t)
@@ -81,26 +112,6 @@ func newWorkerRetryStoreFixture(t *testing.T, maxAttempts uint32) *workerRetrySt
 	}); err != nil {
 		t.Fatalf("prepare retry root dispatch: %v", err)
 	}
-	attemptReceipt := testReceipt("retry-root-attempt-"+request.Spec.RunID, "dispatch_attempt", request.Spec.RunID)
-	attempt := contract.Attempt{
-		AttemptID:  root.AttemptID,
-		DispatchID: root.DispatchID,
-		ReceiptRef: attemptReceipt.ReceiptID,
-		RecordedAt: time.Now().UTC(),
-	}
-	if err := WithinScope(ctx, pool, scope, testActor(scope), func(ctx context.Context, tx *Transaction) error {
-		_, err := RecordDispatchAttempt(ctx, tx, DispatchAttemptCommit{
-			Task:    lease.Task,
-			Attempt: attempt,
-			Receipt: attemptReceipt,
-			Audit:   testAudit("retry-root-attempt-audit-"+request.Spec.RunID, "dispatch_possibly_sent", request.Spec.RunID),
-			Event:   testEvent("retry-root-attempt-event-"+request.Spec.RunID, "dispatch_possibly_sent", request.Spec.RunID),
-			Outbox:  testOutbox("retry-root-attempt-outbox-"+request.Spec.RunID, "reconcile_dispatch", request.Spec.RunID),
-		})
-		return err
-	}); err != nil {
-		t.Fatalf("record retry root attempt: %v", err)
-	}
 	return &workerRetryStoreFixture{
 		credentials: credentials,
 		pool:        pool,
@@ -109,8 +120,14 @@ func newWorkerRetryStoreFixture(t *testing.T, maxAttempts uint32) *workerRetrySt
 		task:        task,
 		lease:       lease,
 		root:        root,
-		rootAttempt: attempt,
 	}
+}
+
+func newWorkerRetryStoreFixture(t *testing.T, maxAttempts uint32) *workerRetryStoreFixture {
+	t.Helper()
+	fixture := newPreparedWorkerRetryFixture(t, maxAttempts)
+	fixture.rootAttempt = fixture.recordAttempt(t, fixture.root, "retry-root-attempt-"+fixture.request.Spec.RunID)
+	return fixture
 }
 
 func (fixture *workerRetryStoreFixture) nextDispatch(t *testing.T, label string) contract.Dispatch {
@@ -664,6 +681,135 @@ func TestWorkerRetryMembershipSurvivesScopeClear(t *testing.T) {
 		}
 		if root.Intent.DispatchID != fixture.root.DispatchID || len(root.Attempts) != 1 || root.Attempts[0] != fixture.rootAttempt {
 			return errors.New("refused child changed the existing physical attempt")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// attemptCommitInterleavingTx drives one deterministic interleaving: every
+// statement of a read that runs before the physical attempt is read observes the
+// durable state before a worker's attempt commit, the writer commits while that
+// read is in flight, and the statement that reads the attempt observes the
+// committed one. Every other transaction method stays the real transaction.
+type attemptCommitInterleavingTx struct {
+	pgx.Tx
+	onAttemptRead   func()
+	attemptReadSeen bool
+}
+
+func (interleaved *attemptCommitInterleavingTx) beforeAttemptRead(sql string) {
+	if interleaved.attemptReadSeen || !strings.Contains(sql, "pm.dispatch_attempts") {
+		return
+	}
+	interleaved.attemptReadSeen = true
+	interleaved.onAttemptRead()
+}
+
+func (interleaved *attemptCommitInterleavingTx) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	interleaved.beforeAttemptRead(sql)
+	return interleaved.Tx.Query(ctx, sql, args...)
+}
+
+func (interleaved *attemptCommitInterleavingTx) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	interleaved.beforeAttemptRead(sql)
+	return interleaved.Tx.QueryRow(ctx, sql, args...)
+}
+
+// TestLoadWorkerDispatchObservesOneCommittedAttemptState proves the immutable
+// dispatch read returns one committed record while a worker commits that
+// dispatch's physical attempt inside the read. The decorator above holds the
+// attempt transaction open until the read reaches the physical attempt, so the
+// interleaving is driven rather than timed.
+func TestLoadWorkerDispatchObservesOneCommittedAttemptState(t *testing.T) {
+	// The root dispatch intent exists with no physical attempt: exactly the state a
+	// worker observes between planning and its attempt commit.
+	fixture := newPreparedWorkerRetryFixture(t, 2)
+	taskRef := TaskRef{RunID: fixture.task.RunID, TaskID: fixture.task.TaskID}
+
+	writerStarted := make(chan struct{})
+	releaseWriter := make(chan struct{})
+	writerResult := make(chan error, 1)
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		writerResult <- func() error {
+			return WithinScope(ctx, fixture.pool, fixture.scope, testActor(fixture.scope), func(
+				ctx context.Context,
+				tx *Transaction,
+			) error {
+				close(writerStarted)
+				<-releaseWriter
+				receipt := testReceipt("interleaved-attempt", "dispatch_attempt", fixture.request.Spec.RunID)
+				attempt := contract.Attempt{
+					AttemptID:  fixture.root.AttemptID,
+					DispatchID: fixture.root.DispatchID,
+					ReceiptRef: receipt.ReceiptID,
+					RecordedAt: time.Now().UTC(),
+				}
+				_, err := RecordDispatchAttempt(ctx, tx, DispatchAttemptCommit{
+					Task:    fixture.lease.Task,
+					Attempt: attempt,
+					Receipt: receipt,
+					Audit:   testAudit("interleaved-attempt-audit", "dispatch_possibly_sent", fixture.request.Spec.RunID),
+					Event:   testEvent("interleaved-attempt-event", "dispatch_possibly_sent", fixture.request.Spec.RunID),
+					Outbox:  testOutbox("interleaved-attempt-outbox", "reconcile_dispatch", fixture.request.Spec.RunID),
+				})
+				return err
+			})
+		}()
+	}()
+	<-writerStarted
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	connection, err := fixture.pool.inner.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire interleaved reader connection: %v", err)
+	}
+	defer connection.Release()
+	rawTx, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted, AccessMode: pgx.ReadWrite})
+	if err != nil {
+		t.Fatalf("begin interleaved reader transaction: %v", err)
+	}
+	interleaved := &attemptCommitInterleavingTx{
+		Tx: rawTx,
+		onAttemptRead: func() {
+			close(releaseWriter)
+			if err := <-writerResult; err != nil {
+				t.Errorf("commit the interleaved physical attempt: %v", err)
+			}
+		},
+	}
+	reader := &Transaction{tx: interleaved, actor: testActor(fixture.scope)}
+	if err := installScope(ctx, reader, fixture.scope, testActor(fixture.scope)); err != nil {
+		t.Fatalf("install interleaved reader scope: %v", err)
+	}
+	record, err := LoadWorkerDispatch(ctx, reader, taskRef)
+	if err != nil {
+		t.Fatalf("read a prepared dispatch while its attempt commits = %v; want one committed record", err)
+	}
+	switch {
+	case record.State == DispatchPrepared && len(record.Attempts) == 0 && record.PossiblyDispatchedAt == nil:
+	case record.State == DispatchPossiblySent && len(record.Attempts) == 1 && record.PossiblyDispatchedAt != nil:
+	default:
+		t.Fatalf("interleaved read returned mixed state %#v attempts=%d; want one committed dispatch state",
+			record.State, len(record.Attempts))
+	}
+	if err := rawTx.Rollback(ctx); err != nil && !errors.Is(err, pgx.ErrTxClosed) {
+		t.Fatalf("roll back interleaved reader transaction: %v", err)
+	}
+	if err := WithinScope(ctx, fixture.pool, fixture.scope, testActor(fixture.scope), func(
+		ctx context.Context,
+		tx *Transaction,
+	) error {
+		settled, err := LoadWorkerDispatch(ctx, tx, taskRef)
+		if err != nil {
+			return err
+		}
+		if settled.State != DispatchPossiblySent || len(settled.Attempts) != 1 || settled.PossiblyDispatchedAt == nil {
+			return fmt.Errorf("committed attempt read = %#v; want one possibly dispatched attempt", settled)
 		}
 		return nil
 	}); err != nil {

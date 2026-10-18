@@ -1847,6 +1847,12 @@ func (boundary *workerPhysicalCallBoundary) ResolveCredential(
 		return nil, err
 	}
 	binding, err := boundary.loadCurrentCredentialBinding(ctx, call)
+	if errors.Is(err, errNoCredentialBound) {
+		// A connection that never bound a credential has no material to supply.
+		// The runtime decides: an optional channel sends no credential, a required
+		// channel refuses with ErrCredentialRequired. Authority was rechecked above.
+		return nil, nil
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -1897,6 +1903,10 @@ func (boundary *workerPhysicalCallBoundary) ResolveCredential(
 	)
 }
 
+// errNoCredentialBound reports that the connection never bound a credential. It is
+// distinct from a stale, revoked or mismatched credential, which still refuses.
+var errNoCredentialBound = errors.New("connection has no bound credential")
+
 func (boundary *workerPhysicalCallBoundary) loadCurrentCredentialBinding(
 	ctx context.Context,
 	call pmruntime.PhysicalCall,
@@ -1913,6 +1923,9 @@ func (boundary *workerPhysicalCallBoundary) loadCurrentCredentialBinding(
 			connection, err := store.LoadConnection(ctx, tx, call.ConnectionID)
 			if err != nil {
 				return err
+			}
+			if connection.CredentialRef == "" {
+				return errNoCredentialBound
 			}
 			account, err := store.LoadProviderAccount(ctx, tx, connection.ProviderAccountID)
 			if err != nil {

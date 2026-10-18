@@ -540,6 +540,7 @@ func writeConnectorFixture(t *testing.T, root string) {
 			Dialect: pmcompile.DialectOpenAPI30,
 			Documents: []pmcompile.SourceDocument{{
 				SourceID:    fixtureSourceID,
+				Dialect:     pmcompile.DialectOpenAPI30,
 				OfficialURL: "https://synthetic.example.test/openapi.yaml",
 				Path:        "openapi.yaml",
 				CapturedAt:  "2026-09-19T00:00:00Z",

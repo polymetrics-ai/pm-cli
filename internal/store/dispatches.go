@@ -314,20 +314,38 @@ func LoadDispatch(ctx context.Context, tx *Transaction, task TaskRef, dispatchID
 	if err := dispatchID.Validate(); err != nil {
 		return DispatchRecord{}, err
 	}
+	// The immutable dispatch row and its ordered physical attempts are observed by
+	// one statement, so the record below is always one committed state. Reading
+	// them through separate statements at READ COMMITTED can mix the state of an
+	// earlier snapshot with the attempts of a later one -- exactly what a physical
+	// attempt record commits -- and the consistency checks below would then refuse
+	// a record no transaction ever wrote.
 	var record DispatchRecord
-	var encoded []byte
+	var encoded, attemptsEncoded []byte
 	var state string
 	var attemptNumber int64
 	if err := tx.queryRow(ctx, `
-		SELECT intent, state, prepared_at, possibly_dispatched_at, attempt_number
-		FROM pm.dispatches
-		WHERE run_id = $1 AND task_id = $2 AND dispatch_id = $3
+		SELECT dispatch.intent, dispatch.state, dispatch.prepared_at,
+		       dispatch.possibly_dispatched_at, dispatch.attempt_number,
+		       COALESCE((
+		           SELECT jsonb_agg(recorded.attempt ORDER BY recorded.recorded_at, recorded.attempt_id)
+		           FROM (
+		               SELECT attempt.attempt, attempt.recorded_at, attempt.attempt_id
+		               FROM pm.dispatch_attempts AS attempt
+		               WHERE attempt.run_id = $1 AND attempt.task_id = $2 AND attempt.dispatch_id = $3
+		               ORDER BY attempt.recorded_at, attempt.attempt_id
+		               LIMIT 2
+		           ) AS recorded
+		       ), '[]'::jsonb)
+		FROM pm.dispatches AS dispatch
+		WHERE dispatch.run_id = $1 AND dispatch.task_id = $2 AND dispatch.dispatch_id = $3
 	`, task.RunID, task.TaskID, string(dispatchID)).Scan(
 		&encoded,
 		&state,
 		&record.PreparedAt,
 		&record.PossiblyDispatchedAt,
 		&attemptNumber,
+		&attemptsEncoded,
 	); errors.Is(err, pgx.ErrNoRows) {
 		return DispatchRecord{}, ErrNotFound
 	} else if err != nil {
@@ -367,23 +385,12 @@ func LoadDispatch(ctx context.Context, tx *Transaction, task TaskRef, dispatchID
 		retry != nil && retry.ParentDispatchID == dispatchID {
 		return DispatchRecord{}, ErrImmutableConflict
 	}
-	record.Attempts = make([]contract.Attempt, 0, 1)
-	rows, err := tx.query(ctx, `
-		SELECT attempt
-		FROM pm.dispatch_attempts
-		WHERE run_id = $1 AND task_id = $2 AND dispatch_id = $3
-		ORDER BY recorded_at, attempt_id
-		LIMIT 2
-	`, task.RunID, task.TaskID, string(dispatchID))
-	if err != nil {
-		return DispatchRecord{}, fmt.Errorf("list dispatch attempts: %w", err)
+	var storedAttempts []json.RawMessage
+	if err := json.Unmarshal(attemptsEncoded, &storedAttempts); err != nil {
+		return DispatchRecord{}, fmt.Errorf("decode stored dispatch attempts: %w", err)
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var attemptJSON []byte
-		if err := rows.Scan(&attemptJSON); err != nil {
-			return DispatchRecord{}, fmt.Errorf("scan dispatch attempt: %w", err)
-		}
+	record.Attempts = make([]contract.Attempt, 0, 1)
+	for _, attemptJSON := range storedAttempts {
 		var attempt contract.Attempt
 		if err := json.Unmarshal(attemptJSON, &attempt); err != nil {
 			return DispatchRecord{}, fmt.Errorf("decode stored dispatch attempt: %w", err)
@@ -393,9 +400,6 @@ func LoadDispatch(ctx context.Context, tx *Transaction, task TaskRef, dispatchID
 			return DispatchRecord{}, ErrImmutableConflict
 		}
 		record.Attempts = append(record.Attempts, attempt)
-	}
-	if err := rows.Err(); err != nil {
-		return DispatchRecord{}, fmt.Errorf("iterate dispatch attempts: %w", err)
 	}
 	switch {
 	case record.State == DispatchPrepared &&

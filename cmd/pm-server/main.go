@@ -11,6 +11,7 @@ import (
 	"syscall"
 
 	"github.com/polymetrics-ai/pm-cli/internal/config"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/server"
 	"github.com/spf13/cobra"
 )
@@ -91,7 +92,7 @@ func serve(ctx context.Context, configurationPath, secretsDirectory string, diag
 	if err != nil {
 		return err
 	}
-	application, err := server.Open(ctx, configuration, secretsDirectory, diagnostics)
+	application, err := server.Open(ctx, configuration, secretsDirectory, diagnostics, pmruntime.ProductClientIdentity(version))
 	if err != nil {
 		return err
 	}

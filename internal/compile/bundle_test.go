@@ -798,3 +798,127 @@ func TestReservedProviderFlagsRemainInvocableThroughDeterministicAliases(t *test
 		t.Fatalf("emitted alias-collision wire binding changed: %#v", aliasCollisionInput)
 	}
 }
+
+// headerParameterDocument declares required and optional header parameters at
+// the path-item level (shared by every operation under the path) and at the
+// operation level, next to a query parameter with a source default.
+const headerParameterDocument = `{
+  "openapi": "3.0.3",
+  "info": {"title": "Header parameter fixture", "version": "1.0.0"},
+  "servers": [{"url": "https://headers.example.test/v1"}],
+  "paths": {
+    "/records": {
+      "parameters": [
+        {"name": "User-Agent", "in": "header", "required": true, "schema": {"type": "string"}},
+        {"name": "X-Trace", "in": "header", "required": false, "schema": {"type": "string"}}
+      ],
+      "get": {
+        "operationId": "listRecords",
+        "parameters": [
+          {"name": "X-Request-Id", "in": "header", "required": true, "schema": {"type": "string"}},
+          {"name": "per-page", "in": "query", "required": false, "schema": {"type": "integer", "default": 30}}
+        ],
+        "responses": {"204": {"description": "no content"}}
+      }
+    }
+  }
+}`
+
+// TestDeclaredHeaderParametersReachTheEmittedOperationInputs pins the parameter
+// admission contract for the shape whose loss is invisible at the operation
+// level: a required header parameter declared at the path-item level must reach
+// the emitted operation's inputs with its exact wire name and requiredness, and
+// so must one declared at the operation level. A compiler that quietly drops
+// either declaration would publish an operation that cannot carry a header the
+// source requires.
+func TestDeclaredHeaderParametersReachTheEmittedOperationInputs(t *testing.T) {
+	pointer := "#/paths/~1records/get"
+	operation := testOperation("listRecords", "root", pointer, nil, []VariantRef{{
+		Pointer: pointer + "/responses/204", Status: "204", MediaType: noContentMediaType,
+	}})
+	captured := testCapturedSource(t, DialectOpenAPI30, map[string][]byte{"root": []byte(headerParameterDocument)}, nil, []SourceOperation{operation})
+	resolved := testResolve(t, captured)
+	loaded, err := LoadDialects(context.Background(), resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalization, err := Normalize(context.Background(), loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := HTTPCompilationTargetFoundations()
+	if err := CheckRequirements(normalization, resolved, target); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := EmitBundle(normalization, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var bundle Bundle
+	if err := json.Unmarshal(encoded, &bundle); err != nil {
+		t.Fatal(err)
+	}
+	if len(bundle.Operations) != 1 || bundle.Operations[0].OperationID != "listRecords" {
+		t.Fatalf("emitted operations = %#v", bundle.Operations)
+	}
+	inputs := make(map[string]contract.FieldBinding, len(bundle.Operations[0].Inputs))
+	for _, input := range bundle.Operations[0].Inputs {
+		inputs[input.FieldID] = input
+	}
+	for _, want := range []struct {
+		fieldID  string
+		wireName string
+		required bool
+	}{
+		{fieldID: "header.user-agent", wireName: "User-Agent", required: true},
+		{fieldID: "header.x-request-id", wireName: "X-Request-Id", required: true},
+		{fieldID: "header.x-trace", wireName: "X-Trace", required: false},
+	} {
+		binding, present := inputs[want.fieldID]
+		if !present || binding.WireName != want.wireName ||
+			binding.Location != contract.FieldLocationHeader || binding.Required != want.required {
+			t.Fatalf("declared header parameter %q emitted as %#v (present=%t)", want.fieldID, binding, present)
+		}
+	}
+	if perPage := inputs["query.per-page"]; perPage.SourceDefault == nil {
+		t.Fatalf("declared query default was dropped: %#v", perPage)
+	}
+}
+
+// TestParameterAbsentFromTheCaptureRefusesTheOperation pins the refusal side of
+// the same contract: when the capture does not carry the target of a declared
+// required parameter, the operation is refused instead of being emitted with
+// the parameter silently missing.
+func TestParameterAbsentFromTheCaptureRefusesTheOperation(t *testing.T) {
+	document := []byte(`{
+  "openapi": "3.0.3",
+  "info": {"title": "Dropped parameter fixture", "version": "1.0.0"},
+  "servers": [{"url": "https://dropped.example.test/v1"}],
+  "paths": {
+    "/records": {
+      "get": {
+        "operationId": "listRecords",
+        "parameters": [{"$ref": "#/components/parameters/absent-user-agent"}],
+        "responses": {"204": {"description": "no content"}}
+      }
+    }
+  }
+}`)
+	pointer := "#/paths/~1records/get"
+	operation := testOperation("listRecords", "root", pointer, nil, []VariantRef{{
+		Pointer: pointer + "/responses/204", Status: "204", MediaType: noContentMediaType,
+	}})
+	lock, captures := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": document}, nil, []SourceOperation{operation})
+	captured, err := CaptureSource(lock, captures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, resolveErr := ResolveRefs(captured)
+	if resolveErr == nil {
+		t.Fatal("a declared parameter absent from the capture resolved without refusal")
+	}
+	if !strings.Contains(resolveErr.Error(), "parameters/0/$ref") ||
+		!strings.Contains(resolveErr.Error(), "captured reference target pointer does not exist") {
+		t.Fatalf("refusal did not report the missing captured reference target: %v", resolveErr)
+	}
+}

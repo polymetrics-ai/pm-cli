@@ -36,6 +36,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	pmtemporal "github.com/polymetrics-ai/pm-cli/internal/temporal"
 	"github.com/polymetrics-ai/pm-cli/internal/testfixture"
@@ -728,6 +729,7 @@ func TestEffectCrashHelperProcess(t *testing.T) {
 	runtime, err := app.OpenWorkerRuntime(ctx, app.WorkerRuntimeConfig{
 		Configuration: configuration, SecretsDirectory: secretsDirectory,
 		Registry: registry, ResolveOperation: resolver,
+		ClientIdentity: pmruntime.ProductClientIdentity("test-version"),
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -9,6 +9,7 @@ go_library(
         "//internal/activities",
         "//internal/app",
         "//internal/config",
+        "//internal/runtime",
         "//internal/temporal",
         "//internal/workflows",
         "@com_github_spf13_cobra//:cobra",

@@ -115,6 +115,21 @@ type IdentityConfiguration struct {
 	ClientID         string
 	ClientSecretRef  string
 	StepUpMaximumAge time.Duration
+
+	caTrustRootRef      string
+	caTrustRootDeclared bool
+}
+
+// CATrustRootRef returns the exact declared operator secret reference for the
+// identity provider trust root. The declaration is optional: an absent
+// reference returns false and leaves the OIDC client on the process system
+// root store. A declared reference is retained verbatim and never falls back
+// to another reference or to the system store.
+func (configuration IdentityConfiguration) CATrustRootRef() (string, bool) {
+	if !configuration.caTrustRootDeclared {
+		return "", false
+	}
+	return configuration.caTrustRootRef, true
 }
 
 type EncryptionConfiguration struct {
@@ -485,7 +500,7 @@ func decodeArtifacts(raw json.RawMessage) (ArtifactsConfiguration, error) {
 }
 
 func decodeIdentity(raw json.RawMessage) (IdentityConfiguration, error) {
-	fields := []string{"issuer", "client_id", "client_secret_ref", "step_up_maximum_age"}
+	fields := []string{"issuer", "client_id", "client_secret_ref", "step_up_maximum_age", "ca_ref"}
 	object, err := decodeObject(raw, "identity", fields, fields[:3])
 	if err != nil {
 		return IdentityConfiguration{}, err
@@ -509,9 +524,16 @@ func decodeIdentity(raw json.RawMessage) (IdentityConfiguration, error) {
 			return IdentityConfiguration{}, err
 		}
 	}
-	return IdentityConfiguration{
+	result := IdentityConfiguration{
 		Issuer: issuer, ClientID: clientID, ClientSecretRef: clientSecretRef, StepUpMaximumAge: maximumAge,
-	}, nil
+	}
+	if _, declared := object["ca_ref"]; declared {
+		result.caTrustRootDeclared = true
+		if result.caTrustRootRef, err = decodeString(object, "ca_ref", "identity.ca_ref"); err != nil {
+			return IdentityConfiguration{}, err
+		}
+	}
+	return result, nil
 }
 
 func decodeEncryption(raw json.RawMessage) (EncryptionConfiguration, error) {
