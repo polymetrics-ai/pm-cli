@@ -299,11 +299,18 @@ func admittedWarehouseQuery(document WarehouseQueryRequest) (warehouse.SavedQuer
 			query.Predicates = append(query.Predicates, admitted)
 			continue
 		}
-		value, err := admittedQueryValue(predicate.Value)
-		if err != nil {
-			return warehouse.SavedQuery{}, nil, err
+		if takesScalarOperand(admitted.Operator) {
+			value, err := admittedQueryValue(predicate.Value)
+			if err != nil {
+				return warehouse.SavedQuery{}, nil, err
+			}
+			admitted.Value = value
+		} else if predicate.Value.Presence() != contract.PresenceAbsent {
+			// A null test carries no operand and an in-list carries its list, so
+			// a scalar here is refused rather than silently dropped.
+			return warehouse.SavedQuery{}, nil, fmt.Errorf("%w: predicate operator %q does not take a scalar operand",
+				errInvalidHTTPInput, predicate.Operator)
 		}
-		admitted.Value = value
 		for _, element := range predicate.Values {
 			bound, err := admittedQueryValue(element)
 			if err != nil {
@@ -341,6 +348,20 @@ func admittedWarehouseQuery(document WarehouseQueryRequest) (warehouse.SavedQuer
 		})
 	}
 	return query, bindings, nil
+}
+
+// takesScalarOperand reports whether one predicate operator consumes the scalar
+// operand. A null test consumes no operand and an in-list consumes only its
+// list; every other operator, including one the warehouse refuses later,
+// consumes the scalar.
+func takesScalarOperand(operator warehouse.QueryOperator) bool {
+	switch operator {
+	case warehouse.QueryOperatorIsNull, warehouse.QueryOperatorIsNotNull,
+		warehouse.QueryOperatorIn, warehouse.QueryOperatorNotIn:
+		return false
+	default:
+		return true
+	}
 }
 
 // declareQueryParameter declares one parameter from the exact value the caller

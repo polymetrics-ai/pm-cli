@@ -255,3 +255,56 @@ func TestGinStrictBoundary(t *testing.T) {
 		}
 	})
 }
+
+// TestWarehousePredicateOperandArity admits each predicate operator with only
+// the operand it consumes. A null test carries no operand, and an in-list
+// carries its list rather than a scalar, so an absent scalar on those operators
+// is the valid shape, never a refusal. A scalar operator still requires its
+// scalar, and an operator that takes no scalar refuses one.
+func TestWarehousePredicateOperandArity(t *testing.T) {
+	listValue, err := contract.NewIntegerValue("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := func(predicate WarehousePredicate) WarehouseQueryRequest {
+		return WarehouseQueryRequest{
+			Relation:   "orders",
+			Project:    []WarehouseProjection{{Column: "id"}},
+			Predicates: []WarehousePredicate{predicate},
+			Limit:      1,
+		}
+	}
+	for _, operator := range []WarehousePredicateOperator{"is_null", "is_not_null", "in", "not_in"} {
+		t.Run("admits_"+string(operator)+"_without_a_scalar", func(t *testing.T) {
+			predicate := WarehousePredicate{Column: "id", Operator: operator, Value: contract.AbsentValue()}
+			if operator == "in" || operator == "not_in" {
+				predicate.Values = []PresentValue{listValue}
+			}
+			admitted, _, err := admittedWarehouseQuery(query(predicate))
+			if err != nil {
+				t.Fatalf("valid %s predicate refused: %v", operator, err)
+			}
+			if len(admitted.Predicates) != 1 || admitted.Predicates[0].Value.Present() {
+				t.Fatalf("admitted %s predicate = %#v; want one predicate with no scalar operand", operator, admitted.Predicates)
+			}
+			if wanted := len(predicate.Values); len(admitted.Predicates[0].Values) != wanted {
+				t.Fatalf("admitted %s predicate carries %d list values; want %d", operator, len(admitted.Predicates[0].Values), wanted)
+			}
+		})
+		t.Run("refuses_"+string(operator)+"_with_a_scalar", func(t *testing.T) {
+			predicate := WarehousePredicate{Column: "id", Operator: operator, Value: listValue}
+			if operator == "in" || operator == "not_in" {
+				predicate.Values = []PresentValue{listValue}
+			}
+			if _, _, err := admittedWarehouseQuery(query(predicate)); !errors.Is(err, errInvalidHTTPInput) {
+				t.Fatalf("%s predicate with a scalar operand = %v; want an invalid-input refusal", operator, err)
+			}
+		})
+	}
+	t.Run("a_scalar_operator_still_requires_its_scalar", func(t *testing.T) {
+		predicate := WarehousePredicate{Column: "id", Operator: "eq", Value: contract.AbsentValue()}
+		if _, _, err := admittedWarehouseQuery(query(predicate)); !errors.Is(err, errInvalidHTTPInput) {
+			t.Fatalf("eq predicate without a scalar = %v; want an invalid-input refusal", err)
+		}
+	})
+}
