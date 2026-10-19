@@ -43,8 +43,9 @@ var (
 	// ErrIncompleteDiscovery reports a failed or partial discovery, which never
 	// replaces the last complete valid snapshot.
 	ErrIncompleteDiscovery = errors.New("incomplete metadata discovery")
-	// ErrSnapshotScope reports metadata bound to another connection, account,
-	// permission revision, resource or source revision.
+	// ErrSnapshotScope reports metadata bound to another organization,
+	// workspace, connection, account, permission revision, resource or source
+	// revision.
 	ErrSnapshotScope = errors.New("schema snapshot scope mismatch")
 	// ErrSnapshotCorrupt reports stored bytes that do not match their reference.
 	ErrSnapshotCorrupt = errors.New("schema snapshot content does not match its fingerprint")
@@ -72,10 +73,15 @@ var (
 	ErrEvaluatorUnavailable = errors.New("predicate expression evaluator is unavailable")
 )
 
-// Binding scopes one snapshot to the exact connection, provider account,
-// permission revision, resource and source revision it was discovered for. Two
-// accounts that expose the same resource name therefore never share metadata.
+// Binding scopes one snapshot to the exact organization, workspace, connection,
+// provider account, permission revision, resource and source revision it was
+// discovered for. Connection identities are workspace-scoped, so the owning
+// organization and workspace are part of the binding: two workspaces that
+// declare the same connection identity, and two accounts that expose the same
+// resource name, therefore never share metadata.
 type Binding struct {
+	OrgID              string `json:"org_id"`
+	WorkspaceID        string `json:"workspace_id"`
 	ConnectorID        string `json:"connector_id"`
 	ConnectionID       string `json:"connection_id"`
 	ProviderAccountID  string `json:"provider_account_id"`
@@ -89,6 +95,8 @@ func (binding Binding) Validate() error {
 		path  string
 		value string
 	}{
+		{"org_id", binding.OrgID},
+		{"workspace_id", binding.WorkspaceID},
 		{"connector_id", binding.ConnectorID},
 		{"connection_id", binding.ConnectionID},
 		{"provider_account_id", binding.ProviderAccountID},
@@ -311,8 +319,20 @@ func DecodeSnapshot(document []byte) (Snapshot, error) {
 // Store owns the snapshot state of exactly one connection. Its directory is the
 // connection's owned state directory: snapshots are immutable payloads below
 // it, and the connection's config.json is the sole schema_ref selection.
+//
+// A scoped store also records the organization, workspace and connection that
+// own its directory, and refuses every binding of another owner before it reads
+// or writes anything, so a caller authorized for one workspace never reads or
+// replaces another workspace's metadata through a shared connection identity.
 type Store struct {
 	directory string
+	owner     *storeOwner
+}
+
+// storeOwner is the exact workspace-scoped connection one scoped store serves.
+type storeOwner struct {
+	scope        contract.Scope
+	connectionID string
 }
 
 // NewStore binds a store to an existing private connection state directory.
@@ -326,6 +346,83 @@ func NewStore(connectionStateDirectory string) (*Store, error) {
 		return nil, errorf(ErrSnapshotUnavailable, "connection_state_directory", "must be an existing private directory")
 	}
 	return &Store{directory: directory}, nil
+}
+
+// NewScopedStore binds a store to one existing private connection state
+// directory owned by exactly one organization, workspace and connection. Every
+// later read or write must name that owner in its binding.
+func NewScopedStore(connectionStateDirectory string, scope contract.Scope, connectionID string) (*Store, error) {
+	owner, err := newStoreOwner(scope, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	store, err := NewStore(connectionStateDirectory)
+	if err != nil {
+		return nil, err
+	}
+	store.owner = owner
+	return store, nil
+}
+
+// ConnectionStateDirectory names the owned state directory of one
+// workspace-scoped connection beneath a server-owned metadata root:
+// root/<org>/<workspace>/<connection>. Each component must be one plain path
+// segment, so no identity can traverse into another owner's state.
+func ConnectionStateDirectory(root string, scope contract.Scope, connectionID string) (string, error) {
+	if root == "" || !filepath.IsAbs(root) {
+		return "", errorf(ErrSnapshotUnavailable, "metadata_root", "must be an absolute path")
+	}
+	if _, err := newStoreOwner(scope, connectionID); err != nil {
+		return "", err
+	}
+	return filepath.Join(filepath.Clean(root), scope.OrgID, scope.WorkspaceID, connectionID), nil
+}
+
+// NewConnectionStore opens the scoped store of one workspace-scoped connection
+// beneath a server-owned metadata root. The directory must already exist as a
+// private directory; this never creates or defaults a location.
+func NewConnectionStore(root string, scope contract.Scope, connectionID string) (*Store, error) {
+	directory, err := ConnectionStateDirectory(root, scope, connectionID)
+	if err != nil {
+		return nil, err
+	}
+	return NewScopedStore(directory, scope, connectionID)
+}
+
+func newStoreOwner(scope contract.Scope, connectionID string) (*storeOwner, error) {
+	for _, member := range []struct {
+		path  string
+		value string
+	}{
+		{"org_id", scope.OrgID},
+		{"workspace_id", scope.WorkspaceID},
+		{"connection_id", connectionID},
+	} {
+		if !validPathSegment(member.value) {
+			return nil, errorf(ErrSnapshotScope, member.path, "must be one plain bounded path segment")
+		}
+	}
+	return &storeOwner{scope: scope, connectionID: connectionID}, nil
+}
+
+// authorize refuses a binding that belongs to another owner of a scoped store.
+func (store *Store) authorize(binding Binding) error {
+	if err := binding.Validate(); err != nil {
+		return err
+	}
+	if store.owner == nil {
+		return nil
+	}
+	if binding.OrgID != store.owner.scope.OrgID || binding.WorkspaceID != store.owner.scope.WorkspaceID ||
+		binding.ConnectionID != store.owner.connectionID {
+		return errorf(ErrSnapshotScope, "binding", "the binding belongs to another organization, workspace or connection than this store")
+	}
+	return nil
+}
+
+func validPathSegment(value string) bool {
+	return validBoundedIdentity(value) && value != "." && value != ".." &&
+		!strings.ContainsAny(value, `/\`)
 }
 
 func snapshotFileName(reference contract.SemanticDigest) string {
@@ -514,7 +611,7 @@ func (store *Store) load(reference contract.SemanticDigest) (Snapshot, error) {
 // binding, so metadata of another account, connection, permission revision,
 // resource or source revision is never served.
 func (store *Store) LoadFor(binding Binding, reference contract.SemanticDigest) (Snapshot, error) {
-	if err := binding.Validate(); err != nil {
+	if err := store.authorize(binding); err != nil {
 		return Snapshot{}, err
 	}
 	snapshot, err := store.load(reference)
@@ -522,14 +619,14 @@ func (store *Store) LoadFor(binding Binding, reference contract.SemanticDigest) 
 		return Snapshot{}, err
 	}
 	if snapshot.Binding != binding {
-		return Snapshot{}, errorf(ErrSnapshotScope, "binding", "the stored snapshot belongs to another connection, account, permission revision, resource or source revision")
+		return Snapshot{}, errorf(ErrSnapshotScope, "binding", "the stored snapshot belongs to another organization, workspace, connection, account, permission revision, resource or source revision")
 	}
 	return snapshot, nil
 }
 
 // Active reports the snapshot the connection config currently selects.
 func (store *Store) Active(binding Binding) (Snapshot, bool, error) {
-	if err := binding.Validate(); err != nil {
+	if err := store.authorize(binding); err != nil {
 		return Snapshot{}, false, err
 	}
 	selected, present, err := store.Selection()
@@ -550,11 +647,11 @@ func (store *Store) Active(binding Binding) (Snapshot, bool, error) {
 // selection. expected is the reference the caller read as selected, or the
 // empty reference when it read no selection.
 func (store *Store) Promote(binding Binding, candidate Candidate, expected contract.SemanticDigest) (Snapshot, error) {
-	if err := binding.Validate(); err != nil {
+	if err := store.authorize(binding); err != nil {
 		return Snapshot{}, err
 	}
 	if candidate.Binding != binding {
-		return Snapshot{}, errorf(ErrSnapshotScope, "binding", "the candidate belongs to another connection, account, permission revision, resource or source revision")
+		return Snapshot{}, errorf(ErrSnapshotScope, "binding", "the candidate belongs to another organization, workspace, connection, account, permission revision, resource or source revision")
 	}
 	snapshot, err := candidate.Snapshot()
 	if err != nil {

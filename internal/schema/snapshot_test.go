@@ -13,6 +13,8 @@ import (
 )
 
 const (
+	testOrgID          = "org-fixture"
+	testWorkspaceID    = "workspace-fixture"
 	testConnectorID    = "hubspot"
 	testConnectionID   = "connection-fixture"
 	testAccountID      = "account-fixture"
@@ -24,6 +26,8 @@ const (
 
 func testBinding(accountID string) Binding {
 	return Binding{
+		OrgID:              testOrgID,
+		WorkspaceID:        testWorkspaceID,
 		ConnectorID:        testConnectorID,
 		ConnectionID:       testConnectionID,
 		ProviderAccountID:  accountID,
@@ -527,5 +531,94 @@ func TestSchemaPromotionCompareAndSwapAdmitsOneWriter(t *testing.T) {
 	}
 	if !slices.Equal(stateEntryNames(t, store.directory), []string{selectionFileName, snapshotDirectoryName}) {
 		t.Fatalf("connection state entries = %v; want the config and the snapshot directory only", stateEntryNames(t, store.directory))
+	}
+}
+
+// TestSnapshotStateIsNamespacedByWorkspaceScopedConnection proves that two
+// workspaces declaring the same connection identity, connector, account and
+// resource never share schema metadata: their state directories differ, each
+// scoped store answers only its own owner's snapshot, and a binding of the
+// other workspace is refused before anything is read.
+func TestSnapshotStateIsNamespacedByWorkspaceScopedConnection(t *testing.T) {
+	root := t.TempDir()
+	primary := contract.Scope{OrgID: testOrgID, WorkspaceID: testWorkspaceID}
+	foreign := contract.Scope{OrgID: testOrgID, WorkspaceID: "workspace-foreign"}
+	open := func(t *testing.T, scope contract.Scope) *Store {
+		t.Helper()
+		directory, err := ConnectionStateDirectory(root, scope, testConnectionID)
+		if err != nil {
+			t.Fatalf("ConnectionStateDirectory: %v", err)
+		}
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatalf("create the scoped connection state directory: %v", err)
+		}
+		store, err := NewConnectionStore(root, scope, testConnectionID)
+		if err != nil {
+			t.Fatalf("NewConnectionStore: %v", err)
+		}
+		return store
+	}
+	bindingFor := func(scope contract.Scope) Binding {
+		binding := testBinding(testAccountID)
+		binding.OrgID, binding.WorkspaceID = scope.OrgID, scope.WorkspaceID
+		return binding
+	}
+	primaryStore, foreignStore := open(t, primary), open(t, foreign)
+	if primaryStore.directory == foreignStore.directory {
+		t.Fatalf("two workspaces share the connection state directory %s", primaryStore.directory)
+	}
+	primaryBinding, foreignBinding := bindingFor(primary), bindingFor(foreign)
+	promoted := promoteComplete(t, primaryStore, primaryBinding)
+
+	// The foreign workspace has selected nothing, and its store refuses the
+	// primary binding instead of reading the primary snapshot.
+	if _, present, err := foreignStore.Active(foreignBinding); err != nil || present {
+		t.Fatalf("foreign workspace active snapshot present=%v err=%v; want its own absent selection", present, err)
+	}
+	if _, err := foreignStore.LoadFor(foreignBinding, promoted.Fingerprint); !errors.Is(err, ErrSnapshotNotFound) {
+		t.Fatalf("foreign workspace load of the primary snapshot = %v; want %v", err, ErrSnapshotNotFound)
+	}
+	if _, _, err := foreignStore.Active(primaryBinding); !errors.Is(err, ErrSnapshotScope) {
+		t.Fatalf("foreign store answered the primary binding: %v; want %v", err, ErrSnapshotScope)
+	}
+	if _, err := foreignStore.Promote(primaryBinding, testCandidate(t, primaryBinding, testFields()), ""); !errors.Is(err, ErrSnapshotScope) {
+		t.Fatalf("foreign store promoted a primary binding: %v; want %v", err, ErrSnapshotScope)
+	}
+	// The same content under the other workspace's binding is another snapshot.
+	own := promoteComplete(t, foreignStore, foreignBinding)
+	if own.Fingerprint == promoted.Fingerprint {
+		t.Fatalf("two workspaces' snapshots share the identity %s", own.Fingerprint)
+	}
+	for _, read := range []struct {
+		store   *Store
+		binding Binding
+		want    contract.SemanticDigest
+	}{
+		{primaryStore, primaryBinding, promoted.Fingerprint},
+		{foreignStore, foreignBinding, own.Fingerprint},
+	} {
+		active, present, err := read.store.Active(read.binding)
+		if err != nil || !present || active.Fingerprint != read.want || active.Binding != read.binding {
+			t.Fatalf("workspace %s active = %s present=%v err=%v; want only its own %s",
+				read.binding.WorkspaceID, active.Fingerprint, present, err, read.want)
+		}
+	}
+	// An unscoped store over a shared directory still never serves another
+	// workspace's snapshot, because the binding itself names the workspace.
+	shared, err := NewStore(primaryStore.directory)
+	if err != nil {
+		t.Fatalf("NewStore: %v", err)
+	}
+	if _, err := shared.LoadFor(foreignBinding, promoted.Fingerprint); !errors.Is(err, ErrSnapshotScope) {
+		t.Fatalf("a foreign-workspace binding loaded the primary snapshot: %v; want %v", err, ErrSnapshotScope)
+	}
+	for _, hostile := range []contract.Scope{
+		{OrgID: testOrgID, WorkspaceID: ".."},
+		{OrgID: testOrgID, WorkspaceID: "workspace/other"},
+		{OrgID: "", WorkspaceID: testWorkspaceID},
+	} {
+		if _, err := ConnectionStateDirectory(root, hostile, testConnectionID); !errors.Is(err, ErrSnapshotScope) {
+			t.Fatalf("hostile scope %#v named a state directory: %v", hostile, err)
+		}
 	}
 }

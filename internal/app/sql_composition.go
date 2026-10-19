@@ -235,7 +235,7 @@ func LoadProviderSQLResources(
 	if err != nil {
 		return SQLConnectionResources{}, errors.New("customer SQL trust anchor is unavailable")
 	}
-	snapshots, err := schema.NewStore(connection.StateDirectory)
+	snapshots, err := schema.NewScopedStore(connection.StateDirectory, connection.Scope(), connection.ConnectionID)
 	if err != nil {
 		clear(trustAnchor)
 		return SQLConnectionResources{}, errors.New("customer SQL connection state directory is unavailable")
@@ -400,7 +400,12 @@ func (composition *SQLComposition) bind(
 			ErrSQLBindingUnavailable, operation.Transport.RelationBinding,
 		)
 	}
+	// The snapshot binding names the declared connection's own organization and
+	// workspace, so a snapshot of another workspace's same-named connection is
+	// never selected here.
 	snapshot, present, err := connection.snapshots.Active(schema.Binding{
+		OrgID:              connection.declaration.Scope().OrgID,
+		WorkspaceID:        connection.declaration.Scope().WorkspaceID,
 		ConnectorID:        connection.declaration.ConnectorID,
 		ConnectionID:       connection.declaration.ConnectionID,
 		ProviderAccountID:  binding.Snapshot.ProviderAccountID,

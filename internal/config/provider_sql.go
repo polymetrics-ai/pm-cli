@@ -457,6 +457,9 @@ func resolveProviderSQL(configuration ProviderSQLConfiguration) (ProviderSQLConf
 	}
 	policies := make(map[providerSQLConnectionKey]ProviderSQLConnection, len(configuration.connections))
 	connections := make([]ProviderSQLConnection, 0, len(configuration.connections))
+	// One state directory holds exactly one workspace-scoped connection's
+	// schema state, so two declarations never share a schema snapshot store.
+	directories := make(map[string]struct{}, len(configuration.connections))
 	for index, connection := range configuration.connections {
 		path := "provider_sql.connections[" + strconv.Itoa(index) + "]"
 		if err := connection.scope.Validate(); err != nil {
@@ -489,6 +492,10 @@ func resolveProviderSQL(configuration ProviderSQLConfiguration) (ProviderSQLConf
 		if err := validateProviderSQLStateDirectory(connection.StateDirectory, path+".state_directory"); err != nil {
 			return ProviderSQLConfiguration{}, err
 		}
+		if _, shared := directories[connection.StateDirectory]; shared {
+			return ProviderSQLConfiguration{}, diagnostic(path+".state_directory", DiagnosticDuplicate)
+		}
+		directories[connection.StateDirectory] = struct{}{}
 		if err := validateProviderSQLBindings(connection, path); err != nil {
 			return ProviderSQLConfiguration{}, err
 		}

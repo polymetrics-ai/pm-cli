@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/oapi-codegen/nullable"
 
 	"github.com/polymetrics-ai/pm-cli/internal/api"
@@ -172,6 +173,131 @@ func TestConnectionReadSelectorRefusalsAreConcealed(t *testing.T) {
 		}
 		harness.requireStartDelta(t, before, 0, "the unreadable-snapshot refusal")
 	})
+}
+
+// TestConnectionSchemaIsolatesWorkspacesThatShareAConnectionID is the
+// cross-workspace metadata case. Connection identities are workspace-scoped, so
+// a second workspace may declare a connection with the very same identity,
+// connector and provider account. The schema route must namespace and authorize
+// snapshot state by organization, workspace and connection: the second
+// workspace never reads the first workspace's snapshot, and naming that
+// snapshot explicitly is concealed exactly like an unknown one.
+func TestConnectionSchemaIsolatesWorkspacesThatShareAConnectionID(t *testing.T) {
+	harness := newETLHarness(t)
+	fixture := harness.fixture
+	shared := fixture.Connection
+	foreignScope := fixture.ForeignScope
+	fixture.SetupSQL(t, foreignScope, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO pm.connections (
+				org_id, workspace_id, connection_id, connector_id, provider_account_id,
+				revision, credential_ref, display_name, state
+			) VALUES ($1, $2, $3, $4, $5, 1, $6, 'same-identity foreign connection', 'active')
+		`, foreignScope.OrgID, foreignScope.WorkspaceID, shared.ConnectionID, shared.ConnectorID,
+			shared.ProviderAccountID, "credential-shared-identity"); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			UPDATE pm.memberships
+			SET resource_grants = ARRAY(
+					SELECT DISTINCT value FROM unnest(resource_grants || $4::text[]) AS value ORDER BY value
+				),
+				connection_ids = ARRAY(
+					SELECT DISTINCT value FROM unnest(connection_ids || $5::text[]) AS value ORDER BY value
+				),
+				policy_epoch = policy_epoch + 1,
+				control_revision = control_revision + 1
+			WHERE org_id = $1 AND workspace_id = $2 AND identity_id = $3
+		`, foreignScope.OrgID, foreignScope.WorkspaceID, fixture.ForeignActor.RequestedActor.PrincipalID,
+			[]string{"connection:" + shared.ConnectionID}, []string{shared.ConnectionID})
+		return err
+	})
+	primary := fixture.Client
+	foreign := fixture.ClientFor(t, fixture.ForeignActor)
+	primarySnapshot := harness.metadata.snapshot.Fingerprint
+	// The foreign workspace's own state directory exists but has promoted
+	// nothing yet.
+	harness.connectionSchemaStore(t, foreignScope)
+
+	t.Run("a_workspace_without_its_own_discovery_reads_no_other_workspace_snapshot", func(t *testing.T) {
+		inspection := decodeWarehouseRoute[api.ConnectionSchemaInspection](t,
+			harness.send(t, foreign, http.MethodGet, schemaSelectorPath(harness, foreignScope.WorkspaceID, nil), nil),
+			http.StatusOK)
+		if selected, err := inspection.Selected.Get(); err == nil && selected != "" {
+			t.Fatalf("workspace %s read the snapshot %s selected by workspace %s through the shared connection identity",
+				foreignScope.WorkspaceID, selected, fixture.Scope.WorkspaceID)
+		}
+		if inspection.WorkspaceId != foreignScope.WorkspaceID || len(inspection.Fields) != 0 ||
+			inspection.Snapshot.ContentFingerprint != "" || inspection.Snapshot.Complete {
+			t.Fatalf("workspace %s schema inspection = %#v; want its own absent selection", foreignScope.WorkspaceID, inspection)
+		}
+		named := url.Values{"snapshot_id": {string(primarySnapshot)}}
+		response := harness.send(t, foreign, http.MethodGet, schemaSelectorPath(harness, foreignScope.WorkspaceID, named), nil)
+		requireConcealed(t, response, "another workspace's snapshot named by its identity")
+		if bytes.Contains(response.document, []byte(primarySnapshot)) {
+			t.Fatalf("the concealed cross-workspace answer disclosed %s: %s", primarySnapshot, response.document)
+		}
+	})
+
+	t.Run("each_workspace_reads_only_its_own_snapshot", func(t *testing.T) {
+		foreignMetadata := harness.promoteWorkspaceSchema(t, foreignScope, []schema.Field{{
+			Name:     "foreign_only",
+			Pointer:  "/properties/foreign_only",
+			Schema:   contract.Schema{Type: contract.SchemaTypeString},
+			Required: true,
+		}})
+		foreignSnapshot := foreignMetadata.snapshot.Fingerprint
+		if foreignSnapshot == primarySnapshot {
+			t.Fatalf("two workspaces' snapshots share the identity %s", foreignSnapshot)
+		}
+		for _, read := range []struct {
+			name      string
+			client    *http.Client
+			workspace string
+			want      contract.SemanticDigest
+			fields    int
+		}{
+			{"primary", primary, fixture.Scope.WorkspaceID, primarySnapshot, len(harness.metadata.snapshot.Fields)},
+			{"foreign", foreign, foreignScope.WorkspaceID, foreignSnapshot, len(foreignMetadata.snapshot.Fields)},
+		} {
+			inspection := decodeWarehouseRoute[api.ConnectionSchemaInspection](t,
+				harness.send(t, read.client, http.MethodGet, schemaSelectorPath(harness, read.workspace, nil), nil),
+				http.StatusOK)
+			selected, err := inspection.Selected.Get()
+			if err != nil || selected != string(read.want) || inspection.Snapshot.ContentFingerprint != string(read.want) ||
+				inspection.WorkspaceId != read.workspace || len(inspection.Fields) != read.fields {
+				t.Fatalf("the %s workspace schema read = %#v (%v); want only its own %s over %d fields",
+					read.name, inspection, err, read.want, read.fields)
+			}
+		}
+		for _, cross := range []struct {
+			name      string
+			client    *http.Client
+			workspace string
+			named     contract.SemanticDigest
+		}{
+			{"the primary workspace naming the foreign snapshot", primary, fixture.Scope.WorkspaceID, foreignSnapshot},
+			{"the foreign workspace naming the primary snapshot", foreign, foreignScope.WorkspaceID, primarySnapshot},
+		} {
+			named := url.Values{"snapshot_id": {string(cross.named)}}
+			response := harness.send(t, cross.client, http.MethodGet, schemaSelectorPath(harness, cross.workspace, named), nil)
+			requireConcealed(t, response, cross.name)
+		}
+		// A workspace cannot read another workspace's connection state at all:
+		// the primary actor has no authority in the foreign workspace.
+		requireConcealedOrForbidden(t, harness.send(t, primary, http.MethodGet,
+			schemaSelectorPath(harness, foreignScope.WorkspaceID, nil), nil))
+	})
+}
+
+// requireConcealedOrForbidden requires a refusal of a read outside the actor's
+// workspace authority, without asserting which refusal the identity boundary
+// selects.
+func requireConcealedOrForbidden(t *testing.T, response warehouseRouteResponse) {
+	t.Helper()
+	if response.status != http.StatusNotFound && response.status != http.StatusForbidden {
+		t.Fatalf("a read outside the actor's workspace answered HTTP %d: %s", response.status, response.document)
+	}
 }
 
 // unknownSchemaSnapshot declares one well-formed snapshot identity that no

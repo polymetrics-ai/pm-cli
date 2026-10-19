@@ -50,6 +50,13 @@ func TestProviderSQLDeclaration(t *testing.T) {
 				`[{"org_id":"org-alpha","workspace_id":"workspace-alpha","connection_id":"postgres-main","connector_id":"postgres","host":"127.0.0.1","port":5432,"database":"customer_db","user":"customer_role","tls_trust_ref":"secret://fixture/provider-sql","password_ref":"credential-postgres-main","state_directory":"/opt/pm/state/postgres-main","relation_bindings":`+providerSQLRelationBindings+`},{"org_id"`, 1),
 		},
 		{
+			// Connection identities are workspace-scoped, so another workspace may
+			// declare the same identity, but never the same schema state directory.
+			name: "state directory shared across workspaces",
+			document: strings.Replace(providerSQLConnections, `[{"org_id"`,
+				`[{"org_id":"org-alpha","workspace_id":"workspace-beta","connection_id":"postgres-main","connector_id":"postgres","host":"127.0.0.1","port":5432,"database":"customer_db","user":"customer_role","tls_trust_ref":"secret://fixture/provider-sql","password_ref":"credential-postgres-main","state_directory":"/opt/pm/state/postgres-main","relation_bindings":`+providerSQLRelationBindings+`},{"org_id"`, 1),
+		},
+		{
 			name:     "wrongly typed bound",
 			document: strings.Replace(providerSQLDeclaration, `"max_rows":256`, `"max_rows":"many"`, 1),
 		},

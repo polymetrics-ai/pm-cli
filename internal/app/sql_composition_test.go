@@ -930,6 +930,8 @@ func (customer *sqlCustomerDatabase) promoteSnapshot(t *testing.T, dependencies 
 
 func sqlExecutionSnapshotBinding(dependencies testfixture.ServiceDependencies) schema.Binding {
 	return schema.Binding{
+		OrgID:              dependencies.Scope.OrgID,
+		WorkspaceID:        dependencies.Scope.WorkspaceID,
 		ConnectorID:        sqlExecutionConnectorID,
 		ConnectionID:       dependencies.Connection.ConnectionID,
 		ProviderAccountID:  dependencies.Connection.ProviderAccountID,

@@ -407,8 +407,36 @@ func (harness *etlHarness) installReadSurface(
 // arrangement the route was taught to expect.
 func (harness *etlHarness) promoteConnectionSchema(t *testing.T) *connectionMetadata {
 	t.Helper()
+	return harness.promoteWorkspaceSchema(t, harness.fixture.Scope, []schema.Field{
+		{
+			Name:     "id",
+			Pointer:  "/properties/id",
+			Schema:   contract.Schema{Type: contract.SchemaTypeInteger},
+			Required: true,
+		},
+		{
+			Name:     "note",
+			Pointer:  "/properties/note",
+			Schema:   contract.Schema{Type: contract.SchemaTypeString},
+			Required: true,
+		},
+	})
+}
+
+// promoteWorkspaceSchema promotes one complete declared discovery of the
+// fixture's connection identity for one workspace. The state directory is the
+// one the store namespaces by organization, workspace and connection, because a
+// connection identity is unique only within its workspace.
+func (harness *etlHarness) promoteWorkspaceSchema(
+	t *testing.T,
+	scope contract.Scope,
+	fields []schema.Field,
+) *connectionMetadata {
+	t.Helper()
 	connection := harness.fixture.Connection
 	binding := schema.Binding{
+		OrgID:              scope.OrgID,
+		WorkspaceID:        scope.WorkspaceID,
 		ConnectorID:        connection.ConnectorID,
 		ConnectionID:       connection.ConnectionID,
 		ProviderAccountID:  connection.ProviderAccountID,
@@ -416,32 +444,12 @@ func (harness *etlHarness) promoteConnectionSchema(t *testing.T) *connectionMeta
 		Resource:           etlDatasetName,
 		SourceRevision:     etlSchemaSourceRevision,
 	}
-	directory := filepath.Join(harness.metadataRoot, connection.ConnectionID)
-	if err := os.Mkdir(directory, 0o700); err != nil {
-		t.Fatalf("create the connection metadata state directory: %v", err)
-	}
-	store, err := schema.NewStore(directory)
-	if err != nil {
-		t.Fatalf("open the connection metadata store: %v", err)
-	}
+	store := harness.connectionSchemaStore(t, scope)
 	candidate, err := schema.Discover(binding, []schema.Observation{{
 		Capability: etlSchemaCapability,
 		Resource:   binding.Resource,
 		Available:  true,
-		Fields: []schema.Field{
-			{
-				Name:     "id",
-				Pointer:  "/properties/id",
-				Schema:   contract.Schema{Type: contract.SchemaTypeInteger},
-				Required: true,
-			},
-			{
-				Name:     "note",
-				Pointer:  "/properties/note",
-				Schema:   contract.Schema{Type: contract.SchemaTypeString},
-				Required: true,
-			},
-		},
+		Fields:     fields,
 	}})
 	if err != nil {
 		t.Fatalf("declare the connection discovery: %v", err)
@@ -454,6 +462,25 @@ func (harness *etlHarness) promoteConnectionSchema(t *testing.T) *connectionMeta
 		t.Fatalf("promote the connection schema snapshot: %v", err)
 	}
 	return &connectionMetadata{binding: binding, snapshot: snapshot}
+}
+
+// connectionSchemaStore creates and opens the private state directory of the
+// fixture's connection identity in one workspace beneath the server-owned root.
+func (harness *etlHarness) connectionSchemaStore(t *testing.T, scope contract.Scope) *schema.Store {
+	t.Helper()
+	connectionID := harness.fixture.Connection.ConnectionID
+	directory, err := schema.ConnectionStateDirectory(harness.metadataRoot, scope, connectionID)
+	if err != nil {
+		t.Fatalf("name the connection metadata state directory: %v", err)
+	}
+	if err := os.MkdirAll(directory, 0o700); err != nil {
+		t.Fatalf("create the connection metadata state directory: %v", err)
+	}
+	store, err := schema.NewConnectionStore(harness.metadataRoot, scope, connectionID)
+	if err != nil {
+		t.Fatalf("open the connection metadata store: %v", err)
+	}
+	return store
 }
 
 func (harness *etlHarness) newPublisher(t *testing.T, resources *app.ArtifactResources) *objects.Publisher {

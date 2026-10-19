@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
-	"strings"
 
 	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
@@ -33,11 +31,17 @@ func (service *Service) GetConnectionSchema(
 	if err != nil {
 		return asProblemResponse(err, nil), nil
 	}
-	store, err := service.connectionSchemaStore(request.ConnectionId)
+	// The connection identity is workspace-scoped, so the store is the one
+	// namespaced by the authorized organization, workspace and connection, and
+	// the binding names that same owner: another workspace's snapshot under the
+	// same connection identity is neither reachable nor readable here.
+	store, err := service.connectionSchemaStore(scope, connection.ConnectionID)
 	if err != nil {
 		return asProblemResponse(err, nil), nil
 	}
 	binding := schema.Binding{
+		OrgID:              scope.OrgID,
+		WorkspaceID:        scope.WorkspaceID,
 		ConnectorID:        connection.ConnectorID,
 		ConnectionID:       connection.ConnectionID,
 		ProviderAccountID:  connection.ProviderAccountID,
@@ -105,18 +109,20 @@ func concealedSchemaSelector(err error) error {
 	}
 }
 
-// connectionSchemaStore resolves the connection's owned metadata state
-// directory beneath the configured root. A directory traversal or an
-// unconfigured root is a refusal, never a default location.
-func (service *Service) connectionSchemaStore(connectionID string) (*schema.Store, error) {
+// connectionSchemaStore resolves the authorized connection's owned metadata
+// state directory beneath the configured root. The directory is namespaced by
+// organization, workspace and connection, because connection identities are
+// only unique within one workspace, and the store refuses every binding of
+// another owner. A directory traversal or an unconfigured root is a refusal,
+// never a default location.
+func (service *Service) connectionSchemaStore(scope contract.Scope, connectionID string) (*schema.Store, error) {
 	if service.connectionMetadataRoot == "" {
 		return nil, fmt.Errorf("connection metadata state is unavailable: %w", capabilityUnavailable())
 	}
-	if connectionID == "" || connectionID == "." || connectionID == ".." ||
-		strings.ContainsAny(connectionID, `/\`) || strings.ContainsRune(connectionID, 0) {
-		return nil, fmt.Errorf("%w: connection_id cannot name a state directory", errInvalidHTTPInput)
+	if _, err := schema.ConnectionStateDirectory(service.connectionMetadataRoot, scope, connectionID); err != nil {
+		return nil, fmt.Errorf("%w: the authorized connection cannot name a state directory", errInvalidHTTPInput)
 	}
-	return schema.NewStore(filepath.Join(service.connectionMetadataRoot, connectionID))
+	return schema.NewConnectionStore(service.connectionMetadataRoot, scope, connectionID)
 }
 
 // absentSchemaSnapshot reports the withheld snapshot identity of a connection
