@@ -9,14 +9,19 @@ go_library(
         "inputs.go",
         "limits.go",
         "pagination.go",
+        "postgres.go",
         "response.go",
         "retry.go",
+        "sqltls.go",
+        "sqltypes.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/runtime",
     visibility = ["//visibility:public"],
     deps = [
         "//internal/contract",
         "//internal/credentials",
+        "@com_github_jackc_pgx_v5//pgconn",
+        "@com_github_jackc_pgx_v5//pgproto3",
     ],
 )
 
@@ -31,10 +36,24 @@ go_test(
         "pagination_test.go",
         "response_open_test.go",
         "retry_test.go",
+        "sqltls_test.go",
+        "sqltypes_test.go",
     ],
     embed = [":runtime"],
+    env_inherit = [
+        "PM_STACK_ROOT",
+        "PM_STACK_POSTGRES_PORT",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
     deps = [
         "//internal/contract",
         "//internal/credentials",
+        "@com_github_jackc_pgx_v5//pgconn",
+        "@com_github_jackc_pgx_v5//pgproto3",
     ],
 )

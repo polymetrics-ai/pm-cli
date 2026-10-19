@@ -131,12 +131,14 @@ type LaneDisposition struct {
 }
 
 type RawOperationFact struct {
-	SourceOperationID string       `json:"source_operation_id"`
-	SourceFacts       []SourceFact `json:"source_facts"`
-	Method            string       `json:"method"`
-	Path              string       `json:"path"`
-	RequestVariants   []VariantRef `json:"request_variants"`
-	ResponseVariants  []VariantRef `json:"response_variants"`
+	SourceOperationID string                           `json:"source_operation_id"`
+	SourceFacts       []SourceFact                     `json:"source_facts"`
+	Method            string                           `json:"method,omitempty"`
+	Path              string                           `json:"path,omitempty"`
+	StatementKind     contract.PostgreSQLStatementKind `json:"statement_kind,omitempty"`
+	RelationBinding   string                           `json:"relation_binding,omitempty"`
+	RequestVariants   []VariantRef                     `json:"request_variants"`
+	ResponseVariants  []VariantRef                     `json:"response_variants"`
 }
 
 type NormalizedOperation struct {

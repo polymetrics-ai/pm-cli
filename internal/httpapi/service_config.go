@@ -21,11 +21,18 @@ type ServiceConfig struct {
 	Admission    *app.AdmissionService
 	Runs         *app.RunService
 	// Artifacts is optional; absence preserves explicit read unavailability.
-	Artifacts             app.ArtifactBackend
-	InstanceID            string
-	OIDCHTTPClient        *http.Client
-	ResolveEventCursorKey func(context.Context) ([]byte, error)
-	EventBufferSize       uint64
-	EventWriteTimeout     time.Duration
-	Draining              <-chan struct{}
+	Artifacts app.ArtifactBackend
+	// Warehouse is optional; absence preserves explicit warehouse read
+	// unavailability.
+	Warehouse *WarehouseResources
+	// ConnectionMetadataRoot is the server-owned root of each connection's
+	// metadata state directory. Absence preserves explicit schema read
+	// unavailability rather than defaulting to another location.
+	ConnectionMetadataRoot string
+	InstanceID             string
+	OIDCHTTPClient         *http.Client
+	ResolveEventCursorKey  func(context.Context) ([]byte, error)
+	EventBufferSize        uint64
+	EventWriteTimeout      time.Duration
+	Draining               <-chan struct{}
 }

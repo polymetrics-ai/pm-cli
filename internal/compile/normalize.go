@@ -18,6 +18,10 @@ import (
 const noContentMediaType = "application/x.pm.no-content"
 const parameterOnlyMediaType = "application/x.pm.parameters"
 
+// documentationResponseMediaType is the JSON media type of the native
+// PostgreSQL typed-row response envelope the runtime contract declares.
+const documentationResponseMediaType = "application/json"
+
 type discoveredOperation struct {
 	sourceID             string
 	pointer              string
@@ -55,6 +59,9 @@ func Normalize(ctx context.Context, source *LoadedSource) (*Normalization, error
 	}
 	if ctx == nil {
 		ctx = context.Background()
+	}
+	if source.Documentation != nil {
+		return normalizeDocumentationOperations(source)
 	}
 	discovered, err := discoverOperations(source)
 	if err != nil {
@@ -99,6 +106,105 @@ func Normalize(ctx context.Context, source *LoadedSource) (*Normalization, error
 type lockedOperation struct {
 	lock       SourceOperation
 	discovered discoveredOperation
+}
+
+// normalizeDocumentationOperations lowers the operations of a documentation
+// dialect into the same NormalizedOperation model the interface-description
+// path produces. The declared statement facts become the transport, the
+// response shape the transport contract requires is derived once, and the lane
+// inventory stays the unclassified default until the connector's own semantics
+// classifies every lane.
+func normalizeDocumentationOperations(source *LoadedSource) (*Normalization, error) {
+	lock := source.Resolved.Captured.Lock
+	normalization := &Normalization{
+		ConnectorID:       lock.ConnectorID,
+		SemanticsRevision: lock.SemanticsRevision,
+		SourceDigest:      source.Resolved.Captured.Digest,
+	}
+	operations := slices.Clone(lock.Operations)
+	slices.SortFunc(operations, func(left, right SourceOperation) int {
+		return strings.Compare(left.SourceOperationID, right.SourceOperationID)
+	})
+	for _, operation := range operations {
+		if operation.StatementKind == nil || operation.RelationBinding == nil {
+			return nil, sourceError(ErrInvalidSource, "", "/operations/"+escapePointerToken(operation.SourceOperationID), "documentation operation lost its declared statement facts")
+		}
+		sourceFacts, err := documentationSourceFacts(source.Documentation, operation.SourceRefs)
+		if err != nil {
+			return nil, err
+		}
+		if len(sourceFacts) == 0 {
+			return nil, sourceError(ErrSourceFidelity, "", "/operations/"+escapePointerToken(operation.SourceOperationID)+"/source_refs", "documentation operation has no verified anchor witness")
+		}
+		normalization.SourceOperationIDs = append(normalization.SourceOperationIDs, operation.SourceOperationID)
+		normalization.Operations = append(normalization.Operations, NormalizedOperation{
+			OperationID: operation.SourceOperationID,
+			SourceRefs:  slices.Clone(operation.SourceRefs),
+			Transport: contract.Transport{
+				Kind:            contract.TransportKindPostgreSQL,
+				StatementKind:   *operation.StatementKind,
+				RelationBinding: *operation.RelationBinding,
+			},
+			LaneInventory: defaultLaneInventory(operation.SourceRefs),
+			Raw: RawOperationFact{
+				SourceOperationID: operation.SourceOperationID,
+				SourceFacts:       sourceFacts,
+				StatementKind:     *operation.StatementKind,
+				RelationBinding:   *operation.RelationBinding,
+				RequestVariants:   []VariantRef{},
+				ResponseVariants:  []VariantRef{},
+			},
+			CommonBindings:   []BindingFact{},
+			RequestVariants:  []RequestVariant{},
+			ResponseVariants: []ResponseVariant{documentationStatementResponse(sourceFacts)},
+		})
+	}
+	return normalization, nil
+}
+
+// documentationSourceFacts resolves every declared selector of one operation
+// against the pinned bytes. A selector without a verified anchor witness is
+// refused rather than lowered.
+func documentationSourceFacts(documentation *DocumentationSource, references []contract.SourceRef) ([]SourceFact, error) {
+	facts := make([]SourceFact, 0, len(references))
+	for _, reference := range references {
+		fact, ok := documentation.Fact(reference.SourceID, reference.Pointer)
+		if !ok {
+			return nil, sourceError(ErrSourceFidelity, reference.SourceID, reference.Pointer, "declared documentation anchor is absent from the pinned bytes")
+		}
+		facts = append(facts, fact)
+	}
+	slices.SortFunc(facts, func(left, right SourceFact) int {
+		if compared := strings.Compare(left.SourceRef.SourceID, right.SourceRef.SourceID); compared != 0 {
+			return compared
+		}
+		return strings.Compare(left.SourceRef.Pointer, right.SourceRef.Pointer)
+	})
+	return slices.CompactFunc(facts, func(left, right SourceFact) bool {
+		return left.SourceRef == right.SourceRef
+	}), nil
+}
+
+// documentationStatementResponse is the one transport response the native
+// PostgreSQL contract requires. The exact row shape of a customer relation is
+// bound per connection at call time, so the declared result is a bounded
+// sequence of open typed rows; the compiler never invents column identities the
+// documentation does not carry. The response is attributed to the operation's
+// own verified anchors.
+func documentationStatementResponse(facts []SourceFact) ResponseVariant {
+	schema := contract.Schema{
+		Type:  contract.SchemaTypeArray,
+		Items: &contract.Schema{Type: contract.SchemaTypeObject, OpenProperties: true},
+	}
+	return ResponseVariant{
+		Status:           "success",
+		MediaType:        documentationResponseMediaType,
+		NoContent:        false,
+		SourceFacts:      slices.Clone(facts),
+		Sensitivity:      SensitivityPublic,
+		Schema:           &schema,
+		NormalizedSHA256: hashJSON(schema),
+	}
 }
 
 func discoverOperations(source *LoadedSource) (map[string]discoveredOperation, error) {

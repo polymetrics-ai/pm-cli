@@ -347,6 +347,79 @@ export interface paths {
         patch: operations["updateConnection"];
         trace?: never;
     };
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Inspect the connection's selected metadata snapshot and its effective schema
+         * @description Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+         */
+        get: operations["getConnectionSchema"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+                /** @description Declared dataset component of the connection's warehouse namespace; never a path, a parent reference, or an object key. */
+                dataset: components["parameters"]["DatasetName"];
+            };
+            cookie?: never;
+        };
+        /**
+         * Inspect the committed read view of one warehouse dataset
+         * @description Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
+         */
+        get: operations["getWarehouseDataset"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+                /** @description Declared dataset component of the connection's warehouse namespace; never a path, a parent reference, or an object key. */
+                dataset: components["parameters"]["DatasetName"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Run one bounded typed query over a dataset's registered segments
+         * @description Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+         */
+        post: operations["runWarehouseQuery"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace_id}/connectors": {
         parameters: {
             query?: never;
@@ -846,6 +919,27 @@ export interface components {
             items: components["schemas"]["Connection"][];
             next_cursor: string | null;
         };
+        ConnectionSchemaInspection: {
+            connection_id: string;
+            connector_id: string;
+            fields: components["schemas"]["SchemaField"][];
+            org_id: string;
+            selected: string | null;
+            snapshot: components["schemas"]["ConnectionSchemaSnapshot"];
+            workspace_id: string;
+        };
+        ConnectionSchemaSnapshot: {
+            blockers: string[];
+            complete: boolean;
+            connection_id: string;
+            connector_id: string;
+            content_fingerprint: string;
+            field_count: number;
+            permission_revision: string;
+            provider_account_id: string;
+            resource: string;
+            source_revision: string;
+        };
         ConnectionUpdateRequest: {
             connection: components["schemas"]["SafeConnectionPatch"];
             protocol: components["schemas"]["ProtocolMetadata"];
@@ -1318,6 +1412,16 @@ export interface components {
             kind: "request" | "run" | "connection" | "membership" | "service_account" | "delegation";
             ref: string;
         };
+        SchemaField: {
+            name: string;
+            pointer: string;
+            precision: number;
+            required: boolean;
+            scale: number;
+            /** @enum {string} */
+            type: "string" | "integer" | "number" | "bool" | "object" | "array" | "date" | "timestamp_instant" | "timestamp_local";
+            writable: boolean;
+        };
         ServerInfo: {
             features: string[];
             instance_id: string;
@@ -1415,6 +1519,90 @@ export interface components {
             required?: string[];
             /** @enum {string} */
             type: "string" | "bool" | "integer" | "decimal" | "date" | "timestamp_instant" | "timestamp_local" | "array" | "object" | "union" | "binary_ref";
+        };
+        WarehouseColumn: {
+            /** @enum {string} */
+            kind: "int64" | "decimal" | "text" | "boolean" | "bytea" | "date" | "timestamp" | "timestamptz" | "uuid" | "json";
+            name: string;
+            nullable: boolean;
+            precision: number;
+            scale: number;
+        };
+        WarehouseDatasetSnapshot: {
+            connection_id: string;
+            connector_id: string;
+            /** Format: int64 */
+            cursor_ordinal: number;
+            dataset: string;
+            org_id: string;
+            /** Format: int64 */
+            revision: number;
+            /** Format: int64 */
+            rows: number;
+            segments: components["schemas"]["WarehouseSegment"][];
+            snapshot_id: string | null;
+            workspace_id: string;
+        };
+        WarehouseObject: {
+            artifact_id: string;
+            backend_generation: string;
+            /** Format: int64 */
+            byte_length: number;
+            media_type: string;
+            sha256: string;
+        };
+        WarehouseOrdering: {
+            column: string;
+            descending: boolean;
+        };
+        WarehouseParameter: {
+            name: string;
+            value: components["schemas"]["PresentValue"];
+        };
+        WarehousePredicate: {
+            column: string;
+            /** @enum {string} */
+            operator: "eq" | "ne" | "lt" | "lte" | "gt" | "gte" | "is_null" | "is_not_null" | "in" | "not_in";
+            parameter: string | null;
+            value: components["schemas"]["PresentValue"];
+            values: components["schemas"]["PresentValue"][];
+        };
+        WarehouseProjection: {
+            alias: string | null;
+            column: string;
+        };
+        WarehouseQueryRequest: {
+            /** Format: int64 */
+            limit: number;
+            order: components["schemas"]["WarehouseOrdering"][];
+            parameters: components["schemas"]["WarehouseParameter"][];
+            predicates: components["schemas"]["WarehousePredicate"][];
+            project: components["schemas"]["WarehouseProjection"][];
+            relation: string;
+            snapshot_id: string | null;
+        };
+        WarehouseQueryResult: {
+            columns: components["schemas"]["WarehouseColumn"][];
+            connection_id: string;
+            connector_id: string;
+            dataset: string;
+            org_id: string;
+            rows: components["schemas"]["PresentValue"][][];
+            snapshot_id: string | null;
+            truncated: boolean;
+            workspace_id: string;
+        };
+        WarehouseSegment: {
+            column_fingerprint: string;
+            /** Format: int64 */
+            manifest_revision: number;
+            object: components["schemas"]["WarehouseObject"];
+            /** Format: int64 */
+            ordinal: number;
+            /** Format: int64 */
+            row_count: number;
+            /** @enum {string} */
+            state: "live" | "retired" | "collected";
         };
         Workspace: {
             membership_id: string;
@@ -1555,6 +1743,8 @@ export interface components {
         ConnectionID: string;
         ConnectorCatalogID: string;
         Cursor: string;
+        /** @description Declared dataset component of the connection's warehouse namespace; never a path, a parent reference, or an object key. */
+        DatasetName: string;
         IdempotencyKey: string;
         /** @description Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope. */
         IfMatch: string;
@@ -1565,6 +1755,16 @@ export interface components {
         RunID: string;
         /** @description Restrict the workspace-scoped page to one canonical run state. */
         RunStateFilter: components["schemas"]["RunState"];
+        /** @description Permission revision the discovery observed; metadata bound to another revision is never served. */
+        SchemaPermissionRevision: string;
+        /** @description Provider account the discovery observed; defaults to the authorized connection's stored provider account. */
+        SchemaProviderAccount: string;
+        /** @description Declared provider resource whose account metadata is requested; it is part of the snapshot binding, never a directory or object key. */
+        SchemaResource: string;
+        /** @description Source revision the discovery observed; metadata bound to another revision is never served. */
+        SchemaSourceRevision: string;
+        /** @description Selects one retained snapshot's exact segment set instead of the dataset's live set. */
+        SnapshotID: string;
         /** @description Deterministic reversible opaque encoding of the exact run and stored task IDs inside the authorized workspace; it is not a bearer capability or alternate selector. */
         TaskID: string;
         WorkspaceID: string;
@@ -2249,6 +2449,115 @@ export interface operations {
             409: components["responses"]["Problem409"];
             412: components["responses"]["Problem412"];
             428: components["responses"]["Problem428"];
+            503: components["responses"]["Problem503"];
+        };
+    };
+    getConnectionSchema: {
+        parameters: {
+            query: {
+                /** @description Declared provider resource whose account metadata is requested; it is part of the snapshot binding, never a directory or object key. */
+                resource: components["parameters"]["SchemaResource"];
+                /** @description Permission revision the discovery observed; metadata bound to another revision is never served. */
+                permission_revision: components["parameters"]["SchemaPermissionRevision"];
+                /** @description Source revision the discovery observed; metadata bound to another revision is never served. */
+                source_revision: components["parameters"]["SchemaSourceRevision"];
+                /** @description Provider account the discovery observed; defaults to the authorized connection's stored provider account. */
+                provider_account_id?: components["parameters"]["SchemaProviderAccount"];
+                /** @description Selects one retained snapshot's exact segment set instead of the dataset's live set. */
+                snapshot_id?: components["parameters"]["SnapshotID"];
+            };
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Selected snapshot identity, completeness and effective typed fields */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ConnectionSchemaInspection"];
+                };
+            };
+            400: components["responses"]["Problem400"];
+            401: components["responses"]["Problem401"];
+            403: components["responses"]["Problem403"];
+            404: components["responses"]["Problem404"];
+            503: components["responses"]["Problem503"];
+        };
+    };
+    getWarehouseDataset: {
+        parameters: {
+            query?: {
+                /** @description Selects one retained snapshot's exact segment set instead of the dataset's live set. */
+                snapshot_id?: components["parameters"]["SnapshotID"];
+            };
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+                /** @description Declared dataset component of the connection's warehouse namespace; never a path, a parent reference, or an object key. */
+                dataset: components["parameters"]["DatasetName"];
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Committed revision, acknowledged cursor and registered segments */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseDatasetSnapshot"];
+                };
+            };
+            400: components["responses"]["Problem400"];
+            401: components["responses"]["Problem401"];
+            403: components["responses"]["Problem403"];
+            404: components["responses"]["Problem404"];
+            503: components["responses"]["Problem503"];
+        };
+    };
+    runWarehouseQuery: {
+        parameters: {
+            query?: never;
+            header?: {
+                /** @description Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization. */
+                "X-CSRF-Token"?: components["parameters"]["CSRFToken"];
+            };
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+                /** @description Declared dataset component of the connection's warehouse namespace; never a path, a parent reference, or an object key. */
+                dataset: components["parameters"]["DatasetName"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WarehouseQueryRequest"];
+            };
+        };
+        responses: {
+            /** @description Exact typed rows of the admitted query, in registered ordinal order */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WarehouseQueryResult"];
+                };
+            };
+            400: components["responses"]["Problem400"];
+            401: components["responses"]["Problem401"];
+            403: components["responses"]["Problem403"];
+            404: components["responses"]["Problem404"];
             503: components["responses"]["Problem503"];
         };
     };

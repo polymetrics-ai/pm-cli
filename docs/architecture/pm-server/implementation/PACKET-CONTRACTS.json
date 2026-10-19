@@ -13626,48 +13626,48 @@
           ],
           "subsequent_wiring_milestones": []
         },
-          {
-            "path": "internal/cli/result_document_test.go",
-            "group_id": "T_V30b",
-            "prior_group_id": "T_V30b",
-            "owner": "cli",
-            "process": "CLI",
-            "milestone": "M5",
-            "action": "CREATE",
-            "kind": "authored",
-            "responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
-            "interfaces": [
-              "TestRunResultRendersExactPublishedDocument"
-            ],
-            "dependencies": [
-              "api",
-              "contract"
-            ],
-            "test_ids": [
-              "V30"
-            ],
-            "generator": null,
-            "go_package": "cli",
-            "assignment_owner": "cli",
-            "group_responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
-            "allowed_internal_dependencies": [
-              "api",
-              "contract"
-            ],
-            "import_activation": [
-              {
-                "package": "api",
-                "earliest_milestone": "M5",
-                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-              },
-              {
-                "package": "contract",
-                "earliest_milestone": "M5",
-                "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
-              }
-            ],
-            "subsequent_wiring_milestones": []
-          },
+        {
+          "path": "internal/cli/result_document_test.go",
+          "group_id": "T_V30b",
+          "prior_group_id": "T_V30b",
+          "owner": "cli",
+          "process": "CLI",
+          "milestone": "M5",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+          "interfaces": [
+            "TestRunResultRendersExactPublishedDocument"
+          ],
+          "dependencies": [
+            "api",
+            "contract"
+          ],
+          "test_ids": [
+            "V30"
+          ],
+          "generator": null,
+          "go_package": "cli",
+          "assignment_owner": "cli",
+          "group_responsibility": "The generated connector command with --wait and `runs result` render the authoritative published action document byte-for-byte with nested objects/arrays, explicit null, false, zero, empty arrays and exact integers/identifiers preserved; an unpublished or ambiguous reference set refuses with the existing capability-unavailable semantics and a finite client download bound fails explicitly.",
+          "allowed_internal_dependencies": [
+            "api",
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M5",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
         {
           "path": "internal/api/events_test.go",
           "group_id": "T_V30",
@@ -17746,6 +17746,37 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "path": "internal/compile/documentation.go",
+          "group_id": "F16",
+          "prior_group_id": "F16",
+          "owner": "compile",
+          "process": "Build tools",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "Admit the pinned documentation dialect this packet's connector declares: a strict anchor selector grammar verified against the captured bytes, dialect-routed source loading and normalization into the declared postgresql operation shape. Introduced by the accepted PostgreSQL source authority; the compile package keeps first ownership.",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "go_package": "compile",
+          "assignment_owner": "compile",
+          "group_responsibility": "Source-to-bundle compiler and explicit shape refusals",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
           "path": "connectors/postgres/source.lock.json",
           "group_id": "C_postgres",
           "prior_group_id": "C_postgres",
@@ -18311,6 +18342,335 @@
             }
           ],
           "subsequent_wiring_milestones": []
+        },
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/config/provider_sql.go",
+          "group_id": "N14",
+          "go_package": "config",
+          "responsibility": "Closed, strictly validated server-owned declaration for customer SQL connections: structured endpoint facts, TLS trust and secret references, permitted relation bindings with their concrete schema/table and declared key columns, and the declared bounds. No raw DSN and no secret value is declarable here.",
+          "interfaces": [
+            "ProviderSQLConfiguration"
+          ]
+        },
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/config/provider_sql_test.go",
+          "group_id": "N14",
+          "go_package": "config",
+          "responsibility": "Prove the provider SQL declaration's refusals and acceptance: unknown, duplicate, wrongly typed, absent or secret-bearing members are refused and a complete declaration resolves.",
+          "interfaces": [
+            "TestProviderSQLDeclaration"
+          ]
+        },
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/app/sql_composition.go",
+          "group_id": "N14",
+          "go_package": "app",
+          "responsibility": "Compose the declared postgresql operation with its server-owned connection binding and the bounded runtime SQL transport behind the shared handler registry: resolve the operation, binding, credential and current authority at execution, refuse explicitly when any is unavailable, and never substitute another connection, relation or statement.",
+          "interfaces": [
+            "OpenSQLComposition",
+            "SQLComposition"
+          ]
+        },
+        {
+          "prior_group_id": null,
+          "owner": "app",
+          "process": "API and worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [],
+          "generator": null,
+          "assignment_owner": "app",
+          "group_responsibility": "Durable HTTP execution, continuation and retry authority for admitted provider reads: exact physical-call planning, bounded transport retry/redirect, observation and continuation state, and the shared physical-attempt boundary.",
+          "allowed_internal_dependencies": [
+            "config",
+            "contract",
+            "credentials",
+            "objects",
+            "runtime",
+            "schema",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "config",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "credentials",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "objects",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "runtime",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "schema",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/app/sql_composition_test.go",
+          "group_id": "N14",
+          "go_package": "app",
+          "responsibility": "Same-stack case over the real authenticated admission path: exact typed rows through the registered SQL handler against an isolated customer relation, plus zero-send refusals for an unregistered capability, another workspace's declaration, an unusable binding and a credential that is not the declared one.",
+          "interfaces": [
+            "TestSQLExecutionCompositionWorkerBehavior"
+          ]
         }
       ],
       "acceptance": [
@@ -18377,6 +18737,29 @@
       "integration_edits": [
         {
           "paths": [
+            "internal/compile/documentation.go"
+          ],
+          "reason": "The accepted PostgreSQL source authority needs a documentation dialect in the compiler; the file is first-owned by the compile package (F16) and declared here as the introducing packet.",
+          "authority": "CREATE in the compiler first owner's package; do not redefine the OpenAPI dialect contracts."
+        },
+        {
+          "paths": [
+            "schemas/bundle.schema.json",
+            "schemas/source.schema.json",
+            "schemas/field-binding.schema.json"
+          ],
+          "reason": "The published schemas must admit the declared documentation anchor and match the Go contract's already-implemented open_properties/additional_properties rules; the committed GitHub bundle already declared those members while the published field-binding schema refused them.",
+          "authority": "UPDATE the published projections only; the Go contract keeps first ownership and no member was added to it."
+        },
+        {
+          "paths": [
+            "scripts/check-boundaries.sh"
+          ],
+          "reason": "ADR475-12 admits the native engine only in the restricted analytical child, so the boundary allow-list gains internal/analytics and cmd/pm-query while every other package, including internal/warehouse, stays native-free.",
+          "authority": "UPDATE the build owner's check with the accepted ADR scope; the refusal stays fail-closed for every other package."
+        },
+        {
+          "paths": [
             "internal/runtime/admission_test.go"
           ],
           "reason": "Extend the first-owned transport admission test with actual sql call boundaries; serialized test-file integration.",
@@ -18398,7 +18781,8 @@
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
-        "No full provider-parity or live-certification claim from generated descriptors or fixtures."
+        "No full provider-parity or live-certification claim from generated descriptors or fixtures.",
+        "Provider SQL attempt retries are not scheduled by this packet: the shared worker retry planner admits one retry basis, for the registered HTTP handler only, so provider_sql.max_attempts is a declared and validated ceiling for the single physical attempt this composition performs today. Forwarding the transport's retry eligibility into the SQL execution observation and admitting a SQL retry basis in the planner is later integration work, not delivered behaviour."
       ],
       "stage_contract": "Issue #28 keeps M7 first ownership of official PostgreSQL source.lock/NOTICE/semantics/lifecycle and reusable native protocol/metadata/TLS/cancellation/grant capability, including bounded keyed/mapped-column support. After first-owner merge, #34 may serialized-UPDATE semantics/lifecycle for mapped upsert; no arbitrary SQL, sync/demo executor or OpenAPI assumption.",
       "source_authority": {
@@ -18930,6 +19314,20 @@
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
         "No live provider effects, production infrastructure, merge, or purge without their specific authority.",
         "No full provider-parity or live-certification claim from generated descriptors or fixtures."
+      ],
+      "integration_edits": [
+        {
+          "paths": [
+            "internal/schema/snapshot.go",
+            "internal/schema/effective.go",
+            "internal/schema/predicates.go",
+            "internal/schema/discover.go",
+            "internal/schema/drift.go",
+            "internal/schema/completeness.go"
+          ],
+          "reason": "Delivered durable authority differs from this packet's planned S15 wording. The packet and STATE-OWNERSHIP plan PM PostgreSQL snapshot tables from shared-object-publication migration 0004; that migration does not exist at the delivered head (0004 is credential_lifecycle.sql and the current head is 0019), while the repository's dynamic-field rules require immutable snapshots under the connection's owned state directory with the connection config.json as the sole schema_ref selection and no second catalog. The delivered store is exactly that: content-addressed immutable payloads below the connection directory with compare-and-swap promotion on the config selection, completeness-gated so a partial discovery never replaces a complete snapshot. The declared acceptance rules V25/V36/V73 are unchanged and pass.",
+          "authority": "Recorded substitution with its reason; S15's declared PostgreSQL authority is not claimed as delivered, and no second metadata catalog or global current selector is introduced."
+        }
       ]
     },
     {
@@ -19756,6 +20154,74 @@
           "subsequent_wiring_milestones": []
         },
         {
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V38",
+            "V57"
+          ],
+          "generator": null,
+          "assignment_owner": "store",
+          "group_responsibility": "Dataset/object manifest/checkpoint and schema snapshot PG tables; same commit boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/store/migrations/postgres/0019_warehouse_segments.sql",
+          "group_id": "R17",
+          "go_package": null,
+          "responsibility": "Own the warehouse dataset/segment/cursor/snapshot/retention tables this packet's manifest and query paths require, under the warehouse store authority; a registered segment ledger is the only membership and a downgrade that would discard retained authority is refused."
+        },
+        {
+          "prior_group_id": null,
+          "owner": "store",
+          "process": "API and worker, scoped PG transactions",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "interfaces": [],
+          "dependencies": [
+            "contract"
+          ],
+          "test_ids": [
+            "V38",
+            "V57"
+          ],
+          "generator": null,
+          "assignment_owner": "store",
+          "group_responsibility": "Dataset/object manifest/checkpoint and schema snapshot PG tables; same commit boundary.",
+          "allowed_internal_dependencies": [
+            "contract"
+          ],
+          "import_activation": [
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": [],
+          "path": "internal/store/warehouse_manifest.go",
+          "group_id": "R17",
+          "go_package": "store",
+          "responsibility": "Persist the warehouse dataset, segment ledger, cursor, snapshot and retention registry under the shared scoped-store conventions: compare-and-swap publication, a cursor that never advances over a gap, and retention that keeps a referenced object from collection."
+        },
+        {
           "path": "internal/warehouse/query_test.go",
           "group_id": "T_V37",
           "prior_group_id": "T_V37",
@@ -20375,6 +20841,16 @@
       ],
       "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",
       "test_first": "For behavior changes, write the causal failing test BEFORE production edits; execute and retain the real failure, implement the scoped fix, then retain success. A passing characterization alone does not prove a new behavior. Documentation/setup requires structural, link and discovery observations, without fabricated runtime RED.",
+      "integration_edits": [
+        {
+          "paths": [
+            "internal/store/migrations/postgres/0019_warehouse_segments.sql",
+            "internal/store/warehouse_manifest.go"
+          ],
+          "reason": "The warehouse manifest/query path needs its own registered segment ledger, cursor, snapshot and retention tables and their scoped store access; the warehouse store authority stays with its existing R17 first owner.",
+          "authority": "CREATE under the warehouse store authority; do not redefine the shared publication or checkpoint contracts."
+        }
+      ],
       "non_goals": [
         "No implementation during setup/publication. A later explicit authorization must name the plan revision and this issue or issue set.",
         "Do not redefine unowned package contracts or add another runtime/proof authority.",
@@ -20398,7 +20874,9 @@
         "F28b",
         "F29",
         "F29b",
-        "T_V39"
+        "T_V39",
+        "T_V39b",
+        "T_V36b"
       ],
       "files": [
         {
@@ -20593,7 +21071,7 @@
           "kind": "authored",
           "responsibility": "Own schema behavior within httpapi; bounded role: Authorized warehouse/query and schema endpoints.",
           "interfaces": [
-            "GetSchema"
+            "GetConnectionSchema"
           ],
           "dependencies": [
             "api",
@@ -20691,7 +21169,8 @@
           "kind": "authored",
           "responsibility": "Own schema behavior within cli; bounded role: Read-only query/schema controls",
           "interfaces": [
-            "InspectSchema"
+            "newSchemaCommand",
+            "newSchemaShowCommand"
           ],
           "dependencies": [
             "api",
@@ -20785,6 +21264,98 @@
             }
           ],
           "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/sync/etl_scratch_test.go",
+          "group_id": "T_V39b",
+          "prior_group_id": "T_V39b",
+          "owner": "sync",
+          "process": "Worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+          "interfaces": [
+            "TestPageAcknowledgedAfterCrashedAttemptScratch"
+          ],
+          "dependencies": [
+            "warehouse"
+          ],
+          "test_ids": [
+            "V39"
+          ],
+          "generator": null,
+          "go_package": "sync",
+          "assignment_owner": "sync",
+          "group_responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+          "allowed_internal_dependencies": [
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
+        },
+        {
+          "path": "internal/sync/read_selector_refusal_test.go",
+          "group_id": "T_V36b",
+          "prior_group_id": "T_V36b",
+          "owner": "sync",
+          "process": "Worker",
+          "milestone": "M7",
+          "action": "CREATE",
+          "kind": "authored",
+          "responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+          "interfaces": [
+            "TestConnectionReadSelectorRefusalsAreConcealed"
+          ],
+          "dependencies": [
+            "api",
+            "contract",
+            "store",
+            "warehouse"
+          ],
+          "test_ids": [
+            "V36",
+            "V37"
+          ],
+          "generator": null,
+          "go_package": "sync",
+          "assignment_owner": "sync",
+          "group_responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+          "allowed_internal_dependencies": [
+            "api",
+            "contract",
+            "store",
+            "warehouse"
+          ],
+          "import_activation": [
+            {
+              "package": "api",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "contract",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "store",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            },
+            {
+              "package": "warehouse",
+              "earliest_milestone": "M7",
+              "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+            }
+          ],
+          "subsequent_wiring_milestones": []
         }
       ],
       "acceptance": [
@@ -20823,6 +21394,25 @@
             "selected same-stack fixture after dependency qualification"
           ],
           "status": "UNEXECUTED"
+        },
+        {
+          "id": "ETL-CRASHED-ATTEMPT-SCRATCH",
+          "assertion": "A page whose previous attempt died after materializing it is still acknowledged: the admitted scratch names the attempt that wrote it, the registered segment identity stays position-derived, and an exact replay resolves to the one registration.",
+          "command": "set -eu\ngo test ./internal/sync -run '^TestPageAcknowledgedAfterCrashedAttemptScratch$' -count=1 -timeout 10m",
+          "environment": [
+            "foundation_fixture",
+            "same_stack_integration"
+          ],
+          "status": "UNEXECUTED"
+        },
+        {
+          "id": "ETL-READ-SELECTOR-CONCEALMENT",
+          "assertion": "A caller-supplied schema binding the exact stored binding cannot serve, an unknown snapshot identity, an unknown retained snapshot and a retained snapshot of another dataset are each concealed as one shared resource_not_found refusal on both read routes, while the authorized schema and dataset documents keep answering.",
+          "command": "set -eu\ngo test ./internal/sync -run '^TestConnectionReadSelectorRefusalsAreConcealed$' -count=1 -timeout 10m",
+          "environment": [
+            "selected same-stack fixture after dependency qualification"
+          ],
+          "status": "UNEXECUTED"
         }
       ],
       "validation_ids": [
@@ -20849,6 +21439,17 @@
           ],
           "reason": "Bind this issue's owned public routes/handlers to the existing composition roots; registered positive/denied request and absent-handler zero-I/O case are mandatory. Client presentation does not establish reachability.",
           "authority": "UPDATE after first owner merged; preserve its contract and serialize any overlapping integration edit."
+        },
+        {
+          "paths": [
+            "internal/httpapi/warehouse.go",
+            "internal/httpapi/schema.go",
+            "internal/httpapi/service.go",
+            "internal/httpapi/service_config.go",
+            "internal/cli/root.go"
+          ],
+          "reason": "The warehouse dataset, typed query and connection schema routes consume the shared warehouse, schema and object seams directly and are registered in the existing authenticated policy table; the packet's declared dependency list for these files named only api/app/auth/contract, so the realised dependency set is recorded here rather than silently widened.",
+          "authority": "UPDATE the shared HTTP and CLI surfaces with the existing authorization path; no new authority, permission string or bypass is introduced."
         }
       ],
       "integration_policy": "Owned interfaces may compile before downstream wiring, but an unavailable handler must return explicit blocked/unsupported. Do not claim reachable product capability until the named integration owner and causal test pass. Downstream integration does not redefine first ownership.",

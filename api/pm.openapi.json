@@ -144,6 +144,18 @@
           "type": "string"
         }
       },
+      "DatasetName": {
+        "description": "Declared dataset component of the connection's warehouse namespace; never a path, a parent reference, or an object key.",
+        "in": "path",
+        "name": "dataset",
+        "required": true,
+        "schema": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z0-9][a-z0-9_-]*$",
+          "type": "string"
+        }
+      },
       "IdempotencyKey": {
         "in": "header",
         "name": "Idempotency-Key",
@@ -207,6 +219,59 @@
         "name": "state",
         "schema": {
           "$ref": "#/components/schemas/RunState"
+        }
+      },
+      "SchemaPermissionRevision": {
+        "description": "Permission revision the discovery observed; metadata bound to another revision is never served.",
+        "in": "query",
+        "name": "permission_revision",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "SchemaProviderAccount": {
+        "description": "Provider account the discovery observed; defaults to the authorized connection's stored provider account.",
+        "in": "query",
+        "name": "provider_account_id",
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "SchemaResource": {
+        "description": "Declared provider resource whose account metadata is requested; it is part of the snapshot binding, never a directory or object key.",
+        "in": "query",
+        "name": "resource",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "SchemaSourceRevision": {
+        "description": "Source revision the discovery observed; metadata bound to another revision is never served.",
+        "in": "query",
+        "name": "source_revision",
+        "required": true,
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "SnapshotID": {
+        "description": "Selects one retained snapshot's exact segment set instead of the dataset's live set.",
+        "in": "query",
+        "name": "snapshot_id",
+        "schema": {
+          "maxLength": 512,
+          "minLength": 1,
+          "type": "string"
         }
       },
       "TaskID": {
@@ -1040,6 +1105,103 @@
           "items",
           "collection_revision",
           "next_cursor"
+        ],
+        "type": "object"
+      },
+      "ConnectionSchemaInspection": {
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "fields": {
+            "items": {
+              "$ref": "#/components/schemas/SchemaField"
+            },
+            "maxItems": 4096,
+            "type": "array"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "selected": {
+            "maxLength": 128,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "snapshot": {
+            "$ref": "#/components/schemas/ConnectionSchemaSnapshot"
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "workspace_id",
+          "connector_id",
+          "connection_id",
+          "selected",
+          "snapshot",
+          "fields"
+        ],
+        "type": "object"
+      },
+      "ConnectionSchemaSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "blockers": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "content_fingerprint": {
+            "type": "string"
+          },
+          "field_count": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "permission_revision": {
+            "type": "string"
+          },
+          "provider_account_id": {
+            "type": "string"
+          },
+          "resource": {
+            "type": "string"
+          },
+          "source_revision": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "connector_id",
+          "connection_id",
+          "provider_account_id",
+          "permission_revision",
+          "resource",
+          "source_revision",
+          "content_fingerprint",
+          "complete",
+          "blockers",
+          "field_count"
         ],
         "type": "object"
       },
@@ -3091,6 +3253,59 @@
         ],
         "type": "object"
       },
+      "SchemaField": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "pointer": {
+            "maxLength": 2048,
+            "minLength": 1,
+            "type": "string"
+          },
+          "precision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "required": {
+            "type": "boolean"
+          },
+          "scale": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "type": {
+            "enum": [
+              "string",
+              "integer",
+              "number",
+              "bool",
+              "object",
+              "array",
+              "date",
+              "timestamp_instant",
+              "timestamp_local"
+            ],
+            "type": "string"
+          },
+          "writable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "name",
+          "pointer",
+          "required",
+          "writable",
+          "type",
+          "precision",
+          "scale"
+        ],
+        "type": "object"
+      },
       "ServerInfo": {
         "additionalProperties": {
           "x-go-type": "json.RawMessage",
@@ -3569,6 +3784,422 @@
           "name": "contract",
           "path": "github.com/polymetrics-ai/pm-cli/internal/contract"
         }
+      },
+      "WarehouseColumn": {
+        "additionalProperties": false,
+        "properties": {
+          "kind": {
+            "enum": [
+              "int64",
+              "decimal",
+              "text",
+              "boolean",
+              "bytea",
+              "date",
+              "timestamp",
+              "timestamptz",
+              "uuid",
+              "json"
+            ],
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "nullable": {
+            "type": "boolean"
+          },
+          "precision": {
+            "minimum": 0,
+            "type": "integer"
+          },
+          "scale": {
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "name",
+          "kind",
+          "precision",
+          "scale",
+          "nullable"
+        ],
+        "type": "object"
+      },
+      "WarehouseDatasetSnapshot": {
+        "additionalProperties": false,
+        "properties": {
+          "connection_id": {
+            "type": "string"
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "cursor_ordinal": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "dataset": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "revision": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "rows": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/WarehouseSegment"
+            },
+            "maxItems": 10000,
+            "type": "array"
+          },
+          "snapshot_id": {
+            "maxLength": 512,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "workspace_id",
+          "connector_id",
+          "connection_id",
+          "dataset",
+          "revision",
+          "cursor_ordinal",
+          "snapshot_id",
+          "rows",
+          "segments"
+        ],
+        "type": "object"
+      },
+      "WarehouseObject": {
+        "additionalProperties": false,
+        "properties": {
+          "artifact_id": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "backend_generation": {
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          },
+          "byte_length": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "media_type": {
+            "maxLength": 256,
+            "minLength": 1,
+            "type": "string"
+          },
+          "sha256": {
+            "pattern": "^[0-9a-f]{64}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "artifact_id",
+          "media_type",
+          "byte_length",
+          "sha256",
+          "backend_generation"
+        ],
+        "type": "object"
+      },
+      "WarehouseOrdering": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "descending": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "column",
+          "descending"
+        ],
+        "type": "object"
+      },
+      "WarehouseParameter": {
+        "additionalProperties": false,
+        "properties": {
+          "name": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "value": {
+            "$ref": "#/components/schemas/PresentValue"
+          }
+        },
+        "required": [
+          "name",
+          "value"
+        ],
+        "type": "object"
+      },
+      "WarehousePredicate": {
+        "additionalProperties": false,
+        "properties": {
+          "column": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "operator": {
+            "enum": [
+              "eq",
+              "ne",
+              "lt",
+              "lte",
+              "gt",
+              "gte",
+              "is_null",
+              "is_not_null",
+              "in",
+              "not_in"
+            ],
+            "type": "string"
+          },
+          "parameter": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "value": {
+            "$ref": "#/components/schemas/PresentValue"
+          },
+          "values": {
+            "items": {
+              "$ref": "#/components/schemas/PresentValue"
+            },
+            "maxItems": 64,
+            "type": "array"
+          }
+        },
+        "required": [
+          "column",
+          "operator",
+          "value",
+          "values",
+          "parameter"
+        ],
+        "type": "object"
+      },
+      "WarehouseProjection": {
+        "additionalProperties": false,
+        "properties": {
+          "alias": {
+            "maxLength": 64,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "column": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "column",
+          "alias"
+        ],
+        "type": "object"
+      },
+      "WarehouseQueryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "limit": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "order": {
+            "items": {
+              "$ref": "#/components/schemas/WarehouseOrdering"
+            },
+            "maxItems": 8,
+            "type": "array"
+          },
+          "parameters": {
+            "items": {
+              "$ref": "#/components/schemas/WarehouseParameter"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "predicates": {
+            "items": {
+              "$ref": "#/components/schemas/WarehousePredicate"
+            },
+            "maxItems": 16,
+            "type": "array"
+          },
+          "project": {
+            "items": {
+              "$ref": "#/components/schemas/WarehouseProjection"
+            },
+            "maxItems": 64,
+            "minItems": 1,
+            "type": "array"
+          },
+          "relation": {
+            "maxLength": 64,
+            "minLength": 1,
+            "type": "string"
+          },
+          "snapshot_id": {
+            "maxLength": 512,
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "relation",
+          "project",
+          "predicates",
+          "order",
+          "parameters",
+          "limit",
+          "snapshot_id"
+        ],
+        "type": "object"
+      },
+      "WarehouseQueryResult": {
+        "additionalProperties": false,
+        "properties": {
+          "columns": {
+            "items": {
+              "$ref": "#/components/schemas/WarehouseColumn"
+            },
+            "maxItems": 64,
+            "type": "array"
+          },
+          "connection_id": {
+            "type": "string"
+          },
+          "connector_id": {
+            "type": "string"
+          },
+          "dataset": {
+            "type": "string"
+          },
+          "org_id": {
+            "type": "string"
+          },
+          "rows": {
+            "items": {
+              "items": {
+                "$ref": "#/components/schemas/PresentValue"
+              },
+              "maxItems": 64,
+              "type": "array"
+            },
+            "maxItems": 100000,
+            "type": "array"
+          },
+          "snapshot_id": {
+            "maxLength": 512,
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "workspace_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "org_id",
+          "workspace_id",
+          "connector_id",
+          "connection_id",
+          "dataset",
+          "snapshot_id",
+          "columns",
+          "rows",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "WarehouseSegment": {
+        "additionalProperties": false,
+        "properties": {
+          "column_fingerprint": {
+            "pattern": "^sha256:[0-9a-f]{64}$",
+            "type": "string"
+          },
+          "manifest_revision": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "object": {
+            "$ref": "#/components/schemas/WarehouseObject"
+          },
+          "ordinal": {
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
+          "row_count": {
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "state": {
+            "enum": [
+              "live",
+              "retired",
+              "collected"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "ordinal",
+          "manifest_revision",
+          "row_count",
+          "column_fingerprint",
+          "state",
+          "object"
+        ],
+        "type": "object"
       },
       "Workspace": {
         "additionalProperties": false,
@@ -4823,6 +5454,208 @@
         "summary": "Update safe connection metadata while preserving its credential binding",
         "tags": [
           "connections"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema": {
+      "get": {
+        "description": "Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.",
+        "operationId": "getConnectionSchema",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SchemaResource"
+          },
+          {
+            "$ref": "#/components/parameters/SchemaPermissionRevision"
+          },
+          {
+            "$ref": "#/components/parameters/SchemaSourceRevision"
+          },
+          {
+            "$ref": "#/components/parameters/SchemaProviderAccount"
+          },
+          {
+            "$ref": "#/components/parameters/SnapshotID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConnectionSchemaInspection"
+                }
+              }
+            },
+            "description": "Selected snapshot identity, completeness and effective typed fields"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Inspect the connection's selected metadata snapshot and its effective schema",
+        "tags": [
+          "schema"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectionID"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}": {
+      "get": {
+        "description": "Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.",
+        "operationId": "getWarehouseDataset",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/SnapshotID"
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarehouseDatasetSnapshot"
+                }
+              }
+            },
+            "description": "Committed revision, acknowledged cursor and registered segments"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Inspect the committed read view of one warehouse dataset",
+        "tags": [
+          "warehouse"
+        ]
+      },
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectionID"
+        },
+        {
+          "$ref": "#/components/parameters/DatasetName"
+        }
+      ]
+    },
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectionID"
+        },
+        {
+          "$ref": "#/components/parameters/DatasetName"
+        }
+      ],
+      "post": {
+        "description": "Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.",
+        "operationId": "runWarehouseQuery",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/WarehouseQueryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/WarehouseQueryResult"
+                }
+              }
+            },
+            "description": "Exact typed rows of the admitted query, in registered ordinal order"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Run one bounded typed query over a dataset's registered segments",
+        "tags": [
+          "warehouse"
         ]
       }
     },
@@ -6283,6 +7116,12 @@
     },
     {
       "name": "artifacts"
+    },
+    {
+      "name": "warehouse"
+    },
+    {
+      "name": "schema"
     }
   ]
 }

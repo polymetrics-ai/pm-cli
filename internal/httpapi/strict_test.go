@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
 
 // This consumer exercises the real generated binder and process middleware. It
@@ -252,6 +253,126 @@ func TestGinStrictBoundary(t *testing.T) {
 		}
 		if err := <-clientResult; !errors.Is(err, context.Canceled) {
 			t.Fatalf("client error = %v", err)
+		}
+	})
+}
+
+// TestWarehousePredicateOperandArity admits each predicate operator with only
+// the operand it consumes. A null test carries no operand, and an in-list
+// carries its list rather than a scalar, so an absent scalar on those operators
+// is the valid shape, never a refusal. A scalar operator still requires its
+// scalar, and an operator that takes no scalar refuses one.
+func TestWarehousePredicateOperandArity(t *testing.T) {
+	listValue, err := contract.NewIntegerValue("1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := func(predicate WarehousePredicate) WarehouseQueryRequest {
+		return WarehouseQueryRequest{
+			Relation:   "orders",
+			Project:    []WarehouseProjection{{Column: "id"}},
+			Predicates: []WarehousePredicate{predicate},
+			Limit:      1,
+		}
+	}
+	for _, operator := range []WarehousePredicateOperator{"is_null", "is_not_null", "in", "not_in"} {
+		t.Run("admits_"+string(operator)+"_without_a_scalar", func(t *testing.T) {
+			predicate := WarehousePredicate{Column: "id", Operator: operator, Value: contract.AbsentValue()}
+			if operator == "in" || operator == "not_in" {
+				predicate.Values = []PresentValue{listValue}
+			}
+			admitted, _, err := admittedWarehouseQuery(query(predicate))
+			if err != nil {
+				t.Fatalf("valid %s predicate refused: %v", operator, err)
+			}
+			if len(admitted.Predicates) != 1 || admitted.Predicates[0].Value.Present() {
+				t.Fatalf("admitted %s predicate = %#v; want one predicate with no scalar operand", operator, admitted.Predicates)
+			}
+			if wanted := len(predicate.Values); len(admitted.Predicates[0].Values) != wanted {
+				t.Fatalf("admitted %s predicate carries %d list values; want %d", operator, len(admitted.Predicates[0].Values), wanted)
+			}
+		})
+		t.Run("refuses_"+string(operator)+"_with_a_scalar", func(t *testing.T) {
+			predicate := WarehousePredicate{Column: "id", Operator: operator, Value: listValue}
+			if operator == "in" || operator == "not_in" {
+				predicate.Values = []PresentValue{listValue}
+			}
+			if _, _, err := admittedWarehouseQuery(query(predicate)); !errors.Is(err, errInvalidHTTPInput) {
+				t.Fatalf("%s predicate with a scalar operand = %v; want an invalid-input refusal", operator, err)
+			}
+		})
+	}
+	t.Run("a_scalar_operator_still_requires_its_scalar", func(t *testing.T) {
+		predicate := WarehousePredicate{Column: "id", Operator: "eq", Value: contract.AbsentValue()}
+		if _, _, err := admittedWarehouseQuery(query(predicate)); !errors.Is(err, errInvalidHTTPInput) {
+			t.Fatalf("eq predicate without a scalar = %v; want an invalid-input refusal", err)
+		}
+	})
+}
+
+// TestWarehouseDecimalKeepsItsExactTextAndScale proves an exact decimal crosses
+// the warehouse boundary in one representation: base-10 text with an explicit
+// scale. An admitted operand becomes the warehouse's own exact unscaled value,
+// and a warehouse result renders back as the same exact decimal text.
+func TestWarehouseDecimalKeepsItsExactTextAndScale(t *testing.T) {
+	for _, exact := range []struct {
+		text      string
+		precision int
+		scale     int
+		unscaled  string
+	}{
+		{text: "10.20", precision: 4, scale: 2, unscaled: "1020"},
+		{text: "0.05", precision: 3, scale: 2, unscaled: "5"},
+		{text: "-1.50", precision: 3, scale: 2, unscaled: "-150"},
+		{text: "0.0", precision: 2, scale: 1, unscaled: "0"},
+	} {
+		t.Run("admit_"+exact.text, func(t *testing.T) {
+			wire, err := contract.NewDecimalValue(exact.text, exact.precision, exact.scale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			admitted, err := admittedQueryValue(wire)
+			if err != nil {
+				t.Fatalf("valid exact decimal operand %s was refused: %v", exact.text, err)
+			}
+			unscaled, scale, ok := admitted.Unscaled()
+			if !ok || unscaled != exact.unscaled || scale != exact.scale {
+				t.Fatalf("operand %s admitted as unscaled=%q scale=%d ok=%v; want %s scale %d",
+					exact.text, unscaled, scale, ok, exact.unscaled, exact.scale)
+			}
+			declaration, err := declareQueryParameter("amount", admitted)
+			if err != nil {
+				t.Fatalf("operand %s declaration: %v", exact.text, err)
+			}
+			if declaration.Scale != exact.scale || declaration.Precision < declaration.Scale {
+				t.Fatalf("operand %s declared precision=%d scale=%d", exact.text, declaration.Precision, declaration.Scale)
+			}
+		})
+		t.Run("render_"+exact.text, func(t *testing.T) {
+			internal, err := warehouse.DecimalQueryValue(exact.unscaled, exact.scale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rendered, err := projectQueryValue(internal)
+			if err != nil {
+				t.Fatalf("warehouse decimal %s cannot be rendered: %v", exact.text, err)
+			}
+			number, ok := rendered.ExactNumber()
+			if !ok || rendered.Kind() != contract.ValueKindDecimal ||
+				number != (contract.ExactNumber{Text: exact.text, Precision: exact.precision, Scale: exact.scale}) {
+				t.Fatalf("warehouse decimal %s rendered as %#v", exact.text, number)
+			}
+		})
+	}
+	t.Run("refuse_a_scale_zero_render", func(t *testing.T) {
+		// The shared exact decimal always carries a fractional part, so a
+		// scale-zero warehouse decimal has no exact decimal rendering.
+		internal, err := warehouse.DecimalQueryValue("12", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := projectQueryValue(internal); err == nil {
+			t.Fatal("a scale-zero warehouse decimal rendered as an inexact decimal")
 		}
 	})
 }

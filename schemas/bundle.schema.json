@@ -64,7 +64,7 @@
       "required": ["source_id", "pointer"],
       "properties": {
         "source_id": {"$ref": "#/$defs/contractIdentity"},
-        "pointer": {"type": "string", "maxLength": 4096, "pattern": "^(?:#(?:/(?:[^~]|~[01])*)?|/(?:[^~]|~[01])*)$"}
+        "pointer": {"type": "string", "maxLength": 4096, "pattern": "^(?:#(?:/(?:[^~]|~[01])*)?|/(?:[^~]|~[01])*|#[A-Za-z][A-Za-z0-9]*(?:-[A-Za-z0-9]+)*)$"}
       }
     },
     "operationExecution": {

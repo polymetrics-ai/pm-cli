@@ -1,0 +1,426 @@
+{
+  "schema_version": "pm.bundle/v1",
+  "connector_id": "postgres",
+  "source_digest": "sha256:25952582914c648a0d0f193f07679f41cd15c8e7ced92d34ee0bd2a55ac176f2",
+  "semantics_revision": "sha256:91463ecb00fd9997f04b1131abab41e7a00d2c1df9b574baabdcfb70e82a4030",
+  "operations": [
+    {
+      "schema_version": "pm.operation/v1",
+      "operation_id": "relation/mapped-upsert",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-INSERT"
+        },
+        {
+          "source_id": "postgresql-16-sql-insert",
+          "pointer": "#SQL-ON-CONFLICT"
+        },
+        {
+          "source_id": "postgresql-16-sql-update",
+          "pointer": "#SQL-UPDATE"
+        }
+      ],
+      "transport": {
+        "kind": "postgresql",
+        "statement_kind": "mapped_upsert",
+        "relation_binding": "postgres.reusable-relation"
+      },
+      "inputs": [],
+      "request_variants": [],
+      "responses": [
+        {
+          "status": "success",
+          "no_content": false,
+          "media_type": "application/json",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "open_properties": true
+            }
+          },
+          "source_refs": [
+            {
+              "source_id": "postgresql-16-protocol",
+              "pointer": "#PROTOCOL"
+            },
+            {
+              "source_id": "postgresql-16-protocol-flow",
+              "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+            },
+            {
+              "source_id": "postgresql-16-sql-insert",
+              "pointer": "#SQL-INSERT"
+            },
+            {
+              "source_id": "postgresql-16-sql-insert",
+              "pointer": "#SQL-ON-CONFLICT"
+            },
+            {
+              "source_id": "postgresql-16-sql-update",
+              "pointer": "#SQL-UPDATE"
+            }
+          ]
+        }
+      ],
+      "capability_requirements": [
+        {
+          "capability": "effect.authorize",
+          "foundation": {
+            "id": "FND-05",
+            "version": "2.0.0"
+          }
+        },
+        {
+          "capability": "effect.limit",
+          "foundation": {
+            "id": "FND-10",
+            "version": "2.0.0"
+          }
+        },
+        {
+          "capability": "sql.execute",
+          "foundation": {
+            "id": "FND-07",
+            "version": "1.0.0"
+          }
+        },
+        {
+          "capability": "value.serialize",
+          "foundation": {
+            "id": "FND-03",
+            "version": "1.0.0"
+          }
+        }
+      ],
+      "lane_eligibility": [
+        {
+          "lane": "direct_read",
+          "status": "not_applicable",
+          "reason": "the mapped insert-or-update is a destination mutation; its typed row projection reports its own effects, not a read of provider state"
+        },
+        {
+          "lane": "direct_write",
+          "status": "eligible",
+          "reason": "declared mapped insert-or-update over one relation with a stable unique key, approved writable-column mappings, changed-value-only assignment and unchanged-value suppression"
+        },
+        {
+          "lane": "etl",
+          "status": "not_applicable",
+          "reason": "the operation writes one destination relation and declares no checkpointed extraction"
+        },
+        {
+          "lane": "reverse_etl",
+          "status": "unproven",
+          "reason": "the reusable typed statement is declared, but mapping, workset, dispatch and settlement are owned by the later reverse-ETL packet, so the lane stays unproven"
+        },
+        {
+          "lane": "binary_download",
+          "status": "not_applicable",
+          "reason": "the declared response is a typed JSON row envelope with no binary media type"
+        },
+        {
+          "lane": "binary_upload",
+          "status": "not_applicable",
+          "reason": "the operation declares no request body and no binary media type"
+        },
+        {
+          "lane": "sync_transport",
+          "status": "unproven",
+          "reason": "the change-set transport, ordering and reconciliation semantics this lane needs are not implemented in this slice"
+        }
+      ]
+    },
+    {
+      "schema_version": "pm.operation/v1",
+      "operation_id": "relation/metadata",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-information-schema",
+          "pointer": "#INFORMATION-SCHEMA"
+        },
+        {
+          "source_id": "postgresql-16-infoschema-columns",
+          "pointer": "#INFOSCHEMA-COLUMNS"
+        }
+      ],
+      "transport": {
+        "kind": "postgresql",
+        "statement_kind": "metadata",
+        "relation_binding": "postgres.reusable-relation"
+      },
+      "inputs": [],
+      "request_variants": [],
+      "responses": [
+        {
+          "status": "success",
+          "no_content": false,
+          "media_type": "application/json",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "open_properties": true
+            }
+          },
+          "source_refs": [
+            {
+              "source_id": "postgresql-16-information-schema",
+              "pointer": "#INFORMATION-SCHEMA"
+            },
+            {
+              "source_id": "postgresql-16-infoschema-columns",
+              "pointer": "#INFOSCHEMA-COLUMNS"
+            },
+            {
+              "source_id": "postgresql-16-protocol",
+              "pointer": "#PROTOCOL"
+            }
+          ]
+        }
+      ],
+      "capability_requirements": [
+        {
+          "capability": "effect.authorize",
+          "foundation": {
+            "id": "FND-05",
+            "version": "2.0.0"
+          }
+        },
+        {
+          "capability": "effect.limit",
+          "foundation": {
+            "id": "FND-10",
+            "version": "2.0.0"
+          }
+        },
+        {
+          "capability": "sql.execute",
+          "foundation": {
+            "id": "FND-07",
+            "version": "1.0.0"
+          }
+        },
+        {
+          "capability": "value.serialize",
+          "foundation": {
+            "id": "FND-03",
+            "version": "1.0.0"
+          }
+        }
+      ],
+      "lane_eligibility": [
+        {
+          "lane": "direct_read",
+          "status": "eligible",
+          "reason": "the declared metadata statement reads one live relation's column names and types over the native protocol, so an authorized bounded relation read is reachable"
+        },
+        {
+          "lane": "direct_write",
+          "status": "not_applicable",
+          "reason": "the metadata statement takes no mapped input and performs no destination mutation"
+        },
+        {
+          "lane": "etl",
+          "status": "unproven",
+          "reason": "extraction into a checkpointed destination is not admitted in this slice; the statement inspects exactly one relation"
+        },
+        {
+          "lane": "reverse_etl",
+          "status": "not_applicable",
+          "reason": "the operation declares no destination mapping, workset or writable column"
+        },
+        {
+          "lane": "binary_download",
+          "status": "not_applicable",
+          "reason": "the declared response is a typed JSON row envelope with no binary media type"
+        },
+        {
+          "lane": "binary_upload",
+          "status": "not_applicable",
+          "reason": "the operation declares no request body and no binary media type"
+        },
+        {
+          "lane": "sync_transport",
+          "status": "unproven",
+          "reason": "scheduled transport with cadence, deduplication and checkpoint semantics is not implemented in this slice; PostgreSQL logical CDC remains deferred"
+        }
+      ]
+    },
+    {
+      "schema_version": "pm.operation/v1",
+      "operation_id": "relation/select",
+      "source_refs": [
+        {
+          "source_id": "postgresql-16-protocol",
+          "pointer": "#PROTOCOL"
+        },
+        {
+          "source_id": "postgresql-16-protocol-flow",
+          "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-SELECT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-WHERE"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-LIMIT"
+        },
+        {
+          "source_id": "postgresql-16-sql-select",
+          "pointer": "#SQL-ORDERBY"
+        }
+      ],
+      "transport": {
+        "kind": "postgresql",
+        "statement_kind": "select",
+        "relation_binding": "postgres.reusable-relation"
+      },
+      "inputs": [],
+      "request_variants": [],
+      "responses": [
+        {
+          "status": "success",
+          "no_content": false,
+          "media_type": "application/json",
+          "schema": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "open_properties": true
+            }
+          },
+          "source_refs": [
+            {
+              "source_id": "postgresql-16-protocol",
+              "pointer": "#PROTOCOL"
+            },
+            {
+              "source_id": "postgresql-16-protocol-flow",
+              "pointer": "#PROTOCOL-FLOW-EXT-QUERY"
+            },
+            {
+              "source_id": "postgresql-16-sql-select",
+              "pointer": "#SQL-LIMIT"
+            },
+            {
+              "source_id": "postgresql-16-sql-select",
+              "pointer": "#SQL-ORDERBY"
+            },
+            {
+              "source_id": "postgresql-16-sql-select",
+              "pointer": "#SQL-SELECT"
+            },
+            {
+              "source_id": "postgresql-16-sql-select",
+              "pointer": "#SQL-WHERE"
+            }
+          ]
+        }
+      ],
+      "capability_requirements": [
+        {
+          "capability": "effect.authorize",
+          "foundation": {
+            "id": "FND-05",
+            "version": "2.0.0"
+          }
+        },
+        {
+          "capability": "effect.limit",
+          "foundation": {
+            "id": "FND-10",
+            "version": "2.0.0"
+          }
+        },
+        {
+          "capability": "sql.execute",
+          "foundation": {
+            "id": "FND-07",
+            "version": "1.0.0"
+          }
+        },
+        {
+          "capability": "value.serialize",
+          "foundation": {
+            "id": "FND-03",
+            "version": "1.0.0"
+          }
+        }
+      ],
+      "lane_eligibility": [
+        {
+          "lane": "direct_read",
+          "status": "eligible",
+          "reason": "bounded keyed select over declared columns with an explicit row bound, positional parameters and a deterministic order"
+        },
+        {
+          "lane": "direct_write",
+          "status": "not_applicable",
+          "reason": "the select statement performs no destination mutation"
+        },
+        {
+          "lane": "etl",
+          "status": "unproven",
+          "reason": "the operation can supply bounded typed rows, but this slice admits no accepted ETL checkpoint or warehouse publication path"
+        },
+        {
+          "lane": "reverse_etl",
+          "status": "not_applicable",
+          "reason": "the accepted operation declares no destination mapping or provider write, which reverse ETL requires"
+        },
+        {
+          "lane": "binary_download",
+          "status": "not_applicable",
+          "reason": "every declared response media type is a typed JSON row envelope; no binary media type is declared"
+        },
+        {
+          "lane": "binary_upload",
+          "status": "not_applicable",
+          "reason": "the accepted operation declares no request body and no binary media type"
+        },
+        {
+          "lane": "sync_transport",
+          "status": "unproven",
+          "reason": "durable scheduled transport with cadence, deduplication and checkpoint semantics is not implemented in this slice"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "name": "relation-mapped-upsert",
+      "operation_id": "relation/mapped-upsert",
+      "fields": []
+    },
+    {
+      "name": "relation-metadata",
+      "operation_id": "relation/metadata",
+      "fields": []
+    },
+    {
+      "name": "relation-select",
+      "operation_id": "relation/select",
+      "fields": []
+    }
+  ],
+  "unavailable_operations": []
+}

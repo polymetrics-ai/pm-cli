@@ -630,6 +630,33 @@
       "optional_body_fields": [],
       "requires_idempotency_key": false,
       "requires_if_match": false
+    },
+    {
+      "operation_id": "getConnectionSchema",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "getWarehouseDataset",
+      "method": "GET",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}",
+      "required_body_fields": [],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "runWarehouseQuery",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query",
+      "required_body_fields": ["limit", "order", "parameters", "predicates", "project", "relation", "snapshot_id"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": false,
+      "requires_if_match": false
     }
   ]
 }

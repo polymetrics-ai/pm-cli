@@ -5,10 +5,14 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
 
 func TestDialectAndReferenceBoundary(t *testing.T) {
@@ -155,6 +159,431 @@ paths:
 			t.Fatalf("query serialization = %#v", actual.CommonBindings)
 		}
 	})
+	t.Run("C11 documentation anchors are mandatory and byte-verified", func(t *testing.T) {
+		documents := map[string][]byte{"pg-select": []byte(documentationSelectPage)}
+		admitted := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		captured := testCapturedSource(t, DialectPostgreSQLDocs16, documents, nil, []SourceOperation{admitted})
+		resolved := testResolve(t, captured)
+		hash, ok := resolved.PointerHash("pg-select", "SQL-WHERE")
+		if !ok || !validDigest(hash) {
+			t.Fatalf("declared documentation anchor witness = %q (indexed=%v)", hash, ok)
+		}
+		loaded, err := LoadDialects(context.Background(), resolved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if loaded.Documentation == nil || len(loaded.Documentation.Documents) != 1 || len(loaded.Documentation.Documents[0].Anchors) != 1 {
+			t.Fatalf("documentation view = %#v", loaded.Documentation)
+		}
+
+		malformed := documentationOperation("relation-select", "pg-select", "#id-1.9.3.172.1", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		malformedLock, malformedCaptures := testSourceInput(t, DialectPostgreSQLDocs16, documents, nil, []SourceOperation{malformed})
+		if _, err := CaptureSource(malformedLock, malformedCaptures); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("malformed documentation selector error = %v", err)
+		}
+
+		missing := documentationOperation("relation-select", "pg-select", "#SQL-NOT-DECLARED", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		missingCaptured := testCapturedSource(t, DialectPostgreSQLDocs16, documents, nil, []SourceOperation{missing})
+		if _, err := ResolveRefs(missingCaptured); err == nil || !strings.Contains(err.Error(), "SQL-NOT-DECLARED") {
+			t.Fatalf("missing documentation anchor error = %v", err)
+		}
+
+		unresolvable := []byte("<html><body><p id=SQL-WHERE>unquoted declaration</p></body></html>")
+		unresolvableCaptured := testCapturedSource(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": unresolvable}, nil, []SourceOperation{admitted})
+		if _, err := ResolveRefs(unresolvableCaptured); err == nil {
+			t.Fatal("declaration without a resolvable start tag was accepted")
+		}
+	})
+
+	t.Run("C12 SQL statement facts stay outside interface-description operations", func(t *testing.T) {
+		kind := contract.PostgreSQLStatementSelect
+		binding := "postgres.reusable-relation"
+		empty := contract.PostgreSQLStatementKind("")
+		document := testFixture(t, "complete-openapi.yaml")
+		httpOperation := testOperation("getWidgets", "root", "#/paths/~1widgets/get", nil, []VariantRef{{Pointer: "#/paths/~1widgets/get/responses/204", Status: "204", MediaType: noContentMediaType}})
+		httpOperation.StatementKind = &kind
+		httpOperation.RelationBinding = &binding
+		lock, captures := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": document}, nil, []SourceOperation{httpOperation})
+		if _, err := CaptureSource(lock, captures); err == nil || !strings.Contains(err.Error(), "statement_kind") {
+			t.Fatalf("OpenAPI operation with a statement kind error = %v", err)
+		}
+
+		documents := map[string][]byte{"pg-select": []byte(documentationSelectPage)}
+		absentKind := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", kind, binding)
+		absentKind.StatementKind = nil
+		absentLock, absentCaptures := testSourceInput(t, DialectPostgreSQLDocs16, documents, nil, []SourceOperation{absentKind})
+		if _, err := CaptureSource(absentLock, absentCaptures); err == nil || !strings.Contains(err.Error(), "statement kind explicitly") {
+			t.Fatalf("documentation operation without a statement kind error = %v", err)
+		}
+
+		emptyKind := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", kind, binding)
+		emptyKind.StatementKind = &empty
+		emptyLock, emptyCaptures := testSourceInput(t, DialectPostgreSQLDocs16, documents, nil, []SourceOperation{emptyKind})
+		if _, err := CaptureSource(emptyLock, emptyCaptures); err == nil {
+			t.Fatal("explicitly empty statement kind stood in for a declared one")
+		}
+
+		absentBinding := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", kind, binding)
+		absentBinding.RelationBinding = nil
+		bindingLock, bindingCaptures := testSourceInput(t, DialectPostgreSQLDocs16, documents, nil, []SourceOperation{absentBinding})
+		if _, err := CaptureSource(bindingLock, bindingCaptures); err == nil || !strings.Contains(err.Error(), "relation binding explicitly") {
+			t.Fatalf("documentation operation without a relation binding error = %v", err)
+		}
+
+		httpShaped := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", kind, binding)
+		httpShaped.RequestVariants = []VariantRef{{Pointer: "#SQL-WHERE", MediaType: "application/json"}}
+		httpLock, httpCaptures := testSourceInput(t, DialectPostgreSQLDocs16, documents, nil, []SourceOperation{httpShaped})
+		if _, err := CaptureSource(httpLock, httpCaptures); err == nil || !strings.Contains(err.Error(), "request_variants") {
+			t.Fatalf("documentation operation with request variants error = %v", err)
+		}
+	})
+
+	t.Run("C13 documentation operation emits its declared statement facts", func(t *testing.T) {
+		operation := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		lock, captures := testSourceInput(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil, []SourceOperation{operation})
+		captured, err := CaptureSource(lock, captures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lockDocument, err := json.Marshal(lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input := CompilationInput{
+			SourceLock: lockDocument, Captures: captures,
+			Semantics: documentationSemanticsDocument(t, lock, captured.Digest, []SourceOperation{operation}),
+		}
+		artifacts, err := Compile(context.Background(), input)
+		if err != nil {
+			t.Fatalf("documentation connector compile: %v", err)
+		}
+		var bundle Bundle
+		if err := json.Unmarshal(artifacts.Bundle, &bundle); err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Operations) != 1 || len(bundle.UnavailableOperations) != 0 {
+			t.Fatalf("documentation bundle inventory = %#v", bundle)
+		}
+		emitted := bundle.Operations[0]
+		if emitted.Transport.Kind != contract.TransportKindPostgreSQL ||
+			emitted.Transport.StatementKind != contract.PostgreSQLStatementSelect ||
+			emitted.Transport.RelationBinding != "postgres.reusable-relation" ||
+			emitted.Transport.Method != "" || emitted.Transport.Path != "" {
+			t.Fatalf("emitted documentation transport = %#v", emitted.Transport)
+		}
+		if emitted.Execution != nil {
+			t.Fatalf("native PostgreSQL operation carries execution facts: %#v", emitted.Execution)
+		}
+		if emitted.Inputs == nil || len(emitted.Inputs) != 0 || emitted.RequestVariants == nil || len(emitted.RequestVariants) != 0 {
+			t.Fatalf("native PostgreSQL operation request shape = %#v %#v", emitted.Inputs, emitted.RequestVariants)
+		}
+		if len(emitted.Responses) != 1 || emitted.Responses[0].Status != "success" || emitted.Responses[0].NoContent ||
+			emitted.Responses[0].Schema == nil || emitted.Responses[0].Schema.Type != contract.SchemaTypeArray {
+			t.Fatalf("native PostgreSQL response shape = %#v", emitted.Responses)
+		}
+		if len(emitted.CapabilityRequirements) == 0 || len(emitted.LaneEligibility) != len(allLanes) {
+			t.Fatalf("native PostgreSQL closure = %#v %#v", emitted.CapabilityRequirements, emitted.LaneEligibility)
+		}
+		if status := emittedLaneStatus(t, emitted, contract.LaneDirectRead); status != contract.LaneEligible {
+			t.Fatalf("documentation lane classification = %q", status)
+		}
+		if len(bundle.Commands) != 1 || bundle.Commands[0].Fields == nil || len(bundle.Commands[0].Fields) != 0 {
+			t.Fatalf("native PostgreSQL command projection = %#v", bundle.Commands)
+		}
+		second, err := Compile(context.Background(), input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(artifacts.Bundle, second.Bundle) {
+			t.Fatal("identical documentation inputs produced different bundle bytes")
+		}
+	})
+
+	t.Run("C14 documentation revision diff admits declared anchors", func(t *testing.T) {
+		operation := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		lock, captures := testSourceInput(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil, []SourceOperation{operation})
+		captured, err := CaptureSource(lock, captures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := ResolveRefs(captured)
+		if err != nil {
+			t.Fatal(err)
+		}
+		anchorHash, ok := resolved.PointerHash("pg-select", "SQL-WHERE")
+		if !ok {
+			t.Fatal("declared documentation anchor has no captured witness")
+		}
+		lockDocument, err := json.Marshal(lock)
+		if err != nil {
+			t.Fatal(err)
+		}
+		previousDigest := "sha256:" + strings.Repeat("b", 64)
+		previousHash := "sha256:" + strings.Repeat("c", 64)
+		revisionDiff := func(pointer, currentHash string) []byte {
+			t.Helper()
+			encoded, err := json.Marshal(SourceRevisionDiff{
+				SchemaVersion:  SourceRevisionDiffSchemaVersion,
+				PreviousDigest: previousDigest,
+				CurrentDigest:  captured.Digest,
+				Changes: []PointerChange{{
+					SourceID: "pg-select", Pointer: pointer,
+					PreviousSHA256: previousHash, CurrentSHA256: currentHash,
+				}},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return encoded
+		}
+		input := CompilationInput{
+			SourceLock: lockDocument, Captures: captures, PreviousSourceDigest: previousDigest,
+			RevisionDiff: revisionDiff("#SQL-WHERE", anchorHash),
+			Semantics:    documentationSemanticsDocument(t, lock, captured.Digest, []SourceOperation{operation}),
+		}
+		artifacts, err := Compile(context.Background(), input)
+		if err != nil {
+			t.Fatalf("documentation revision diff compile: %v", err)
+		}
+		var bundle Bundle
+		if err := json.Unmarshal(artifacts.Bundle, &bundle); err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Operations) != 1 || bundle.Operations[0].OperationID != operation.SourceOperationID {
+			t.Fatalf("documentation revision bundle inventory = %#v", bundle)
+		}
+
+		// A selector of the other admitted grammar stays refused: the source
+		// set's own grammar decides, and a malformed anchor is refused too.
+		pointerInput := input
+		pointerInput.RevisionDiff = revisionDiff("/paths/~1x/get", anchorHash)
+		if _, err := Compile(context.Background(), pointerInput); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("documentation revision diff with a JSON pointer error = %v", err)
+		}
+		malformedInput := input
+		malformedInput.RevisionDiff = revisionDiff("#id-1.9.3.172.1", anchorHash)
+		if _, err := Compile(context.Background(), malformedInput); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("malformed documentation revision selector error = %v", err)
+		}
+
+		// An interface-description source set still refuses a documentation anchor,
+		// and a malformed pointer keeps its refusal too.
+		httpOperation := testOperation("getWidgets", "root", "#/paths/~1widgets/get", nil, []VariantRef{{Pointer: "#/paths/~1widgets/get/responses/204", Status: "204", MediaType: noContentMediaType}})
+		httpCaptured := testCapturedSource(t, DialectOpenAPI30, map[string][]byte{"root": testFixture(t, "complete-openapi.yaml")}, nil, []SourceOperation{httpOperation})
+		httpResolved := testResolve(t, httpCaptured)
+		httpDiff := &SourceRevisionDiff{
+			SchemaVersion:  SourceRevisionDiffSchemaVersion,
+			PreviousDigest: previousDigest,
+			CurrentDigest:  httpCaptured.Digest,
+			Changes: []PointerChange{{
+				SourceID: "root", Pointer: "#PROTOCOL",
+				PreviousSHA256: previousHash, CurrentSHA256: anchorHash,
+			}},
+		}
+		if err := ValidateCurrentRevisionDiff(httpResolved, httpDiff); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("interface-description revision selector error = %v", err)
+		}
+		malformedHTTPDiff := *httpDiff
+		malformedHTTPDiff.Changes = []PointerChange{{
+			SourceID: "root", Pointer: "#/paths/~1widgets~2get",
+			PreviousSHA256: previousHash, CurrentSHA256: previousHash,
+		}}
+		if err := ValidateCurrentRevisionDiff(httpResolved, &malformedHTTPDiff); err == nil || !strings.Contains(err.Error(), "selector is malformed") {
+			t.Fatalf("malformed interface-description revision selector error = %v", err)
+		}
+
+		// The exact captured witness of a declared anchor is still required, so a
+		// documentation source update cannot claim an unrelated hash.
+		staleDiff := &SourceRevisionDiff{
+			SchemaVersion:  SourceRevisionDiffSchemaVersion,
+			PreviousDigest: previousDigest,
+			CurrentDigest:  captured.Digest,
+			Changes: []PointerChange{{
+				SourceID: "pg-select", Pointer: "#SQL-WHERE",
+				PreviousSHA256: previousHash, CurrentSHA256: previousHash,
+			}},
+		}
+		if err := ValidateCurrentRevisionDiff(resolved, staleDiff); err == nil || !strings.Contains(err.Error(), "hash disagrees") {
+			t.Fatalf("stale documentation revision diff error = %v", err)
+		}
+	})
+
+	t.Run("C15 documentation diagnostics isolate to unavailable metadata", func(t *testing.T) {
+		operation := documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		lock, captures := testSourceInput(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil, []SourceOperation{operation})
+		captured, err := CaptureSource(lock, captures)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resolved, err := ResolveRefs(captured)
+		if err != nil {
+			t.Fatal(err)
+		}
+		loaded, err := LoadDialects(context.Background(), resolved)
+		if err != nil {
+			t.Fatal(err)
+		}
+		normalization, err := Normalize(context.Background(), loaded)
+		if err != nil {
+			t.Fatal(err)
+		}
+		semantics, err := DecodeSemantics(documentationSemanticsDocument(t, lock, captured.Digest, []SourceOperation{operation}))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := ApplyAmendments(normalization, resolved, &semantics); err != nil {
+			t.Fatal(err)
+		}
+		target := ConnectorCompilationTargetFoundations()
+		if err := CheckRequirements(normalization, resolved, target); err != nil {
+			t.Fatal(err)
+		}
+
+		// The documentation dialect emits no diagnostic of its own yet, so the
+		// diagnostic boundary is exercised with a diagnostic that carries the
+		// operation's own verified anchor facts, exactly as an unclassified
+		// documentation fact would arrive, and with the operation marked blocked
+		// exactly as the normalizer marks a diagnostic-bearing operation.
+		diagnostic := newDiagnostic(
+			"unknown_sensitivity", SeverityError, operation.SourceOperationID, "",
+			operationFacts(normalization.Operations[0]),
+			"/operations/relation-select/response_variants/0/sensitivity",
+			nil, []contract.Lane{contract.LaneDirectRead},
+			"documentation response sensitivity is not classified",
+		)
+		normalization.Diagnostics = append(normalization.Diagnostics, diagnostic)
+		normalization.Operations[0].BlockedDiagnosticIDs = []string{diagnostic.ID}
+		applyBlockingDiagnostics(&normalization.Operations[0], normalization.Diagnostics)
+
+		encoded, err := EmitBundle(normalization, target)
+		if err != nil {
+			t.Fatalf("documentation diagnostic refused bundle emission: %v", err)
+		}
+		var bundle Bundle
+		if err := json.Unmarshal(encoded, &bundle); err != nil {
+			t.Fatal(err)
+		}
+		if len(bundle.Operations) != 0 || len(bundle.UnavailableOperations) != 1 {
+			t.Fatalf("documentation diagnostic inventory = %#v", bundle)
+		}
+		unavailable := bundle.UnavailableOperations[0]
+		if unavailable.OperationID != operation.SourceOperationID ||
+			len(unavailable.DiagnosticCodes) != 1 || unavailable.DiagnosticCodes[0] != "unknown_sensitivity" {
+			t.Fatalf("documentation unavailable metadata = %#v", unavailable)
+		}
+		if len(unavailable.SourceRefs) != 1 || unavailable.SourceRefs[0].Pointer != "#SQL-WHERE" {
+			t.Fatalf("documentation unavailable source refs = %#v", unavailable.SourceRefs)
+		}
+
+		// An interface-description operation cannot absorb a documentation anchor
+		// as unavailable metadata.
+		httpNormalization := &Normalization{
+			ConnectorID: "synthetic", SourceDigest: captured.Digest, SemanticsRevision: lock.SemanticsRevision,
+			SourceOperationIDs: []string{"getWidgets"},
+			Operations: []NormalizedOperation{{
+				OperationID: "getWidgets",
+				Transport:   contract.Transport{Kind: contract.TransportKindHTTP, Method: "GET", Path: "/widgets"},
+			}},
+			Diagnostics: []Diagnostic{newDiagnostic(
+				"unknown_sensitivity", SeverityError, "getWidgets", "",
+				[]SourceFact{{SourceRef: contract.SourceRef{SourceID: "root", Pointer: "#PROTOCOL"}, SHA256: "sha256:" + strings.Repeat("f", 64)}},
+				"/operations/getWidgets/response_variants/0/sensitivity",
+				nil, []contract.Lane{contract.LaneDirectRead},
+				"interface-description response sensitivity is not classified",
+			)},
+		}
+		if _, err := EmitBundle(httpNormalization, target); err == nil || !strings.Contains(err.Error(), "blocked by diagnostic") {
+			t.Fatalf("interface-description diagnostic with an anchor fact error = %v", err)
+		}
+	})
+}
+
+// documentationSelectPage is the smallest captured page that carries the
+// anchors the documentation dialect admits, including one positional identifier
+// that the strict selector grammar refuses.
+const documentationSelectPage = `<!doctype html>
+<html lang="en">
+ <head>
+  <title>PostgreSQL: Documentation: 16: SELECT</title>
+ </head>
+ <body>
+  <div class="refentry" id="SQL-SELECT">
+   <p>SELECT, TABLE, WITH — retrieve rows from a table or view.</p>
+   <div class="refsect2" id="SQL-WHERE">
+    <p>The optional WHERE clause has the general form WHERE condition.</p>
+   </div>
+   <div class="refsect2" id="SQL-LIMIT">
+    <p>The optional LIMIT clause bounds the number of rows returned.</p>
+   </div>
+   <div id="id-1.9.3.172.1"></div>
+  </div>
+ </body>
+</html>
+`
+
+// documentationOperation declares one documentation-dialect operation with the
+// dialect's closed, explicitly present members.
+func documentationOperation(
+	id, sourceID, selector string,
+	kind contract.PostgreSQLStatementKind,
+	binding string,
+) SourceOperation {
+	return SourceOperation{
+		SourceOperationID: id,
+		SourceRefs:        []SourceRef{{SourceID: sourceID, Pointer: selector}},
+		RequestVariants:   []VariantRef{},
+		ResponseVariants:  []VariantRef{},
+		StatementKind:     &kind,
+		RelationBinding:   &binding,
+	}
+}
+
+// documentationSemanticsDocument authors the connector semantics of one
+// documentation source set: every operation stays source-linked to its anchors
+// and classifies all seven lanes explicitly.
+func documentationSemanticsDocument(t *testing.T, lock SourceLock, sourceDigest string, operations []SourceOperation) []byte {
+	t.Helper()
+	type laneSemantics struct {
+		Lane           contract.Lane        `json:"lane"`
+		Classification LaneStatus           `json:"classification"`
+		Reason         string               `json:"reason,omitempty"`
+		SourceRefs     []contract.SourceRef `json:"source_refs"`
+	}
+	type operationSemantics struct {
+		OperationID string               `json:"operation_id"`
+		SourceRefs  []contract.SourceRef `json:"source_refs"`
+		Lanes       []laneSemantics      `json:"lanes"`
+	}
+	document := struct {
+		SchemaVersion string               `json:"schema_version"`
+		ConnectorID   string               `json:"connector_id"`
+		SourceDigest  string               `json:"source_digest"`
+		Revision      string               `json:"revision"`
+		Operations    []operationSemantics `json:"operations"`
+	}{
+		SchemaVersion: SemanticsSchemaVersion, ConnectorID: lock.ConnectorID,
+		SourceDigest: sourceDigest, Revision: lock.SemanticsRevision,
+	}
+	for _, operation := range operations {
+		amendment := operationSemantics{OperationID: operation.SourceOperationID, SourceRefs: slices.Clone(operation.SourceRefs)}
+		for index, lane := range allLanes {
+			classification := LaneNotApplicable
+			reason := "the declared statement fact carries no data for this lane"
+			if index == 0 {
+				classification = LaneEligible
+				reason = "synthetic fixture classifies its first lane eligible"
+			}
+			amendment.Lanes = append(amendment.Lanes, laneSemantics{
+				Lane: lane, Classification: classification, Reason: reason, SourceRefs: slices.Clone(operation.SourceRefs),
+			})
+		}
+		document.Operations = append(document.Operations, amendment)
+	}
+	encoded, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return encoded
 }
 
 func testFixture(t *testing.T, name string) []byte {
@@ -267,6 +696,63 @@ func FuzzSourceCanonicalization(f *testing.F) {
 		}
 		if !bytes.Equal(first.canonical, second.canonical) {
 			t.Fatal("canonical source changed exact values after reparsing")
+		}
+	})
+}
+
+// TestDocumentationGrammarsStayDisjoint keeps the two documentation grammars
+// apart: a documentation dialect source set addresses its pages only by
+// declared anchors, an interface-description source set addresses supplemental
+// official-documentation captures only by exact byte ranges, and neither
+// selector form resolves against the other kind of source.
+func TestDocumentationGrammarsStayDisjoint(t *testing.T) {
+	documentationLock := func(t *testing.T, selector string) SourceLock {
+		t.Helper()
+		operation := documentationOperation("relation-select", "pg-select", selector, contract.PostgreSQLStatementSelect, "postgres.reusable-relation")
+		lock, _ := testSourceInput(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil, []SourceOperation{operation})
+		return lock
+	}
+	t.Run("documentation set documents omit or repeat the set dialect", func(t *testing.T) {
+		lock := documentationLock(t, "#SQL-WHERE")
+		if err := lock.Validate(); err != nil {
+			t.Fatalf("declared set dialect: %v", err)
+		}
+		lock.SourceSet.Documents[0].Dialect = ""
+		if err := lock.Validate(); err != nil {
+			t.Fatalf("omitted document dialect: %v", err)
+		}
+		lock.SourceSet.Documents[0].Dialect = DialectOfficialDocumentation
+		if err := lock.Validate(); !errors.Is(err, ErrUnsupportedDialect) {
+			t.Fatalf("supplemental capture inside a documentation set error = %v", err)
+		}
+	})
+	t.Run("documentation set refuses byte ranges", func(t *testing.T) {
+		for _, selector := range []string{"bytes:0-10", "#bytes:0-10"} {
+			if err := documentationLock(t, selector).Validate(); !errors.Is(err, ErrInvalidSource) {
+				t.Fatalf("byte range %q in a documentation set error = %v", selector, err)
+			}
+		}
+		resolved := testResolve(t, testCapturedSource(t, DialectPostgreSQLDocs16, map[string][]byte{"pg-select": []byte(documentationSelectPage)}, nil,
+			[]SourceOperation{documentationOperation("relation-select", "pg-select", "#SQL-WHERE", contract.PostgreSQLStatementSelect, "postgres.reusable-relation")}))
+		if resolved.SupplementalDocumentation("pg-select") || resolved.HasFact("pg-select", "bytes:0-10") {
+			t.Fatal("a documentation set page resolved as a supplemental byte-range capture")
+		}
+	})
+	t.Run("interface-description set refuses documentation anchors", func(t *testing.T) {
+		operation := testOperation("getWidgets", "root", "#/paths/~1widgets/get", nil, []VariantRef{
+			{Pointer: "#/paths/~1widgets/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json"},
+		})
+		lock, _ := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": testFixture(t, "complete-openapi.yaml")}, nil, []SourceOperation{operation})
+		if err := lock.Validate(); err != nil {
+			t.Fatalf("baseline interface-description lock: %v", err)
+		}
+		for _, selector := range []string{"#SQL-WHERE", "bytes:0-10"} {
+			candidate := lock
+			candidate.Operations = slices.Clone(lock.Operations)
+			candidate.Operations[0].SourceRefs = []SourceRef{{SourceID: "root", Pointer: selector}}
+			if err := candidate.Validate(); !errors.Is(err, ErrInvalidSource) {
+				t.Fatalf("selector %q in an interface-description set error = %v", selector, err)
+			}
 		}
 	})
 }

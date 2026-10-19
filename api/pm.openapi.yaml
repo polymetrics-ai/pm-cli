@@ -16,6 +16,8 @@ tags:
   - name: catalog
   - name: runs
   - name: artifacts
+  - name: warehouse
+  - name: schema
 paths:
   /v1/info:
     get:
@@ -1498,6 +1500,126 @@ paths:
           $ref: "#/components/responses/Problem428"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections/{connection_id}/schema:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectionID"
+    get:
+      tags: [schema]
+      summary: Inspect the connection's selected metadata snapshot and its effective schema
+      operationId: getConnectionSchema
+      description: >-
+        Reports the connection's single selected snapshot reference, that snapshot's
+        declared binding and completeness, and the effective typed fields built from
+        it. An absent selection is explicit. Help and this read never require provider
+        credentials, and a failed or partial discovery never replaces the last
+        complete valid snapshot.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/SchemaResource"
+        - $ref: "#/components/parameters/SchemaPermissionRevision"
+        - $ref: "#/components/parameters/SchemaSourceRevision"
+        - $ref: "#/components/parameters/SchemaProviderAccount"
+        - $ref: "#/components/parameters/SnapshotID"
+      responses:
+        "200":
+          description: Selected snapshot identity, completeness and effective typed fields
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ConnectionSchemaInspection"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectionID"
+      - $ref: "#/components/parameters/DatasetName"
+    get:
+      tags: [warehouse]
+      summary: Inspect the committed read view of one warehouse dataset
+      operationId: getWarehouseDataset
+      description: >-
+        Reports the dataset's committed manifest revision, its acknowledged cursor,
+        and the registered immutable segments that currently serve it, each with the
+        exact shared object it registered. Listing objects never establishes dataset
+        membership.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/SnapshotID"
+      responses:
+        "200":
+          description: Committed revision, acknowledged cursor and registered segments
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseDatasetSnapshot"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectionID"
+      - $ref: "#/components/parameters/DatasetName"
+    post:
+      tags: [warehouse]
+      summary: Run one bounded typed query over a dataset's registered segments
+      operationId: runWarehouseQuery
+      description: >-
+        Executes one admitted typed query over the dataset's immutable registered
+        segments and returns exact typed rows. The request carries a declared relation,
+        projections, typed predicates, order, parameter bindings and a limit; it never
+        carries statement text, so raw SQL, file functions, extensions, unknown
+        identifiers and cross-scope paths are refused before any object byte is read.
+        A read creates no durable work, so it carries no idempotency identity.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/WarehouseQueryRequest"
+      responses:
+        "200":
+          description: Exact typed rows of the admitted query, in registered ordinal order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WarehouseQueryResult"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
 components:
   securitySchemes:
     PMSession:
@@ -1658,6 +1780,61 @@ components:
       in: header
       required: false
       description: Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    DatasetName:
+      name: dataset
+      in: path
+      required: true
+      description: Declared dataset component of the connection's warehouse namespace; never a path, a parent reference, or an object key.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+        pattern: "^[a-z0-9][a-z0-9_-]*$"
+    SnapshotID:
+      name: snapshot_id
+      in: query
+      required: false
+      description: Selects one retained snapshot's exact segment set instead of the dataset's live set.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    SchemaResource:
+      name: resource
+      in: query
+      required: true
+      description: Declared provider resource whose account metadata is requested; it is part of the snapshot binding, never a directory or object key.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    SchemaPermissionRevision:
+      name: permission_revision
+      in: query
+      required: true
+      description: Permission revision the discovery observed; metadata bound to another revision is never served.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    SchemaSourceRevision:
+      name: source_revision
+      in: query
+      required: true
+      description: Source revision the discovery observed; metadata bound to another revision is never served.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 512
+    SchemaProviderAccount:
+      name: provider_account_id
+      in: query
+      required: false
+      description: Provider account the discovery observed; defaults to the authorized connection's stored provider account.
       schema:
         type: string
         minLength: 1
@@ -3443,6 +3620,314 @@ components:
       x-go-type-import:
         path: github.com/polymetrics-ai/pm-cli/internal/contract
         name: contract
+    WarehouseColumn:
+      type: object
+      additionalProperties: false
+      required: [name, kind, precision, scale, nullable]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        kind:
+          type: string
+          enum: [int64, decimal, text, boolean, bytea, date, timestamp, timestamptz, uuid, json]
+        precision:
+          type: integer
+          minimum: 0
+        scale:
+          type: integer
+          minimum: 0
+        nullable:
+          type: boolean
+    WarehouseObject:
+      type: object
+      additionalProperties: false
+      required: [artifact_id, media_type, byte_length, sha256, backend_generation]
+      properties:
+        artifact_id:
+          type: string
+          minLength: 1
+          maxLength: 512
+        media_type:
+          type: string
+          minLength: 1
+          maxLength: 256
+        byte_length:
+          type: integer
+          format: int64
+          minimum: 1
+        sha256:
+          type: string
+          pattern: "^[0-9a-f]{64}$"
+        backend_generation:
+          type: string
+          minLength: 1
+          maxLength: 512
+    WarehouseSegment:
+      type: object
+      additionalProperties: false
+      required: [ordinal, manifest_revision, row_count, column_fingerprint, state, object]
+      properties:
+        ordinal:
+          type: integer
+          format: int64
+          minimum: 1
+        manifest_revision:
+          type: integer
+          format: int64
+          minimum: 1
+        row_count:
+          type: integer
+          format: int64
+          minimum: 0
+        column_fingerprint:
+          type: string
+          pattern: "^sha256:[0-9a-f]{64}$"
+        state:
+          type: string
+          enum: [live, retired, collected]
+        object:
+          $ref: "#/components/schemas/WarehouseObject"
+    WarehouseDatasetSnapshot:
+      type: object
+      additionalProperties: false
+      required: [org_id, workspace_id, connector_id, connection_id, dataset, revision, cursor_ordinal, snapshot_id, rows, segments]
+      properties:
+        org_id:
+          type: string
+        workspace_id:
+          type: string
+        connector_id:
+          type: string
+        connection_id:
+          type: string
+        dataset:
+          type: string
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+        cursor_ordinal:
+          type: integer
+          format: int64
+          minimum: 0
+        snapshot_id:
+          type: [string, "null"]
+          maxLength: 512
+        rows:
+          type: integer
+          format: int64
+          minimum: 0
+        segments:
+          type: array
+          maxItems: 10000
+          items:
+            $ref: "#/components/schemas/WarehouseSegment"
+    WarehouseProjection:
+      type: object
+      additionalProperties: false
+      required: [column, alias]
+      properties:
+        column:
+          type: string
+          minLength: 1
+          maxLength: 64
+        alias:
+          type: [string, "null"]
+          maxLength: 64
+    WarehousePredicate:
+      type: object
+      additionalProperties: false
+      required: [column, operator, value, values, parameter]
+      properties:
+        column:
+          type: string
+          minLength: 1
+          maxLength: 64
+        operator:
+          type: string
+          enum: [eq, ne, lt, lte, gt, gte, is_null, is_not_null, in, not_in]
+        value:
+          $ref: "#/components/schemas/PresentValue"
+        values:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/PresentValue"
+        parameter:
+          type: [string, "null"]
+          maxLength: 64
+    WarehouseOrdering:
+      type: object
+      additionalProperties: false
+      required: [column, descending]
+      properties:
+        column:
+          type: string
+          minLength: 1
+          maxLength: 64
+        descending:
+          type: boolean
+    WarehouseParameter:
+      type: object
+      additionalProperties: false
+      required: [name, value]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 64
+        value:
+          $ref: "#/components/schemas/PresentValue"
+    WarehouseQueryRequest:
+      type: object
+      additionalProperties: false
+      required: [relation, project, predicates, order, parameters, limit, snapshot_id]
+      properties:
+        relation:
+          type: string
+          minLength: 1
+          maxLength: 64
+        project:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/WarehouseProjection"
+        predicates:
+          type: array
+          maxItems: 16
+          items:
+            $ref: "#/components/schemas/WarehousePredicate"
+        order:
+          type: array
+          maxItems: 8
+          items:
+            $ref: "#/components/schemas/WarehouseOrdering"
+        parameters:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/WarehouseParameter"
+        limit:
+          type: integer
+          format: int64
+          minimum: 1
+        snapshot_id:
+          type: [string, "null"]
+          maxLength: 512
+    WarehouseQueryResult:
+      type: object
+      additionalProperties: false
+      required: [org_id, workspace_id, connector_id, connection_id, dataset, snapshot_id, columns, rows, truncated]
+      properties:
+        org_id:
+          type: string
+        workspace_id:
+          type: string
+        connector_id:
+          type: string
+        connection_id:
+          type: string
+        dataset:
+          type: string
+        snapshot_id:
+          type: [string, "null"]
+          maxLength: 512
+        columns:
+          type: array
+          maxItems: 64
+          items:
+            $ref: "#/components/schemas/WarehouseColumn"
+        rows:
+          type: array
+          maxItems: 100000
+          items:
+            type: array
+            maxItems: 64
+            items:
+              $ref: "#/components/schemas/PresentValue"
+        truncated:
+          type: boolean
+    SchemaField:
+      type: object
+      additionalProperties: false
+      required: [name, pointer, required, writable, type, precision, scale]
+      properties:
+        name:
+          type: string
+          minLength: 1
+          maxLength: 512
+        pointer:
+          type: string
+          minLength: 1
+          maxLength: 2048
+        required:
+          type: boolean
+        writable:
+          type: boolean
+        type:
+          type: string
+          enum: [string, integer, number, bool, object, array, date, timestamp_instant, timestamp_local]
+        precision:
+          type: integer
+          minimum: 0
+        scale:
+          type: integer
+          minimum: 0
+    ConnectionSchemaInspection:
+      type: object
+      additionalProperties: false
+      required: [org_id, workspace_id, connector_id, connection_id, selected, snapshot, fields]
+      properties:
+        org_id:
+          type: string
+        workspace_id:
+          type: string
+        connector_id:
+          type: string
+        connection_id:
+          type: string
+        selected:
+          type: [string, "null"]
+          maxLength: 128
+        snapshot:
+          $ref: "#/components/schemas/ConnectionSchemaSnapshot"
+        fields:
+          type: array
+          maxItems: 4096
+          items:
+            $ref: "#/components/schemas/SchemaField"
+    ConnectionSchemaSnapshot:
+      type: object
+      additionalProperties: false
+      required: [connector_id, connection_id, provider_account_id, permission_revision, resource, source_revision, content_fingerprint, complete, blockers, field_count]
+      properties:
+        connector_id:
+          type: string
+        connection_id:
+          type: string
+        provider_account_id:
+          type: string
+        permission_revision:
+          type: string
+        resource:
+          type: string
+        source_revision:
+          type: string
+        content_fingerprint:
+          type: string
+        complete:
+          type: boolean
+        blockers:
+          type: array
+          maxItems: 64
+          items:
+            type: string
+        field_count:
+          type: integer
+          minimum: 0
     PresentValue:
       oneOf:
         - type: object

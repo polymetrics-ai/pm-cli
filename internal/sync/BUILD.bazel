@@ -1,12 +1,54 @@
-load("@rules_go//go:def.bzl", "go_library")
+load("@rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "sync",
-    srcs = ["direct.go"],
+    srcs = [
+        "checkpoint.go",
+        "direct.go",
+        "etl.go",
+    ],
     importpath = "github.com/polymetrics-ai/pm-cli/internal/sync",
     visibility = ["//visibility:public"],
     deps = [
         "//internal/contract",
         "//internal/runtime",
+        "//internal/store",
+        "//internal/warehouse",
+    ],
+)
+
+go_test(
+    name = "sync_test",
+    srcs = [
+        "ack_test.go",
+        "etl_scratch_test.go",
+        "read_selector_refusal_test.go",
+    ],
+    env_inherit = [
+        "PM_STACK_ROOT",
+        "PM_STACK_SECRETS_DIR",
+        "PM_STACK_TEST_CONFIG",
+        "PM_STACK_TEST_S3_PRIMARY_ENDPOINT",
+        "PM_STACK_TEST_S3_SECONDARY_ENDPOINT",
+        "PM_STORE_TEST_SECRETS_DIR",
+    ],
+    tags = [
+        "exclusive",
+        "external",
+        "no-remote",
+    ],
+    deps = [
+        ":sync",
+        "//internal/api",
+        "//internal/app",
+        "//internal/contract",
+        "//internal/httpapi",
+        "//internal/objects",
+        "//internal/schema",
+        "//internal/store",
+        "//internal/testfixture",
+        "//internal/warehouse",
+        "@com_github_jackc_pgx_v5//:pgx",
+        "@com_github_oapi_codegen_nullable//:nullable",
     ],
 )

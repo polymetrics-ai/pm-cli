@@ -265,6 +265,38 @@ type ClientInterface interface {
 	// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
 	UpdateConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
+	//
+	// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
+	GetConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
+	//
+	// Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset} (the `GetWarehouseDataset` operationId).
+	GetWarehouseDataset(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *GetWarehouseDatasetParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunWarehouseQueryWithBody Run one bounded typed query over a dataset's registered segments
+	//
+	// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+	RunWarehouseQueryWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RunWarehouseQuery Run one bounded typed query over a dataset's registered segments
+	//
+	// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+	RunWarehouseQuery(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, body RunWarehouseQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListCatalogConnectors List the authorized immutable connector catalog and actual lane availability
 	//
 	// Corresponds with GET /v1/workspaces/{workspace_id}/connectors (the `ListCatalogConnectors` operationId).
@@ -893,6 +925,78 @@ func (c *Client) UpdateConnectionWithBody(ctx context.Context, workspaceId Works
 // Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
 func (c *Client) UpdateConnection(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateConnectionRequest(c.Server, workspaceId, connectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
+//
+// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
+func (c *Client) GetConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConnectionSchemaRequest(c.Server, workspaceId, connectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
+//
+// Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset} (the `GetWarehouseDataset` operationId).
+func (c *Client) GetWarehouseDataset(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *GetWarehouseDatasetParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWarehouseDatasetRequest(c.Server, workspaceId, connectionId, dataset, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RunWarehouseQueryWithBody Run one bounded typed query over a dataset's registered segments
+//
+// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+func (c *Client) RunWarehouseQueryWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunWarehouseQueryRequestWithBody(c.Server, workspaceId, connectionId, dataset, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RunWarehouseQuery Run one bounded typed query over a dataset's registered segments
+//
+// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+func (c *Client) RunWarehouseQuery(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, body RunWarehouseQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRunWarehouseQueryRequest(c.Server, workspaceId, connectionId, dataset, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2404,6 +2508,261 @@ func NewUpdateConnectionRequestWithBody(server string, workspaceId WorkspaceID, 
 			}
 
 			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewGetConnectionSchemaRequest constructs an http.Request for the GetConnectionSchema method
+func NewGetConnectionSchemaRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s/schema", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "resource", params.Resource, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "permission_revision", params.PermissionRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source_revision", params.SourceRevision, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.ProviderAccountId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "provider_account_id", *params.ProviderAccountId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.SnapshotId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "snapshot_id", *params.SnapshotId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetWarehouseDatasetRequest constructs an http.Request for the GetWarehouseDataset method
+func NewGetWarehouseDatasetRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *GetWarehouseDatasetParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "dataset", dataset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s/warehouse/datasets/%s", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.SnapshotId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "snapshot_id", *params.SnapshotId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRunWarehouseQueryRequest calls the generic RunWarehouseQuery builder with application/json body
+func NewRunWarehouseQueryRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, body RunWarehouseQueryJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRunWarehouseQueryRequestWithBody(server, workspaceId, connectionId, dataset, params, "application/json", bodyReader)
+}
+
+// NewRunWarehouseQueryRequestWithBody constructs an http.Request for the RunWarehouseQuery method, with any body, and a specified content type
+func NewRunWarehouseQueryRequestWithBody(server string, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam2 string
+
+	pathParam2, err = runtime.StyleParamWithOptions("simple", false, "dataset", dataset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s/warehouse/datasets/%s/query", pathParam0, pathParam1, pathParam2)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		if params.XCSRFToken != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam0)
 		}
 
 	}
@@ -4031,6 +4390,42 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with PATCH /v1/workspaces/{workspace_id}/connections/{connection_id} (the `UpdateConnection` operationId).
 	UpdateConnectionWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *UpdateConnectionParams, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConnectionResponse, error)
 
+	// GetConnectionSchemaWithResponse Inspect the connection's selected metadata snapshot and its effective schema
+	//
+	// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
+	GetConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*GetConnectionSchemaResponse, error)
+
+	// GetWarehouseDatasetWithResponse Inspect the committed read view of one warehouse dataset
+	//
+	// Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset} (the `GetWarehouseDataset` operationId).
+	GetWarehouseDatasetWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *GetWarehouseDatasetParams, reqEditors ...RequestEditorFn) (*GetWarehouseDatasetResponse, error)
+
+	// RunWarehouseQueryWithBodyWithResponse Run one bounded typed query over a dataset's registered segments
+	//
+	// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+	RunWarehouseQueryWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunWarehouseQueryResponse, error)
+
+	// RunWarehouseQueryWithResponse Run one bounded typed query over a dataset's registered segments
+	//
+	// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+	RunWarehouseQueryWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, body RunWarehouseQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*RunWarehouseQueryResponse, error)
+
 	// ListCatalogConnectorsWithResponse List the authorized immutable connector catalog and actual lane availability
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -5613,6 +6008,234 @@ func (r UpdateConnectionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UpdateConnectionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetConnectionSchemaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ConnectionSchemaInspection
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConnectionSchemaResponse) GetJSON200() *ConnectionSchemaInspection {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetConnectionSchemaResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetConnectionSchemaResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetConnectionSchemaResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetConnectionSchemaResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetConnectionSchemaResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConnectionSchemaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConnectionSchemaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConnectionSchemaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConnectionSchemaResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type GetWarehouseDatasetResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WarehouseDatasetSnapshot
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetWarehouseDatasetResponse) GetJSON200() *WarehouseDatasetSnapshot {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r GetWarehouseDatasetResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r GetWarehouseDatasetResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r GetWarehouseDatasetResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r GetWarehouseDatasetResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r GetWarehouseDatasetResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetWarehouseDatasetResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWarehouseDatasetResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWarehouseDatasetResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetWarehouseDatasetResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type RunWarehouseQueryResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *WarehouseQueryResult
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RunWarehouseQueryResponse) GetJSON200() *WarehouseQueryResult {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r RunWarehouseQueryResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r RunWarehouseQueryResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r RunWarehouseQueryResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r RunWarehouseQueryResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r RunWarehouseQueryResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r RunWarehouseQueryResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RunWarehouseQueryResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RunWarehouseQueryResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RunWarehouseQueryResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -7719,6 +8342,66 @@ func (c *ClientWithResponses) UpdateConnectionWithResponse(ctx context.Context, 
 	return ParseUpdateConnectionResponse(rsp)
 }
 
+// GetConnectionSchemaWithResponse Inspect the connection's selected metadata snapshot and its effective schema
+//
+// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
+func (c *ClientWithResponses) GetConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*GetConnectionSchemaResponse, error) {
+	rsp, err := c.GetConnectionSchema(ctx, workspaceId, connectionId, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConnectionSchemaResponse(rsp)
+}
+
+// GetWarehouseDatasetWithResponse Inspect the committed read view of one warehouse dataset
+//
+// Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset} (the `GetWarehouseDataset` operationId).
+func (c *ClientWithResponses) GetWarehouseDatasetWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *GetWarehouseDatasetParams, reqEditors ...RequestEditorFn) (*GetWarehouseDatasetResponse, error) {
+	rsp, err := c.GetWarehouseDataset(ctx, workspaceId, connectionId, dataset, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWarehouseDatasetResponse(rsp)
+}
+
+// RunWarehouseQueryWithBodyWithResponse Run one bounded typed query over a dataset's registered segments
+//
+// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+func (c *ClientWithResponses) RunWarehouseQueryWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RunWarehouseQueryResponse, error) {
+	rsp, err := c.RunWarehouseQueryWithBody(ctx, workspaceId, connectionId, dataset, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunWarehouseQueryResponse(rsp)
+}
+
+// RunWarehouseQueryWithResponse Run one bounded typed query over a dataset's registered segments
+//
+// Executes one admitted typed query over the dataset's immutable registered segments and returns exact typed rows. The request carries a declared relation, projections, typed predicates, order, parameter bindings and a limit; it never carries statement text, so raw SQL, file functions, extensions, unknown identifiers and cross-scope paths are refused before any object byte is read. A read creates no durable work, so it carries no idempotency identity.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query (the `RunWarehouseQuery` operationId).
+func (c *ClientWithResponses) RunWarehouseQueryWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *RunWarehouseQueryParams, body RunWarehouseQueryJSONRequestBody, reqEditors ...RequestEditorFn) (*RunWarehouseQueryResponse, error) {
+	rsp, err := c.RunWarehouseQuery(ctx, workspaceId, connectionId, dataset, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRunWarehouseQueryResponse(rsp)
+}
+
 // ListCatalogConnectorsWithResponse List the authorized immutable connector catalog and actual lane availability
 //
 // Returns a wrapper object for the known response body format(s).
@@ -9203,6 +9886,189 @@ func ParseUpdateConnectionResponse(rsp *http.Response) (*UpdateConnectionRespons
 			return nil, err
 		}
 		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetConnectionSchemaResponse parses an HTTP response from a GetConnectionSchemaWithResponse call
+func ParseGetConnectionSchemaResponse(rsp *http.Response) (*GetConnectionSchemaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConnectionSchemaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ConnectionSchemaInspection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWarehouseDatasetResponse parses an HTTP response from a GetWarehouseDatasetWithResponse call
+func ParseGetWarehouseDatasetResponse(rsp *http.Response) (*GetWarehouseDatasetResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWarehouseDatasetResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WarehouseDatasetSnapshot
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRunWarehouseQueryResponse parses an HTTP response from a RunWarehouseQueryWithResponse call
+func ParseRunWarehouseQueryResponse(rsp *http.Response) (*RunWarehouseQueryResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RunWarehouseQueryResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WarehouseQueryResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem503

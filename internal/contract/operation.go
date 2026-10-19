@@ -1434,19 +1434,30 @@ var canonicalLanes = [...]Lane{
 	LaneSyncTransport,
 }
 
-// validSourcePointer admits the two exact ways one source reference may address
-// an admitted capture: a JSON pointer into a structured source document, and an
-// exact byte range ("bytes:<start>-<end>") into a retained documentation
-// capture. Both forms are bounded and neither can be read as the other, so a
-// structured fact can never be satisfied by documentation bytes and the
-// reverse. Which form a document admits is decided by the document's own
-// declared dialect, never by the pointer text alone.
+// validSourcePointer admits the three exact ways one source reference may
+// address an admitted capture: a JSON pointer into a structured source
+// document, an exact byte range ("bytes:<start>-<end>") into a retained
+// supplemental documentation capture, and a declared anchor ("#<anchor>") of a
+// pinned page of a documentation source set. The forms are bounded and none
+// can be read as another, so a structured fact can never be satisfied by
+// documentation bytes or anchors and the reverse. Which form a document admits
+// is decided by the source set dialect and the document's own declared
+// dialect, never by the pointer text alone.
 func validSourcePointer(value string) bool {
-	if value == "" || len(value) > 4096 {
+	if value == "" || len(value) > 4096 || !utf8.ValidString(value) {
 		return false
 	}
 	if _, ok := ParseSourceByteRange(value); ok {
 		return true
+	}
+	if strings.HasPrefix(value, "#") {
+		anchor := strings.TrimPrefix(value, "#")
+		// A documentation dialect references one declared anchor of a pinned
+		// page instead of a JSON pointer location. Every JSON pointer keeps its
+		// existing meaning and validation.
+		if anchor != "" && anchor[0] != '/' {
+			return ValidDocumentationAnchor(anchor)
+		}
 	}
 	return validJSONPointer(strings.TrimPrefix(value, "#"))
 }
@@ -1495,6 +1506,34 @@ func canonicalDecimalCount(value string) (int, bool) {
 		return 0, false
 	}
 	return number, true
+}
+
+// ValidDocumentationAnchor admits one documentation anchor name: a bounded,
+// hyphen-separated sequence of ASCII letters and digits that begins with a
+// letter and ends with a letter or digit. A documentation dialect declares
+// source references of the form "#<anchor>", and the captured page must declare
+// exactly that anchor identifier.
+func ValidDocumentationAnchor(anchor string) bool {
+	if anchor == "" || len(anchor) > 128 {
+		return false
+	}
+	for index := range len(anchor) {
+		character := anchor[index]
+		switch {
+		case character >= 'a' && character <= 'z', character >= 'A' && character <= 'Z':
+		case character >= '0' && character <= '9':
+			if index == 0 {
+				return false
+			}
+		case character == '-':
+			if index == 0 || index+1 == len(anchor) || anchor[index-1] == '-' {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // ValidateLane validates one canonical execution lane without duplicating the

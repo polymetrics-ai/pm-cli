@@ -38,6 +38,15 @@ def packages(module, cgo):
 
 
 counts = {}
+# ADR475-12: only the restricted analytical child links the native engine. The
+# probe qualifies the pinned native identity; internal/analytics owns the engine
+# wrapper and cmd/pm-query is the child binary that runs it. Every other
+# package, including internal/warehouse, must stay free of native imports.
+native_owners = {
+    "github.com/polymetrics-ai/pm-cli/build/nativeprobe",
+    "github.com/polymetrics-ai/pm-cli/internal/analytics",
+    "github.com/polymetrics-ai/pm-cli/cmd/pm-query",
+}
 for module, cgo in (("application", "1"), ("tools", "0")):
     selected = packages(module, cgo)
     counts[module] = len(selected)
@@ -45,7 +54,7 @@ for module, cgo in (("application", "1"), ("tools", "0")):
         path = package["ImportPath"]
         native = [p for p in package.get("Deps", [])
                   if p.startswith("github.com/duckdb/")]
-        allowed = path == "github.com/polymetrics-ai/pm-cli/build/nativeprobe"
+        allowed = path in native_owners
         if native and not allowed:
             raise SystemExit(f"Native analytics outside qualification child: {path}: {native}")
         if package.get("CgoFiles") and not allowed:

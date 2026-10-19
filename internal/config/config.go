@@ -195,6 +195,7 @@ type Configuration struct {
 	server             ServerConfiguration
 	worker             WorkerConfiguration
 	providerHTTP       ProviderHTTPConfiguration
+	providerSQL        ProviderSQLConfiguration
 	connectors         ConnectorsConfiguration
 }
 
@@ -260,6 +261,13 @@ func (c Configuration) ProviderHTTP() ProviderHTTPConfiguration {
 	return c.providerHTTP.clone()
 }
 
+// ProviderSQL returns the declared customer SQL connections. The returned value
+// is a copy; an absent or empty declaration configures no customer SQL
+// capability.
+func (c Configuration) ProviderSQL() ProviderSQLConfiguration {
+	return c.providerSQL.clone()
+}
+
 // Connectors returns the declared generated execution bundles. The returned
 // slice is a copy; an absent or empty declaration configures no connector.
 func (c Configuration) Connectors() ConnectorsConfiguration {
@@ -281,6 +289,7 @@ type documentData struct {
 	server             ServerConfiguration
 	worker             WorkerConfiguration
 	providerHTTP       ProviderHTTPConfiguration
+	providerSQL        ProviderSQLConfiguration
 	connectors         ConnectorsConfiguration
 }
 
@@ -360,6 +369,9 @@ func Load(reader io.Reader) (Document, error) {
 	if result.providerHTTP, err = decodeProviderHTTP(root["provider_http"]); err != nil {
 		return Document{}, err
 	}
+	if result.providerSQL, err = decodeProviderSQL(root["provider_sql"]); err != nil {
+		return Document{}, err
+	}
 	if result.connectors, err = decodeConnectors(root["connectors"]); err != nil {
 		return Document{}, err
 	}
@@ -379,7 +391,7 @@ var rootFields = []string{
 	"limits",
 }
 
-var allowedRootFields = append([]string{"server", "worker", "provider_http", "connectors"}, rootFields...)
+var allowedRootFields = append([]string{"server", "worker", "provider_http", "provider_sql", "connectors"}, rootFields...)
 
 func decodePostgres(raw json.RawMessage) (PostgresConfiguration, error) {
 	fields := []string{"ownership", "database", "endpoint_ref"}

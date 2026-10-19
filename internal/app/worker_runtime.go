@@ -148,6 +148,21 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 	}); err != nil {
 		return fail(errors.Join(errors.New("worker connector direct-read registration failed"), err))
 	}
+	declaredSQL := configuration.Configuration.ProviderSQL()
+	sqlComposition, err := OpenSQLComposition(SQLCompositionConfig{
+		Declarations: declaredSQL,
+		Bundles:      composition.Registry(),
+		Dialer:       nil,
+		Resources: func(connection config.ProviderSQLConnection) (SQLConnectionResources, error) {
+			return LoadProviderSQLResources(secrets, connection)
+		},
+	})
+	if err != nil {
+		return fail(errors.Join(errors.New("worker customer SQL composition is unavailable"), err))
+	}
+	if err := sqlComposition.Register(registry); err != nil {
+		return fail(errors.Join(errors.New("worker customer SQL registration failed"), err))
+	}
 	resolver := configuration.ResolveOperation
 	if resolver == nil {
 		resolver = unavailableWorkerOperation
@@ -185,6 +200,7 @@ func OpenWorkerRuntime(ctx context.Context, configuration WorkerRuntimeConfig) (
 		LoadCredentialWrappingKey: loadCredentialWrappingKey,
 		ArtifactPublisher:         artifactPublisher,
 		MaximumResultBytes:        int64(artifactConfiguration.Execution.MaxObjectBytes),
+		SQLBounds:                 sqlComposition.Bounds,
 	}
 
 	return &WorkerRuntime{

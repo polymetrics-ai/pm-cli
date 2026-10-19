@@ -99,7 +99,7 @@ func Compile(ctx context.Context, input CompilationInput) (CompilationArtifacts,
 	}
 	targetFoundations := input.TargetFoundations
 	if len(targetFoundations) == 0 {
-		targetFoundations = HTTPCompilationTargetFoundations()
+		targetFoundations = ConnectorCompilationTargetFoundations()
 	}
 	if err := CheckRequirements(normalization, resolved, targetFoundations); err != nil {
 		return CompilationArtifacts{}, err
@@ -139,11 +139,22 @@ func emitBundle(
 		return nil, sourceError(ErrInvalidSource, "", "", "normalization is required")
 	}
 	diagnosticsByOperation := make(map[string][]Diagnostic)
+	operationsByID := make(map[string]NormalizedOperation, len(normalization.Operations))
+	for _, operation := range normalization.Operations {
+		operationsByID[operation.OperationID] = operation
+	}
 	for _, diagnostic := range normalization.Diagnostics {
 		if diagnostic.Severity != SeverityError {
 			continue
 		}
-		if !isolatableOperationDiagnostic(diagnostic) {
+		// A diagnostic whose operation is not in the normalized inventory keeps
+		// the interface-description grammar; it is refused by the inventory check
+		// below instead of being admitted as documentation metadata.
+		dialect := DialectOpenAPI30
+		if operation, attributed := operationsByID[diagnostic.OperationID]; attributed {
+			dialect = sourceSelectorDialect(operation)
+		}
+		if !isolatableOperationDiagnostic(diagnostic, dialect) {
 			return nil, diagnosticEmissionError(diagnostic)
 		}
 		diagnosticsByOperation[diagnostic.OperationID] = append(diagnosticsByOperation[diagnostic.OperationID], diagnostic)
@@ -276,14 +287,33 @@ func emitCommands(normalization *Normalization, commands []contract.Command) ([]
 	return marshalCanonicalDocument(manifest)
 }
 
-func isolatableOperationDiagnostic(diagnostic Diagnostic) bool {
+// sourceSelectorDialect returns the dialect whose selector grammar governs the
+// source facts of one normalized operation: the compiler lowers a documentation
+// dialect to the native PostgreSQL transport (normalizeDocumentationOperations)
+// and every interface-description dialect to the HTTP transport, so the
+// operation itself names the grammar of its source set. All three
+// interface-description dialects share one RFC 6901 pointer grammar, which
+// DialectOpenAPI30 names here; an operation that declares neither transport keeps
+// that grammar and can therefore never admit a documentation anchor.
+func sourceSelectorDialect(operation NormalizedOperation) Dialect {
+	if operation.Transport.Kind == contract.TransportKindPostgreSQL {
+		return DialectPostgreSQLDocs16
+	}
+	return DialectOpenAPI30
+}
+
+// isolatableOperationDiagnostic reports whether one diagnostic can become
+// unavailable operation metadata instead of refusing the whole bundle. Every
+// source fact must name a well-formed selector of the source grammar the
+// operation was lowered from, so a documentation anchor is admitted exactly
+// where the operation declares the documentation transport.
+func isolatableOperationDiagnostic(diagnostic Diagnostic, dialect Dialect) bool {
 	if diagnostic.ID == "" || diagnostic.OperationID == "" || len(diagnostic.SourceFacts) == 0 || len(diagnostic.AffectedCells) == 0 {
 		return false
 	}
 	for _, fact := range diagnostic.SourceFacts {
-		pointer := strings.TrimPrefix(fact.SourceRef.Pointer, "#")
 		if !validIdentity(fact.SourceRef.SourceID) || fact.SourceRef.Pointer == "" ||
-			!validJSONPointer(pointer) || !validDigest(fact.SHA256) {
+			!validSourceSelector(dialect, fact.SourceRef.Pointer) || !validDigest(fact.SHA256) {
 			return false
 		}
 	}
@@ -354,7 +384,7 @@ func emitUnavailableOperation(
 	diagnosticCodes := make([]string, 0, len(diagnostics))
 	codesByLane := make(map[contract.Lane][]string)
 	for _, diagnostic := range diagnostics {
-		if !isolatableOperationDiagnostic(diagnostic) || diagnostic.OperationID != normalized.OperationID {
+		if !isolatableOperationDiagnostic(diagnostic, sourceSelectorDialect(normalized)) || diagnostic.OperationID != normalized.OperationID {
 			return contract.UnavailableOperation{}, fmt.Errorf("operation %q has a diagnostic that cannot become unavailable metadata", normalized.OperationID)
 		}
 		if _, duplicate := diagnosticsByID[diagnostic.ID]; duplicate {

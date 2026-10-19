@@ -123,6 +123,10 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if err != nil {
 		return Configuration{}, err
 	}
+	providerSQL, err := resolveProviderSQL(data.providerSQL)
+	if err != nil {
+		return Configuration{}, err
+	}
 	connectors, err := resolveConnectors(data.connectors)
 	if err != nil {
 		return Configuration{}, err
@@ -152,6 +156,7 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 		server:             server,
 		worker:             data.worker,
 		providerHTTP:       providerHTTP,
+		providerSQL:        providerSQL,
 		connectors:         connectors,
 	}, nil
 }

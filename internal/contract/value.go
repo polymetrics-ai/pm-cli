@@ -109,6 +109,18 @@ func NewDecimalValue(exact string, precision, scale int) (PresentValue, error) {
 	}, nil
 }
 
+// NewDecimalText builds one exact decimal from its base-10 text alone: every
+// digit of the text counts toward its precision and the digits after its point
+// are its scale, so "10.20" is precision 4 and scale 2. The text is kept
+// exactly; it is never rescaled or normalized.
+func NewDecimalText(exact string) (PresentValue, error) {
+	precision, scale, ok := decimalShape(exact)
+	if !ok {
+		return PresentValue{}, contractError(ErrInvalidValue, "decimal", "exact text must match its positive precision and scale")
+	}
+	return NewDecimalValue(exact, precision, scale)
+}
+
 func NewDateValue(value string) (PresentValue, error) {
 	parsed, err := time.Parse("2006-01-02", value)
 	if err != nil || parsed.Format("2006-01-02") != value {

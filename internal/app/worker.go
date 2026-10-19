@@ -82,6 +82,10 @@ type WorkerServiceConfig struct {
 	LoadCredentialWrappingKey WorkerCredentialKeyLoader
 	ArtifactPublisher         *objects.Publisher
 	MaximumResultBytes        int64
+	// SQLBounds resolves the declared finite bounds of one customer SQL
+	// connection. It is the only source of the compiled statement's byte and
+	// attempt bounds; nil means this process admits no customer SQL connection.
+	SQLBounds SQLBoundsResolver
 }
 
 // WorkerService is the authenticated application boundary behind Temporal
@@ -99,6 +103,7 @@ type WorkerService struct {
 	loadCredentialWrappingKey WorkerCredentialKeyLoader
 	artifactPublisher         *objects.Publisher
 	maximumResultBytes        int64
+	sqlBounds                 SQLBoundsResolver
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -131,6 +136,7 @@ func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error)
 		loadCredentialWrappingKey: configuration.LoadCredentialWrappingKey,
 		artifactPublisher:         configuration.ArtifactPublisher,
 		maximumResultBytes:        configuration.MaximumResultBytes,
+		sqlBounds:                 configuration.SQLBounds,
 	}, nil
 }
 
@@ -827,7 +833,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		if freshSend {
 			physicalCall, err := newWorkerPhysicalCallBoundary(
 				service, execution, request.Run, state, task, dispatch.Intent, attempt, lease, permit,
-				dispatch.Retry != nil,
+				dispatch.Retry != nil, handler.Kind == HandlerSQL,
 			)
 			if err != nil {
 				return err
@@ -1602,6 +1608,7 @@ type workerPhysicalCallBoundary struct {
 
 	mu             sync.Mutex
 	admissionUsed  bool
+	multiSend      bool
 	credentialUsed bool
 }
 
@@ -1634,6 +1641,7 @@ func newWorkerPhysicalCallBoundary(
 	lease store.Lease,
 	permit store.AccountPermit,
 	retryAuthorized bool,
+	multiSend bool,
 ) (*workerPhysicalCallBoundary, error) {
 	if service == nil || !workerPhysicalStateEligible(state.record.State, task.State, retryAuthorized) ||
 		state.record.CancelRequested || task.CancelRequested || state.grant.RevokedAt != nil ||
@@ -1709,7 +1717,7 @@ func newWorkerPhysicalCallBoundary(
 	return &workerPhysicalCallBoundary{
 		service: service, execution: execution, reference: reference, route: state.route,
 		task: task, dispatch: dispatch, lease: lease, permit: cloneWorkerPhysicalPermit(permit),
-		call: call, approval: approval, retry: retryAuthorized,
+		call: call, approval: approval, retry: retryAuthorized, multiSend: multiSend,
 	}, nil
 }
 
@@ -1736,13 +1744,20 @@ func cloneWorkerPhysicalPermit(permit store.AccountPermit) store.AccountPermit {
 	return permit
 }
 
+// beginPhysicalAdmission admits one physical send of the exact immutable call.
+// The shared HTTP transport performs exactly one send per attempt, so a second
+// admission of the same call is refused. The shared PostgreSQL transport
+// re-authorizes every send it performs — one connection with its BEGIN, one
+// statement, one COMMIT and any rollback — so its boundary admits once per
+// send, and every entry rechecks current durable authority rather than reusing
+// a cached decision.
 func (boundary *workerPhysicalCallBoundary) beginPhysicalAdmission(call pmruntime.PhysicalCall) error {
 	if boundary == nil || !sameWorkerPhysicalCall(call, boundary.call) {
 		return workerFailure(ErrWorkerRouteMismatch, errors.New("physical-call identity differs from callback authority"))
 	}
 	boundary.mu.Lock()
 	defer boundary.mu.Unlock()
-	if boundary.admissionUsed {
+	if boundary.admissionUsed && !boundary.multiSend {
 		return workerFailure(ErrWorkerAuthorization, errors.New("physical-call admission was already consumed"))
 	}
 	boundary.admissionUsed = true
@@ -1755,7 +1770,7 @@ func (boundary *workerPhysicalCallBoundary) beginCredentialResolution(call pmrun
 	}
 	boundary.mu.Lock()
 	defer boundary.mu.Unlock()
-	if boundary.credentialUsed || boundary.admissionUsed {
+	if boundary.credentialUsed {
 		return workerFailure(ErrWorkerAuthorization, errors.New("credential authority was already consumed"))
 	}
 	boundary.credentialUsed = true
@@ -1780,7 +1795,13 @@ func (boundary *workerPhysicalCallBoundary) AdmitPhysicalCall(
 			if err := boundary.recheckPhysicalCall(ctx, tx, state, call); err != nil {
 				return err
 			}
-			if boundary.permit.State != store.AccountPermitReserved {
+			boundary.mu.Lock()
+			reserved := boundary.permit.State == store.AccountPermitReserved
+			boundary.mu.Unlock()
+			if !reserved {
+				// This boundary already authorized its exact account permit for
+				// this dispatch, so every later send of the same immutable call
+				// reauthorizes the current state without re-reserving capacity.
 				return nil
 			}
 			permit, err := store.LoadAccountPermit(ctx, tx, call.PermitRef)
@@ -1799,6 +1820,9 @@ func (boundary *workerPhysicalCallBoundary) AdmitPhysicalCall(
 			if !sameWorkerPhysicalPermit(authorized, expected) {
 				return workerFailure(ErrWorkerAuthorization, errors.New("physical-call account permit dispatch changed immutable identity"))
 			}
+			boundary.mu.Lock()
+			boundary.permit = cloneWorkerPhysicalPermit(authorized)
+			boundary.mu.Unlock()
 			return nil
 		},
 	)

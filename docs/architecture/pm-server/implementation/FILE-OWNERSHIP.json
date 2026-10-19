@@ -539,6 +539,7 @@
         "cmd/pmgen/main.go",
         "internal/compile/source.go",
         "internal/compile/dialects.go",
+        "internal/compile/documentation.go",
         "internal/compile/refs.go",
         "internal/compile/normalize.go",
         "internal/compile/semantics.go",
@@ -1123,7 +1124,7 @@
         "CommitCursor",
         "CommitPrefix"
       ],
-      "data_owned": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "data_owned": "Fetch→durableartifact→ack/cursor protocol",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
       "imports": [
         "contract",
@@ -1153,7 +1154,7 @@
       "process_owner": "API",
       "public_interfaces": [
         "QueryDataset",
-        "GetSchema"
+        "GetConnectionSchema"
       ],
       "data_owned": "Authorized warehouse/query and schema endpoints.",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
@@ -1183,7 +1184,8 @@
       "process_owner": "CLI",
       "public_interfaces": [
         "QuerySaved",
-        "InspectSchema"
+        "newSchemaCommand",
+        "newSchemaShowCommand"
       ],
       "data_owned": "Read-only query/schema controls",
       "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
@@ -5789,7 +5791,9 @@
       "first_milestone": "M7",
       "action": "CREATE",
       "paths": [
-        "internal/store/migrations/postgres/0006_warehouse_schema.sql"
+        "internal/store/migrations/postgres/0006_warehouse_schema.sql",
+        "internal/store/migrations/postgres/0019_warehouse_segments.sql",
+        "internal/store/warehouse_manifest.go"
       ],
       "package": "store",
       "process_owner": "Scoped PG migration",
@@ -6119,6 +6123,10 @@
         "internal/app/http_continuation_test.go",
         "internal/app/physical_boundary_test.go",
         "internal/app/continuations.go",
+        "internal/config/provider_sql.go",
+        "internal/config/provider_sql_test.go",
+        "internal/app/sql_composition.go",
+        "internal/app/sql_composition_test.go",
         "internal/store/worker_retries.go",
         "internal/store/worker_retries_test.go"
       ]
@@ -6381,6 +6389,58 @@
         "internal/testfixture/artifacts.go",
         "tests/client-parity/artifact_test.go"
       ]
+    },
+    {
+      "id": "T_V36b",
+      "first_milestone": "M7",
+      "action": "CREATE",
+      "paths": [
+        "internal/sync/read_selector_refusal_test.go"
+      ],
+      "package": "sync",
+      "process_owner": "Worker",
+      "public_interfaces": [
+        "TestConnectionReadSelectorRefusalsAreConcealed"
+      ],
+      "data_owned": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "api",
+        "contract",
+        "store",
+        "warehouse"
+      ],
+      "test_ids": [
+        "V36",
+        "V37"
+      ],
+      "sequence_within_milestone": 1,
+      "prior_group_id": "T_V36b",
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
+    },
+    {
+      "id": "T_V39b",
+      "first_milestone": "M7",
+      "action": "CREATE",
+      "paths": [
+        "internal/sync/etl_scratch_test.go"
+      ],
+      "package": "sync",
+      "process_owner": "Worker",
+      "public_interfaces": [
+        "TestPageAcknowledgedAfterCrashedAttemptScratch"
+      ],
+      "data_owned": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+      "must_not_own": "Provider-specific shared-code policy; unscoped state; client provider secrets; alternate storage/scheduler authority.",
+      "imports": [
+        "warehouse"
+      ],
+      "test_ids": [
+        "V39"
+      ],
+      "sequence_within_milestone": 1,
+      "prior_group_id": "T_V39b",
+      "review_state": "planning_semantics_audited; implementation UNEXECUTED"
     }
   ],
   "files": [
@@ -12219,7 +12279,7 @@
       "milestone": "M6",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Actual staged source\u2192delivery\u2192durableack\u2192contiguouscursor with lostack/restart",
+      "responsibility": "Actual staged source→delivery→durableack→contiguouscursor with lostack/restart",
       "interfaces": [
         "ExecuteCase"
       ],
@@ -12986,7 +13046,7 @@
       "milestone": "M7",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Own etl behavior within sync; bounded role: Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "responsibility": "Own etl behavior within sync; bounded role: Fetch→durableartifact→ack/cursor protocol",
       "interfaces": [],
       "dependencies": [
         "contract",
@@ -13003,7 +13063,7 @@
       "generator": null,
       "go_package": "sync",
       "assignment_owner": "sync",
-      "group_responsibility": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "group_responsibility": "Fetch→durableartifact→ack/cursor protocol",
       "allowed_internal_dependencies": [
         "contract",
         "runtime",
@@ -13049,7 +13109,7 @@
       "milestone": "M7",
       "action": "CREATE",
       "kind": "authored",
-      "responsibility": "Own checkpoint behavior within sync; bounded role: Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "responsibility": "Own checkpoint behavior within sync; bounded role: Fetch→durableartifact→ack/cursor protocol",
       "interfaces": [],
       "dependencies": [
         "contract",
@@ -13066,7 +13126,7 @@
       "generator": null,
       "go_package": "sync",
       "assignment_owner": "sync",
-      "group_responsibility": "Fetch\u2192durableartifact\u2192ack/cursor protocol",
+      "group_responsibility": "Fetch→durableartifact→ack/cursor protocol",
       "allowed_internal_dependencies": [
         "contract",
         "runtime",
@@ -13169,7 +13229,7 @@
       "kind": "authored",
       "responsibility": "Own schema behavior within httpapi; bounded role: Authorized warehouse/query and schema endpoints.",
       "interfaces": [
-        "GetSchema"
+        "GetConnectionSchema"
       ],
       "dependencies": [
         "api",
@@ -13267,7 +13327,8 @@
       "kind": "authored",
       "responsibility": "Own schema behavior within cli; bounded role: Read-only query/schema controls",
       "interfaces": [
-        "InspectSchema"
+        "newSchemaCommand",
+        "newSchemaShowCommand"
       ],
       "dependencies": [
         "api",
@@ -22969,7 +23030,7 @@
       "generator": null,
       "go_package": null,
       "assignment_owner": "proof",
-      "group_responsibility": "N13-PG narrow PostgreSQL source\u2192warehouse/query/mapping\u2192separate destination mapped-upsert composition through the common runner; not full #41 closure.",
+      "group_responsibility": "N13-PG narrow PostgreSQL source→warehouse/query/mapping→separate destination mapped-upsert composition through the common runner; not full #41 closure.",
       "allowed_internal_dependencies": [],
       "import_activation": [],
       "subsequent_wiring_milestones": [
@@ -33107,6 +33168,98 @@
         {
           "package": "credentials",
           "earliest_milestone": "M6",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/sync/read_selector_refusal_test.go",
+      "group_id": "T_V36b",
+      "prior_group_id": "T_V36b",
+      "owner": "sync",
+      "process": "Worker",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+      "interfaces": [
+        "TestConnectionReadSelectorRefusalsAreConcealed"
+      ],
+      "dependencies": [
+        "api",
+        "contract",
+        "store",
+        "warehouse"
+      ],
+      "test_ids": [
+        "V36",
+        "V37"
+      ],
+      "generator": null,
+      "go_package": "sync",
+      "assignment_owner": "sync",
+      "group_responsibility": "A caller-supplied schema binding or retained-snapshot selector that names nothing the authenticated scope can reach is concealed as one shared resource_not_found refusal, while the authorized schema and dataset documents keep answering.",
+      "allowed_internal_dependencies": [
+        "api",
+        "contract",
+        "store",
+        "warehouse"
+      ],
+      "import_activation": [
+        {
+          "package": "api",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "contract",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "store",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        },
+        {
+          "package": "warehouse",
+          "earliest_milestone": "M7",
+          "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
+        }
+      ],
+      "subsequent_wiring_milestones": []
+    },
+    {
+      "path": "internal/sync/etl_scratch_test.go",
+      "group_id": "T_V39b",
+      "prior_group_id": "T_V39b",
+      "owner": "sync",
+      "process": "Worker",
+      "milestone": "M7",
+      "action": "CREATE",
+      "kind": "authored",
+      "responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+      "interfaces": [
+        "TestPageAcknowledgedAfterCrashedAttemptScratch"
+      ],
+      "dependencies": [
+        "warehouse"
+      ],
+      "test_ids": [
+        "V39"
+      ],
+      "generator": null,
+      "go_package": "sync",
+      "assignment_owner": "sync",
+      "group_responsibility": "A page whose crashed attempt left its admitted scratch file behind is still acknowledged exactly once: the admitted scratch names the attempt that wrote it, and the registered segment identity stays position-derived so an exact replay resolves to the one registration.",
+      "allowed_internal_dependencies": [
+        "warehouse"
+      ],
+      "import_activation": [
+        {
+          "package": "warehouse",
+          "earliest_milestone": "M7",
           "rule": "Dependency permission, not mandatory import; introduce actual wiring only when its concrete interface/implementation exists. No substitute backend."
         }
       ],

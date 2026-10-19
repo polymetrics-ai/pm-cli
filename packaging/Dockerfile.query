@@ -1,0 +1,123 @@
+# Restricted analytical child image for pm-query.
+#
+# Only this image links the native analytical engine. The child reads exactly
+# one bounded typed request from standard input, opens only the admitted local
+# Parquet files that request names, and writes one bounded typed response to
+# standard output. It needs no provider, object-store, or PostgreSQL credential,
+# no network, and no writable shared database file: the supervising worker
+# supplies a private per-attempt directory through TMPDIR and HOME.
+#
+# The two base images are supplied as build arguments and must be digest
+# references: the builder stage refuses an absent, tag-only, or otherwise
+# non-digest argument before it builds anything, and the runtime stage is never
+# resolved from a mutable tag. Their pinned identities are still deferred --
+# neither argument is admitted by build/toolchains.lock.json yet, and
+# scripts/ci/check-image-pins.py reads that lock only, so this Dockerfile
+# verifies the *form* of each reference and claims no verified registry
+# identity. Supply the digests once the toolchain lock admits these images.
+#
+#   docker build \
+#     --build-arg GO_BUILD_IMAGE=golang@sha256:<pinned index digest> \
+#     --build-arg RUNTIME_IMAGE=<pinned runtime base with libstdc++>@sha256:<pinned index digest> \
+#     -f packaging/Dockerfile.query -t pm-query:<tag> .
+#
+# The runtime base must provide the C++ runtime the pinned DuckDB static
+# libraries need (for example a distroless "cc" image); a fully static base
+# cannot execute the child.
+
+ARG GO_BUILD_IMAGE
+ARG RUNTIME_IMAGE
+
+FROM ${GO_BUILD_IMAGE} AS builder
+
+ARG GO_BUILD_IMAGE
+ARG RUNTIME_IMAGE
+
+# A tag, a bare name, or an absent argument is not a pinned base image. This is
+# the builder stage's first step, so a non-digest RUNTIME_IMAGE fails the build
+# before that base is resolved; the builder base itself is already resolved by
+# the FROM above, which is why it is checked here rather than before it.
+RUN set -eu; \
+    guard_digest_reference() { \
+        name="$1"; \
+        reference="$2"; \
+        case "$reference" in \
+            *@sha256:*) \
+                repository="${reference%@sha256:*}"; \
+                digest="${reference##*@sha256:}"; \
+                ;; \
+            *) \
+                echo "$name must be a digest reference, found '${reference:-<absent>}'" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+        case "$repository" in \
+            ""|*[!A-Za-z0-9._:/-]*) \
+                echo "$name must name a repository before its digest" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+        case "$digest" in \
+            ""|*[!0-9a-f]*) \
+                echo "$name must be pinned by a lowercase sha256 digest" >&2; \
+                exit 1; \
+                ;; \
+        esac; \
+        if [ "${#digest}" -ne 64 ]; then \
+            echo "$name must be pinned by a 64-character sha256 digest" >&2; \
+            exit 1; \
+        fi; \
+    }; \
+    guard_digest_reference GO_BUILD_IMAGE "$GO_BUILD_IMAGE"; \
+    guard_digest_reference RUNTIME_IMAGE "$RUNTIME_IMAGE"
+
+# The pinned module graph is authoritative: the build never resolves a new
+# dependency and never rewrites go.mod or go.sum.
+ENV GOWORK=off \
+    GOFLAGS=-mod=readonly \
+    CGO_ENABLED=1
+
+WORKDIR /src
+
+COPY build/toolchains.lock.json /src/build/toolchains.lock.json
+COPY go.mod go.sum /src/
+
+# The builder's Go must be exactly the pinned toolchain. The lock file is the
+# single source of that pin, and a mismatch fails the build instead of
+# producing an unqualified native binary.
+RUN set -eu; \
+    pinned="$(sed -n 's/.*"go_version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' /src/build/toolchains.lock.json | head -n 1)"; \
+    actual="$(go env GOVERSION | sed 's/^go//')"; \
+    if [ -z "$pinned" ] || [ "$pinned" != "$actual" ]; then \
+        echo "pinned Go ${pinned:-<absent>} does not match the builder Go ${actual}" >&2; \
+        exit 1; \
+    fi
+
+RUN go mod download
+
+COPY cmd/pm-query /src/cmd/pm-query
+COPY internal/analytics /src/internal/analytics
+COPY internal/contract /src/internal/contract
+
+# A static, stripped child keeps the attack surface of the image to the one
+# binary and the base runtime libraries it links.
+RUN CGO_ENABLED=1 go build -mod=readonly -trimpath -ldflags='-s -w' \
+        -o /out/pm-query ./cmd/pm-query
+
+FROM ${RUNTIME_IMAGE} AS runtime
+
+LABEL org.opencontainers.image.title="pm-query" \
+      org.opencontainers.image.description="Restricted analytical child for PM warehouse queries" \
+      org.opencontainers.image.source="https://github.com/polymetrics-ai/pm-cli"
+
+COPY --from=builder /out/pm-query /usr/local/bin/pm-query
+
+# The child runs unprivileged and expects a supervisor-provided private scratch
+# directory. It holds no configuration, no credential, and no writable path of
+# its own: the worker starts it with a cleared environment and closed inherited
+# descriptors, and kills it on timeout or bound violation.
+USER 65532:65532
+
+# One request on standard input, one response on standard output, diagnostics on
+# standard error. The supervisor reads only the bounded response document.
+ENTRYPOINT ["/usr/local/bin/pm-query"]

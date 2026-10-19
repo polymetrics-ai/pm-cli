@@ -505,6 +505,45 @@ func (e SafeOutcomeReferenceKind) Valid() bool {
 	}
 }
 
+// Defines values for SchemaFieldType.
+const (
+	SchemaFieldTypeArray            SchemaFieldType = "array"
+	SchemaFieldTypeBool             SchemaFieldType = "bool"
+	SchemaFieldTypeDate             SchemaFieldType = "date"
+	SchemaFieldTypeInteger          SchemaFieldType = "integer"
+	SchemaFieldTypeNumber           SchemaFieldType = "number"
+	SchemaFieldTypeObject           SchemaFieldType = "object"
+	SchemaFieldTypeString           SchemaFieldType = "string"
+	SchemaFieldTypeTimestampInstant SchemaFieldType = "timestamp_instant"
+	SchemaFieldTypeTimestampLocal   SchemaFieldType = "timestamp_local"
+)
+
+// Valid indicates whether the value is a known member of the SchemaFieldType enum.
+func (e SchemaFieldType) Valid() bool {
+	switch e {
+	case SchemaFieldTypeArray:
+		return true
+	case SchemaFieldTypeBool:
+		return true
+	case SchemaFieldTypeDate:
+		return true
+	case SchemaFieldTypeInteger:
+		return true
+	case SchemaFieldTypeNumber:
+		return true
+	case SchemaFieldTypeObject:
+		return true
+	case SchemaFieldTypeString:
+		return true
+	case SchemaFieldTypeTimestampInstant:
+		return true
+	case SchemaFieldTypeTimestampLocal:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ServerInfoProtocolVersion.
 const (
 	ServerInfoProtocolVersionPmApiv1 ServerInfoProtocolVersion = "pm.api/v1"
@@ -577,6 +616,111 @@ func (e TaskViewLane) Valid() bool {
 	case TaskViewLaneReverseEtl:
 		return true
 	case TaskViewLaneSyncTransport:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarehouseColumnKind.
+const (
+	WarehouseColumnKindBoolean     WarehouseColumnKind = "boolean"
+	WarehouseColumnKindBytea       WarehouseColumnKind = "bytea"
+	WarehouseColumnKindDate        WarehouseColumnKind = "date"
+	WarehouseColumnKindDecimal     WarehouseColumnKind = "decimal"
+	WarehouseColumnKindInt64       WarehouseColumnKind = "int64"
+	WarehouseColumnKindJson        WarehouseColumnKind = "json"
+	WarehouseColumnKindText        WarehouseColumnKind = "text"
+	WarehouseColumnKindTimestamp   WarehouseColumnKind = "timestamp"
+	WarehouseColumnKindTimestamptz WarehouseColumnKind = "timestamptz"
+	WarehouseColumnKindUuid        WarehouseColumnKind = "uuid"
+)
+
+// Valid indicates whether the value is a known member of the WarehouseColumnKind enum.
+func (e WarehouseColumnKind) Valid() bool {
+	switch e {
+	case WarehouseColumnKindBoolean:
+		return true
+	case WarehouseColumnKindBytea:
+		return true
+	case WarehouseColumnKindDate:
+		return true
+	case WarehouseColumnKindDecimal:
+		return true
+	case WarehouseColumnKindInt64:
+		return true
+	case WarehouseColumnKindJson:
+		return true
+	case WarehouseColumnKindText:
+		return true
+	case WarehouseColumnKindTimestamp:
+		return true
+	case WarehouseColumnKindTimestamptz:
+		return true
+	case WarehouseColumnKindUuid:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarehousePredicateOperator.
+const (
+	Eq        WarehousePredicateOperator = "eq"
+	Gt        WarehousePredicateOperator = "gt"
+	Gte       WarehousePredicateOperator = "gte"
+	In        WarehousePredicateOperator = "in"
+	IsNotNull WarehousePredicateOperator = "is_not_null"
+	IsNull    WarehousePredicateOperator = "is_null"
+	Lt        WarehousePredicateOperator = "lt"
+	Lte       WarehousePredicateOperator = "lte"
+	Ne        WarehousePredicateOperator = "ne"
+	NotIn     WarehousePredicateOperator = "not_in"
+)
+
+// Valid indicates whether the value is a known member of the WarehousePredicateOperator enum.
+func (e WarehousePredicateOperator) Valid() bool {
+	switch e {
+	case Eq:
+		return true
+	case Gt:
+		return true
+	case Gte:
+		return true
+	case In:
+		return true
+	case IsNotNull:
+		return true
+	case IsNull:
+		return true
+	case Lt:
+		return true
+	case Lte:
+		return true
+	case Ne:
+		return true
+	case NotIn:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for WarehouseSegmentState.
+const (
+	Collected WarehouseSegmentState = "collected"
+	Live      WarehouseSegmentState = "live"
+	Retired   WarehouseSegmentState = "retired"
+)
+
+// Valid indicates whether the value is a known member of the WarehouseSegmentState enum.
+func (e WarehouseSegmentState) Valid() bool {
+	switch e {
+	case Collected:
+		return true
+	case Live:
+		return true
+	case Retired:
 		return true
 	default:
 		return false
@@ -739,6 +883,31 @@ type ConnectionPage struct {
 	CollectionRevision string                    `json:"collection_revision"`
 	Items              []Connection              `json:"items"`
 	NextCursor         nullable.Nullable[string] `json:"next_cursor"`
+}
+
+// ConnectionSchemaInspection defines model for ConnectionSchemaInspection.
+type ConnectionSchemaInspection struct {
+	ConnectionId string                    `json:"connection_id"`
+	ConnectorId  string                    `json:"connector_id"`
+	Fields       []SchemaField             `json:"fields"`
+	OrgId        string                    `json:"org_id"`
+	Selected     nullable.Nullable[string] `json:"selected"`
+	Snapshot     ConnectionSchemaSnapshot  `json:"snapshot"`
+	WorkspaceId  string                    `json:"workspace_id"`
+}
+
+// ConnectionSchemaSnapshot defines model for ConnectionSchemaSnapshot.
+type ConnectionSchemaSnapshot struct {
+	Blockers           []string `json:"blockers"`
+	Complete           bool     `json:"complete"`
+	ConnectionId       string   `json:"connection_id"`
+	ConnectorId        string   `json:"connector_id"`
+	ContentFingerprint string   `json:"content_fingerprint"`
+	FieldCount         int      `json:"field_count"`
+	PermissionRevision string   `json:"permission_revision"`
+	ProviderAccountId  string   `json:"provider_account_id"`
+	Resource           string   `json:"resource"`
+	SourceRevision     string   `json:"source_revision"`
 }
 
 // ConnectionUpdateRequest defines model for ConnectionUpdateRequest.
@@ -1261,6 +1430,20 @@ type SafeOutcomeReference struct {
 // SafeOutcomeReferenceKind defines model for SafeOutcomeReference.Kind.
 type SafeOutcomeReferenceKind string
 
+// SchemaField defines model for SchemaField.
+type SchemaField struct {
+	Name      string          `json:"name"`
+	Pointer   string          `json:"pointer"`
+	Precision int             `json:"precision"`
+	Required  bool            `json:"required"`
+	Scale     int             `json:"scale"`
+	Type      SchemaFieldType `json:"type"`
+	Writable  bool            `json:"writable"`
+}
+
+// SchemaFieldType defines model for SchemaField.Type.
+type SchemaFieldType string
+
 // ServerInfo defines model for ServerInfo.
 type ServerInfo struct {
 	Features             []string                   `json:"features"`
@@ -1374,6 +1557,108 @@ type TaskViewLane string
 // TypedSchema defines model for TypedSchema.
 type TypedSchema = contract.Schema
 
+// WarehouseColumn defines model for WarehouseColumn.
+type WarehouseColumn struct {
+	Kind      WarehouseColumnKind `json:"kind"`
+	Name      string              `json:"name"`
+	Nullable  bool                `json:"nullable"`
+	Precision int                 `json:"precision"`
+	Scale     int                 `json:"scale"`
+}
+
+// WarehouseColumnKind defines model for WarehouseColumn.Kind.
+type WarehouseColumnKind string
+
+// WarehouseDatasetSnapshot defines model for WarehouseDatasetSnapshot.
+type WarehouseDatasetSnapshot struct {
+	ConnectionId  string                    `json:"connection_id"`
+	ConnectorId   string                    `json:"connector_id"`
+	CursorOrdinal int64                     `json:"cursor_ordinal"`
+	Dataset       string                    `json:"dataset"`
+	OrgId         string                    `json:"org_id"`
+	Revision      int64                     `json:"revision"`
+	Rows          int64                     `json:"rows"`
+	Segments      []WarehouseSegment        `json:"segments"`
+	SnapshotId    nullable.Nullable[string] `json:"snapshot_id"`
+	WorkspaceId   string                    `json:"workspace_id"`
+}
+
+// WarehouseObject defines model for WarehouseObject.
+type WarehouseObject struct {
+	ArtifactId        string `json:"artifact_id"`
+	BackendGeneration string `json:"backend_generation"`
+	ByteLength        int64  `json:"byte_length"`
+	MediaType         string `json:"media_type"`
+	Sha256            string `json:"sha256"`
+}
+
+// WarehouseOrdering defines model for WarehouseOrdering.
+type WarehouseOrdering struct {
+	Column     string `json:"column"`
+	Descending bool   `json:"descending"`
+}
+
+// WarehouseParameter defines model for WarehouseParameter.
+type WarehouseParameter struct {
+	Name  string       `json:"name"`
+	Value PresentValue `json:"value"`
+}
+
+// WarehousePredicate defines model for WarehousePredicate.
+type WarehousePredicate struct {
+	Column    string                     `json:"column"`
+	Operator  WarehousePredicateOperator `json:"operator"`
+	Parameter nullable.Nullable[string]  `json:"parameter"`
+	Value     PresentValue               `json:"value"`
+	Values    []PresentValue             `json:"values"`
+}
+
+// WarehousePredicateOperator defines model for WarehousePredicate.Operator.
+type WarehousePredicateOperator string
+
+// WarehouseProjection defines model for WarehouseProjection.
+type WarehouseProjection struct {
+	Alias  nullable.Nullable[string] `json:"alias"`
+	Column string                    `json:"column"`
+}
+
+// WarehouseQueryRequest defines model for WarehouseQueryRequest.
+type WarehouseQueryRequest struct {
+	Limit      int64                     `json:"limit"`
+	Order      []WarehouseOrdering       `json:"order"`
+	Parameters []WarehouseParameter      `json:"parameters"`
+	Predicates []WarehousePredicate      `json:"predicates"`
+	Project    []WarehouseProjection     `json:"project"`
+	Relation   string                    `json:"relation"`
+	SnapshotId nullable.Nullable[string] `json:"snapshot_id"`
+}
+
+// WarehouseQueryResult defines model for WarehouseQueryResult.
+type WarehouseQueryResult struct {
+	Columns      []WarehouseColumn         `json:"columns"`
+	ConnectionId string                    `json:"connection_id"`
+	ConnectorId  string                    `json:"connector_id"`
+	Dataset      string                    `json:"dataset"`
+	OrgId        string                    `json:"org_id"`
+	Rows         [][]PresentValue          `json:"rows"`
+	SnapshotId   nullable.Nullable[string] `json:"snapshot_id"`
+	Truncated    bool                      `json:"truncated"`
+	WorkspaceId  string                    `json:"workspace_id"`
+}
+
+// WarehouseSegment defines model for WarehouseSegment.
+type WarehouseSegment struct {
+	ColumnFingerprint string                `json:"column_fingerprint"`
+	ManifestRevision  int64                 `json:"manifest_revision"`
+	Object            WarehouseObject       `json:"object"`
+	Ordinal           int64                 `json:"ordinal"`
+	RowCount          int64                 `json:"row_count"`
+	State             WarehouseSegmentState `json:"state"`
+}
+
+// WarehouseSegmentState defines model for WarehouseSegment.State.
+type WarehouseSegmentState string
+
 // Workspace defines model for Workspace.
 type Workspace struct {
 	MembershipId       string `json:"membership_id"`
@@ -1417,6 +1702,9 @@ type ConnectorCatalogID = string
 // Cursor defines model for Cursor.
 type Cursor = string
 
+// DatasetName defines model for DatasetName.
+type DatasetName = string
+
 // IdempotencyKey defines model for IdempotencyKey.
 type IdempotencyKey = string
 
@@ -1437,6 +1725,21 @@ type RunID = string
 
 // RunStateFilter defines model for RunStateFilter.
 type RunStateFilter = RunState
+
+// SchemaPermissionRevision defines model for SchemaPermissionRevision.
+type SchemaPermissionRevision = string
+
+// SchemaProviderAccount defines model for SchemaProviderAccount.
+type SchemaProviderAccount = string
+
+// SchemaResource defines model for SchemaResource.
+type SchemaResource = string
+
+// SchemaSourceRevision defines model for SchemaSourceRevision.
+type SchemaSourceRevision = string
+
+// SnapshotID defines model for SnapshotID.
+type SnapshotID = string
 
 // TaskID defines model for TaskID.
 type TaskID = string
@@ -1558,6 +1861,36 @@ type UpdateConnectionParams struct {
 	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
 	IfMatch *IfMatch `json:"If-Match,omitempty"`
 
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// GetConnectionSchemaParams defines parameters for GetConnectionSchema.
+type GetConnectionSchemaParams struct {
+	// Resource Declared provider resource whose account metadata is requested; it is part of the snapshot binding, never a directory or object key.
+	Resource SchemaResource `form:"resource" json:"resource"`
+
+	// PermissionRevision Permission revision the discovery observed; metadata bound to another revision is never served.
+	PermissionRevision SchemaPermissionRevision `form:"permission_revision" json:"permission_revision"`
+
+	// SourceRevision Source revision the discovery observed; metadata bound to another revision is never served.
+	SourceRevision SchemaSourceRevision `form:"source_revision" json:"source_revision"`
+
+	// ProviderAccountId Provider account the discovery observed; defaults to the authorized connection's stored provider account.
+	ProviderAccountId *SchemaProviderAccount `form:"provider_account_id,omitempty" json:"provider_account_id,omitempty"`
+
+	// SnapshotId Selects one retained snapshot's exact segment set instead of the dataset's live set.
+	SnapshotId *SnapshotID `form:"snapshot_id,omitempty" json:"snapshot_id,omitempty"`
+}
+
+// GetWarehouseDatasetParams defines parameters for GetWarehouseDataset.
+type GetWarehouseDatasetParams struct {
+	// SnapshotId Selects one retained snapshot's exact segment set instead of the dataset's live set.
+	SnapshotId *SnapshotID `form:"snapshot_id,omitempty" json:"snapshot_id,omitempty"`
+}
+
+// RunWarehouseQueryParams defines parameters for RunWarehouseQuery.
+type RunWarehouseQueryParams struct {
 	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
@@ -1738,6 +2071,9 @@ type DeleteConnectionJSONRequestBody = ConnectionDeleteRequest
 
 // UpdateConnectionJSONRequestBody defines body for UpdateConnection for application/json ContentType.
 type UpdateConnectionJSONRequestBody = ConnectionUpdateRequest
+
+// RunWarehouseQueryJSONRequestBody defines body for RunWarehouseQuery for application/json ContentType.
+type RunWarehouseQueryJSONRequestBody = WarehouseQueryRequest
 
 // CreateDelegationJSONRequestBody defines body for CreateDelegation for application/json ContentType.
 type CreateDelegationJSONRequestBody = DelegationCreateRequest

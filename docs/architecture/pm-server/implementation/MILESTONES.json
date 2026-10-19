@@ -1656,8 +1656,6 @@
         "Discover",
         "EncodeAnalyticValue",
         "ExecuteQueryChild",
-        "GetSchema",
-        "InspectSchema",
         "MaterializeParquet",
         "OpenRange",
         "PublishManifest",
@@ -1679,7 +1677,10 @@
         "TestTypedRequirementsAndAtlasGaps",
         "TestUniqueAttemptPublication",
         "WriteSegment",
-        "main"
+        "main",
+        "GetConnectionSchema",
+        "newSchemaCommand",
+        "newSchemaShowCommand"
       ],
       "schemas_and_migrations": [
         "internal/store/migrations/postgres/0006_warehouse_schema.sql"

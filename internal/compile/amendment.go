@@ -42,6 +42,12 @@ func DecodeSourceRevisionDiff(document []byte) (SourceRevisionDiff, error) {
 	return diff, nil
 }
 
+// Validate admits the dialect-independent structure of one revision diff: the
+// schema version, distinct canonical source digests, at least one changed
+// pointer, and distinct change identities and hashes. A change selector is only
+// meaningful under the source set's own selector grammar, so the grammar
+// refusal belongs to validateSelectors, which runs where the resolved source
+// names its dialect.
 func (diff SourceRevisionDiff) Validate() error {
 	if diff.SchemaVersion != SourceRevisionDiffSchemaVersion {
 		return sourceError(ErrUnsafeAmendment, "", "/schema_version", "source revision diff schema is unsupported")
@@ -55,7 +61,7 @@ func (diff SourceRevisionDiff) Validate() error {
 	seen := make(map[string]struct{}, len(diff.Changes))
 	for index, change := range diff.Changes {
 		pointer := fmt.Sprintf("/changes/%d", index)
-		if !validIdentity(change.SourceID) || !validJSONPointer(strings.TrimPrefix(change.Pointer, "#")) || change.Pointer == "" {
+		if !validIdentity(change.SourceID) || change.Pointer == "" {
 			return sourceError(ErrUnsafeAmendment, change.SourceID, pointer, "changed source identity and pointer are required")
 		}
 		if !validDigest(change.PreviousSHA256) || !validDigest(change.CurrentSHA256) || change.PreviousSHA256 == change.CurrentSHA256 {
@@ -70,6 +76,25 @@ func (diff SourceRevisionDiff) Validate() error {
 	return nil
 }
 
+// validateSelectors admits every changed selector under the source set's own
+// selector grammar: a documentation anchor for the documentation dialect, or an
+// RFC 6901 JSON pointer for the interface-description dialects. One malformed
+// selector refuses the whole diff before any captured byte is read.
+func (diff SourceRevisionDiff) validateSelectors(dialect Dialect) error {
+	for _, change := range diff.Changes {
+		if !validSourceSelector(dialect, change.Pointer) {
+			return sourceError(ErrUnsafeAmendment, change.SourceID, change.Pointer, "changed source selector is malformed")
+		}
+	}
+	return nil
+}
+
+// ValidateRevisionDiff admits one optional revision diff against the previous
+// and current source identities: a diff must be present exactly when the
+// identity changed, and it must bind both identities. Its changed selectors are
+// admitted against the resolved source by ValidateCurrentRevisionDiff, which
+// owns the source set's selector grammar and the exact captured witness of
+// every change.
 func ValidateRevisionDiff(previousDigest, currentDigest string, diff *SourceRevisionDiff) error {
 	if previousDigest == "" || previousDigest == currentDigest {
 		if diff != nil {
@@ -88,12 +113,20 @@ func ValidateRevisionDiff(previousDigest, currentDigest string, diff *SourceRevi
 	}
 	return nil
 }
+
+// ValidateCurrentRevisionDiff admits one revision diff against the resolved
+// source it claims: every changed selector must be well-formed under the source
+// set's own selector grammar, and its current hash must be the exact captured
+// witness of that selector.
 func ValidateCurrentRevisionDiff(source *ResolvedSource, diff *SourceRevisionDiff) error {
 	if diff == nil {
 		return nil
 	}
 	if source == nil || source.Captured == nil || diff.CurrentDigest != source.Captured.Digest {
 		return sourceError(ErrUnsafeAmendment, "", "", "revision diff is detached from the current captured source")
+	}
+	if err := diff.validateSelectors(source.Captured.Lock.SourceSet.Dialect); err != nil {
+		return err
 	}
 	for _, change := range diff.Changes {
 		hash, ok := source.PointerHash(change.SourceID, strings.TrimPrefix(change.Pointer, "#"))
@@ -194,20 +227,21 @@ func validateAmendmentSourceRefs(source *ResolvedSource, references []contract.S
 	if len(references) == 0 {
 		return sourceError(ErrUnsafeAmendment, "", "", "semantic amendment fact is not source-linked")
 	}
+	dialect := source.Captured.Lock.SourceSet.Dialect
 	seen := make(map[string]struct{}, len(references))
 	for _, reference := range references {
 		pointer := strings.TrimPrefix(reference.Pointer, "#")
 		if !validIdentity(reference.SourceID) || reference.Pointer == "" {
 			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source reference is malformed")
 		}
-		if source.Documentation(reference.SourceID) {
+		if source.SupplementalDocumentation(reference.SourceID) {
 			if _, ok := contract.ParseSourceByteRange(pointer); !ok {
 				return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "documentation source reference must be an exact byte range")
 			}
-		} else if !validJSONPointer(pointer) {
+		} else if !validSourceSelector(dialect, reference.Pointer) {
 			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source reference is malformed")
 		}
-		if _, ok := source.RawValue(reference.SourceID, pointer); !ok {
+		if !source.HasFact(reference.SourceID, pointer) {
 			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source pointer is outside the captured closure")
 		}
 		key := reference.SourceID + "\x00" + pointer
@@ -349,7 +383,7 @@ func validateCreatedAuthorizationChannel(
 	}
 	namesChannel := false
 	for _, reference := range amendmentHTTP.Witness.SourceRefs {
-		if source == nil || !source.Documentation(reference.SourceID) {
+		if source == nil || !source.SupplementalDocumentation(reference.SourceID) {
 			return absent
 		}
 		cited, ok := source.RawValue(reference.SourceID, strings.TrimPrefix(reference.Pointer, "#"))

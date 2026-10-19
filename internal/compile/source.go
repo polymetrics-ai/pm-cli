@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 )
@@ -69,6 +71,12 @@ const (
 	DialectOpenAPI30 Dialect = "openapi-3.0"
 	DialectOpenAPI31 Dialect = "openapi-3.1"
 	DialectSwagger20 Dialect = "swagger-2.0"
+	// DialectPostgreSQLDocs16 describes connector behavior through the pinned
+	// official PostgreSQL 16 protocol, SQL and metadata documentation. The
+	// identity names the documented family and its selected supported version,
+	// exactly as openapi-3.0 names a document format and its version; the
+	// connector branch itself stays in the connector root.
+	DialectPostgreSQLDocs16 Dialect = "postgresql-docs-16"
 	// DialectOfficialDocumentation identifies a supplemental capture of a
 	// provider's own published documentation. A documentation capture is not an
 	// OpenAPI description: it is never parsed as YAML or JSON, it never supplies
@@ -92,11 +100,13 @@ type SourceSet struct {
 
 type SourceDocument struct {
 	SourceID string `json:"source_id"`
-	// Dialect is the exact dialect of this document. An OpenAPI document
-	// declares the source set dialect (it is the one description that supplies
-	// operations); every other admitted document declares
-	// DialectOfficialDocumentation.
-	Dialect     Dialect `json:"dialect"`
+	// Dialect is the exact dialect of this document. In an interface-description
+	// source set, the OpenAPI document declares the source set dialect (it is
+	// the one description that supplies operations) and every other admitted
+	// document declares DialectOfficialDocumentation. A page of a documentation
+	// source set may omit it, so the field is omitted from the canonical lock
+	// encoding exactly when it is empty and existing source digests stay stable.
+	Dialect     Dialect `json:"dialect,omitempty"`
 	OfficialURL string  `json:"official_url"`
 	Repository  string `json:"repository,omitempty"`
 	Revision    string `json:"revision,omitempty"`
@@ -132,11 +142,18 @@ type SourceReference struct {
 	TargetPointer  string `json:"target_pointer"`
 }
 
+// SourceOperation is one declared source operation. An interface-description
+// dialect declares request and response variants; a documentation dialect
+// declares the typed PostgreSQL statement facts instead. StatementKind and
+// RelationBinding are pointers so an absent fact stays distinct from an
+// explicitly empty one.
 type SourceOperation struct {
-	SourceOperationID string       `json:"source_operation_id"`
-	SourceRefs        []SourceRef  `json:"source_refs"`
-	RequestVariants   []VariantRef `json:"request_variants"`
-	ResponseVariants  []VariantRef `json:"response_variants"`
+	SourceOperationID string                            `json:"source_operation_id"`
+	SourceRefs        []SourceRef                       `json:"source_refs"`
+	RequestVariants   []VariantRef                      `json:"request_variants"`
+	ResponseVariants  []VariantRef                      `json:"response_variants"`
+	StatementKind     *contract.PostgreSQLStatementKind `json:"statement_kind,omitempty"`
+	RelationBinding   *string                           `json:"relation_binding,omitempty"`
 }
 
 type SourceRef = contract.SourceRef
@@ -192,9 +209,9 @@ func (lock SourceLock) Validate() error {
 		return sourceError(ErrInvalidSource, "", "/connector_id", "must be a nonempty canonical identity")
 	}
 	switch lock.SourceSet.Dialect {
-	case DialectOpenAPI30, DialectOpenAPI31, DialectSwagger20:
+	case DialectOpenAPI30, DialectOpenAPI31, DialectSwagger20, DialectPostgreSQLDocs16:
 	default:
-		return sourceError(ErrUnsupportedDialect, "", "/source_set/dialect", "dialect is not admitted by the OpenAPI source compiler")
+		return sourceError(ErrUnsupportedDialect, "", "/source_set/dialect", "dialect is not admitted by the source compiler")
 	}
 	if !lock.SourceSet.ReferencesClosed {
 		return sourceError(ErrUnsafeReference, "", "/source_set/references_closed", "reference closure must be explicit and closed")
@@ -218,6 +235,13 @@ func (lock SourceLock) Validate() error {
 		}
 		documents[document.SourceID] = struct{}{}
 		dialects[document.SourceID] = document.Dialect
+	}
+	if isDocumentationDialect(lock.SourceSet.Dialect) {
+		for index, document := range lock.SourceSet.Documents {
+			if len(document.References) != 0 {
+				return sourceError(ErrUnsafeReference, document.SourceID, fmt.Sprintf("/source_set/documents/%d/references", index), "documentation dialects declare no reference closure; captured pages are self-contained")
+			}
+		}
 	}
 	closureTargets := make(map[string]struct{}, len(lock.SourceSet.Documents))
 	for index, document := range lock.SourceSet.Documents {
@@ -249,26 +273,31 @@ func (lock SourceLock) Validate() error {
 			}
 		}
 	}
-	// Exactly one admitted document is the OpenAPI description that supplies the
-	// operations of this source set. Every other document is either a declared
-	// fragment of that description's reference closure (a declared reference
-	// target, which cannot supply an operation on its own) or a supplemental
-	// official-documentation capture, which is refused above as a closure target.
-	roots := make([]string, 0, 1)
-	for _, document := range lock.SourceSet.Documents {
-		if document.Dialect != lock.SourceSet.Dialect {
-			continue
+	// An interface-description source set has exactly one admitted document that
+	// is the OpenAPI description supplying its operations. Every other document
+	// is either a declared fragment of that description's reference closure (a
+	// declared reference target, which cannot supply an operation on its own) or
+	// a supplemental official-documentation capture, which is refused above as a
+	// closure target. A documentation dialect has no such root: every pinned
+	// page of the set may source an operation through its declared anchors.
+	openAPIDocument := ""
+	if !isDocumentationDialect(lock.SourceSet.Dialect) {
+		roots := make([]string, 0, 1)
+		for _, document := range lock.SourceSet.Documents {
+			if document.Dialect != lock.SourceSet.Dialect {
+				continue
+			}
+			if _, closureFragment := closureTargets[document.SourceID]; closureFragment {
+				continue
+			}
+			roots = append(roots, document.SourceID)
 		}
-		if _, closureFragment := closureTargets[document.SourceID]; closureFragment {
-			continue
+		if len(roots) != 1 {
+			slices.Sort(roots)
+			return sourceError(ErrInvalidSource, "", "/source_set/documents", "source set must declare exactly one OpenAPI document that supplies operations; the documents outside a declared reference closure are: "+strings.Join(roots, ", "))
 		}
-		roots = append(roots, document.SourceID)
+		openAPIDocument = roots[0]
 	}
-	if len(roots) != 1 {
-		slices.Sort(roots)
-		return sourceError(ErrInvalidSource, "", "/source_set/documents", "source set must declare exactly one OpenAPI document that supplies operations; the documents outside a declared reference closure are: "+strings.Join(roots, ", "))
-	}
-	openAPIDocument := roots[0]
 
 	if len(lock.Operations) == 0 {
 		return sourceError(ErrInvalidSource, "", "/operations", "at least one source operation is required")
@@ -290,12 +319,24 @@ func (lock SourceLock) Validate() error {
 			if _, ok := documents[reference.SourceID]; !ok {
 				return sourceError(ErrInvalidSource, reference.SourceID, fmt.Sprintf("%s/source_refs/%d", pointer, refIndex), "operation source is absent from the captured closure")
 			}
-			if reference.SourceID != openAPIDocument {
+			if !isDocumentationDialect(lock.SourceSet.Dialect) && reference.SourceID != openAPIDocument {
 				return sourceError(ErrInvalidSource, reference.SourceID, fmt.Sprintf("%s/source_refs/%d", pointer, refIndex), "only the OpenAPI document that supplies operations can source an operation")
 			}
-			if !validJSONPointer(strings.TrimPrefix(reference.Pointer, "#")) || reference.Pointer == "" {
-				return sourceError(ErrInvalidSource, reference.SourceID, reference.Pointer, "operation source pointer is malformed")
+			if !validSourceSelector(lock.SourceSet.Dialect, reference.Pointer) || reference.Pointer == "" {
+				return sourceError(ErrInvalidSource, reference.SourceID, reference.Pointer, "operation source selector is malformed")
 			}
+		}
+		if isDocumentationDialect(lock.SourceSet.Dialect) {
+			if err := validateDocumentationOperation(operation, pointer); err != nil {
+				return err
+			}
+			continue
+		}
+		if operation.StatementKind != nil {
+			return sourceError(ErrInvalidSource, "", pointer+"/statement_kind", "an interface-description operation cannot declare a PostgreSQL statement kind")
+		}
+		if operation.RelationBinding != nil {
+			return sourceError(ErrInvalidSource, "", pointer+"/relation_binding", "an interface-description operation cannot declare a PostgreSQL relation binding")
 		}
 		if len(operation.RequestVariants) == 0 || len(operation.ResponseVariants) == 0 {
 			return sourceError(ErrInvalidSource, "", pointer, "request and response variants must both be explicit")
@@ -310,13 +351,74 @@ func (lock SourceLock) Validate() error {
 	return nil
 }
 
+// validateDocumentationOperation admits one documentation-dialect operation:
+// the typed statement facts this dialect needs, and no interface-description
+// variant inventory. Every member is closed and explicit, and an absent member
+// stays distinct from an explicitly empty one.
+func validateDocumentationOperation(operation SourceOperation, pointer string) error {
+	if operation.StatementKind == nil {
+		return sourceError(ErrInvalidSource, "", pointer+"/statement_kind", "a documentation operation must declare its PostgreSQL statement kind explicitly")
+	}
+	if !validStatementKind(*operation.StatementKind) {
+		return sourceError(ErrInvalidSource, "", pointer+"/statement_kind", "PostgreSQL statement kind is unsupported")
+	}
+	if operation.RelationBinding == nil {
+		return sourceError(ErrInvalidSource, "", pointer+"/relation_binding", "a documentation operation must declare its stable relation binding explicitly")
+	}
+	if !validRelationBinding(*operation.RelationBinding) {
+		return sourceError(ErrInvalidSource, "", pointer+"/relation_binding", "relation binding must be a bounded stable identity")
+	}
+	if operation.RequestVariants == nil || len(operation.RequestVariants) != 0 {
+		return sourceError(ErrInvalidSource, "", pointer+"/request_variants", "a documentation operation declares no request variants; the array must be explicitly empty")
+	}
+	if operation.ResponseVariants == nil || len(operation.ResponseVariants) != 0 {
+		return sourceError(ErrInvalidSource, "", pointer+"/response_variants", "a documentation operation declares no response variants; the array must be explicitly empty")
+	}
+	return nil
+}
+
+// validStatementKind admits the PostgreSQL statement kinds this compiler can
+// lower. It mirrors the transport contract so a lock-admitted statement can
+// never fail contract validation at emission.
+func validStatementKind(kind contract.PostgreSQLStatementKind) bool {
+	switch kind {
+	case contract.PostgreSQLStatementMetadata, contract.PostgreSQLStatementSelect, contract.PostgreSQLStatementMappedUpsert:
+		return true
+	default:
+		return false
+	}
+}
+
+// validRelationBinding mirrors contract's identity rule for the transport's
+// relation binding: one bounded, trimmed, control-free UTF-8 identity.
+func validRelationBinding(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || !utf8.ValidString(value) || len(value) > 512 {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
+}
+
 func validateSourceDocument(document SourceDocument, setDialect Dialect, pointer string) error {
 	if !validIdentity(document.SourceID) {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/source_id", "must be a stable source identity")
 	}
-	switch document.Dialect {
-	case setDialect:
-	case DialectOfficialDocumentation:
+	switch {
+	case isDocumentationDialect(setDialect):
+		// Every document of a documentation source set is a pinned page of the
+		// set's own documentation family, addressed only by its declared
+		// anchors. A document either omits its dialect or declares the set
+		// dialect exactly, so a supplemental byte-range capture can never be
+		// mixed into an anchor-addressed set.
+		if document.Dialect != "" && document.Dialect != setDialect {
+			return sourceError(ErrUnsupportedDialect, document.SourceID, pointer+"/dialect", "a documentation source set document must declare the source set dialect or none")
+		}
+	case document.Dialect == setDialect:
+	case document.Dialect == DialectOfficialDocumentation:
 		// A documentation capture is retained verbatim: it has no closure and no
 		// operation pointer, so nothing in it can be mistaken for OpenAPI data.
 		if document.Pointer != "" {
@@ -346,8 +448,8 @@ func validateSourceDocument(document SourceDocument, setDialect Dialect, pointer
 	if _, err := time.Parse(time.RFC3339, document.CapturedAt); err != nil {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/captured_at", "must be an RFC3339 timestamp")
 	}
-	if document.Pointer != "" && !validJSONPointer(strings.TrimPrefix(document.Pointer, "#")) {
-		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/pointer", "source pointer is malformed")
+	if document.Pointer != "" && !validSourceSelector(setDialect, document.Pointer) {
+		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/pointer", "source selector is malformed")
 	}
 	if document.ByteLength < 0 || document.ByteLength > MaxSourceDocumentBytes {
 		return sourceError(ErrInvalidSource, document.SourceID, pointer+"/byte_length", "source byte length is outside the compiler bound")
