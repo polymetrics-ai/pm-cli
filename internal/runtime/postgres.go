@@ -234,11 +234,15 @@ type SQLTransport struct {
 }
 
 // Execute performs at most one admitted PostgreSQL transaction: one connection
-// and BEGIN, one parameterized statement, and one COMMIT. Every physical send
-// is separately re-authorized through the shared admission seam, and one-use
-// credential material is resolved only at the execution boundary. It never
-// retries, never sends a statement twice, never creates a unit-ledger table,
-// and never claims transactional idempotency on an unmanaged customer target.
+// and BEGIN, the declared parameterized statements, and one COMMIT. A metadata
+// or select operation sends one statement. A mapped upsert locks and compares
+// its keyed row, then inserts it, updates exactly its changed columns, or
+// writes nothing, all inside the same transaction (see sqlMappedWrite). Every
+// physical send is separately re-authorized through the shared admission seam,
+// and one-use credential material is resolved only at the execution boundary.
+// It never retries the attempt, never sends a write statement twice, never
+// creates a unit-ledger table, and never claims transactional idempotency on an
+// unmanaged customer target.
 func (transport SQLTransport) Execute(ctx context.Context, call SQLCall) (SQLObservation, error) {
 	if ctx == nil {
 		return SQLObservation{}, context.Canceled
@@ -268,19 +272,22 @@ func (transport SQLTransport) Execute(ctx context.Context, call SQLCall) (SQLObs
 	if err != nil {
 		return observation, err
 	}
-	bindings, err := statement.parameterBytes()
-	if err != nil {
-		return observation, err
-	}
-	encodedBytes := uint64(len(statement.Text))
-	for _, binding := range bindings {
-		encodedBytes, err = addUint64(encodedBytes, uint64(len(binding)))
+	var plan *sqlMappedWrite
+	planned := []SQLStatement{statement}
+	if statement.Kind == contract.PostgreSQLStatementMappedUpsert {
+		write, err := buildSQLMappedWrite(call.Operation, call.Relation, call.Input)
 		if err != nil {
 			return observation, err
 		}
+		plan = &write
+		planned = []SQLStatement{write.compare, write.insert}
 	}
-	if encodedBytes > call.Limits.MaxBytes {
-		return observation, ErrSQLRequestTooLarge
+	// Every statement this attempt may send is bounded before any physical
+	// work; a later update statement is bounded again before its own send.
+	for _, candidate := range planned {
+		if _, err := sqlStatementBindings(candidate, call.Limits); err != nil {
+			return observation, err
+		}
 	}
 	observation.Statement = statement.Text
 	observation.Parameters = len(statement.Parameters)
@@ -325,22 +332,27 @@ func (transport SQLTransport) Execute(ctx context.Context, call SQLCall) (SQLObs
 		observation.Retry = sqlRetryFor(DispositionNotSent, call.Limits, "definitive_unsent")
 		return observation, &SQLAttemptError{Outcome: SQLOutcomeKnownRollback, cause: fmt.Errorf("%w: begin: %w", ErrSQLTransport, err)}
 	}
-	statementCtx, cancelStatement := context.WithTimeout(boundedCtx, call.Limits.MaxStatementDuration)
-	defer cancelStatement()
-	// Boundary two: the parameterized statement send.
-	if err := admitPhysicalCall(statementCtx, transport.Dependencies.Admitter, call.Call); err != nil {
-		transport.abort(boundedCtx, connection, call.Call)
-		return observation, err
+	// Boundary two: every parameterized statement send of the transaction.
+	session := sqlSession{transport: transport, connection: connection, call: call, observation: &observation}
+	var rows []SQLRow
+	var truncated bool
+	if plan != nil {
+		rows, err = session.writeMapped(boundedCtx, *plan)
+	} else {
+		rows, truncated, err = session.send(boundedCtx, statement)
 	}
-	rows, truncated, buffered, err := readSQLStatement(statementCtx, connection, statement, bindings, call.Limits)
 	if err != nil {
 		transport.abort(boundedCtx, connection, call.Call)
+		var refused *sqlAdmissionRefusal
+		if errors.As(err, &refused) {
+			observation.withholdWriteRows(statement.Kind)
+			return observation, refused.cause
+		}
 		observation.Retry = sqlRetryFor(DispositionNotSent, call.Limits, "definitive_rolled_back")
 		return observation, &SQLAttemptError{Outcome: SQLOutcomeKnownRollback, cause: err}
 	}
 	observation.Rows = rows
 	observation.Truncated = truncated
-	observation.BufferedBytes = buffered
 	commitCtx, cancelCommit := context.WithTimeout(boundedCtx, call.Limits.MaxStatementDuration)
 	defer cancelCommit()
 	// Boundary three: the COMMIT request.
@@ -359,6 +371,126 @@ func (transport SQLTransport) Execute(ctx context.Context, call SQLCall) (SQLObs
 		return observation, &SQLAttemptError{Outcome: outcome, cause: commitErr}
 	}
 	return observation, nil
+}
+
+// sqlSession is one open admitted transaction of one attempt.
+type sqlSession struct {
+	transport   SQLTransport
+	connection  *pgconn.PgConn
+	call        SQLCall
+	observation *SQLObservation
+}
+
+// sqlAdmissionRefusal reports that current authority refused one statement
+// send, so the statement never reached the target.
+type sqlAdmissionRefusal struct{ cause error }
+
+func (refusal *sqlAdmissionRefusal) Error() string { return refusal.cause.Error() }
+
+func (refusal *sqlAdmissionRefusal) Unwrap() error { return refusal.cause }
+
+// maximumSQLMappedWriteRounds bounds the compare-then-write rounds of one
+// mapped write. A second round happens only when a concurrent transaction
+// inserted the same key after this one compared it; the compare of the second
+// round locks that committed row, so a third round cannot be needed.
+const maximumSQLMappedWriteRounds = 2
+
+// send admits and sends one parameterized statement of the open transaction
+// and reads at most its declared row and byte bounds.
+func (session sqlSession) send(ctx context.Context, statement SQLStatement) ([]SQLRow, bool, error) {
+	bindings, err := sqlStatementBindings(statement, session.call.Limits)
+	if err != nil {
+		return nil, false, err
+	}
+	statementCtx, cancel := context.WithTimeout(ctx, session.call.Limits.MaxStatementDuration)
+	defer cancel()
+	if err := admitPhysicalCall(statementCtx, session.transport.Dependencies.Admitter, session.call.Call); err != nil {
+		return nil, false, &sqlAdmissionRefusal{cause: err}
+	}
+	session.observation.Statement = statement.Text
+	session.observation.Parameters = len(statement.Parameters)
+	rows, truncated, buffered, err := readSQLStatement(statementCtx, session.connection, statement, bindings, session.call.Limits)
+	session.observation.BufferedBytes, _ = addUint64(session.observation.BufferedBytes, buffered)
+	if err != nil {
+		return nil, false, err
+	}
+	return rows, truncated, nil
+}
+
+// writeMapped performs one changed-column-only mapped write inside the open
+// transaction. It returns the written row, or no row when every mapped value
+// already equals the stored one and nothing was assigned.
+func (session sqlSession) writeMapped(ctx context.Context, plan sqlMappedWrite) ([]SQLRow, error) {
+	for round := 0; round < maximumSQLMappedWriteRounds; round++ {
+		compared, err := session.sendKeyed(ctx, plan.compare)
+		if err != nil {
+			return nil, err
+		}
+		present, changed, err := plan.changedColumns(compared)
+		if err != nil {
+			return nil, err
+		}
+		if present {
+			if len(changed) == 0 {
+				return nil, nil
+			}
+			written, err := session.sendKeyed(ctx, plan.updateStatement(changed))
+			if err != nil {
+				return nil, err
+			}
+			if len(written) != 1 {
+				return nil, fmt.Errorf("%w: the locked keyed row was not updated exactly once", ErrSQLResponseMismatch)
+			}
+			return written, nil
+		}
+		inserted, err := session.sendKeyed(ctx, plan.insert)
+		if err != nil {
+			return nil, err
+		}
+		if len(inserted) == 1 {
+			return inserted, nil
+		}
+		if len(inserted) != 0 {
+			return nil, ErrSQLResponseMismatch
+		}
+		// A concurrent transaction committed the same key after the compare;
+		// compare the now-present row again instead of assigning blindly.
+	}
+	return nil, fmt.Errorf("%w: the keyed row stayed contended across the bounded write rounds", ErrSQLStatement)
+}
+
+// sendKeyed sends one statement of a mapped write. Each one addresses exactly
+// one declared key, so a response beyond the row bound is a key that matched
+// more than one row, never a prefix to settle on.
+func (session sqlSession) sendKeyed(ctx context.Context, statement SQLStatement) ([]SQLRow, error) {
+	rows, truncated, err := session.send(ctx, statement)
+	if err != nil {
+		return nil, err
+	}
+	if truncated || len(rows) > 1 {
+		return nil, fmt.Errorf("%w: the declared key matched more than one row", ErrSQLStatement)
+	}
+	return rows, nil
+}
+
+// sqlStatementBindings encodes one statement's parameters and refuses a
+// statement whose encoded text and bindings exceed the server-owned bound.
+func sqlStatementBindings(statement SQLStatement, limits SQLLimits) ([][]byte, error) {
+	bindings, err := statement.parameterBytes()
+	if err != nil {
+		return nil, err
+	}
+	encodedBytes := uint64(len(statement.Text))
+	for _, binding := range bindings {
+		encodedBytes, err = addUint64(encodedBytes, uint64(len(binding)))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if encodedBytes > limits.MaxBytes {
+		return nil, ErrSQLRequestTooLarge
+	}
+	return bindings, nil
 }
 
 // abort ends an open transaction. A ROLLBACK is itself a physical send, so it

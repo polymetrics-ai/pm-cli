@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"net/netip"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -179,6 +180,13 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 				{Column: "local_wall", Value: mustSQLLocalTimestamp(t, "2026-09-19 07:00:00")},
 			}
 		}
+		// A mapped write of an absent key sends its plan's statements in order:
+		// the locking compare, then the insert. Admission ordinal 1 is the
+		// connection boundary, each statement send is the next ordinal, and the
+		// COMMIT follows the last statement.
+		const mappedWriteStatements = 2
+		const writeStatementBoundary = 1 + mappedWriteStatements
+		const commitBoundary = writeStatementBoundary + 1
 		committedRows := func(t *testing.T, key string) string {
 			t.Helper()
 			row := fixture.adminRow(t, ctx, `SELECT count(*)::text AS rows FROM "`+sqlFixtureSchema+`"."`+sqlFixtureRelation+`" WHERE "record_id" = `+key)
@@ -233,13 +241,35 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 				}
 			})
 
-			t.Run("commit boundary/"+refusal.name, func(t *testing.T) {
-				result := attempt(t, 3, refusal.err, write, writeInput(key))
+			t.Run("write statement boundary/"+refusal.name, func(t *testing.T) {
+				result := attempt(t, writeStatementBoundary, refusal.err, write, writeInput(key))
 				if !errors.Is(result.err, ErrAdmissionRequired) {
 					t.Fatalf("error = %v", result.err)
 				}
 				begins, statements, commits := result.probe.counters()
-				if begins != 1 || statements != 1 || commits != 0 {
+				if begins != 1 || statements != mappedWriteStatements-1 || commits != 0 {
+					t.Fatalf("refused write statement boundary sent %d/%d/%d", begins, statements, commits)
+				}
+				for _, text := range result.probe.statementTexts() {
+					if strings.HasPrefix(text, "INSERT ") || strings.HasPrefix(text, "UPDATE ") {
+						t.Fatalf("a refused write statement boundary sent the write: %s", text)
+					}
+				}
+				if result.observation.Outcome != SQLOutcomeKnownRollback || result.observation.Retry.Eligible {
+					t.Fatalf("refused write statement boundary observation=%#v", result.observation)
+				}
+				if rows := committedRows(t, key); rows != "0" {
+					t.Fatalf("refused write statement boundary committed %s rows", rows)
+				}
+			})
+
+			t.Run("commit boundary/"+refusal.name, func(t *testing.T) {
+				result := attempt(t, commitBoundary, refusal.err, write, writeInput(key))
+				if !errors.Is(result.err, ErrAdmissionRequired) {
+					t.Fatalf("error = %v", result.err)
+				}
+				begins, statements, commits := result.probe.counters()
+				if begins != 1 || statements != mappedWriteStatements || commits != 0 {
 					t.Fatalf("refused commit boundary sent %d/%d/%d", begins, statements, commits)
 				}
 				if result.observation.Outcome != SQLOutcomeKnownRollback {
@@ -258,10 +288,10 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 				t.Fatalf("healthy observation=%#v error=%v", observation, err)
 			}
 			begins, statements, commits := probe.counters()
-			if begins != 1 || statements != 1 || commits != 1 {
+			if begins != 1 || statements != mappedWriteStatements || commits != 1 {
 				t.Fatalf("healthy send counts = %d/%d/%d", begins, statements, commits)
 			}
-			if admitter.calls.Load() != 3 {
+			if admitter.calls.Load() != commitBoundary {
 				t.Fatalf("healthy admits=%d; want one admitted boundary per allowed send", admitter.calls.Load())
 			}
 			if resolver.calls.Load() != 1 {

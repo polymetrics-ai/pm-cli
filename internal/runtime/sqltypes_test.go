@@ -386,8 +386,123 @@ func TestLosslessParameterizedSQL(t *testing.T) {
 		if !observed || !probe.fault.completed() {
 			t.Fatal("the withheld reply did not follow an independently observed accepted commit")
 		}
-		if statements := probe.statementTexts(); len(statements) != 1 {
-			t.Fatalf("a possibly committed statement was retried: %v", statements)
+		// The plan locks and compares the absent key, then sends its one insert;
+		// a possibly committed write statement is never sent again.
+		writes := 0
+		for _, statement := range probe.statementTexts() {
+			if strings.HasPrefix(statement, "INSERT ") || strings.HasPrefix(statement, "UPDATE ") {
+				writes++
+			}
+		}
+		if writes != 1 {
+			t.Fatalf("a possibly committed write statement was sent %d times: %v", writes, probe.statementTexts())
+		}
+	})
+}
+
+// TestSQLMappedUpsertAssignsOnlyChangedColumns proves the changed-column-only
+// write against the real fixture PostgreSQL. Column-scoped AFTER UPDATE OF
+// triggers record every column a statement assigns, which is exactly what a
+// PostgreSQL UPDATE OF trigger observes: a column named in the SET list fires
+// it even when the assigned value equals the stored one. Changing only note
+// must assign only note, an unchanged repeat must assign nothing, and a changed
+// amount must be assigned and written.
+func TestSQLMappedUpsertAssignsOnlyChangedColumns(t *testing.T) {
+	fixture := openSQLFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	connection := fixture.connection()
+	upsert := sqlTestOperation(t, contract.PostgreSQLStatementMappedUpsert, fixture.relation.Binding)
+	mapped := func(amount, note string) []SQLColumnValue {
+		return []SQLColumnValue{
+			{Column: "record_id", Value: mustSQLInt8(t, "51")},
+			{Column: "amount", Value: mustSQLNumeric(t, amount, 9, 4)},
+			{Column: "flagged", Value: SQLBooleanValue(false)},
+			{Column: "note", Value: SQLTextValue(note)},
+			{Column: "observed_at", Value: mustSQLInstant(t, "2026-09-19T05:00:00.5+02:00")},
+			{Column: "local_wall", Value: mustSQLLocalTimestamp(t, "2026-09-19 05:00:00.5")},
+			{Column: "document", Value: mustSQLJSON(t, SQLJSONB, `{"z": 2, "a": [3, 1]}`)},
+			{Column: "probe_id", Value: mustSQLInt8(t, "900")},
+		}
+	}
+	write := func(t *testing.T, input []SQLColumnValue) SQLObservation {
+		t.Helper()
+		observation, err := fixture.execute(t, ctx, sqlTestCall(t, upsert, connection, fixture.relation, input, sqlTestLimits(), now))
+		if err != nil || observation.Outcome != SQLOutcomeKnownCommit {
+			t.Fatalf("mapped upsert observation=%#v error=%v", observation, err)
+		}
+		return observation
+	}
+	// The seed is a plain insert: it assigns no existing row.
+	if seeded := write(t, mapped("7.5000", "before")); len(seeded.Rows) != 1 {
+		t.Fatalf("seeding upsert returned %d rows; want the inserted row", len(seeded.Rows))
+	}
+	for _, statement := range []string{
+		`CREATE SCHEMA "pm_probe"`,
+		`CREATE TABLE "pm_probe"."assignments" ("ordinal" bigserial PRIMARY KEY, "column_name" text NOT NULL)`,
+		`CREATE FUNCTION "pm_probe"."record_assignment"() RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog AS $$ BEGIN INSERT INTO "pm_probe"."assignments" ("column_name") VALUES (TG_ARGV[0]); RETURN NULL; END $$`,
+		`CREATE TRIGGER "assigns_amount" AFTER UPDATE OF "amount" ON "customer"."records" FOR EACH ROW EXECUTE FUNCTION "pm_probe"."record_assignment"('amount')`,
+		`CREATE TRIGGER "assigns_note" AFTER UPDATE OF "note" ON "customer"."records" FOR EACH ROW EXECUTE FUNCTION "pm_probe"."record_assignment"('note')`,
+		`CREATE TRIGGER "assigns_document" AFTER UPDATE OF "document" ON "customer"."records" FOR EACH ROW EXECUTE FUNCTION "pm_probe"."record_assignment"('document')`,
+	} {
+		fixture.adminExec(t, ctx, statement)
+	}
+	assignments := func(t *testing.T) string {
+		t.Helper()
+		row := fixture.adminRow(t, ctx, `SELECT coalesce(string_agg("column_name", ',' ORDER BY "ordinal"), '') AS assigned FROM "pm_probe"."assignments"`)
+		fixture.adminExec(t, ctx, `DELETE FROM "pm_probe"."assignments"`)
+		return *row["assigned"]
+	}
+	stored := func(t *testing.T) map[string]*string {
+		t.Helper()
+		return fixture.adminRow(t, ctx, `SELECT xmin::text AS version, "amount"::text AS amount, "note" FROM "customer"."records" WHERE "record_id" = 51`)
+	}
+
+	t.Run("changing_only_note_assigns_only_note", func(t *testing.T) {
+		observation := write(t, mapped("7.5000", "after"))
+		if len(observation.Rows) != 1 {
+			t.Fatalf("a changed note returned %d rows; want the assigned row", len(observation.Rows))
+		}
+		if assigned := assignments(t); assigned != "note" {
+			t.Fatalf("changing only note assigned %q; want only note (unchanged amount=7.5000 must not be assigned)", assigned)
+		}
+		if row := stored(t); *row["note"] != "after" || *row["amount"] != "7.5000" {
+			t.Fatalf("stored row after a note change = %v", row)
+		}
+	})
+
+	t.Run("an_unchanged_repeat_assigns_nothing", func(t *testing.T) {
+		before := stored(t)
+		// 7.5 equals the stored 7.5000 and the reordered jsonb document equals
+		// the stored one, so nothing is assigned.
+		repeat := mapped("7.5", "after")
+		repeat[6] = SQLColumnValue{Column: "document", Value: mustSQLJSON(t, SQLJSONB, `{"a": [3, 1], "z": 2}`)}
+		observation := write(t, repeat)
+		if len(observation.Rows) != 0 {
+			t.Fatalf("an unchanged repeat returned %d assigned rows; want none", len(observation.Rows))
+		}
+		if assigned := assignments(t); assigned != "" {
+			t.Fatalf("an unchanged repeat assigned %q; want no assignment", assigned)
+		}
+		if after := stored(t); *after["version"] != *before["version"] {
+			t.Fatalf("an unchanged repeat physically updated the row: xmin %s -> %s", *before["version"], *after["version"])
+		}
+	})
+
+	t.Run("a_changed_amount_is_assigned_and_written", func(t *testing.T) {
+		observation := write(t, mapped("8.2500", "after"))
+		if len(observation.Rows) != 1 {
+			t.Fatalf("a changed amount returned %d rows; want the assigned row", len(observation.Rows))
+		}
+		if number, ok := sqlValueOf(t, observation.Rows[0], "amount").Number(); !ok || number.Text != "8.2500" {
+			t.Fatalf("a changed amount returned %#v; want the written 8.2500", number)
+		}
+		if assigned := assignments(t); assigned != "amount" {
+			t.Fatalf("changing only amount assigned %q; want only amount", assigned)
+		}
+		if row := stored(t); *row["amount"] != "8.2500" || *row["note"] != "after" {
+			t.Fatalf("stored row after an amount change = %v", row)
 		}
 	})
 }

@@ -895,30 +895,16 @@ func validateSQLSourceFacts(operation contract.Operation) error {
 // BuildSQLStatement builds the one declared statement for the operation's
 // statement kind. Every value becomes a positional parameter; only declared
 // identifiers and fixed keywords appear in the SQL text.
+//
+// A mapped upsert is a plan of several statements in one transaction (see
+// sqlMappedWrite); its built statement is the plan's insert arm.
 func BuildSQLStatement(
 	operation contract.Operation,
 	relation SQLRelation,
 	input []SQLColumnValue,
 	rowBound uint64,
 ) (SQLStatement, error) {
-	if err := validateSQLSourceFacts(operation); err != nil {
-		return SQLStatement{}, err
-	}
-	if err := relation.Validate(); err != nil {
-		return SQLStatement{}, err
-	}
-	if relation.Binding != operation.Transport.RelationBinding {
-		return SQLStatement{}, fmt.Errorf("%w: relation binding does not match the declared operation", ErrSQLRelation)
-	}
-	mapped, err := orderSQLInput(relation, input)
-	if err != nil {
-		return SQLStatement{}, err
-	}
-	qualified, err := relation.qualifiedName()
-	if err != nil {
-		return SQLStatement{}, err
-	}
-	projection, err := sqlProjection(relation)
+	mapped, qualified, projection, err := prepareSQLStatement(operation, relation, input)
 	if err != nil {
 		return SQLStatement{}, err
 	}
@@ -935,6 +921,50 @@ func BuildSQLStatement(
 	default:
 		return SQLStatement{}, fmt.Errorf("%w: statement kind %q is unsupported", ErrUnsupportedSQL, operation.Transport.StatementKind)
 	}
+}
+
+// buildSQLMappedWrite builds the changed-column-only plan of one declared
+// mapped upsert under the same validation every built statement passes.
+func buildSQLMappedWrite(operation contract.Operation, relation SQLRelation, input []SQLColumnValue) (sqlMappedWrite, error) {
+	if operation.Transport.StatementKind != contract.PostgreSQLStatementMappedUpsert {
+		return sqlMappedWrite{}, fmt.Errorf("%w: only a mapped upsert has a mapped write plan", ErrSQLStatement)
+	}
+	mapped, qualified, projection, err := prepareSQLStatement(operation, relation, input)
+	if err != nil {
+		return sqlMappedWrite{}, err
+	}
+	return newSQLMappedWrite(relation, mapped, qualified, projection)
+}
+
+// prepareSQLStatement validates one declared operation, relation and input and
+// returns the ordered mapped input, the quoted relation and its projection.
+func prepareSQLStatement(
+	operation contract.Operation,
+	relation SQLRelation,
+	input []SQLColumnValue,
+) (map[string]SQLValue, string, string, error) {
+	if err := validateSQLSourceFacts(operation); err != nil {
+		return nil, "", "", err
+	}
+	if err := relation.Validate(); err != nil {
+		return nil, "", "", err
+	}
+	if relation.Binding != operation.Transport.RelationBinding {
+		return nil, "", "", fmt.Errorf("%w: relation binding does not match the declared operation", ErrSQLRelation)
+	}
+	mapped, err := orderSQLInput(relation, input)
+	if err != nil {
+		return nil, "", "", err
+	}
+	qualified, err := relation.qualifiedName()
+	if err != nil {
+		return nil, "", "", err
+	}
+	projection, err := sqlProjection(relation)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return mapped, qualified, projection, nil
 }
 
 func sqlMetadataStatement(relation SQLRelation) SQLStatement {
@@ -1028,73 +1058,221 @@ func sqlMappedUpsertStatement(
 	qualified string,
 	projection string,
 ) (SQLStatement, error) {
-	parameters := make([]SQLParameter, 0, len(mapped))
-	insertColumns := make([]string, 0, len(mapped))
-	valueExpressions := make([]string, 0, len(mapped))
-	updates := make([]string, 0, len(mapped))
-	retained := make([]string, 0, len(mapped))
-	proposed := make([]string, 0, len(mapped))
-	keys := make([]string, 0, len(relation.Columns))
+	plan, err := newSQLMappedWrite(relation, mapped, qualified, projection)
+	if err != nil {
+		return SQLStatement{}, err
+	}
+	return plan.insert, nil
+}
+
+// sqlMappedWrite is the parameterized plan of one mapped upsert. A mapped write
+// assigns only the approved mapped columns whose stored values differ from the
+// proposed ones, and makes no assignment at all when none differ, so a
+// column-scoped UPDATE OF trigger never fires for a column whose value is
+// unchanged. Inside one transaction it locks and compares the keyed row, then
+// either inserts it, updates exactly the changed columns, or writes nothing.
+// Every statement carries only declared identifiers, fixed keywords and
+// positional parameters; no plan statement is DDL or a delete.
+type sqlMappedWrite struct {
+	relation   SQLRelation
+	qualified  string
+	projection string
+	// keys are the declared key columns, each with its exact bound value.
+	keys []sqlBoundColumn
+	// assigned are the mapped non-key columns in declared order. An absent
+	// column is never assigned and keeps its declared default on insert.
+	assigned []sqlBoundColumn
+	// compare locks the keyed row and reports, per assigned column, whether
+	// the proposed value is distinct from the stored one.
+	compare SQLStatement
+	// insert writes the absent keyed row and yields to a concurrent insert.
+	insert SQLStatement
+}
+
+// sqlBoundColumn is one declared column with its quoted identifier, its exact
+// declared type and its bound value.
+type sqlBoundColumn struct {
+	column   SQLColumn
+	quoted   string
+	typeName string
+	value    SQLValue
+}
+
+// sqlMappedPresenceColumn names the leading compare output that proves the
+// keyed row exists.
+const sqlMappedPresenceColumn = "pm_present"
+
+func newSQLMappedWrite(
+	relation SQLRelation,
+	mapped map[string]SQLValue,
+	qualified string,
+	projection string,
+) (sqlMappedWrite, error) {
+	plan := sqlMappedWrite{relation: relation, qualified: qualified, projection: projection}
 	for _, column := range relation.Columns {
 		quoted, err := QuoteSQLIdentifier(column.Name)
 		if err != nil {
-			return SQLStatement{}, err
-		}
-		if column.Key {
-			keys = append(keys, quoted)
+			return sqlMappedWrite{}, err
 		}
 		value, present := mapped[column.Name]
 		if !present || value.IsAbsent() {
 			// An absent column keeps the declared default on insert and the
-			// retained value on conflict.
+			// retained value of an existing row.
 			if column.Key {
-				return SQLStatement{}, fmt.Errorf("%w: key column %q requires an exact value", ErrSQLStatement, column.Name)
+				return sqlMappedWrite{}, fmt.Errorf("%w: key column %q requires an exact value", ErrSQLStatement, column.Name)
 			}
 			continue
 		}
 		if column.Key && value.IsNull() {
-			return SQLStatement{}, fmt.Errorf("%w: key column %q requires an exact value", ErrSQLStatement, column.Name)
+			return sqlMappedWrite{}, fmt.Errorf("%w: key column %q requires an exact value", ErrSQLStatement, column.Name)
 		}
 		typeName, err := column.Kind.sqlTypeName(column.Precision, column.Scale)
 		if err != nil {
-			return SQLStatement{}, err
+			return sqlMappedWrite{}, err
 		}
-		parameters = append(parameters, SQLParameter{Column: column.Name, Value: value})
-		insertColumns = append(insertColumns, quoted)
-		valueExpressions = append(valueExpressions, "CAST($"+strconv.Itoa(len(parameters))+" AS "+typeName+")")
-		if !column.Key {
-			updates = append(updates, quoted+" = EXCLUDED."+quoted)
-			retained = append(retained, sqlUpsertComparable(column.Kind, sqlUpsertTargetAlias+"."+quoted))
-			proposed = append(proposed, sqlUpsertComparable(column.Kind, "EXCLUDED."+quoted))
+		bound := sqlBoundColumn{column: column, quoted: quoted, typeName: typeName, value: value}
+		if column.Key {
+			plan.keys = append(plan.keys, bound)
+		} else {
+			plan.assigned = append(plan.assigned, bound)
 		}
 	}
-	if len(insertColumns) == 0 {
-		return SQLStatement{}, fmt.Errorf("%w: mapped upsert requires at least one mapped column", ErrSQLStatement)
+	if len(plan.keys) == 0 {
+		return sqlMappedWrite{}, fmt.Errorf("%w: mapped upsert requires its declared key", ErrSQLStatement)
 	}
-	text := "INSERT INTO " + qualified + " AS " + sqlUpsertTargetAlias + " (" + strings.Join(insertColumns, ", ") +
-		") VALUES (" + strings.Join(valueExpressions, ", ") + ") ON CONFLICT (" + strings.Join(keys, ", ") + ")"
-	if len(updates) == 0 {
-		text += " DO NOTHING"
-	} else {
-		// A retained row whose mapped values already equal the proposed ones is
-		// never assigned: the conflict arm makes no physical update and returns
-		// no row, which the caller settles as unchanged.
-		text += " DO UPDATE SET " + strings.Join(updates, ", ") +
-			" WHERE ROW(" + strings.Join(retained, ", ") + ") IS DISTINCT FROM ROW(" + strings.Join(proposed, ", ") + ")"
-	}
-	text += " RETURNING " + projection
-	return SQLStatement{
-		Kind: contract.PostgreSQLStatementMappedUpsert, Text: text,
-		Parameters: parameters, Columns: relation.Columns,
-	}, nil
+	plan.compare = plan.compareStatement()
+	plan.insert = plan.insertStatement()
+	return plan, nil
 }
 
-// sqlUpsertTargetAlias names the retained row of a mapped upsert's conflict arm.
+// keyCondition renders the declared key filter over the first len(keys)
+// parameters, which every plan statement binds first.
+func (plan sqlMappedWrite) keyCondition() (string, []SQLParameter) {
+	conditions := make([]string, 0, len(plan.keys))
+	parameters := make([]SQLParameter, 0, len(plan.keys))
+	for _, key := range plan.keys {
+		parameters = append(parameters, SQLParameter{Column: key.column.Name, Value: key.value})
+		conditions = append(conditions,
+			sqlUpsertTargetAlias+"."+key.quoted+" = CAST($"+strconv.Itoa(len(parameters))+" AS "+key.typeName+")")
+	}
+	return strings.Join(conditions, " AND "), parameters
+}
+
+// compareStatement locks the keyed row for the rest of the transaction and
+// lets PostgreSQL itself decide, per assigned column, whether the proposed
+// value differs from the stored one: the same type equality the unchanged-row
+// guard always used, and json by its exact stored text.
+func (plan sqlMappedWrite) compareStatement() SQLStatement {
+	condition, parameters := plan.keyCondition()
+	outputs := []string{"true AS " + sqlMappedPresenceColumn}
+	columns := []SQLColumn{{Name: sqlMappedPresenceColumn, Kind: SQLBoolean}}
+	for _, assigned := range plan.assigned {
+		parameters = append(parameters, SQLParameter{Column: assigned.column.Name, Value: assigned.value})
+		proposed := "CAST($" + strconv.Itoa(len(parameters)) + " AS " + assigned.typeName + ")"
+		outputs = append(outputs, "("+sqlUpsertComparable(assigned.column.Kind, sqlUpsertTargetAlias+"."+assigned.quoted)+
+			" IS DISTINCT FROM "+sqlUpsertComparable(assigned.column.Kind, proposed)+") AS "+assigned.quoted)
+		columns = append(columns, SQLColumn{Name: assigned.column.Name, Kind: SQLBoolean})
+	}
+	text := "SELECT " + strings.Join(outputs, ", ") + " FROM " + plan.qualified + " AS " + sqlUpsertTargetAlias +
+		" WHERE " + condition + " FOR UPDATE"
+	return SQLStatement{Kind: contract.PostgreSQLStatementMappedUpsert, Text: text, Parameters: parameters, Columns: columns}
+}
+
+// insertStatement writes an absent keyed row with every mapped column. A
+// concurrent insert of the same key wins the conflict and returns no row, so
+// the caller compares the now-present row again instead of assigning blindly.
+func (plan sqlMappedWrite) insertStatement() SQLStatement {
+	parameters := make([]SQLParameter, 0, len(plan.keys)+len(plan.assigned))
+	insertColumns := make([]string, 0, len(plan.keys)+len(plan.assigned))
+	values := make([]string, 0, len(plan.keys)+len(plan.assigned))
+	keys := make([]string, 0, len(plan.keys))
+	for _, column := range plan.relation.Columns {
+		if column.Key {
+			quoted, _ := QuoteSQLIdentifier(column.Name)
+			keys = append(keys, quoted)
+		}
+	}
+	for _, bound := range plan.inDeclaredOrder() {
+		parameters = append(parameters, SQLParameter{Column: bound.column.Name, Value: bound.value})
+		insertColumns = append(insertColumns, bound.quoted)
+		values = append(values, "CAST($"+strconv.Itoa(len(parameters))+" AS "+bound.typeName+")")
+	}
+	text := "INSERT INTO " + plan.qualified + " AS " + sqlUpsertTargetAlias + " (" + strings.Join(insertColumns, ", ") +
+		") VALUES (" + strings.Join(values, ", ") + ") ON CONFLICT (" + strings.Join(keys, ", ") + ") DO NOTHING" +
+		" RETURNING " + plan.projection
+	return SQLStatement{
+		Kind: contract.PostgreSQLStatementMappedUpsert, Text: text,
+		Parameters: parameters, Columns: plan.relation.Columns,
+	}
+}
+
+// inDeclaredOrder returns every bound column in the relation's declared order.
+func (plan sqlMappedWrite) inDeclaredOrder() []sqlBoundColumn {
+	bound := make(map[string]sqlBoundColumn, len(plan.keys)+len(plan.assigned))
+	for _, column := range append(append([]sqlBoundColumn(nil), plan.keys...), plan.assigned...) {
+		bound[column.column.Name] = column
+	}
+	ordered := make([]sqlBoundColumn, 0, len(bound))
+	for _, column := range plan.relation.Columns {
+		if value, present := bound[column.Name]; present {
+			ordered = append(ordered, value)
+		}
+	}
+	return ordered
+}
+
+// changedColumns reads one compare result: whether the keyed row exists and,
+// when it does, exactly which assigned columns differ.
+func (plan sqlMappedWrite) changedColumns(rows []SQLRow) (bool, []sqlBoundColumn, error) {
+	switch len(rows) {
+	case 0:
+		return false, nil, nil
+	case 1:
+	default:
+		return false, nil, fmt.Errorf("%w: the declared key matched more than one row", ErrSQLStatement)
+	}
+	row := rows[0]
+	if len(row.Values) != len(plan.assigned)+1 {
+		return false, nil, ErrSQLResponseMismatch
+	}
+	if present, ok := row.Values[0].Boolean(); !ok || !present {
+		return false, nil, ErrSQLResponseMismatch
+	}
+	changed := make([]sqlBoundColumn, 0, len(plan.assigned))
+	for index, assigned := range plan.assigned {
+		distinct, ok := row.Values[index+1].Boolean()
+		if !ok {
+			return false, nil, ErrSQLResponseMismatch
+		}
+		if distinct {
+			changed = append(changed, assigned)
+		}
+	}
+	return true, changed, nil
+}
+
+// updateStatement assigns exactly the changed columns of the locked keyed row.
+func (plan sqlMappedWrite) updateStatement(changed []sqlBoundColumn) SQLStatement {
+	condition, parameters := plan.keyCondition()
+	assignments := make([]string, 0, len(changed))
+	for _, column := range changed {
+		parameters = append(parameters, SQLParameter{Column: column.column.Name, Value: column.value})
+		assignments = append(assignments, column.quoted+" = CAST($"+strconv.Itoa(len(parameters))+" AS "+column.typeName+")")
+	}
+	text := "UPDATE " + plan.qualified + " AS " + sqlUpsertTargetAlias + " SET " + strings.Join(assignments, ", ") +
+		" WHERE " + condition + " RETURNING " + plan.projection
+	return SQLStatement{
+		Kind: contract.PostgreSQLStatementMappedUpsert, Text: text,
+		Parameters: parameters, Columns: plan.relation.Columns,
+	}
+}
+
+// sqlUpsertTargetAlias names the stored row a mapped write compares and updates.
 const sqlUpsertTargetAlias = "pm_target"
 
-// sqlUpsertComparable renders one mapped column for the unchanged-row guard.
-// json has no equality operator, so its exact stored text is compared; every
-// other declared kind compares by its own type equality.
+// sqlUpsertComparable renders one mapped column for the changed-column
+// comparison. json has no equality operator, so its exact stored text is
+// compared; every other declared kind compares by its own type equality.
 func sqlUpsertComparable(kind SQLValueKind, reference string) string {
 	if kind == SQLJSON {
 		return reference + "::text"
