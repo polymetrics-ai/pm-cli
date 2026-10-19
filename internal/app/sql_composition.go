@@ -822,8 +822,7 @@ func sqlRowValue(value pmruntime.SQLValue) (contract.PresentValue, error) {
 		if !ok {
 			return contract.PresentValue{}, sqlRowValueError(value)
 		}
-		precision, scale := sqlDecimalTextShape(number.Text)
-		converted, err := contract.NewDecimalValue(number.Text, precision, scale)
+		converted, err := contract.NewDecimalText(number.Text)
 		if err != nil {
 			return contract.PresentValue{}, fmt.Errorf("%w: %v", ErrSQLStatementUnavailable, err)
 		}
@@ -863,25 +862,6 @@ func sqlRowValue(value pmruntime.SQLValue) (contract.PresentValue, error) {
 	default:
 		return contract.PresentValue{}, sqlRowValueError(value)
 	}
-}
-
-// sqlDecimalTextShape reports the precision and scale one exact decimal text
-// itself carries: every digit, and the digits after its point. The contract
-// decimal constructor still validates the whole rendering.
-func sqlDecimalTextShape(text string) (int, int) {
-	digits, scale, fractional := 0, 0, false
-	for _, character := range text {
-		switch {
-		case character == '.':
-			fractional = true
-		case character >= '0' && character <= '9':
-			digits++
-			if fractional {
-				scale++
-			}
-		}
-	}
-	return digits, scale
 }
 
 func sqlRowValueError(value pmruntime.SQLValue) error {

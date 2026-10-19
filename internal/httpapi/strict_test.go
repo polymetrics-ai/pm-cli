@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/warehouse"
 )
 
 // This consumer exercises the real generated binder and process middleware. It
@@ -305,6 +306,73 @@ func TestWarehousePredicateOperandArity(t *testing.T) {
 		predicate := WarehousePredicate{Column: "id", Operator: "eq", Value: contract.AbsentValue()}
 		if _, _, err := admittedWarehouseQuery(query(predicate)); !errors.Is(err, errInvalidHTTPInput) {
 			t.Fatalf("eq predicate without a scalar = %v; want an invalid-input refusal", err)
+		}
+	})
+}
+
+// TestWarehouseDecimalKeepsItsExactTextAndScale proves an exact decimal crosses
+// the warehouse boundary in one representation: base-10 text with an explicit
+// scale. An admitted operand becomes the warehouse's own exact unscaled value,
+// and a warehouse result renders back as the same exact decimal text.
+func TestWarehouseDecimalKeepsItsExactTextAndScale(t *testing.T) {
+	for _, exact := range []struct {
+		text      string
+		precision int
+		scale     int
+		unscaled  string
+	}{
+		{text: "10.20", precision: 4, scale: 2, unscaled: "1020"},
+		{text: "0.05", precision: 3, scale: 2, unscaled: "5"},
+		{text: "-1.50", precision: 3, scale: 2, unscaled: "-150"},
+		{text: "0.0", precision: 2, scale: 1, unscaled: "0"},
+	} {
+		t.Run("admit_"+exact.text, func(t *testing.T) {
+			wire, err := contract.NewDecimalValue(exact.text, exact.precision, exact.scale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			admitted, err := admittedQueryValue(wire)
+			if err != nil {
+				t.Fatalf("valid exact decimal operand %s was refused: %v", exact.text, err)
+			}
+			unscaled, scale, ok := admitted.Unscaled()
+			if !ok || unscaled != exact.unscaled || scale != exact.scale {
+				t.Fatalf("operand %s admitted as unscaled=%q scale=%d ok=%v; want %s scale %d",
+					exact.text, unscaled, scale, ok, exact.unscaled, exact.scale)
+			}
+			declaration, err := declareQueryParameter("amount", admitted)
+			if err != nil {
+				t.Fatalf("operand %s declaration: %v", exact.text, err)
+			}
+			if declaration.Scale != exact.scale || declaration.Precision < declaration.Scale {
+				t.Fatalf("operand %s declared precision=%d scale=%d", exact.text, declaration.Precision, declaration.Scale)
+			}
+		})
+		t.Run("render_"+exact.text, func(t *testing.T) {
+			internal, err := warehouse.DecimalQueryValue(exact.unscaled, exact.scale)
+			if err != nil {
+				t.Fatal(err)
+			}
+			rendered, err := projectQueryValue(internal)
+			if err != nil {
+				t.Fatalf("warehouse decimal %s cannot be rendered: %v", exact.text, err)
+			}
+			number, ok := rendered.ExactNumber()
+			if !ok || rendered.Kind() != contract.ValueKindDecimal ||
+				number != (contract.ExactNumber{Text: exact.text, Precision: exact.precision, Scale: exact.scale}) {
+				t.Fatalf("warehouse decimal %s rendered as %#v", exact.text, number)
+			}
+		})
+	}
+	t.Run("refuse_a_scale_zero_render", func(t *testing.T) {
+		// The shared exact decimal always carries a fractional part, so a
+		// scale-zero warehouse decimal has no exact decimal rendering.
+		internal, err := warehouse.DecimalQueryValue("12", 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := projectQueryValue(internal); err == nil {
+			t.Fatal("a scale-zero warehouse decimal rendered as an inexact decimal")
 		}
 	})
 }

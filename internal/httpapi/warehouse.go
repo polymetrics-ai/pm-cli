@@ -372,8 +372,14 @@ func declareQueryParameter(name string, value warehouse.QueryValue) (warehouse.Q
 		return warehouse.QueryParameterDeclaration{}, fmt.Errorf("%w: parameter %q carries no admitted value kind",
 			errInvalidHTTPInput, name)
 	}
-	if unscaled, scale, ok := value.Unscaled(); ok {
-		declaration.Precision = decimalPrecision(unscaled)
+	if text, scale, ok := value.DecimalText(); ok {
+		exact, err := contract.NewDecimalText(text)
+		number, isNumber := exact.ExactNumber()
+		if err != nil || !isNumber {
+			return warehouse.QueryParameterDeclaration{}, fmt.Errorf("%w: parameter %q carries no exact decimal",
+				errInvalidHTTPInput, name)
+		}
+		declaration.Precision = number.Precision
 		declaration.Scale = scale
 	}
 	return declaration, nil
@@ -405,7 +411,9 @@ func admittedQueryValue(value PresentValue) (warehouse.QueryValue, error) {
 		if !isNumber {
 			return warehouse.QueryValue{}, errUnbindableValue
 		}
-		return warehouse.DecimalQueryValue(number.Text, number.Scale)
+		// The shared exact decimal is base-10 text with an explicit scale, never
+		// the warehouse's unscaled digits: "10.20" binds unscaled 1020 at scale 2.
+		return warehouse.DecimalQueryValueText(number.Text, number.Scale)
 	case contract.ValueKindString:
 		text, ok := value.TextValue()
 		if !ok {
@@ -518,15 +526,6 @@ func requireMicrosecondFraction(text string) error {
 			errInvalidHTTPInput)
 	}
 	return nil
-}
-
-// decimalPrecision reports the digit count of one exact unscaled decimal.
-func decimalPrecision(unscaled string) int {
-	digits := len(unscaled)
-	if digits > 0 && (unscaled[0] == '-' || unscaled[0] == '+') {
-		digits--
-	}
-	return digits
 }
 
 // optionalString renders an optional parameter member without inventing a value
@@ -668,11 +667,13 @@ func projectQueryValue(value warehouse.QueryValue) (PresentValue, error) {
 		}
 		return contract.NewIntegerValue(strconv.FormatInt(integer, 10))
 	case warehouse.QueryKindDecimal:
-		unscaled, scale, ok := value.Unscaled()
+		// The warehouse holds unscaled digits; the shared exact decimal is the
+		// same value as base-10 text with its explicit scale.
+		text, _, ok := value.DecimalText()
 		if !ok {
 			return PresentValue{}, errUnprojectableValue
 		}
-		return contract.NewDecimalValue(unscaled, decimalPrecision(unscaled), scale)
+		return contract.NewDecimalText(text)
 	case warehouse.QueryKindBoolean:
 		boolean, ok := value.Boolean()
 		if !ok {

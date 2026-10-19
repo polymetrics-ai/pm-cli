@@ -147,6 +147,31 @@ func DecimalQueryValue(unscaled string, scale int) (QueryValue, error) {
 	return QueryValue{present: true, kind: QueryKindDecimal, unscaled: unscaled, scale: scale}, nil
 }
 
+// DecimalQueryValueText carries one exact decimal given in the shared contract
+// form: base-10 text with an explicit scale. "10.20" with scale 2 is the
+// unscaled integer 1020 at scale 2. The text must carry exactly the stated
+// scale; it is never rescaled, rounded or padded.
+func DecimalQueryValueText(text string, scale int) (QueryValue, error) {
+	negative := strings.HasPrefix(text, "-")
+	whole, fraction, found := strings.Cut(strings.TrimPrefix(text, "-"), ".")
+	if whole == "" || (found && fraction == "") || len(fraction) != scale {
+		return QueryValue{}, refusal(RefusalProtocol, "decimal text must carry exactly its declared scale %d", scale)
+	}
+	for _, character := range whole + fraction {
+		if character < '0' || character > '9' {
+			return QueryValue{}, refusal(RefusalProtocol, "decimal text must be base-10")
+		}
+	}
+	unscaled := strings.TrimLeft(whole+fraction, "0")
+	if unscaled == "" {
+		unscaled = "0"
+	}
+	if negative {
+		unscaled = "-" + unscaled
+	}
+	return DecimalQueryValue(unscaled, scale)
+}
+
 // TextQueryValue carries bounded text. An over-long payload is refused when the
 // request is validated rather than truncated here.
 func TextQueryValue(text string) QueryValue {
@@ -242,6 +267,27 @@ func (value QueryValue) Unscaled() (string, int, bool) {
 		return "", 0, false
 	}
 	return value.unscaled, value.scale, true
+}
+
+// DecimalText renders a decimal value in the shared contract form: exact
+// base-10 text with its explicit scale, so unscaled 1020 at scale 2 is "10.20"
+// and unscaled 5 at scale 2 is "0.05".
+func (value QueryValue) DecimalText() (string, int, bool) {
+	if value.Kind() != QueryKindDecimal {
+		return "", 0, false
+	}
+	if value.scale == 0 {
+		return value.unscaled, 0, true
+	}
+	digits := strings.TrimPrefix(value.unscaled, "-")
+	if len(digits) <= value.scale {
+		digits = strings.Repeat("0", value.scale-len(digits)+1) + digits
+	}
+	text := digits[:len(digits)-value.scale] + "." + digits[len(digits)-value.scale:]
+	if strings.HasPrefix(value.unscaled, "-") {
+		text = "-" + text
+	}
+	return text, value.scale, true
 }
 
 // Text returns the exact text payload of a text, date, UUID, or JSON value.
