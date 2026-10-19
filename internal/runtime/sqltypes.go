@@ -20,6 +20,9 @@ var (
 	ErrSQLStatement   = errors.New("invalid PostgreSQL statement")
 	ErrSQLRelation    = errors.New("invalid PostgreSQL relation binding")
 	ErrUnsupportedSQL = errors.New("unsupported PostgreSQL transport behavior")
+	// ErrSQLSchemaDrift reports a live relation whose columns or column types
+	// no longer match the admitted relation, so a write would be coerced.
+	ErrSQLSchemaDrift = errors.New("live PostgreSQL relation drifted from the admitted schema")
 )
 
 const (
@@ -1069,14 +1072,22 @@ func sqlMappedUpsertStatement(
 // assigns only the approved mapped columns whose stored values differ from the
 // proposed ones, and makes no assignment at all when none differ, so a
 // column-scoped UPDATE OF trigger never fires for a column whose value is
-// unchanged. Inside one transaction it locks and compares the keyed row, then
-// either inserts it, updates exactly the changed columns, or writes nothing.
-// Every statement carries only declared identifiers, fixed keywords and
-// positional parameters; no plan statement is DDL or a delete.
+// unchanged. Inside one transaction it first locks the relation against a
+// concurrent column type change and verifies the live column types against the
+// admitted relation, then locks and compares the keyed row, and finally either
+// inserts it, updates exactly the changed columns, or writes nothing. Every
+// statement carries only declared identifiers, fixed keywords and positional
+// parameters; no plan statement is DDL or a delete.
 type sqlMappedWrite struct {
 	relation   SQLRelation
 	qualified  string
 	projection string
+	// lock takes the lock every write takes anyway, ROW EXCLUSIVE, before the
+	// live types are read. It conflicts with the ACCESS EXCLUSIVE lock of
+	// ALTER TABLE, so the verified column types hold until COMMIT.
+	lock SQLStatement
+	// metadata reads the live column types the admitted relation must match.
+	metadata SQLStatement
 	// keys are the declared key columns, each with its exact bound value.
 	keys []sqlBoundColumn
 	// assigned are the mapped non-key columns in declared order. An absent
@@ -1140,6 +1151,11 @@ func newSQLMappedWrite(
 	if len(plan.keys) == 0 {
 		return sqlMappedWrite{}, fmt.Errorf("%w: mapped upsert requires its declared key", ErrSQLStatement)
 	}
+	plan.lock = SQLStatement{
+		Kind: contract.PostgreSQLStatementMappedUpsert,
+		Text: "LOCK TABLE ONLY " + qualified + " IN ROW EXCLUSIVE MODE",
+	}
+	plan.metadata = sqlMetadataStatement(relation)
 	plan.compare = plan.compareStatement()
 	plan.insert = plan.insertStatement()
 	return plan, nil

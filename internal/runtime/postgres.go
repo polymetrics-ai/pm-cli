@@ -280,7 +280,7 @@ func (transport SQLTransport) Execute(ctx context.Context, call SQLCall) (SQLObs
 			return observation, err
 		}
 		plan = &write
-		planned = []SQLStatement{write.compare, write.insert}
+		planned = []SQLStatement{write.lock, write.metadata, write.compare, write.insert}
 	}
 	// Every statement this attempt may send is bounded before any physical
 	// work; a later update statement is bounded again before its own send.
@@ -398,7 +398,11 @@ const maximumSQLMappedWriteRounds = 2
 // send admits and sends one parameterized statement of the open transaction
 // and reads at most its declared row and byte bounds.
 func (session sqlSession) send(ctx context.Context, statement SQLStatement) ([]SQLRow, bool, error) {
-	bindings, err := sqlStatementBindings(statement, session.call.Limits)
+	return session.sendWithin(ctx, statement, session.call.Limits)
+}
+
+func (session sqlSession) sendWithin(ctx context.Context, statement SQLStatement, limits SQLLimits) ([]SQLRow, bool, error) {
+	bindings, err := sqlStatementBindings(statement, limits)
 	if err != nil {
 		return nil, false, err
 	}
@@ -409,7 +413,7 @@ func (session sqlSession) send(ctx context.Context, statement SQLStatement) ([]S
 	}
 	session.observation.Statement = statement.Text
 	session.observation.Parameters = len(statement.Parameters)
-	rows, truncated, buffered, err := readSQLStatement(statementCtx, session.connection, statement, bindings, session.call.Limits)
+	rows, truncated, buffered, err := readSQLStatement(statementCtx, session.connection, statement, bindings, limits)
 	session.observation.BufferedBytes, _ = addUint64(session.observation.BufferedBytes, buffered)
 	if err != nil {
 		return nil, false, err
@@ -419,8 +423,29 @@ func (session sqlSession) send(ctx context.Context, statement SQLStatement) ([]S
 
 // writeMapped performs one changed-column-only mapped write inside the open
 // transaction. It returns the written row, or no row when every mapped value
-// already equals the stored one and nothing was assigned.
+// already equals the stored one and nothing was assigned. Before any write it
+// locks the relation and verifies the live column types against the admitted
+// relation, so a column narrowed after admission refuses the write as schema
+// drift instead of letting PostgreSQL round or coerce the bound value.
 func (session sqlSession) writeMapped(ctx context.Context, plan sqlMappedWrite) ([]SQLRow, error) {
+	if _, _, err := session.send(ctx, plan.lock); err != nil {
+		return nil, err
+	}
+	// The live type read is bounded by the admitted relation itself, never by
+	// the result row bound: one row more than the declared columns already
+	// proves an undeclared live column.
+	metadataLimits := session.call.Limits
+	metadataLimits.MaxRows = uint64(len(plan.relation.Columns)) + 1
+	live, truncated, err := session.sendWithin(ctx, plan.metadata, metadataLimits)
+	if err != nil {
+		return nil, err
+	}
+	if truncated {
+		return nil, fmt.Errorf("%w: the live relation declares more columns than the admitted relation", ErrSQLSchemaDrift)
+	}
+	if err := VerifySQLRelation(plan.relation, live); err != nil {
+		return nil, fmt.Errorf("%w: %w", ErrSQLSchemaDrift, err)
+	}
 	for round := 0; round < maximumSQLMappedWriteRounds; round++ {
 		compared, err := session.sendKeyed(ctx, plan.compare)
 		if err != nil {

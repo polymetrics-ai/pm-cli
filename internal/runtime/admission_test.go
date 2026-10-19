@@ -181,10 +181,10 @@ func TestAllPhysicalCallsAdmitted(t *testing.T) {
 			}
 		}
 		// A mapped write of an absent key sends its plan's statements in order:
-		// the locking compare, then the insert. Admission ordinal 1 is the
-		// connection boundary, each statement send is the next ordinal, and the
-		// COMMIT follows the last statement.
-		const mappedWriteStatements = 2
+		// the relation lock, the live type read, the locking compare, then the
+		// insert. Admission ordinal 1 is the connection boundary, each statement
+		// send is the next ordinal, and the COMMIT follows the last statement.
+		const mappedWriteStatements = 4
 		const writeStatementBoundary = 1 + mappedWriteStatements
 		const commitBoundary = writeStatementBoundary + 1
 		committedRows := func(t *testing.T, key string) string {

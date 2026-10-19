@@ -386,7 +386,8 @@ func TestLosslessParameterizedSQL(t *testing.T) {
 		if !observed || !probe.fault.completed() {
 			t.Fatal("the withheld reply did not follow an independently observed accepted commit")
 		}
-		// The plan locks and compares the absent key, then sends its one insert;
+		// The plan locks the relation, verifies its live types, locks and
+		// compares the absent key, then sends its one insert;
 		// a possibly committed write statement is never sent again.
 		writes := 0
 		for _, statement := range probe.statementTexts() {
@@ -503,6 +504,123 @@ func TestSQLMappedUpsertAssignsOnlyChangedColumns(t *testing.T) {
 		}
 		if row := stored(t); *row["amount"] != "8.2500" || *row["note"] != "after" {
 			t.Fatalf("stored row after an amount change = %v", row)
+		}
+	})
+}
+
+// TestSQLMappedUpsertRefusesLiveTypeDrift proves a mapped write verifies the
+// live target column types against the admitted relation inside its own
+// transaction before it writes. A live column narrowed from numeric(9,4) to
+// numeric(9,2) would otherwise round 1.2345 to 1.23 on assignment; the write
+// must instead be refused as schema drift with no row written or changed.
+func TestSQLMappedUpsertRefusesLiveTypeDrift(t *testing.T) {
+	fixture := openSQLFixture(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	connection := fixture.connection()
+	upsert := sqlTestOperation(t, contract.PostgreSQLStatementMappedUpsert, fixture.relation.Binding)
+	mapped := func(key, amount string) []SQLColumnValue {
+		return []SQLColumnValue{
+			{Column: "record_id", Value: mustSQLInt8(t, key)},
+			{Column: "amount", Value: mustSQLNumeric(t, amount, 9, 4)},
+			{Column: "flagged", Value: SQLBooleanValue(false)},
+			{Column: "note", Value: SQLTextValue("drift probe")},
+			{Column: "observed_at", Value: mustSQLInstant(t, "2026-09-19T03:00:00Z")},
+			{Column: "local_wall", Value: mustSQLLocalTimestamp(t, "2026-09-19 03:00:00")},
+		}
+	}
+	// One existing row before the live relation drifts.
+	if observation, err := fixture.execute(t, ctx, sqlTestCall(t, upsert, connection, fixture.relation, mapped("43", "2.0000"), sqlTestLimits(), now)); err != nil || observation.Outcome != SQLOutcomeKnownCommit {
+		t.Fatalf("seeding upsert observation=%#v error=%v", observation, err)
+	}
+	fixture.adminExec(t, ctx, `ALTER TABLE "customer"."records" ALTER COLUMN "amount" TYPE numeric(9,2)`)
+	for _, write := range []struct {
+		name string
+		key  string
+		rows string
+	}{
+		{name: "an_absent_row_is_not_inserted", key: "42", rows: "0"},
+		{name: "an_existing_row_is_not_updated", key: "43", rows: "1"},
+	} {
+		t.Run(write.name, func(t *testing.T) {
+			probe := &sqlProtocolProbe{}
+			observation, err := fixture.executeWith(t, ctx,
+				sqlTestCall(t, upsert, connection, fixture.relation, mapped(write.key, "1.2345"), sqlTestLimits(), now), probe)
+			if err == nil || observation.Outcome == SQLOutcomeKnownCommit {
+				row := fixture.adminRow(t, ctx, `SELECT coalesce("amount"::text, '') AS amount FROM "customer"."records" WHERE "record_id" = `+write.key)
+				t.Fatalf("declared numeric(9,4) value 1.2345 committed as %s after the live column narrowed to numeric(9,2): error=%v",
+					*row["amount"], err)
+			}
+			if !errors.Is(err, ErrSQLSchemaDrift) || !errors.Is(err, ErrSQLRelation) || observation.Outcome != SQLOutcomeKnownRollback || len(observation.Rows) != 0 {
+				t.Fatalf("live type drift refusal observation=%#v error=%v; want a rolled-back relation refusal", observation, err)
+			}
+			for _, statement := range probe.statementTexts() {
+				if strings.HasPrefix(statement, "INSERT ") || strings.HasPrefix(statement, "UPDATE ") {
+					t.Fatalf("a write statement was sent against a drifted relation: %s", statement)
+				}
+			}
+			row := fixture.adminRow(t, ctx, `SELECT count(*)::text AS rows, coalesce(min("amount")::text, '') AS amount FROM "customer"."records" WHERE "record_id" = `+write.key)
+			if *row["rows"] != write.rows || (write.rows == "1" && *row["amount"] != "2.00") {
+				t.Fatalf("a refused drifted write changed the stored rows: %v", row)
+			}
+		})
+	}
+
+	t.Run("a_type_change_racing_the_write_is_verified_after_the_lock", func(t *testing.T) {
+		// Restore the admitted type, then hold an uncommitted narrowing. Its
+		// ACCESS EXCLUSIVE lock blocks the write's relation lock, so the write
+		// can verify the live types only after the narrowing commits; a check
+		// before the lock would have read the old type and then written 1.23.
+		fixture.adminExec(t, ctx, `ALTER TABLE "customer"."records" ALTER COLUMN "amount" TYPE numeric(9,4)`)
+		racing := fixture.connect(t, ctx, sqlFixtureAdminUser, fixture.adminPassword, fixture.database)
+		defer func() { _ = racing.Close(context.Background()) }()
+		if err := sqlExecute(ctx, racing, `BEGIN`); err != nil {
+			t.Fatal(err)
+		}
+		if err := sqlExecute(ctx, racing, `ALTER TABLE "customer"."records" ALTER COLUMN "amount" TYPE numeric(9,2)`); err != nil {
+			t.Fatal(err)
+		}
+		type result struct {
+			observation SQLObservation
+			err         error
+		}
+		done := make(chan result, 1)
+		call := sqlTestCall(t, upsert, connection, fixture.relation, mapped("44", "1.2345"), sqlTestLimits(), now)
+		go func() {
+			observation, err := SQLTransport{Dependencies: SQLDependencies{
+				Admitter:    &testAdmitter{},
+				Credentials: &staticCredentialResolver{secret: []byte(fixture.rolePassword), call: call.Call},
+				Now:         func() time.Time { return time.Now().UTC() },
+			}}.Execute(ctx, call)
+			done <- result{observation: observation, err: err}
+		}()
+		deadline := time.Now().Add(20 * time.Second)
+		for {
+			waiting := fixture.adminRow(t, ctx, `SELECT count(*)::text AS waiting FROM pg_catalog.pg_stat_activity WHERE usename = '`+fixture.role+`' AND wait_event_type = 'Lock'`)
+			if *waiting["waiting"] == "1" {
+				break
+			}
+			select {
+			case finished := <-done:
+				t.Fatalf("the write finished while the narrowing held its lock: observation=%#v error=%v", finished.observation, finished.err)
+			default:
+			}
+			if time.Now().After(deadline) {
+				t.Fatal("the write never waited for the uncommitted narrowing's lock")
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
+		if err := sqlExecute(ctx, racing, `COMMIT`); err != nil {
+			t.Fatal(err)
+		}
+		finished := <-done
+		if !errors.Is(finished.err, ErrSQLSchemaDrift) || finished.observation.Outcome != SQLOutcomeKnownRollback {
+			t.Fatalf("a write racing a committed narrowing observation=%#v error=%v; want a schema drift refusal", finished.observation, finished.err)
+		}
+		row := fixture.adminRow(t, ctx, `SELECT count(*)::text AS rows FROM "customer"."records" WHERE "record_id" = 44`)
+		if *row["rows"] != "0" {
+			t.Fatalf("a write racing a committed narrowing wrote %s rows", *row["rows"])
 		}
 	})
 }
