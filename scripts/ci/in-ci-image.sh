@@ -77,6 +77,8 @@ fi
 # (capture-native-profile.py redirects stdout to a JSON file).
 printf 'CI image: %s\n' "$image" >&2
 
+# PM_TOOLS_CACHE matches check-foundation.sh, so a separate cleanup container
+# (with-stack-fixture.py --cleanup after an abrupt stop) finds the pinned Compose.
 # Run as the runner user (same UID inside and outside), not as the user
 # namespace's root: root ignores file modes, which permission tests rely on,
 # and files written to the workspace keep the runner user's ownership.
@@ -91,6 +93,7 @@ exec "$engine" run --rm --init --pull never --name "$container" \
   --volume "$socket:/var/run/docker.sock" \
   --workdir "$repo_root" \
   --env PMCLI_CACHE_DIR="$cache" --env HOME="$cache/home" \
+  --env PM_TOOLS_CACHE="$cache/pm-tools" \
   --env CI --env GITHUB_ACTIONS --env GITHUB_WORKSPACE --env GITHUB_REPOSITORY \
   --env GITHUB_SHA --env GITHUB_REF --env GITHUB_EVENT_NAME --env GITHUB_EVENT_PATH \
   --env GITHUB_RUN_ID --env GITHUB_RUN_ATTEMPT --env RUNNER_TEMP --env RUNNER_NAME \
