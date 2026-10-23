@@ -62,6 +62,8 @@ build_stack_tools() {
   mkdir -p .cache/bin
   CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack ./cmd/pm-stack
   CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-stack-fixture ./cmd/pm-stack-fixture
+  # internal/api's generated-contract test runs in a stack shard and needs the generator.
+  CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate
   python3 tools/bootstrap.py exec docker-compose -- version
 }
 

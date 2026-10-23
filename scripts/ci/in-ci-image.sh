@@ -60,7 +60,7 @@ if [ ! -S "$socket" ]; then
   printf 'container engine socket is unavailable: %s\n' "$socket" >&2
   exit 1
 fi
-mkdir -p "$cache"
+mkdir -p "$cache" "$cache/home"
 chmod 700 "$cache"
 
 sha256() {
@@ -75,7 +75,11 @@ if ! "$engine" image inspect "$image" >/dev/null 2>&1; then
 fi
 printf 'CI image: %s\n' "$image"
 
+# Run as the runner user (same UID inside and outside), not as the user
+# namespace's root: root ignores file modes, which permission tests rely on,
+# and files written to the workspace keep the runner user's ownership.
 exec "$engine" run --rm --init --pull never --name "$container" \
+  --userns keep-id --user "$(id -u):$(id -g)" \
   --network host \
   --memory "${PMCLI_JOB_MEMORY:-8g}" --cpus "${PMCLI_JOB_CPUS:-4}" \
   --pids-limit "${PMCLI_JOB_PIDS:-4096}" \
@@ -84,7 +88,7 @@ exec "$engine" run --rm --init --pull never --name "$container" \
   --volume "$cache:$cache" \
   --volume "$socket:/var/run/docker.sock" \
   --workdir "$repo_root" \
-  --env PMCLI_CACHE_DIR="$cache" \
+  --env PMCLI_CACHE_DIR="$cache" --env HOME="$cache/home" \
   --env CI --env GITHUB_ACTIONS --env GITHUB_WORKSPACE --env GITHUB_REPOSITORY \
   --env GITHUB_SHA --env GITHUB_REF --env GITHUB_EVENT_NAME --env GITHUB_EVENT_PATH \
   --env GITHUB_RUN_ID --env GITHUB_RUN_ATTEMPT --env RUNNER_TEMP --env RUNNER_NAME \
