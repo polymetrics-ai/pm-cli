@@ -69,11 +69,13 @@ sha256() {
 tag=$(cd "$repo_root/build/ci" && sha256 Dockerfile requirements.txt | sha256 | cut -c1-32)
 image="localhost/pmcli-ci:$tag"
 if ! "$engine" image inspect "$image" >/dev/null 2>&1; then
-  printf 'Building CI image %s\n' "$image"
+  printf 'Building CI image %s\n' "$image" >&2
   "$engine" build --platform linux/amd64 --tag "$image" \
-    --file "$repo_root/build/ci/Dockerfile" "$repo_root/build/ci"
+    --file "$repo_root/build/ci/Dockerfile" "$repo_root/build/ci" >&2
 fi
-printf 'CI image: %s\n' "$image"
+# Status goes to stderr so stdout carries only the child command's output
+# (capture-native-profile.py redirects stdout to a JSON file).
+printf 'CI image: %s\n' "$image" >&2
 
 # Run as the runner user (same UID inside and outside), not as the user
 # namespace's root: root ignores file modes, which permission tests rely on,
