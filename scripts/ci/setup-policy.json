@@ -27,7 +27,13 @@
     "scripts/test-changed.sh",
     "scripts/ci/setup-policy.json",
     "scripts/ci/actionlint.yaml",
-    ".github/workflows/check.yml"
+    ".github/workflows/check.yml",
+    ".github/workflows/governance.yml",
+    "scripts/ci/in-ci-image.sh",
+    "scripts/ci/go-test-report.py",
+    "build/ci/Dockerfile",
+    "build/ci/requirements.txt",
+    "build/ci/capture-native-profile.py"
   ],
   "checked_prefixes": [
     ".agents/skills/",

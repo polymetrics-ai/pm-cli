@@ -1,0 +1,40 @@
+name: PM governance (report only)
+
+# Not a required check (OD-05, M0-05). Atlas, architecture documents, Bazel,
+# browser parity and supply-chain reports run after each main merge.
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: governance-${{ github.sha }}
+  cancel-in-progress: false
+
+jobs:
+  governance:
+    if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.deleted == false && github.event.forced == false
+    runs-on: [self-hosted, Linux, X64, pm-cli-vps]
+    timeout-minutes: 120
+    steps:
+      - name: Check out the exact event revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+      - name: Run governance reports
+        timeout-minutes: 110
+        run: sh scripts/ci/in-ci-image.sh run governance -- sh scripts/ci/check-foundation.sh governance
+      - name: Clean up the job container and dependency fixture
+        if: always()
+        timeout-minutes: 6
+        run: |
+          sh scripts/ci/in-ci-image.sh stop governance
+          sh scripts/ci/in-ci-image.sh run cleanup-governance -- python3 scripts/ci/with-stack-fixture.py \
+            --cleanup "$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"

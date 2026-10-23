@@ -59,11 +59,15 @@ class AdmissionPolicy(unittest.TestCase):
         spec.loader.exec_module(cls.policy)
 
     def test_open_pr_and_main_push_are_accepted(self):
-        for kind in ("pull_request", "push"):
-            for workflow in ("check.yml", "architecture-documentation.yml"):
-                with self.subTest(kind=kind, workflow=workflow):
-                    event, env = payload(kind, workflow)
-                    self.policy.validate(event, env)
+        for kind, workflow in (("pull_request", "check.yml"), ("push", "check.yml"),
+                               ("push", "governance.yml")):
+            with self.subTest(kind=kind, workflow=workflow):
+                event, env = payload(kind, workflow)
+                self.policy.validate(event, env)
+        for kind, workflow in (("pull_request", "governance.yml"),
+                               ("push", "architecture-documentation.yml")):
+            with self.subTest(kind=kind, workflow=workflow), self.assertRaises(ValueError):
+                self.policy.validate(*payload(kind, workflow))
 
         # GITHUB_SHA is server-defined runner context. The immutable PR payload's
         # merge_commit_sha may be absent, null or stale while the merge ref moves.
@@ -152,8 +156,9 @@ class AdmissionPolicy(unittest.TestCase):
             with self.subTest(expected=expected), tempfile.TemporaryDirectory() as directory:
                 path = Path(directory) / "event.json"
                 path.write_text(raw)
-                with mock.patch.dict(os.environ, dict(env, GITHUB_EVENT_PATH=str(path)), clear=True), \
-                        mock.patch.object(self.policy.os, "getuid", return_value=2001), \
+                with mock.patch.dict(os.environ, dict(env, GITHUB_EVENT_PATH=str(path),
+                                                      PMCLI_RUNNER_UID="1002"), clear=True), \
+                        mock.patch.object(self.policy.os, "getuid", return_value=1002), \
                         mock.patch("sys.stderr", new_callable=io.StringIO) as stderr, \
                         mock.patch("sys.stdout", new_callable=io.StringIO):
                     self.assertEqual(self.policy.main(), expected)
@@ -161,21 +166,43 @@ class AdmissionPolicy(unittest.TestCase):
                     self.assertNotIn("Traceback", stderr.getvalue())
 
 
+    def test_runner_identity_is_the_configured_unprivileged_uid(self):
+        for uid, configured, accepted in ((1002, "1002", True), (1004, "1002", False),
+                                          (0, "0", False), (1002, "", False), (1002, "1002x", False)):
+            with self.subTest(uid=uid, configured=configured), \
+                    mock.patch.object(self.policy.os, "getuid", return_value=uid):
+                if accepted:
+                    self.policy.require_runner_identity({"PMCLI_RUNNER_UID": configured})
+                else:
+                    with self.assertRaises(ValueError):
+                        self.policy.require_runner_identity({"PMCLI_RUNNER_UID": configured})
+
+
 class WorkflowPolicy(unittest.TestCase):
+    def load(self, name):
+        return yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
+
     def test_main_push_and_open_pr_are_separate(self):
-        for name in ("check.yml", "architecture-documentation.yml"):
-            with self.subTest(workflow=name):
-                workflow = yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
-                self.assertEqual(workflow["on"].get("push"), {"branches": ["main"]})
-                self.assertIn("github.event_name", workflow["concurrency"]["group"])
-                self.assertIn("github.sha", workflow["concurrency"]["group"])
-                self.assertEqual(workflow["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
-                for job in workflow["jobs"].values():
-                    self.assertIn("github.event.pull_request.state == 'open'", job["if"])
-                    self.assertIn("github.event_name == 'push'", job["if"])
-                    self.assertIn("github.ref == 'refs/heads/main'", job["if"])
-                    self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
-                    self.assertEqual(job["steps"][0]["with"]["ref"], "${{ github.sha }}")
+        workflow = self.load("check.yml")
+        self.assertEqual(workflow["on"].get("push"), {"branches": ["main"]})
+        self.assertIn("github.event_name", workflow["concurrency"]["group"])
+        self.assertIn("github.sha", workflow["concurrency"]["group"])
+        self.assertEqual(workflow["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
+        for job in workflow["jobs"].values():
+            self.assertIn("github.event.pull_request.state == 'open'", job["if"])
+            self.assertIn("github.event_name == 'push'", job["if"])
+            self.assertIn("github.ref == 'refs/heads/main'", job["if"])
+            self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
+        self.assertEqual(workflow["jobs"]["shard"]["steps"][0]["with"]["ref"], "${{ github.sha }}")
+
+    def test_governance_runs_only_on_main_pushes(self):
+        workflow = self.load("governance.yml")
+        self.assertEqual(workflow["on"], {"push": {"branches": ["main"]}})
+        for job in workflow["jobs"].values():
+            self.assertIn("github.event_name == 'push'", job["if"])
+            self.assertIn("github.ref == 'refs/heads/main'", job["if"])
+            self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
+            self.assertEqual(job["steps"][0]["with"]["ref"], "${{ github.sha }}")
 
 
 if __name__ == "__main__":
