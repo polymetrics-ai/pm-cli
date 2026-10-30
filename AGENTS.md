@@ -8,7 +8,7 @@ The accepted PM Server context published through PR #47 is landed on `main` at `
 
 Only behavior present in source and actually exercised may be reported. A bounded build/toolchain foundation does not implement PM application services, client commands, generated bundles, connectors, provider effects, packaging, or certification.
 
-Implement only the explicitly authorized issue in its owned files. Preserve other work, first ownership, later integration rights, issue/case identities, and unresolved obligations. OMP is the sole project coordinator and integration owner. Agent model/account routing is operator-owned outside application documentation; do not encode a route here or make another delivery controller, private runbook, or host setup a worker prerequisite.
+Implement only the explicitly authorized issue in its owned files. Preserve other work, first ownership, later integration rights, issue/case identities, and unresolved obligations. The owner is the sole integration owner and the only person who merges. Agent model/account routing is operator-owned outside application documentation; do not encode a route here or make another delivery controller, private runbook, or host setup a worker prerequisite.
 
 ## Start with authoritative context
 
@@ -17,8 +17,30 @@ Implement only the explicitly authorized issue in its owned files. Preserve othe
 3. Read [developer setup](docs/development/setup.md), [testing](docs/development/testing.md), [release](docs/development/release.md), [skill routing](docs/development/skills.md), and [skill provenance](docs/development/skill-provenance.md).
 4. For Go work, start with the sole local [PM Go router](.agents/skills/pm-go/SKILL.md). Add only the bounded procedure the behavior needs: [connector contracts](.agents/skills/pm-connector-contracts/SKILL.md), [durable effects](.agents/skills/pm-durable-effects/SKILL.md), or [release and recovery](.agents/skills/pm-release-recovery/SKILL.md).
 5. Follow the single [engineering and review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md) for validation, review, and delivery.
+6. Before you write any prose, load the [plain-English skill](.agents/skills/asd-ste100/SKILL.md). See [Writing](#writing).
 
 Files under `docs/architecture/pm-server/instructions/` are synchronized, inactive projections of their mapped actual entrypoints. Do not load them as a second instruction tree. Historical issue drafts, private setup runbooks, controller records, transcripts, and operator paths are evidence, not fresh-worker instruction intake. Do not require them or copy them into the repository.
+
+## Writing
+
+Write all prose in Simplified Technical English (ASD-STE100). Load the [plain-English skill](.agents/skills/asd-ste100/SKILL.md) before you write or change:
+
+- documentation, `AGENTS.md` and skills;
+- issue, pull request and review text;
+- commit messages;
+- user-visible help, error and log text.
+
+Keep every fact, requirement strength (must, should, may), hedge and exact identifier. Do not add a cause, guarantee or action that the source does not state. Do not apply the skill to code, generated files or quoted provider text.
+
+## Commits and pull requests
+
+- Write every commit message in [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) format: `type(scope): description`.
+  - Types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore` and `revert`.
+  - The scope is optional. Use the area that changed, for example `cli`, `server`, `worker`, `gong`, `postgres`, `ci` or `skills`.
+  - Write the description in the imperative mood and in lower case. Use 72 characters or fewer and no final period.
+  - Mark a breaking change with `!` after the type or scope, or with a `BREAKING CHANGE:` footer.
+- Use the same format for the pull request title. A squash merge uses the title as the commit subject on `main`.
+- Push only to your own branch. Do not push to `main`, do not force-push a shared branch, and do not merge. Only the owner merges, by squash.
 
 ## Client, server, and worker boundary
 

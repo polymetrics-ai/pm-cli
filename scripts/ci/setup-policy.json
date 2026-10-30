@@ -6,6 +6,7 @@
     ".agents/skills/pm-connector-contracts/SKILL.md",
     ".agents/skills/pm-durable-effects/SKILL.md",
     ".agents/skills/pm-release-recovery/SKILL.md",
+    ".agents/skills/asd-ste100/SKILL.md",
     "docs/development/setup.md",
     "docs/development/skills.md",
     "docs/development/skill-provenance.md",
@@ -47,6 +48,9 @@
     "pm-connector-contracts",
     "pm-durable-effects",
     "pm-release-recovery"
+  ],
+  "required_vendored_skills": [
+    "asd-ste100"
   ],
   "workflow": ".github/workflows/check.yml",
   "required_project_references": [
