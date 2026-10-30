@@ -16,6 +16,7 @@ TRACKER = "docs/agents/issue-tracker.md"
 PROVENANCE = "docs/development/skill-provenance.json"
 WORKFLOW = ".github/workflows/check.yml"
 SKILL = ".agents/skills/pm-go/SKILL.md"
+VENDORED = ".agents/skills/asd-ste100"
 
 
 class SetupContracts(unittest.TestCase):
@@ -57,6 +58,8 @@ class SetupContracts(unittest.TestCase):
                 ".agents/skills/pm-durable-effects/SKILL.md",
                 ".agents/skills/pm-release-recovery/SKILL.md",
             })
+            self.assertEqual(report["provenance"]["vendored_skills"],
+                             [VENDORED + "/SKILL.md"])
 
     def test_local_heading_fragments_are_resolved(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -102,6 +105,12 @@ class SetupContracts(unittest.TestCase):
             path.unlink()
             path.symlink_to(root / TRACKER)
 
+        def unrecorded_vendored_file(root, inventory):
+            (root / VENDORED / "extra.md").write_text("# Extra\n")
+            names = json.loads(inventory.read_text())
+            names.append(VENDORED + "/extra.md")
+            inventory.write_text(json.dumps(names))
+
         def missing_provenance(root, _):
             json_change(root, PROVENANCE,
                         lambda value: value["project_skills"][0]["references"].remove(TRACKER))
@@ -120,6 +129,13 @@ class SetupContracts(unittest.TestCase):
             "missing tracked membership": missing_membership,
             "missing provenance": lambda r, _: (r / PROVENANCE).unlink(),
             "stale skill digest": lambda r, _: text(r, SKILL, lambda s: s + "\nChanged skill.\n"),
+            "stale vendored file": lambda r, _: text(r, VENDORED + "/references/writing-rules.md",
+                lambda s: s + "\nLocal edit.\n"),
+            "unrecorded vendored file": unrecorded_vendored_file,
+            "vendored skill unrecorded": lambda r, _: json_change(r, PROVENANCE,
+                lambda v: v.update({"vendored_skills": []})),
+            "floating vendored revision": lambda r, _: json_change(r, PROVENANCE,
+                lambda v: v["vendored_skills"][0].update({"revision": "main"})),
             "missing frontmatter": lambda r, _: text(r, SKILL, lambda s: s.split("---\n", 2)[-1]),
             "duplicate frontmatter": lambda r, _: text(r, SKILL, lambda s: s.replace(
                 "name: pm-go", "name: pm-go\nname: conflicting", 1)),

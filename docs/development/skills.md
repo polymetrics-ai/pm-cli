@@ -1,6 +1,6 @@
 # Focused skill routing
 
-Use the repository's four original project skills and selected installed references on demand. The accepted task, [repository instructions](../../AGENTS.md), and [issue/spec tracker](../agents/issue-tracker.md) define authority. Skill advice does not create product requirements, implementation permission, or evidence that a tool, service, or connector works.
+Use the repository's four original project skills, the vendored [plain-English skill](../../.agents/skills/asd-ste100/SKILL.md) and selected installed references on demand. The accepted task, [repository instructions](../../AGENTS.md), and [issue/spec tracker](../agents/issue-tracker.md) define authority. Skill advice does not create product requirements, implementation permission, or evidence that a tool, service, or connector works.
 
 ## Project procedures
 
@@ -10,6 +10,7 @@ Use the repository's four original project skills and selected installed referen
 | Connector source/value/schema fidelity, pagination, generated surfaces, or seven-lane proof | [pm-connector-contracts](../../.agents/skills/pm-connector-contracts/SKILL.md) |
 | Admission/outbox, Temporal handoff, duplicate delivery, grants, worksets, effects, or checkpoints | [pm-durable-effects](../../.agents/skills/pm-durable-effects/SKILL.md) |
 | Paired/standalone packaging, compatibility, migrations, shared-artifact backup, or quarantine recovery | [pm-release-recovery](../../.agents/skills/pm-release-recovery/SKILL.md) |
+| Any prose: documentation, `AGENTS.md`, skills, issue and pull request text, commit messages, and user-visible help, error and log text | [asd-ste100](../../.agents/skills/asd-ste100/SKILL.md), vendored at a pinned commit |
 
 The three domain skills are bounded procedures, not additional Go routers. Start Go work with `pm-go`, then load only the procedure touched by the accepted scope. Missing private planning files are not implicit prerequisites. Canonical PM Server contracts and accepted issue amendments override community examples.
 
@@ -32,7 +33,7 @@ PM has one Go/Gin/PostgreSQL/Temporal/shared-object architecture. CLI and browse
 | Gin and public OpenAPI 3.1 adapters | No selected project skill; use primary docs | [Gin](https://gin-gonic.com/en/docs/), [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.0.html), [oapi-codegen](https://github.com/oapi-codegen/oapi-codegen) |
 | Dependencies, native query child, or authorized CI | `cc-skills-golang:golang-dependency-management`; `golang-continuous-integration` only for owned CI work | [Go modules](https://go.dev/ref/mod), [GitHub Actions security](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions) |
 | Safe logs, metrics, and traces | `cc-skills-golang:golang-observability` | [OpenTelemetry Go](https://opentelemetry.io/docs/languages/go/) |
-| Reader-facing prose | `nbj-write-clearly` when available | [Google developer style](https://developers.google.com/style) |
+| Reader-facing prose | [asd-ste100](../../.agents/skills/asd-ste100/SKILL.md) (vendored); `nbj-write-clearly` when available | [Google developer style](https://developers.google.com/style) |
 | Authorized independent Standards/Spec review | Exact Matt Pocock AI Hero `code-review` source recorded in provenance | Accepted review specification; source availability alone is not a review pass |
 | A future approved Viper evaluation | `cc-skills-golang:golang-spf13-viper` | Only after [decision 0001](../decisions/0001-cli-configuration.md)'s reconsideration condition is met |
 

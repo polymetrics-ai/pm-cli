@@ -186,7 +186,8 @@ def provenance_check(root, files, policy):
     if name not in files:
         return None
     manifest = json.loads(files[name].read_text(), object_pairs_hook=unique_pairs)
-    fields(manifest, {"schema_version", "project_skills", "external_sources", "official_fallbacks"})
+    fields(manifest, {"schema_version", "project_skills", "vendored_skills", "external_sources",
+                      "official_fallbacks"})
     require(manifest["schema_version"] == "pm.skill-provenance/v1", "unknown provenance schema")
     projects = sequence(manifest["project_skills"])
     names, paths, references = set(), set(), set()
@@ -212,8 +213,44 @@ def provenance_check(root, files, policy):
             inside(root, root / target)
             references.add(target)
         strings(row["overrides"])
+    vendored, vendored_paths = set(), set()
+    for row in sequence(manifest["vendored_skills"]):
+        fields(row, {"name", "path", "url", "revision", "license", "notice", "files", "overrides"})
+        string(row["name"])
+        relative(row["path"])
+        require(row["path"] == f".agents/skills/{row['name']}/SKILL.md", "wrong vendored skill path")
+        require(row["name"] not in names | vendored and row["path"] not in paths | vendored_paths,
+                "duplicate skill")
+        https(row["url"])
+        require(isinstance(row["revision"], str) and re.fullmatch(r"[0-9a-f]{40}", row["revision"]),
+                "vendored revision is not an immutable commit")
+        license_expression(row["license"])
+        string(row["notice"])
+        strings(row["overrides"])
+        base = f".agents/skills/{row['name']}/"
+        listed, roles = set(), set()
+        for item in sequence(row["files"]):
+            fields(item, {"path", "sha256", "role"})
+            relative(item["path"])
+            digest(item["sha256"])
+            full = base + item["path"]
+            require(full not in listed, "duplicate vendored file")
+            listed.add(full)
+            require(item["role"] in {"entrypoint", "reference", "example", "script", "license", "metadata"},
+                    "unknown vendored file role")
+            roles.add(item["role"])
+            require(full in files, "vendored file absent from checked inventory")
+            require(hashlib.sha256(files[full].read_bytes()).hexdigest() == item["sha256"],
+                    "stale vendored file hash")
+        require({"entrypoint", "license"} <= roles and row["path"] in listed,
+                "vendored skill entrypoint or license missing")
+        require(listed == {p for p in files if p.startswith(base)},
+                "vendored skill files differ from the pinned record")
+        vendored.add(row["name"])
+        vendored_paths.add(row["path"])
     actual = {p for p in files if p.startswith('.agents/skills/') and p.endswith('/SKILL.md')}
-    require(paths == actual and names == set(policy["required_project_skills"]),
+    require(paths | vendored_paths == actual and names == set(policy["required_project_skills"])
+            and vendored == set(policy.get("required_vendored_skills", [])),
             "project skill membership differs from approved setup")
     external_ids = set()
     for row in sequence(manifest["external_sources"]):
@@ -250,7 +287,8 @@ def provenance_check(root, files, policy):
         https(row["url"])
         require(row["id"] not in fallback_ids, "duplicate fallback")
         fallback_ids.add(row["id"])
-    return {"project_skills": sorted(paths), "references": sorted(references),
+    return {"project_skills": sorted(paths), "vendored_skills": sorted(vendored_paths),
+            "references": sorted(references),
             "external_sources": sorted(external_ids), "fallbacks": sorted(fallback_ids),
             "external_bytes": "recorded only; not read on CI runner"}
 
