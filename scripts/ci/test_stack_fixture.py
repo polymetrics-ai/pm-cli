@@ -172,6 +172,21 @@ class FixtureOwnershipTests(unittest.TestCase):
                 runner_temp, ROOT, "90001", "1", ["never-execute"], {},
             )
 
+    def test_manifest_name_binds_the_job_and_run_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runner_temp = Path(temporary).resolve()
+            env = {"GITHUB_RUN_ID": "90001", "GITHUB_RUN_ATTEMPT": "2"}
+            with mock.patch.dict(os.environ, env):
+                for name in ("pmcli-foundation-90001-2.json", "pmcli-bdd-90001-2.json"):
+                    with self.subTest(name=name):
+                        path, run_id, attempt = FIXTURE.validate_manifest_path(
+                            str(runner_temp / name), runner_temp)
+                        self.assertEqual((path.name, run_id, attempt), (name, "90001", "2"))
+                for name in ("pmcli-other-90001-2.json", "pmcli-bdd-90001.json",
+                             "pmcli-bdd-90001-3.json", "pmcli-bdd-x-2.json"):
+                    with self.subTest(name=name), self.assertRaises(FIXTURE.FixtureError):
+                        FIXTURE.validate_manifest_path(str(runner_temp / name), runner_temp)
+
     def test_colliding_parent_is_not_removed(self):
         with tempfile.TemporaryDirectory() as temporary:
             runner_temp = Path(temporary).resolve()

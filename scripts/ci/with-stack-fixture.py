@@ -29,7 +29,8 @@ PARENT_PREFIX = "pm-stack-job-"
 TOKEN_PATTERN = re.compile(r"[0-9a-f]{20}\Z")
 PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
 TEMPORAL_NAMESPACE_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{2,254}\Z")
-MANIFEST_NAME_PATTERN = re.compile(r"pmcli-foundation-([0-9]+)-([0-9]+)\.json\Z")
+# check-foundation.sh and check-bdd.sh each name their job-owned manifest.
+MANIFEST_NAME_PATTERN = re.compile(r"pmcli-(?:foundation|bdd)-([0-9]+)-([0-9]+)\.json\Z")
 CONTAINER_ID_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_DAEMON_VALUE = re.compile(r"[A-Za-z0-9_.:+/=-]{1,256}\Z")
 SAFE_ONEOFF_SUFFIX = re.compile(r"[a-z0-9]{6,64}\Z")
