@@ -8,7 +8,10 @@ import sys
 
 REPOSITORY = "polymetrics-ai/pm-cli"
 OWNER = "karthik-sivadas"
-WORKFLOWS = ("check.yml", "architecture-documentation.yml")
+# CI runs only the BDD workflow, on pushes by the owner account to any branch.
+# Pull request events never reach this runner.
+WORKFLOWS = {"push": ("bdd.yml",)}
+BRANCH_REF = re.compile(r"refs/heads/[A-Za-z0-9._/-]{1,200}")
 MAX_EVENT_BYTES = 4 * 1024 * 1024
 
 
@@ -29,35 +32,33 @@ def validate(event, env):
         require(isinstance(sha, str) and re.fullmatch(r"[0-9a-f]{40}", sha))
         require(env.get("GITHUB_WORKFLOW_SHA") == sha)
         kind = env.get("GITHUB_EVENT_NAME")
-        if kind == "pull_request":
-            pr = event["pull_request"]
-            number = event["number"]
-            require(type(number) is int and number > 0)
-            require(type(pr["number"]) is int and pr["number"] == number)
-            require(event["action"] in ("opened", "synchronize", "reopened", "edited"))
-            require(pr["state"] == "open" and pr["merged"] is False)
-            require(pr["head"]["repo"]["full_name"] == REPOSITORY)
-            require(pr["base"]["repo"]["full_name"] == REPOSITORY)
-            require(pr["base"]["ref"] == "main")
-            ref = f"refs/pull/{number}/merge"
-        elif kind == "push":
-            ref = "refs/heads/main"
-            require(event["ref"] == ref and event["after"] == sha)
-            require(event["deleted"] is False and event["forced"] is False)
+        if kind == "push":
+            ref = event["ref"]
+            require(isinstance(ref, str) and BRANCH_REF.fullmatch(ref) and ".." not in ref)
+            require(event["after"] == sha and event["deleted"] is False)
+            # A force-push is allowed on a working branch, never on main.
+            require(ref != "refs/heads/main" or event["forced"] is False)
         else:
             raise ValueError("event outside approved policy")
         require(env.get("GITHUB_REF") == ref)
         require(env.get("GITHUB_WORKFLOW_REF") in {
             f"{REPOSITORY}/.github/workflows/{workflow}@{ref}"
-            for workflow in WORKFLOWS
+            for workflow in WORKFLOWS[kind]
         })
     except (KeyError, TypeError, AttributeError) as error:
         raise ValueError("malformed event") from error
 
 
+def require_runner_identity(env):
+    """The runner .env names its own unprivileged UID; root is never admitted."""
+    expected = env.get("PMCLI_RUNNER_UID", "")
+    require(expected.isdigit() and expected.isascii())
+    require(os.getuid() != 0 and os.getuid() == int(expected))
+
+
 def main():
     try:
-        require(os.getuid() == 2001)
+        require_runner_identity(os.environ)
         with Path(os.environ["GITHUB_EVENT_PATH"]).open("rb") as stream:
             raw = stream.read(MAX_EVENT_BYTES + 1)
         require(len(raw) <= MAX_EVENT_BYTES)

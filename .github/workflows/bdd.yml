@@ -1,0 +1,41 @@
+name: PM BDD
+
+on:
+  push:
+    branches: ["**"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bdd-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  # The only CI gate: the Gherkin acceptance suite runs real PM binaries in the
+  # pinned CI image on a rootless Podman runner. Lint and Go developer tests run
+  # in the git hooks. See docs/development/ci.md.
+  bdd:
+    if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
+    runs-on: [self-hosted, Linux, X64, pm-cli-vps]
+    timeout-minutes: 60
+    steps:
+      - name: Check out the exact pushed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+      - name: Run the Gherkin acceptance suite
+        timeout-minutes: 50
+        run: sh scripts/ci/in-ci-image.sh run bdd -- sh scripts/ci/check-bdd.sh
+      - name: Clean up the job container and dependency fixture
+        if: always()
+        timeout-minutes: 6
+        run: |
+          sh scripts/ci/in-ci-image.sh stop bdd
+          sh scripts/ci/in-ci-image.sh run bdd-cleanup -- python3 scripts/ci/with-stack-fixture.py \
+            --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"

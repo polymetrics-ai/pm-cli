@@ -34,6 +34,126 @@ class FixtureOwnershipTests(unittest.TestCase):
             with self.subTest(options=options), self.assertRaises(FIXTURE.FixtureError):
                 FIXTURE.rootless_engine(options)
 
+    def test_podman_compat_info_has_a_stable_rootless_identity(self):
+        # Podman 4.9 compat /info: a new random UUID per call, fixed license string.
+        root = "/home/ghrunner/.local/share/containers/storage"
+        options = ["name=apparmor", "name=seccomp,profile=default", "name=rootless"]
+        observed = []
+        for daemon_id in ("0b5f6a50-8d1e-4c33-9a43-1f0e7c2b9d10", "7d2c1e44-5b6a-4f8e-b1c2-93a4d5e6f708"):
+            info = {"id": daemon_id, "os": "linux", "architecture": "amd64", "server_version": "4.9.3",
+                    "security_options": options, "product_license": "Apache-2.0", "root_dir": root}
+            with mock.patch.object(FIXTURE, "run_capture", return_value=(0, json.dumps(info).encode(), b"")):
+                observed.append(FIXTURE.inspect_daemon(
+                    Path("/unused/docker"), Path("/unused"), "unix:///run/docker.sock", {}, ROOT,
+                    {"device": 1, "inode": 2, "uid": 0, "mode": 0o660}))
+        self.assertEqual(observed[0], observed[1])
+        self.assertEqual(observed[0]["id"], "podman:" + root)
+        self.assertTrue(observed[0]["rootless"])
+        self.assertEqual(FIXTURE.podman_root(observed[0]["id"]), root)
+        docker_id = "QJ4M:ABCD:EFGH"
+        self.assertEqual(FIXTURE.engine_identity(docker_id, "Community Engine", "/var/lib/docker"), docker_id)
+        self.assertIsNone(FIXTURE.podman_root(docker_id))
+        uuid = "0b5f6a50-8d1e-4c33-9a43-1f0e7c2b9d10"
+        for daemon_id, root_dir in (("not-a-uuid", root), (uuid, "relative"), (uuid, None)):
+            with self.subTest(daemon_id=daemon_id, root_dir=root_dir), self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.engine_identity(daemon_id, "Apache-2.0", root_dir)
+
+    def stack_container(self, service, fixture_root, podman):
+        project = "pmci-" + "4" * 20
+        refs = FIXTURE.load_image_refs(ROOT)
+        nano_cpus, memory, pids_limit, readonly, restart = FIXTURE.service_limits(service)
+        network = f"{project}_stack-private"
+        mounts = [{"Type": kind, "Source": source, "Destination": destination, "RW": read_write}
+                  for source, destination, read_write, kind in FIXTURE.expected_mounts(service, fixture_root, ROOT)]
+        tmpfs = None
+        if service == "caddy":
+            options = "size=32m,mode=1777,tmpcopyup,rw,rprivate,nosuid,nodev" if podman else "mode=1777,size=32m"
+            tmpfs = {"/tmp": options}
+        value = {
+            "id": "a" * 64, "name": f"/{project}-{service}-1", "service": service, "project": project,
+            "oneoff": "False", "config_files": ",".join(sorted(FIXTURE.expected_config_files(ROOT))),
+            "working_dir": str(ROOT), "image": FIXTURE.image_for_service(service, refs),
+            "image_id": "sha256:" + "b" * 64, "user": "0:0", "privileged": False,
+            "network_mode": "bridge" if podman else network, "networks": {network: {}},
+            "pid_mode": "private" if podman else "", "ipc_mode": "shareable" if podman else "private",
+            "uts_mode": "private" if podman else "", "userns_mode": "", "readonly_rootfs": readonly,
+            "auto_remove": False, "init": True, "nano_cpus": nano_cpus, "memory": memory,
+            "pids_limit": pids_limit, "restart": restart, "cap_add": [], "security_opt": [],
+            "devices": [], "device_requests": None, "mounts": mounts, "tmpfs": tmpfs,
+            "port_bindings": FIXTURE.expected_ports(service, self.PORTS) or None,
+        }
+        return value, project, refs
+
+    PORTS = {"PM_STACK_PUBLIC_PORT": "12005"}
+
+    def test_podman_inspection_spellings_are_accepted_only_for_podman(self):
+        fixture_root = Path("/private/fixture")
+        root = "/home/ghrunner/.local/share/containers/storage"
+
+        def validate(value, project, refs, engine_root):
+            return FIXTURE.validate_stack_container(value, project, fixture_root, ROOT, self.PORTS, refs,
+                                                    rootless=True, engine_root=engine_root)
+
+        for service in ("seaweed-master", "caddy"):
+            with self.subTest(service=service):
+                value, project, refs = self.stack_container(service, fixture_root, podman=True)
+                validate(value, project, refs, root)
+                with self.assertRaises(FIXTURE.FixtureError):
+                    validate(value, project, refs, None)
+                docker, _, _ = self.stack_container(service, fixture_root, podman=False)
+                validate(docker, project, refs, None)
+                for field, unsafe in (("pid_mode", "host"), ("ipc_mode", "host"), ("uts_mode", "host"),
+                                      ("userns_mode", "private"), ("network_mode", "host"),
+                                      ("networks", {f"{project}_stack-private": {}, "podman": {}})):
+                    with self.subTest(field=field), self.assertRaises(FIXTURE.FixtureError):
+                        validate(dict(value, **{field: unsafe}), project, refs, root)
+        value, project, refs = self.stack_container("caddy", fixture_root, podman=True)
+        with self.assertRaises(FIXTURE.FixtureError):
+            validate(dict(value, tmpfs={"/tmp": "size=32m,mode=1777,exec"}), project, refs, root)
+
+    def test_podman_anonymous_volume_must_be_under_its_storage_root(self):
+        name = "c" * 64
+        root = "/home/ghrunner/.local/share/containers/storage/volumes"
+        volume = {"Type": "volume", "Name": name, "Driver": "local", "RW": True,
+                  "Destination": "/var/lib/postgresql/data", "Source": f"{root}/{name}/_data"}
+        self.assertEqual(FIXTURE.actual_mounts([volume], allow_postgres_anonymous=True, volume_root=root), set())
+        with self.assertRaises(FIXTURE.FixtureError):
+            FIXTURE.actual_mounts([volume], allow_postgres_anonymous=True)
+        moved = dict(volume, Source=f"/var/lib/docker/volumes/{name}/_data")
+        with self.assertRaises(FIXTURE.FixtureError):
+            FIXTURE.actual_mounts([moved], allow_postgres_anonymous=True, volume_root=root)
+
+    def test_podman_cleanup_helper_lists_each_dropped_capability(self):
+        fixture_root = Path("/private/fixture")
+        project = "pmci-" + "5" * 20
+        refs = FIXTURE.load_image_refs(ROOT)
+        data = fixture_root / "state" / "data" / "postgres"
+        value = {
+            "id": "d" * 64, "name": f"/{project}-cleanup", "helper": "true", "helper_project": project,
+            "helper_root": hashlib.sha256(str(fixture_root).encode()).hexdigest(),
+            "project": None, "service": None, "image": refs["postgres"], "image_id": "sha256:" + "e" * 64,
+            "user": "postgres", "privileged": False, "network_mode": "none", "readonly_rootfs": True,
+            "nano_cpus": 250_000_000, "memory": 64 << 20, "pids_limit": 32, "port_bindings": None,
+            "cap_add": [], "pid_mode": "private", "ipc_mode": "shareable", "uts_mode": "private",
+            "userns_mode": "", "init": False, "auto_remove": False, "restart": "no", "devices": [],
+            "device_requests": None, "tmpfs": {}, "security_opt": ["no-new-privileges"],
+            "cap_drop": sorted(FIXTURE.PODMAN_DEFAULT_CAPABILITIES),
+            "mounts": [{"Type": "bind", "Source": str(data), "Destination": "/var/lib/postgresql/data", "RW": True}],
+        }
+
+        def manifest(daemon_id):
+            return types.SimpleNamespace(project=project, fixture_root=fixture_root, daemon={"id": daemon_id})
+
+        podman = manifest("podman:/home/ghrunner/.local/share/containers/storage")
+        FIXTURE.validate_helper_container(value, podman, refs)
+        with self.assertRaises(FIXTURE.FixtureError):
+            FIXTURE.validate_helper_container(value, manifest("QJ4M:ABCD:EFGH"), refs)
+        retained = dict(value, cap_drop=sorted(FIXTURE.PODMAN_DEFAULT_CAPABILITIES - {"SETUID"}))
+        with self.assertRaises(FIXTURE.FixtureError):
+            FIXTURE.validate_helper_container(retained, podman, refs)
+        docker = dict(value, cap_drop=["ALL"], pid_mode="", ipc_mode="private", uts_mode="")
+        FIXTURE.validate_helper_container(docker, manifest("QJ4M:ABCD:EFGH"), refs)
+
     def run_with_preflight(self, runner_temp, token):
         with contextlib.ExitStack() as stack:
             for name, value in (
@@ -51,6 +171,21 @@ class FixtureOwnershipTests(unittest.TestCase):
                 runner_temp / "pmcli-foundation-90001-1.json",
                 runner_temp, ROOT, "90001", "1", ["never-execute"], {},
             )
+
+    def test_manifest_name_binds_the_job_and_run_attempt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runner_temp = Path(temporary).resolve()
+            env = {"GITHUB_RUN_ID": "90001", "GITHUB_RUN_ATTEMPT": "2"}
+            with mock.patch.dict(os.environ, env):
+                for name in ("pmcli-foundation-90001-2.json", "pmcli-bdd-90001-2.json"):
+                    with self.subTest(name=name):
+                        path, run_id, attempt = FIXTURE.validate_manifest_path(
+                            str(runner_temp / name), runner_temp)
+                        self.assertEqual((path.name, run_id, attempt), (name, "90001", "2"))
+                for name in ("pmcli-other-90001-2.json", "pmcli-bdd-90001.json",
+                             "pmcli-bdd-90001-3.json", "pmcli-bdd-x-2.json"):
+                    with self.subTest(name=name), self.assertRaises(FIXTURE.FixtureError):
+                        FIXTURE.validate_manifest_path(str(runner_temp / name), runner_temp)
 
     def test_colliding_parent_is_not_removed(self):
         with tempfile.TemporaryDirectory() as temporary:

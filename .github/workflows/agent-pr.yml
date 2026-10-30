@@ -1,0 +1,38 @@
+name: Agent draft PR
+
+on:
+  push:
+    branches: ["agent/**"]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: agent-pr-${{ github.ref }}
+
+jobs:
+  # Agents push with git only and hold no GitHub API token. This job opens a
+  # draft pull request for a new agent branch. It never checks out or runs the
+  # pushed code. Only the owner merges.
+  draft-pr:
+    if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.event.deleted == false
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Open a draft pull request if none is open
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BRANCH: ${{ github.ref_name }}
+          SUBJECT: ${{ github.event.head_commit.message }}
+        run: |
+          open=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
+          if [ "$open" != 0 ]; then
+            echo "A pull request is already open for $BRANCH."
+            exit 0
+          fi
+          title=$(printf '%s\n' "$SUBJECT" | head -n 1 | cut -c1-200)
+          printf '%s\n' "Opened automatically for the agent branch $BRANCH." "" \
+            "Only the owner merges, by squash." > "$RUNNER_TEMP/body.md"
+          gh pr create --draft --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"

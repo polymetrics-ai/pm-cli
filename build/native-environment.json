@@ -1,9 +1,9 @@
 {
   "files": [
     {
-      "byte_count": 76,
+      "byte_count": 400,
       "path": "/etc/os-release",
-      "sha256": "8636ecf230b66872d72057470e1f6822ce9ae44f38ac3beefd028ca0cf98fea1"
+      "sha256": "7c7bfce1f48c6bf9ff892db06fa2e3e87369eccd165c51e5cae4867eb664449f"
     },
     {
       "byte_count": 236616,
@@ -11,19 +11,9 @@
       "sha256": "938a7d8dbcba04bc4d501c5b393aa7e75cb17b7873b4cc84387b5bb8303a7974"
     },
     {
-      "byte_count": 123215144,
-      "path": "/usr/lib/llvm-18/lib/libLLVM.so.1",
-      "sha256": "7dfb344cc8c0b98092928cb9ec43b823d5315b97c31393a633345f68eed14edf"
-    },
-    {
-      "byte_count": 64796088,
-      "path": "/usr/lib/llvm-18/lib/libclang-cpp.so.18.1",
-      "sha256": "5f1cbbb6c1bed90786d32bf693c40cf82e23865abe6006c4ea6a1fbd0f671a94"
-    },
-    {
       "byte_count": 400,
       "path": "/usr/lib/os-release",
-      "sha256": "c2b3fa3c0375dc18d7f15ffde0073a90f50e5f229fb9266c0c03d7114a553b22"
+      "sha256": "3a99c02bba07c7b54e90c45723d7495774db0acfc1b6676ab853158dbf834807"
     },
     {
       "byte_count": 183024,
@@ -48,16 +38,16 @@
   "sysroot": "/",
   "trees": [
     {
-      "entry_count": 1566,
+      "entry_count": 1561,
       "path": "/usr/include",
-      "sha256": "136b3519f3704bc1970d9daeba101331bdbd50b77c7b5cf8b98581fe272fc419",
-      "total_bytes": 9029756
+      "sha256": "a56947cb86895fac8b3337b1193a5b0b05e2ef5c5604a773782635c7936c7079",
+      "total_bytes": 8975220
     },
     {
-      "entry_count": 2677,
+      "entry_count": 1930,
       "path": "/usr/lib/x86_64-linux-gnu",
-      "sha256": "9277f834f33e57397bd7ec3ae45d069292e45b13ef36301347b7199ddce0bc06",
-      "total_bytes": 459112876
+      "sha256": "a6d5589575632517f518fdf1166262ac090ae6650af6b7a9660b8851c136d909",
+      "total_bytes": 338903792
     }
   ]
 }

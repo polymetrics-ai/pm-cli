@@ -29,10 +29,36 @@ PARENT_PREFIX = "pm-stack-job-"
 TOKEN_PATTERN = re.compile(r"[0-9a-f]{20}\Z")
 PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{2,62}\Z")
 TEMPORAL_NAMESPACE_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{2,254}\Z")
-MANIFEST_NAME_PATTERN = re.compile(r"pmcli-foundation-([0-9]+)-([0-9]+)\.json\Z")
+# check-foundation.sh and check-bdd.sh each name their job-owned manifest.
+MANIFEST_NAME_PATTERN = re.compile(r"pmcli-(?:foundation|bdd)-([0-9]+)-([0-9]+)\.json\Z")
 CONTAINER_ID_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 SAFE_DAEMON_VALUE = re.compile(r"[A-Za-z0-9_.:+/=-]{1,256}\Z")
 SAFE_ONEOFF_SUFFIX = re.compile(r"[a-z0-9]{6,64}\Z")
+UUID_PATTERN = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\Z")
+
+# Podman's Docker-compatible API reports ProductLicense "Apache-2.0" and a new
+# random ID on every `info` call, so its stable identity is its storage root.
+# It also spells default namespaces "private"/"shareable" where Docker reports
+# "", reports a user network as "bridge" plus the attached network, lists each
+# dropped default capability instead of "ALL" and adds default tmpfs options.
+PODMAN_LICENSE = "Apache-2.0"
+PODMAN_ID_PREFIX = "podman:"
+PODMAN_DEFAULT_CAPABILITIES = frozenset(
+    {
+        "CHOWN",
+        "DAC_OVERRIDE",
+        "FOWNER",
+        "FSETID",
+        "KILL",
+        "NET_BIND_SERVICE",
+        "SETFCAP",
+        "SETGID",
+        "SETPCAP",
+        "SETUID",
+        "SYS_CHROOT",
+    }
+)
+PODMAN_TMPFS_DEFAULTS = frozenset({"rw", "rprivate", "noexec", "nosuid", "nodev", "tmpcopyup"})
 
 MAX_JSON_BYTES = 1 << 20
 MAX_GENERATOR_OUTPUT = 64 << 10
@@ -152,6 +178,7 @@ CONTAINER_FORMAT = (
     '"devices":{{json .HostConfig.Devices}},"device_requests":{{json .HostConfig.DeviceRequests}},'
     '"uts_mode":{{json .HostConfig.UTSMode}},"userns_mode":{{json .HostConfig.UsernsMode}},'
     '"port_bindings":{{json .HostConfig.PortBindings}},'
+    '"networks":{{json .NetworkSettings.Networks}},'
     '"mounts":{{json .Mounts}},"tmpfs":{{json (index .HostConfig "Tmpfs")}}}'
 )
 NETWORK_FORMAT = (
@@ -166,7 +193,8 @@ NETWORK_FORMAT = (
 DAEMON_FORMAT = (
     '{"id":{{json .ID}},"os":{{json .OSType}},'
     '"architecture":{{json .Architecture}},"server_version":{{json .ServerVersion}},'
-    '"security_options":{{json .SecurityOptions}}}'
+    '"security_options":{{json .SecurityOptions}},'
+    '"product_license":{{json .ProductLicense}},"root_dir":{{json .DockerRootDir}}}'
 )
 
 
@@ -605,9 +633,18 @@ def inspect_daemon(
         stage="inspect Docker engine",
     )
     value = parse_single_json(stdout, "Docker engine inspection")
-    if not isinstance(value, dict) or set(value) != {"id", "os", "architecture", "server_version", "security_options"}:
+    if not isinstance(value, dict) or set(value) != {
+        "id",
+        "os",
+        "architecture",
+        "server_version",
+        "security_options",
+        "product_license",
+        "root_dir",
+    }:
         raise FixtureError("Docker engine inspection returned an unexpected shape")
     value["rootless"] = rootless_engine(value.pop("security_options"))
+    value["id"] = engine_identity(value["id"], value.pop("product_license"), value.pop("root_dir"))
     for name in ("id", "os", "architecture", "server_version"):
         if not isinstance(value[name], str) or SAFE_DAEMON_VALUE.fullmatch(value[name]) is None:
             raise FixtureError("Docker engine inspection returned an unsafe identity")
@@ -627,6 +664,38 @@ def rootless_engine(options: Any) -> bool:
     if "name=userns" in names:
         raise FixtureError("rootful Docker userns-remap lacks an admitted bind-mount ownership mapping")
     return False
+
+
+def engine_identity(daemon_id: Any, product_license: Any, root_dir: Any) -> Any:
+    """Return a stable engine identity; Podman's compat ID changes on every call."""
+    if product_license != PODMAN_LICENSE:
+        return daemon_id
+    if not isinstance(daemon_id, str) or UUID_PATTERN.fullmatch(daemon_id) is None:
+        raise FixtureError("Podman engine inspection returned an unexpected identity")
+    if (
+        not isinstance(root_dir, str)
+        or not root_dir.startswith("/")
+        or SAFE_DAEMON_VALUE.fullmatch(PODMAN_ID_PREFIX + root_dir) is None
+    ):
+        raise FixtureError("Podman engine storage root is unsafe")
+    return PODMAN_ID_PREFIX + root_dir
+
+
+def podman_root(daemon_id: str) -> str | None:
+    """Return the Podman storage root recorded in an engine identity, if any."""
+    return daemon_id.removeprefix(PODMAN_ID_PREFIX) if daemon_id.startswith(PODMAN_ID_PREFIX) else None
+
+
+def default_namespaces(value: Mapping[str, Any], podman: bool) -> bool:
+    """Accept only each engine's spelling of private, non-host namespaces."""
+    private = ("", None, "private") if podman else ("", None)
+    ipc = ("", None, "private", "shareable") if podman else ("", None, "private")
+    return (
+        value.get("pid_mode") in private
+        and value.get("uts_mode") in private
+        and value.get("ipc_mode") in ipc
+        and value.get("userns_mode") in ("", None)
+    )
 
 
 def verify_daemon_identity(
@@ -1438,6 +1507,7 @@ def actual_mounts(
     value: Any,
     *,
     allow_postgres_anonymous: bool = False,
+    volume_root: str = "/var/lib/docker/volumes",
 ) -> set[tuple[str, str, bool, str]]:
     if not isinstance(value, list):
         raise FixtureError("container mount inspection is invalid")
@@ -1457,7 +1527,7 @@ def actual_mounts(
                 or not isinstance(name, str)
                 or re.fullmatch(r"[0-9a-f]{64}", name) is None
                 or item.get("Driver") != "local"
-                or source != f"/var/lib/docker/volumes/{name}/_data"
+                or source != f"{volume_root}/{name}/_data"
                 or destination != "/var/lib/postgresql/data"
                 or read_write is not True
             ):
@@ -1511,9 +1581,14 @@ def validate_stack_container(
     environment: Mapping[str, str],
     image_refs: Mapping[str, str],
     rootless: bool = False,
+    engine_root: str | None = None,
 ) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise FixtureError("container inspection is invalid")
+    podman = engine_root is not None
+    network = f"{project}_stack-private"
+    networks = value.get("networks")
+    attached_networks = set(networks) if isinstance(networks, dict) else None
     container_id = value.get("id")
     service = value.get("service")
     if not isinstance(container_id, str) or CONTAINER_ID_PATTERN.fullmatch(container_id) is None:
@@ -1555,11 +1630,11 @@ def validate_stack_container(
     if (
         value.get("user") != expected_user
         or value.get("privileged") is not False
-        or value.get("network_mode") != f"{project}_stack-private"
-        or value.get("pid_mode") not in ("", None)
-        or value.get("ipc_mode") not in ("", "private", None)
-        or value.get("uts_mode") not in ("", None)
-        or value.get("userns_mode") not in ("", None)
+        or not (
+            value.get("network_mode") == network
+            or (podman and value.get("network_mode") == "bridge" and attached_networks == {network})
+        )
+        or not default_namespaces(value, podman)
         or value.get("readonly_rootfs") is not readonly
         or value.get("auto_remove") is not expected_oneoff
         or value.get("init") is not True
@@ -1580,6 +1655,7 @@ def validate_stack_container(
     if actual_mounts(
         value.get("mounts"),
         allow_postgres_anonymous=service == "postgres-bootstrap",
+        volume_root=f"{engine_root}/volumes" if podman else "/var/lib/docker/volumes",
     ) != expected_mounts(service, fixture_root, repo_root):
         raise FixtureError("container mounts changed or escaped the owned fixture")
     tmpfs = value.get("tmpfs")
@@ -1590,6 +1666,8 @@ def validate_stack_container(
         if not isinstance(options, str):
             raise FixtureError("Caddy tmpfs options are invalid")
         option_set = set(options.split(","))
+        if podman:
+            option_set -= PODMAN_TMPFS_DEFAULTS
         if option_set not in (
             {"mode=1777", "size=33554432"},
             {"mode=1777", "size=32m"},
@@ -1619,6 +1697,7 @@ def validate_helper_container(
         raise FixtureError("cleanup helper identity is invalid")
     postgres_data = manifest.fixture_root / "state" / "data" / "postgres"
     root_digest = hashlib.sha256(str(manifest.fixture_root).encode()).hexdigest()
+    podman = podman_root(manifest.daemon["id"]) is not None
     if (
         value.get("name") != f"/{manifest.project}-cleanup"
         or bool_label(value.get("helper")) is not True
@@ -1636,10 +1715,7 @@ def validate_helper_container(
         or value.get("pids_limit") != 32
         or value.get("port_bindings") not in (None, {})
         or value.get("cap_add") not in (None, [])
-        or value.get("pid_mode") not in ("", None)
-        or value.get("ipc_mode") not in ("", "private", None)
-        or value.get("uts_mode") not in ("", None)
-        or value.get("userns_mode") not in ("", None)
+        or not default_namespaces(value, podman)
         or value.get("init") not in (False, None)
         or value.get("auto_remove") is not False
         or value.get("restart") != "no"
@@ -1649,7 +1725,8 @@ def validate_helper_container(
     ):
         raise FixtureError("cleanup helper ownership or isolation changed")
     cap_drop = value.get("cap_drop")
-    if not isinstance(cap_drop, list) or {str(item).upper() for item in cap_drop} != {"ALL"}:
+    dropped = {str(item).upper() for item in cap_drop} if isinstance(cap_drop, list) else None
+    if dropped != {"ALL"} and not (podman and dropped == PODMAN_DEFAULT_CAPABILITIES):
         raise FixtureError("cleanup helper capabilities changed")
     security_opt = value.get("security_opt")
     if not isinstance(security_opt, list) or not any(str(item).startswith("no-new-privileges") for item in security_opt):
@@ -1773,6 +1850,7 @@ def discover_resources(
             environment,
             image_refs,
             rootless=manifest.daemon["rootless"],
+            engine_root=podman_root(manifest.daemon["id"]),
         )
         for container_id in sorted(container_ids)
     ]

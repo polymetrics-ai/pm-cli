@@ -1,0 +1,21 @@
+# Packages that need the job-owned dependency stack (PostgreSQL, Temporal,
+# object store). They fail without it. One package per line.
+./internal/app
+./internal/workflows
+./internal/temporal
+./tests/stack
+./internal/activities
+./internal/api
+./internal/auth
+./internal/cli
+./internal/credentials
+./internal/httpapi
+./internal/objects
+./internal/runtime
+./internal/server
+./internal/store
+./internal/sync
+./internal/testfixture
+./internal/warehouse
+./tests/client-parity
+./tests/acceptance

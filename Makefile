@@ -5,10 +5,18 @@ BAZEL = $(TOOLS) exec bazelisk --
 PM_TOOLS_CACHE ?= $(CURDIR)/.cache/pm-tools
 export PM_TOOLS_CACHE
 
-.PHONY: all build build-api-generator generate check-generated test test-tools test-native test-setup test-docs vet boundaries bazel-build bazel-test gazelle benchmark check
+.PHONY: all hooks acceptance build build-api-generator generate check-generated test test-tools test-native test-setup test-docs vet boundaries bazel-build bazel-test gazelle benchmark check
 .PHONY: browser-deps build-browser generate-browser check-generated-browser
 
 all: build
+
+# Install the git hooks for this clone: pre-commit, commit-msg and pre-push.
+hooks:
+	git config core.hooksPath scripts/dev/git-hooks
+
+# The Gherkin acceptance suite. CI runs it with the dependency stack.
+acceptance:
+	CGO_ENABLED=1 $(GO) test -count=1 ./tests/acceptance/...
 
 build: build-api-generator
 	mkdir -p .cache/bin

@@ -293,29 +293,34 @@ def provenance_check(root, files, policy):
             "external_bytes": "recorded only; not read on CI runner"}
 
 
+TRUST = ("github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)")
+RUNNER = ["self-hosted", "Linux", "X64", "pm-cli-vps"]
+BDD_RUN = "sh scripts/ci/in-ci-image.sh run bdd -- sh scripts/ci/check-bdd.sh"
+CLEANUP_RUN = ("sh scripts/ci/in-ci-image.sh stop bdd\n"
+               "sh scripts/ci/in-ci-image.sh run bdd-cleanup -- "
+               "python3 scripts/ci/with-stack-fixture.py \\\n"
+               '  --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n')
+
+
 def workflow_check(path, actionlint):
+    """Freeze the required check: one `bdd` job on owner pushes, in the CI image."""
     obj = read_yaml(path.read_text())
     require(isinstance(obj, dict), "workflow must be an object")
     require(set(obj) == {"name", "on", "permissions", "concurrency", "jobs"},
             "unapproved workflow capability")
-    require(obj["on"] == {"push": {"branches": ["main"]},
-            "pull_request": {"branches": ["main"],
-            "types": ["opened", "synchronize", "reopened", "edited"]}},
-            "unapproved workflow triggers")
+    require(obj["on"] == {"push": {"branches": ["**"]}}, "unapproved workflow triggers")
     require(obj["permissions"] == {"contents": "read"}, "excess workflow permissions")
     require(obj["concurrency"] == {
-            "group": "foundation-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}",
-            "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"},
+            "group": "bdd-${{ github.ref }}",
+            "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}"},
             "unapproved workflow concurrency")
-    require(set(obj["jobs"]) == {"foundation"}, "unapproved job membership")
-    job = obj["jobs"]["foundation"]
-    require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"},
-            "unapproved job capability")
-    require(job["if"] == "github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && ((github.event_name == 'pull_request' && github.event.pull_request.state == 'open' && github.event.pull_request.merged == false && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.deleted == false && github.event.forced == false))",
-            "unapproved workflow trust boundary")
-    require(job["runs-on"] == ["self-hosted", "Linux", "X64", "pm-cli-qual-20260911-r8"],
-            "runner routing changed")
-    require(job["timeout-minutes"] == "30", "job timeout changed")
+    require(set(obj["jobs"]) == {"bdd"}, "unapproved job membership")
+    job = obj["jobs"]["bdd"]
+    # No `container:` key: it would move the workspace away from the host path.
+    require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"}, "unapproved job capability")
+    require(job["if"] == TRUST, "unapproved workflow trust boundary")
+    require(job["runs-on"] == RUNNER, "runner routing changed")
+    require(job["timeout-minutes"] == "60", "job timeout changed")
     steps = job["steps"]
     require(isinstance(steps, list) and len(steps) == 3, "unexpected step membership")
     checkout, check, cleanup = steps
@@ -326,18 +331,14 @@ def workflow_check(path, actionlint):
             "persist-credentials": "false", "fetch-depth": "1",
             "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
             "checkout capabilities changed")
-    require(check == {"name": "Build and test the foundation", "timeout-minutes": "25",
-            "run": "sh scripts/ci/check-foundation.sh"}, "unapproved executable step")
-    require(cleanup == {
-        "name": "Clean up the job-owned dependency fixture",
-        "if": "always()",
-        "timeout-minutes": "4",
-        "run": 'export PATH="/opt/pmcli-tools/venv/bin:/opt/pmcli-tools/bin:$PATH"\n'
-               'python3 scripts/ci/with-stack-fixture.py \\\n'
-               '  --cleanup "$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n',
-    }, "unapproved fixture cleanup step")
+    require(check == {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "50",
+            "run": BDD_RUN}, "unapproved executable step")
+    require(cleanup == {"name": "Clean up the job container and dependency fixture",
+            "if": "always()", "timeout-minutes": "6", "run": CLEANUP_RUN},
+            "unapproved fixture cleanup step")
     config = Path(__file__).with_name("actionlint.yaml")
-    command([actionlint, "-no-color", "-config-file", str(config), str(path)], path.parent)
+    workflows = sorted(str(item) for item in path.parent.glob("*.yml"))
+    command([actionlint, "-no-color", "-config-file", str(config), *workflows], path.parent)
 
 
 def main():

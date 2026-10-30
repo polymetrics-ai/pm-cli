@@ -41,6 +41,13 @@ Keep every fact, requirement strength (must, should, may), hedge and exact ident
   - Mark a breaking change with `!` after the type or scope, or with a `BREAKING CHANGE:` footer.
 - Use the same format for the pull request title. A squash merge uses the title as the commit subject on `main`.
 - Push only to your own branch. Do not push to `main`, do not force-push a shared branch, and do not merge. Only the owner merges, by squash.
+- Agent branches are named `agent/<issue>-<slug>`. A push opens a draft pull request automatically.
+
+## Hooks and CI
+
+- Run `make hooks` once in each clone. The hooks run `gofmt`, `go vet`, the Go developer tests and the commit message check. Do not skip them: never use `--no-verify`.
+- CI runs only the Gherkin acceptance suite in `tests/acceptance` (the required `bdd` check), on our own runners. Go tests are developer checks and never count as acceptance evidence. Gherkin scenarios that run the real binaries are the only proof.
+- See [CI and hooks](docs/development/ci.md).
 
 ## Client, server, and worker boundary
 
