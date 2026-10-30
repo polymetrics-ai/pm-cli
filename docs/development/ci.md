@@ -1,43 +1,31 @@
 # CI events and owner-account merge
 
-## Test before and after merge
+## What runs where
 
-The required `foundation` workflow ([check.yml](../../.github/workflows/check.yml))
-runs for trusted, open, same-repository pull requests targeting `main`. It also
-runs on each non-forced push to `main`, including an authorized merge. Checkout
-uses the event's exact `github.sha`: the PR merge-test revision before merge and
-the landed commit afterward.
+| Where | What runs | Gate |
+| --- | --- | --- |
+| `pre-commit` hook | `gofmt`, `go vet`, Staticcheck and `go test` on the changed packages that need no stack; `gitleaks` on staged changes when it is installed | A failure stops the commit |
+| `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
+| `pre-push` hook | Refuses a push to `main`; `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack | A failure stops the push |
+| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | The Gherkin acceptance suite in `tests/acceptance` | The only required check, `bdd` |
 
-New commits cancel obsolete runs for the same PR. Main runs have separate
-SHA-keyed concurrency groups and are not cancelled by PR activity or later main
-commits. A main failure must stay visible and receive a focused repair PR; it
-does not authorize an agent to merge or waive a test.
+Install the hooks once per clone with `make hooks`. The hooks are developer checks. Go tests are not acceptance proof (OD-05); only the Gherkin suite is.
+
+## The `bdd` check
+
+The `bdd` workflow runs on every push to any branch of this repository by the owner account. A pull request shows the result of its head commit, because a status belongs to a commit. Pull request events do not start CI, so a fork pull request never reaches the self-hosted runners. Only collaborators can push branches or open pull requests.
+
+The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci/check-bdd.sh) in the pinned job image. The script starts the job-owned dependency stack and runs `go test ./tests/acceptance/...`. Strict godog fails the run on an undefined or pending step. A failed suite is never retried.
+
+A new push to a working branch cancels the older run for that branch. Runs on `main` are never cancelled. A force-push is admitted on a working branch and refused on `main`.
 
 Missing prerequisites, test failures and cleanup failures remain failures.
 
-## Required check: three shards and one aggregate
+[stack-packages.txt](../../scripts/ci/stack-packages.txt) lists the packages that need the dependency stack. The hooks skip them. [check-foundation.sh](../../scripts/ci/check-foundation.sh) still runs every package, including the stack packages, for a full local check.
 
-The `shard` matrix job runs three shards in parallel. The `foundation` job needs
-all of them and passes only when every shard passed; a failed, cancelled or
-skipped shard fails it. `foundation` is the only required check name.
+## Agent branches
 
-| Shard | Runs |
-| --- | --- |
-| `build` | Setup, policy and fixture unit tests; tool builds; `generate.sh --check`; `go build ./...`; `go vet`; native qualification; boundaries; browser SDK build; image pins; `go test` of every package that needs no fixture |
-| `stack-a` | `go test -json -p 1` of `internal/app`, `internal/workflows`, `internal/temporal` and `tests/stack` inside its own job-owned fixture |
-| `stack-b` | `go test -json -p 1` of the other physical packages inside its own fixture |
-
-[check-foundation.sh](../../scripts/ci/check-foundation.sh) holds the package
-lists. The split follows the last measured package durations. Each shard writes
-`$RUNNER_TEMP/go-test-<shard>.json` and prints each package's result and elapsed
-time, so the lists can be rebalanced from real runs. A new package runs in
-`build` by default; if it needs the fixture it fails there until it is added to a
-stack list. Go tests are developer checks (OD-05); they are not acceptance proof.
-
-Atlas, architecture-document validation, Bazel build and test, Playwright
-browser parity, the SBOM inventory and the Bazel benchmark do not block merge
-(M0-05). The report-only [governance workflow](../../.github/workflows/governance.yml)
-runs them after each push to `main`.
+Agents push `agent/<issue>-<slug>` branches with git only and hold no GitHub API token. [agent-pr.yml](../../.github/workflows/agent-pr.yml) opens a draft pull request for a new agent branch on a GitHub-hosted runner. It never checks out or runs the pushed code. Only the owner merges, by squash.
 
 ## Pinned job image and native environment
 
@@ -162,12 +150,7 @@ Admission requires that the hook runs as the UID named by `PMCLI_RUNNER_UID`
 (never root), and checks the repository, original and rerun actor, payload
 sender, workflow path, event ref and GitHub's server-defined `GITHUB_SHA`. The
 direct workflow's `GITHUB_WORKFLOW_SHA` must equal `GITHUB_SHA`; checkout
-consumes that exact SHA. For PR jobs, `GITHUB_SHA` and `GITHUB_REF` are the
-merge-test identity source of truth; the immutable event's nullable or stale
-`pull_request.merge_commit_sha` is not required or compared, and admission makes
-no live REST lookup. PRs may run only `check.yml`; pushes to `main` may run
-`check.yml` and `governance.yml`. Forks, closed or merged PR metadata edits,
-other actors, refs, events and workflows are refused. Input size and execution
+consumes that exact SHA. Admission makes no live REST lookup. Only `bdd.yml` on a push event is admitted. The ref must be a branch (`refs/heads/...`), equal the event ref and point at `GITHUB_SHA`. A deleted ref and a force-push to `main` are refused. Pull request events, other actors, refs, events and workflows are refused. Input size and execution
 time are bounded. Refusal returns nonzero to fail only the job; it never stops
 the listener, the Podman service or another job.
 
@@ -179,7 +162,7 @@ actionlint -config-file scripts/ci/actionlint.yaml .github/workflows/*.yml
 shellcheck --shell=sh scripts/ci/runner-admission.sh
 ```
 
-Synthetic admission is not live workflow proof; exercise a real PR job after
+Synthetic admission is not live workflow proof; exercise a real push job after
 each hook update.
 
 ## Retire the old runner

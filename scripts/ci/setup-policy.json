@@ -28,8 +28,9 @@
     "scripts/test-changed.sh",
     "scripts/ci/setup-policy.json",
     "scripts/ci/actionlint.yaml",
-    ".github/workflows/check.yml",
-    ".github/workflows/governance.yml",
+    ".github/workflows/bdd.yml",
+    ".github/workflows/agent-pr.yml",
+    "scripts/ci/check-bdd.sh",
     "scripts/ci/in-ci-image.sh",
     "scripts/ci/go-test-report.py",
     "build/ci/Dockerfile",
@@ -58,7 +59,7 @@
   "required_vendored_skills": [
     "asd-ste100"
   ],
-  "workflow": ".github/workflows/check.yml",
+  "workflow": ".github/workflows/bdd.yml",
   "required_project_references": [
     "AGENTS.md",
     "docs/development/skills.md",

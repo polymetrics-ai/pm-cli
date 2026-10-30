@@ -7,6 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/s3 v1.113.0
 	github.com/aws/smithy-go v1.28.1
 	github.com/coreos/go-oidc/v3 v3.21.0
+	github.com/cucumber/godog v0.16.0
 	github.com/duckdb/duckdb-go-bindings v0.10505.0
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/getkin/kin-openapi v0.149.0
@@ -64,6 +65,8 @@ require (
 	github.com/containerd/log v0.1.0 // indirect
 	github.com/containerd/platforms v0.2.1 // indirect
 	github.com/cpuguy83/dockercfg v0.3.2 // indirect
+	github.com/cucumber/gherkin/go/v42 v42.0.0 // indirect
+	github.com/cucumber/messages/go/v34 v34.2.0 // indirect
 	github.com/danieljoos/wincred v1.2.3 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
 	github.com/docker/go-connections v0.8.1 // indirect
@@ -96,6 +99,9 @@ require (
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/grpc-ecosystem/go-grpc-middleware/v2 v2.3.2 // indirect
 	github.com/grpc-ecosystem/grpc-gateway/v2 v2.30.0 // indirect
+	github.com/hashicorp/go-immutable-radix v1.3.1 // indirect
+	github.com/hashicorp/go-memdb v1.3.5 // indirect
+	github.com/hashicorp/golang-lru v0.5.4 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/jackc/pgpassfile v1.0.0 // indirect
 	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
@@ -133,7 +139,7 @@ require (
 	github.com/sethvargo/go-retry v0.4.0 // indirect
 	github.com/shirou/gopsutil/v4 v4.26.6 // indirect
 	github.com/sirupsen/logrus v1.9.4 // indirect
-	github.com/spf13/pflag v1.0.9 // indirect
+	github.com/spf13/pflag v1.0.10 // indirect
 	github.com/stretchr/objx v0.5.3 // indirect
 	github.com/stretchr/testify v1.12.1 // indirect
 	github.com/tklauser/go-sysconf v0.4.0 // indirect

@@ -19,10 +19,11 @@ REPOSITORY = "polymetrics-ai/pm-cli"
 SHA = "a" * 40
 
 
-def payload(kind="pull_request", workflow="check.yml"):
+def payload(ref="refs/heads/main", workflow="bdd.yml", kind="push"):
     event = {
         "repository": {"full_name": REPOSITORY},
         "sender": {"login": "karthik-sivadas"},
+        "ref": ref, "after": SHA, "deleted": False, "forced": False,
     }
     env = {
         "GITHUB_REPOSITORY": REPOSITORY,
@@ -31,21 +32,9 @@ def payload(kind="pull_request", workflow="check.yml"):
         "GITHUB_EVENT_NAME": kind,
         "GITHUB_SHA": SHA,
         "GITHUB_WORKFLOW_SHA": SHA,
+        "GITHUB_REF": ref,
+        "GITHUB_WORKFLOW_REF": f"{REPOSITORY}/.github/workflows/{workflow}@{ref}",
     }
-    if kind == "pull_request":
-        event.update(action="synchronize", number=52, pull_request={
-            "number": 52, "state": "open", "merged": False,
-            "merge_commit_sha": SHA,
-            "head": {"repo": {"full_name": REPOSITORY}},
-            "base": {"ref": "main", "repo": {"full_name": REPOSITORY}},
-        })
-        env["GITHUB_REF"] = "refs/pull/52/merge"
-    else:
-        event.update(ref="refs/heads/main", after=SHA, deleted=False, forced=False)
-        env["GITHUB_REF"] = "refs/heads/main"
-    env["GITHUB_WORKFLOW_REF"] = (
-        f"{REPOSITORY}/.github/workflows/{workflow}@{env['GITHUB_REF']}"
-    )
     return event, env
 
 
@@ -58,75 +47,46 @@ class AdmissionPolicy(unittest.TestCase):
         cls.policy = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(cls.policy)
 
-    def test_open_pr_and_main_push_are_accepted(self):
-        for kind, workflow in (("pull_request", "check.yml"), ("push", "check.yml"),
-                               ("push", "governance.yml")):
-            with self.subTest(kind=kind, workflow=workflow):
-                event, env = payload(kind, workflow)
-                self.policy.validate(event, env)
-        for kind, workflow in (("pull_request", "governance.yml"),
-                               ("push", "architecture-documentation.yml")):
-            with self.subTest(kind=kind, workflow=workflow), self.assertRaises(ValueError):
-                self.policy.validate(*payload(kind, workflow))
+    def test_branch_pushes_are_accepted(self):
+        for ref in ("refs/heads/main", "refs/heads/agent/72-godog-harness",
+                    "refs/heads/ci/dev-loop", "refs/heads/feature_x.y"):
+            with self.subTest(ref=ref):
+                self.policy.validate(*payload(ref))
+        event, env = payload("refs/heads/agent/72-godog-harness")
+        event["forced"] = True
+        self.policy.validate(event, env)
 
-        # GITHUB_SHA is server-defined runner context. The immutable PR payload's
-        # merge_commit_sha may be absent, null or stale while the merge ref moves.
-        for name, merge_sha in (("absent", ...), ("null", None),
-                                ("stale", "b" * 40)):
-            with self.subTest(merge_commit_sha=name):
-                event, env = payload()
-                if merge_sha is ...:
-                    event["pull_request"].pop("merge_commit_sha")
-                else:
-                    event["pull_request"]["merge_commit_sha"] = merge_sha
-                self.policy.validate(event, env)
+    def test_only_the_bdd_workflow_on_push_is_admitted(self):
+        for workflow in ("check.yml", "governance.yml", "agent-pr.yml", "other.yml"):
+            with self.subTest(workflow=workflow), self.assertRaises(ValueError):
+                self.policy.validate(*payload(workflow=workflow))
+        for kind in ("pull_request", "pull_request_target", "workflow_run", "workflow_dispatch"):
+            with self.subTest(kind=kind), self.assertRaises(ValueError):
+                self.policy.validate(*payload(kind=kind))
 
-    def test_closed_pr_metadata_replay_is_rejected(self):
-        event, env = payload()
-        event["action"] = "edited"
-        event["pull_request"].update(state="closed", merged=True)
-        env["GITHUB_REF"] = "refs/heads/main"
-        env["GITHUB_WORKFLOW_REF"] = f"{REPOSITORY}/.github/workflows/check.yml@refs/heads/main"
-        with self.assertRaises(ValueError):
-            self.policy.validate(event, env)
-
-    def test_pr_trust_boundaries_fail_closed(self):
-        event, env = payload()
+    def test_push_trust_boundaries_fail_closed(self):
         changes = [
             ("actor", lambda e, v: v.update(GITHUB_ACTOR="outsider")),
             ("rerun actor", lambda e, v: v.update(GITHUB_TRIGGERING_ACTOR="outsider")),
             ("sender", lambda e, v: e["sender"].update(login="outsider")),
             ("environment repo", lambda e, v: v.update(GITHUB_REPOSITORY="other/repo")),
             ("payload repo", lambda e, v: e["repository"].update(full_name="other/repo")),
-            ("fork", lambda e, v: e["pull_request"]["head"]["repo"].update(full_name="other/repo")),
-            ("base repo", lambda e, v: e["pull_request"]["base"]["repo"].update(full_name="other/repo")),
-            ("base branch", lambda e, v: e["pull_request"]["base"].update(ref="release")),
-            ("closed", lambda e, v: e["pull_request"].update(state="closed")),
-            ("merged", lambda e, v: e["pull_request"].update(merged=True)),
-            ("number mismatch", lambda e, v: e.update(number=53)),
-            ("boolean number", lambda e, v: e.update(number=True)),
-            ("action", lambda e, v: e.update(action="closed")),
-            ("event", lambda e, v: v.update(GITHUB_EVENT_NAME="pull_request_target")),
-            ("workflow", lambda e, v: v.update(GITHUB_WORKFLOW_REF=f"{REPOSITORY}/.github/workflows/other.yml@refs/pull/52/merge")),
-            ("workflow ref", lambda e, v: v.update(GITHUB_WORKFLOW_REF=f"{REPOSITORY}/.github/workflows/check.yml@refs/heads/main")),
-            ("ref", lambda e, v: v.update(GITHUB_REF="refs/pull/53/merge")),
+            ("forced main", lambda e, v: e.update(forced=True)),
+            ("deleted", lambda e, v: e.update(deleted=True)),
+            ("after mismatch", lambda e, v: e.update(after="b" * 40)),
+            ("ref mismatch", lambda e, v: v.update(GITHUB_REF="refs/heads/other")),
+            ("tag", lambda e, v: (e.update(ref="refs/tags/v1"), v.update(GITHUB_REF="refs/tags/v1"))),
+            ("pull ref", lambda e, v: (e.update(ref="refs/pull/1/merge"), v.update(GITHUB_REF="refs/pull/1/merge"))),
+            ("dot-dot ref", lambda e, v: (e.update(ref="refs/heads/a..b"), v.update(GITHUB_REF="refs/heads/a..b"))),
+            ("workflow ref branch", lambda e, v: v.update(GITHUB_WORKFLOW_REF=f"{REPOSITORY}/.github/workflows/bdd.yml@refs/heads/other")),
             ("SHA", lambda e, v: v.update(GITHUB_SHA="not-a-sha")),
             ("workflow SHA mismatch", lambda e, v: v.update(GITHUB_WORKFLOW_SHA="b" * 40)),
             ("workflow SHA absent", lambda e, v: v.pop("GITHUB_WORKFLOW_SHA")),
         ]
         for name, mutate in changes:
             with self.subTest(case=name):
-                candidate, environment = copy.deepcopy(event), env.copy()
-                mutate(candidate, environment)
-                with self.assertRaises(ValueError):
-                    self.policy.validate(candidate, environment)
-
-    def test_push_only_accepts_exact_non_deleted_main_sha(self):
-        for field, value in (("ref", "refs/heads/other"), ("after", "b" * 40),
-                             ("deleted", True), ("forced", True)):
-            with self.subTest(field=field):
-                event, env = payload("push")
-                event[field] = value
+                event, env = payload()
+                mutate(event, env)
                 with self.assertRaises(ValueError):
                     self.policy.validate(event, env)
 
@@ -182,27 +142,25 @@ class WorkflowPolicy(unittest.TestCase):
     def load(self, name):
         return yaml.load((ROOT / ".github/workflows" / name).read_text(), Loader=yaml.BaseLoader)
 
-    def test_main_push_and_open_pr_are_separate(self):
-        workflow = self.load("check.yml")
-        self.assertEqual(workflow["on"].get("push"), {"branches": ["main"]})
-        self.assertIn("github.event_name", workflow["concurrency"]["group"])
-        self.assertIn("github.sha", workflow["concurrency"]["group"])
-        self.assertEqual(workflow["concurrency"]["cancel-in-progress"], "${{ github.event_name == 'pull_request' }}")
-        for job in workflow["jobs"].values():
-            self.assertIn("github.event.pull_request.state == 'open'", job["if"])
-            self.assertIn("github.event_name == 'push'", job["if"])
-            self.assertIn("github.ref == 'refs/heads/main'", job["if"])
-            self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
-        self.assertEqual(workflow["jobs"]["shard"]["steps"][0]["with"]["ref"], "${{ github.sha }}")
+    def test_bdd_runs_on_owner_pushes_only(self):
+        workflow = self.load("bdd.yml")
+        self.assertEqual(workflow["on"], {"push": {"branches": ["**"]}})
+        self.assertEqual(workflow["concurrency"]["cancel-in-progress"],
+                         "${{ github.ref != 'refs/heads/main' }}")
+        job = workflow["jobs"]["bdd"]
+        self.assertIn("github.event_name == 'push'", job["if"])
+        self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
+        self.assertIn("github.event.forced == false", job["if"])
+        self.assertEqual(job["steps"][0]["with"]["ref"], "${{ github.sha }}")
 
-    def test_governance_runs_only_on_main_pushes(self):
-        workflow = self.load("governance.yml")
-        self.assertEqual(workflow["on"], {"push": {"branches": ["main"]}})
-        for job in workflow["jobs"].values():
-            self.assertIn("github.event_name == 'push'", job["if"])
-            self.assertIn("github.ref == 'refs/heads/main'", job["if"])
-            self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
-            self.assertEqual(job["steps"][0]["with"]["ref"], "${{ github.sha }}")
+    def test_agent_pr_never_runs_pushed_code(self):
+        workflow = self.load("agent-pr.yml")
+        self.assertEqual(workflow["on"], {"push": {"branches": ["agent/**"]}})
+        job = workflow["jobs"]["draft-pr"]
+        self.assertEqual(job["runs-on"], "ubuntu-24.04")
+        self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
+        self.assertTrue(all("uses" not in step for step in job["steps"]))
+        self.assertEqual(workflow["permissions"], {"contents": "read", "pull-requests": "write"})
 
 
 if __name__ == "__main__":

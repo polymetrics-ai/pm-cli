@@ -28,6 +28,12 @@
         "source_url": "https://github.com/coreos/go-oidc/tree/c914bd380327a5a3a81403774d1a5d5b73772ce7"
       },
       {
+        "path": "github.com/cucumber/godog",
+        "version": "v0.16.0",
+        "license": "MIT",
+        "source_url": "https://github.com/cucumber/godog/tree/ba6fc6b7c4495eb8b66391355e7afce1f2513fb7"
+      },
+      {
         "path": "github.com/duckdb/duckdb-go/v2",
         "version": "v2.10505.0",
         "license": "MIT",

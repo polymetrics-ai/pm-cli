@@ -5,9 +5,9 @@ This file records the third-party source identities selected by the build/toolch
 ## Recorded dependency scope
 
 - Module-listing environment: Go 1.27.1 with `CGO_ENABLED=0`, `GOWORK=off`, and `GOFLAGS=-mod=readonly`.
-- Application graph: 247 resolved third-party modules; `go.sum` SHA-256 `d0fc9dd7c14f008aaed4b3d9a3f8311b3acfeeab34709e4f133bbc0a36aa3f6a`.
+- Application graph: 254 resolved third-party modules; `go.sum` SHA-256 `4c46a56399ad3db07782ff5e3c5cdfb7b243bafb2e337582bc16ef6f4cb8601e`.
 - Isolated tools/generator graph: 65 resolved third-party modules; `tools/go.sum` SHA-256 `7c8cfcd3e5d3149e9e8ce2b09003dec1ede617494a9f19f8e8cc90c3f3fa3be0`.
-- Union: 299 exact module path/version identities; 13 identities occur in both graphs.
+- Union: 306 exact module path/version identities; 13 identities occur in both graphs.
 - The module table below names the license material present in the downloaded source module. Full upstream license and NOTICE files must accompany any distribution that contains the corresponding code. This compact inventory is not a substitute for those texts.
 - `github.com/iris-contrib/schema@v0.0.6` places its BSD-3-Clause terms in `README.md#License`. `github.com/nexus-rpc/nexus-proto-annotations@v0.1.0` omits the repository MIT file from its module zip; the upstream repository license must be retained separately. The downloaded `github.com/chzyer/logex@v1.1.10` module contains no license or NOTICE file and no README license statement, so its distribution license remains unresolved.
 
@@ -129,6 +129,9 @@ Locked source archive/binary hashes and installed-content hashes emitted by an S
 | `github.com/coreos/go-oidc/v3@v3.21.0` | application | Apache-2.0 (`LICENSE, NOTICE`) | [source](https://pkg.go.dev/github.com/coreos/go-oidc/v3@v3.21.0) |
 | `github.com/cpuguy83/dockercfg@v0.3.2` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/cpuguy83/dockercfg@v0.3.2) |
 | `github.com/cpuguy83/go-md2man/v2@v2.0.6` | application | MIT (`LICENSE.md`) | [source](https://pkg.go.dev/github.com/cpuguy83/go-md2man/v2@v2.0.6) |
+| `github.com/cucumber/gherkin/go/v42@v42.0.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/cucumber/gherkin/go/v42@v42.0.0) |
+| `github.com/cucumber/godog@v0.16.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/cucumber/godog@v0.16.0) |
+| `github.com/cucumber/messages/go/v34@v34.2.0` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/cucumber/messages/go/v34@v34.2.0) |
 | `github.com/danieljoos/wincred@v1.2.3` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/danieljoos/wincred@v1.2.3) |
 | `github.com/davecgh/go-spew@v1.1.2-0.20180830191138-d8f796af33cc` | application, tools | ISC (`LICENSE`) | [source](https://pkg.go.dev/github.com/davecgh/go-spew@v1.1.2-0.20180830191138-d8f796af33cc) |
 | `github.com/distribution/reference@v0.6.0` | application | Apache-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/distribution/reference@v0.6.0) |
@@ -196,6 +199,10 @@ Locked source archive/binary hashes and installed-content hashes emitted by an S
 | `github.com/gorilla/mux@v1.8.0` | application, tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/gorilla/mux@v1.8.0) |
 | `github.com/grpc-ecosystem/go-grpc-middleware/v2@v2.3.2` | application | Apache-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/grpc-ecosystem/go-grpc-middleware/v2@v2.3.2) |
 | `github.com/grpc-ecosystem/grpc-gateway/v2@v2.30.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/grpc-ecosystem/grpc-gateway/v2@v2.30.0) |
+| `github.com/hashicorp/go-immutable-radix@v1.3.1` | application | MPL-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/hashicorp/go-immutable-radix@v1.3.1) |
+| `github.com/hashicorp/go-memdb@v1.3.5` | application | MPL-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/hashicorp/go-memdb@v1.3.5) |
+| `github.com/hashicorp/go-uuid@v1.0.2` | application | MPL-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/hashicorp/go-uuid@v1.0.2) |
+| `github.com/hashicorp/golang-lru@v0.5.4` | application | MPL-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/hashicorp/golang-lru@v0.5.4) |
 | `github.com/hpcloud/tail@v1.0.0` | tools | MIT (`LICENSE.txt, ratelimiter/Licence`) | [source](https://pkg.go.dev/github.com/hpcloud/tail@v1.0.0) |
 | `github.com/ianlancetaylor/demangle@v0.0.0-20200824232613-28f6c0f3b639` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/ianlancetaylor/demangle@v0.0.0-20200824232613-28f6c0f3b639) |
 | `github.com/inconshreveable/mousetrap@v1.1.0` | application | Apache-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/inconshreveable/mousetrap@v1.1.0) |
@@ -285,7 +292,7 @@ Locked source archive/binary hashes and installed-content hashes emitted by an S
 | `github.com/speakeasy-api/jsonpath@v0.6.3` | tools | Apache-2.0 (`LICENSE`) | [source](https://pkg.go.dev/github.com/speakeasy-api/jsonpath@v0.6.3) |
 | `github.com/speakeasy-api/openapi@v1.24.0` | tools | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/speakeasy-api/openapi@v1.24.0) |
 | `github.com/spf13/cobra@v1.10.2` | application | Apache-2.0 (`LICENSE.txt`) | [source](https://pkg.go.dev/github.com/spf13/cobra@v1.10.2) |
-| `github.com/spf13/pflag@v1.0.9` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/spf13/pflag@v1.0.9) |
+| `github.com/spf13/pflag@v1.0.10` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/github.com/spf13/pflag@v1.0.10) |
 | `github.com/stretchr/objx@v0.1.0` | tools | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/stretchr/objx@v0.1.0) |
 | `github.com/stretchr/objx@v0.5.3` | application | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/stretchr/objx@v0.5.3) |
 | `github.com/stretchr/testify@v1.11.1` | tools | MIT (`LICENSE`) | [source](https://pkg.go.dev/github.com/stretchr/testify@v1.11.1) |

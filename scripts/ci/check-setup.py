@@ -293,42 +293,34 @@ def provenance_check(root, files, policy):
             "external_bytes": "recorded only; not read on CI runner"}
 
 
-TRUST = ("github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && ((github.event_name == 'pull_request' && github.event.pull_request.state == 'open' && github.event.pull_request.merged == false && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository) || (github.event_name == 'push' && github.ref == 'refs/heads/main' && github.event.deleted == false && github.event.forced == false))")
+TRUST = ("github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)")
 RUNNER = ["self-hosted", "Linux", "X64", "pm-cli-vps"]
-SHARD_RUN = ('sh scripts/ci/in-ci-image.sh run "foundation-$PMCLI_SHARD" -- '
-             'sh scripts/ci/check-foundation.sh "$PMCLI_SHARD"')
-CLEANUP_RUN = ('sh scripts/ci/in-ci-image.sh stop "foundation-$PMCLI_SHARD"\n'
-               'sh scripts/ci/in-ci-image.sh run "cleanup-$PMCLI_SHARD" -- '
-               'python3 scripts/ci/with-stack-fixture.py \\\n'
-               '  --cleanup "$RUNNER_TEMP/pmcli-foundation-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n')
+BDD_RUN = "sh scripts/ci/in-ci-image.sh run bdd -- sh scripts/ci/check-bdd.sh"
+CLEANUP_RUN = ("sh scripts/ci/in-ci-image.sh stop bdd\n"
+               "sh scripts/ci/in-ci-image.sh run bdd-cleanup -- "
+               "python3 scripts/ci/with-stack-fixture.py \\\n"
+               '  --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n')
 
 
 def workflow_check(path, actionlint):
-    """Freeze the required check: three image shards and one aggregate `foundation`."""
+    """Freeze the required check: one `bdd` job on owner pushes, in the CI image."""
     obj = read_yaml(path.read_text())
     require(isinstance(obj, dict), "workflow must be an object")
     require(set(obj) == {"name", "on", "permissions", "concurrency", "jobs"},
             "unapproved workflow capability")
-    require(obj["on"] == {"push": {"branches": ["main"]},
-            "pull_request": {"branches": ["main"],
-            "types": ["opened", "synchronize", "reopened", "edited"]}},
-            "unapproved workflow triggers")
+    require(obj["on"] == {"push": {"branches": ["**"]}}, "unapproved workflow triggers")
     require(obj["permissions"] == {"contents": "read"}, "excess workflow permissions")
     require(obj["concurrency"] == {
-            "group": "foundation-${{ github.event_name }}-${{ github.event.pull_request.number || github.sha }}",
-            "cancel-in-progress": "${{ github.event_name == 'pull_request' }}"},
+            "group": "bdd-${{ github.ref }}",
+            "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}"},
             "unapproved workflow concurrency")
-    require(set(obj["jobs"]) == {"shard", "foundation"}, "unapproved job membership")
-    job = obj["jobs"]["shard"]
+    require(set(obj["jobs"]) == {"bdd"}, "unapproved job membership")
+    job = obj["jobs"]["bdd"]
     # No `container:` key: it would move the workspace away from the host path.
-    require(set(job) == {"if", "strategy", "runs-on", "timeout-minutes", "env", "steps"},
-            "unapproved job capability")
+    require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"}, "unapproved job capability")
     require(job["if"] == TRUST, "unapproved workflow trust boundary")
-    require(job["strategy"] == {"fail-fast": "false",
-            "matrix": {"shard": ["build", "stack-a", "stack-b"]}}, "unapproved shard matrix")
     require(job["runs-on"] == RUNNER, "runner routing changed")
     require(job["timeout-minutes"] == "60", "job timeout changed")
-    require(job["env"] == {"PMCLI_SHARD": "${{ matrix.shard }}"}, "unapproved shard environment")
     steps = job["steps"]
     require(isinstance(steps, list) and len(steps) == 3, "unexpected step membership")
     checkout, check, cleanup = steps
@@ -339,16 +331,11 @@ def workflow_check(path, actionlint):
             "persist-credentials": "false", "fetch-depth": "1",
             "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
             "checkout capabilities changed")
-    require(check == {"name": "Build and test the foundation shard", "timeout-minutes": "50",
-            "run": SHARD_RUN}, "unapproved executable step")
+    require(check == {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "50",
+            "run": BDD_RUN}, "unapproved executable step")
     require(cleanup == {"name": "Clean up the job container and dependency fixture",
             "if": "always()", "timeout-minutes": "6", "run": CLEANUP_RUN},
             "unapproved fixture cleanup step")
-    require(obj["jobs"]["foundation"] == {
-        "needs": "shard", "if": "always() && " + TRUST, "runs-on": RUNNER,
-        "timeout-minutes": "5", "env": {"SHARD_RESULT": "${{ needs.shard.result }}"},
-        "steps": [{"name": "Require every foundation shard", "run": 'test "$SHARD_RESULT" = success'}],
-    }, "unapproved aggregate foundation check")
     config = Path(__file__).with_name("actionlint.yaml")
     workflows = sorted(str(item) for item in path.parent.glob("*.yml"))
     command([actionlint, "-no-color", "-config-file", str(config), *workflows], path.parent)
