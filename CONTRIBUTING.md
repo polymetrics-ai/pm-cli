@@ -7,4 +7,4 @@ This repository is public so that people can read it. It does not accept outside
 
 To report a security problem, follow [SECURITY.md](SECURITY.md).
 
-The code is under the Business Source License 1.1. See [LICENSE](LICENSE).
+The code is under the MIT License. See [LICENSE](LICENSE).
