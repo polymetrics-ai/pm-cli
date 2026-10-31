@@ -11,6 +11,10 @@
 
 Install the hooks once per clone with `make hooks`. The hooks are developer checks. Go tests are not acceptance proof (OD-05); only the Gherkin suite is.
 
+On Linux, the `pre-commit` and `pre-push` hooks run inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). The `pre-commit` hook runs `gitleaks` on the host before it enters the image, because the image has no `gitleaks`. On macOS, the hooks run on the host. The `commit-msg` hook always runs on the host.
+
+The first hook run on a Linux host builds the image and downloads the locked tools into the cache (`PMCLI_CACHE_DIR`, default `~/.cache/pmcli`). Later runs reuse both. The host needs rootless Podman (`PMCLI_CONTAINER_ENGINE`, default `podman`). The developer container mounts the checkout, the cache and the Git common directory of a linked worktree at their host paths. It uses the default network and has no engine socket, so a hook cannot start the dependency stack. It uses the same user and the same `PMCLI_JOB_*` limits as a CI job.
+
 ## The `bdd` check
 
 The `bdd` workflow runs on every push to any branch of this repository by the owner account. A pull request shows the result of its head commit, because a status belongs to a commit. Pull request events do not start CI, so a fork pull request never reaches the self-hosted runners. Only collaborators can push branches or open pull requests.
