@@ -1,0 +1,48 @@
+# Exact nonsecret fixtures and public samples reviewed on 2026-10-31.
+# Keep the default rules. Do not exclude a directory or an entire file.
+[extend]
+useDefault = true
+
+[[rules]]
+id = "curl-auth-header"
+
+[[rules.allowlists]]
+description = "Explicit placeholder in synthetic API documentation"
+condition = "AND"
+paths = ["^internal/compile/amendment_test\\.go$"]
+regexTarget = "secret"
+regexes = [
+  "^YOUR\\-TOKEN$",
+]
+
+[[rules]]
+id = "generic-api-key"
+
+[[rules.allowlists]]
+description = "Public temp_clone_token sample from official GitHub REST documentation"
+condition = "AND"
+paths = ["^connectors/github/official\\-documentation/documents/list\\-repository\\-issues\\.html$"]
+regexTarget = "secret"
+regexes = [
+  "^ABTLWHOULUVAXGTRYU7OC2876QJ2O$",
+]
+
+[[rules.allowlists]]
+description = "Idempotency and run identifier in a physical test"
+condition = "AND"
+paths = ["^internal/temporal/outbox_test\\.go$"]
+regexTarget = "secret"
+regexes = [
+  "^r09\\-c04\\-mismatched\\-race$",
+]
+
+[[rules.allowlists]]
+description = "S3 object names in physical storage tests"
+condition = "AND"
+paths = ["^tests/stack/storage_qualification_test\\.go$"]
+regexTarget = "secret"
+regexes = [
+  "^qualification/corrupt/$",
+  "^qualification/interrupted/$",
+  "^qualification/truncated/$",
+]
