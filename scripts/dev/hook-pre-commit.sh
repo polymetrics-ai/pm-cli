@@ -10,11 +10,16 @@ cd "$root"
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -n "$staged" ] || exit 0
 
-if command -v gitleaks >/dev/null 2>&1; then
-  gitleaks git --pre-commit --staged --redact --no-banner .
-else
-  printf '%s\n' 'pre-commit: gitleaks is not installed; the secret scan did not run.' >&2
+# The secret scan runs on the host. The CI image has no gitleaks, so the second
+# run of this hook inside the image does not scan again.
+if [ "${PMCLI_IN_IMAGE:-}" != 1 ]; then
+  if command -v gitleaks >/dev/null 2>&1; then
+    gitleaks git --pre-commit --staged --redact --no-banner .
+  else
+    printf '%s\n' 'pre-commit: gitleaks is not installed; the secret scan did not run.' >&2
+  fi
 fi
+pm_in_image scripts/dev/hook-pre-commit.sh "$@"
 
 go_files=$(printf '%s\n' "$staged" | grep '\.go$' | grep -v '/testdata/' || true)
 [ -n "$go_files" ] || exit 0

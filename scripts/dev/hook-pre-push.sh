@@ -6,6 +6,7 @@ root=$(git rev-parse --show-toplevel)
 cd "$root"
 # shellcheck source=scripts/dev/hook-lib.sh disable=SC1091
 . scripts/dev/hook-lib.sh
+pm_in_image scripts/dev/hook-pre-push.sh "$@"
 
 zero=0000000000000000000000000000000000000000
 pushing=false
