@@ -389,6 +389,7 @@ func (selectRequest Select) validate(bounds BoundAnalytics, relations map[string
 	if selectRequest.Limit <= 0 || selectRequest.Limit > MaximumRows {
 		return failure(CodeBoundExceeded, "the declared row limit must be 1..%d", MaximumRows)
 	}
+	outputNames := make(map[string]struct{}, len(selectRequest.Project))
 	for _, projection := range selectRequest.Project {
 		if _, present := relationColumn(relation, projection.Column.Name); !present {
 			return failure(CodeUnknownColumn, "relation %q does not declare column %q", selectRequest.From, projection.Column.Name)
@@ -398,6 +399,12 @@ func (selectRequest Select) validate(bounds BoundAnalytics, relations map[string
 				return classify(err)
 			}
 		}
+		// DuckDB compares identifiers without case, including quoted names.
+		name := strings.ToLower(projection.OutputName())
+		if _, duplicate := outputNames[name]; duplicate {
+			return failure(CodeProtocol, "output column %q is declared more than once", projection.OutputName())
+		}
+		outputNames[name] = struct{}{}
 	}
 	for _, predicate := range selectRequest.Predicates {
 		if _, present := relationColumn(relation, predicate.Column); !present {
@@ -649,16 +656,22 @@ func (engine *engine) selectRows(ctx context.Context, request Request) (Result, 
 			return result, failure(CodeSchemaMismatch, "column %q is declared DECIMAL(%d,%d), not DECIMAL(%d,%d)",
 				column.Name, column.Precision, column.Scale, requested.Column.Precision, requested.Column.Scale)
 		}
-		expression, err := projectionExpression(column)
+		var expression string
+		if selectRequest.Output != nil {
+			expression, err = parquetProjectionExpression(column)
+		} else {
+			expression, err = projectionExpression(column)
+		}
 		if err != nil {
 			return result, classify(err)
 		}
-		projection = append(projection, expression)
 		output := column
-		if requested.Alias != "" {
-			output.Name = requested.Alias
+		output.Name = requested.OutputName()
+		identifier, err := output.Identifier()
+		if err != nil {
+			return result, classify(err)
 		}
-		output.Nullable = column.Nullable
+		projection = append(projection, expression+" AS "+identifier)
 		declared = append(declared, output)
 	}
 	statement := "SELECT " + strings.Join(projection, ", ") + " FROM " + from
@@ -694,7 +707,7 @@ func (engine *engine) selectRows(ctx context.Context, request Request) (Result, 
 			if ordering.Descending {
 				direction = "DESC"
 			}
-			orderings = append(orderings, identifier+" "+direction)
+			orderings = append(orderings, from+"."+identifier+" "+direction)
 		}
 		statement += " ORDER BY " + strings.Join(orderings, ", ")
 	}
@@ -718,7 +731,7 @@ func (engine *engine) writeSegment(ctx context.Context, request Request, stateme
 	if _, err := engine.database.ExecContext(ctx, statement, arguments...); err != nil {
 		return result, failure(CodeOutputFailed, "write the admitted Parquet segment: %v", err)
 	}
-	descriptor, err := DescribeParquetOutput(output.Path)
+	descriptor, err := DescribeParquetOutput(ctx, engine.database, output.Path, declared)
 	if err != nil {
 		return result, classify(err)
 	}
