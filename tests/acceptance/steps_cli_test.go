@@ -46,6 +46,7 @@ func registerCLISteps(sc *godog.ScenarioContext, bins binaries) {
 	sc.Step(`^stdout is not empty$`, run.stdoutNotEmpty)
 	sc.Step(`^stdout contains "([^"]*)"$`, run.streamContains("stdout"))
 	sc.Step(`^stderr contains "([^"]*)"$`, run.streamContains("stderr"))
+	registerQueryChildSteps(sc)
 }
 
 // runCommand executes the built pm binary with an isolated HOME and no

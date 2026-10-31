@@ -100,6 +100,20 @@ func (column Column) declaredType() (string, error) {
 	}
 }
 
+// parquetProjectionExpression preserves the declared physical type for a file.
+// Wire-decoding expressions can instead produce text or epoch microseconds.
+func parquetProjectionExpression(column Column) (string, error) {
+	identifier, err := column.Identifier()
+	if err != nil {
+		return "", err
+	}
+	declaredType, err := column.declaredType()
+	if err != nil {
+		return "", err
+	}
+	return "CAST(" + identifier + " AS " + declaredType + ")", nil
+}
+
 // acceptsLogicalType reports whether one engine-reported column type is the
 // exact declared class. Widening integer classes are accepted because they are
 // lossless; everything else must match exactly.
@@ -448,25 +462,53 @@ func MaterializeParquet(ctx context.Context, database *sql.DB, columns []Column,
 	if _, err := database.ExecContext(ctx, statement); err != nil {
 		return descriptor, fmt.Errorf("write the admitted Parquet segment: %w", err)
 	}
-	return DescribeParquetOutput(output.Path)
+	return DescribeParquetOutput(ctx, database, output.Path, columns)
 }
 
-// DescribeParquetOutput reads back the materialized segment and reports its
-// exact identity.
-func DescribeParquetOutput(path string) (OutputDescriptor, error) {
-	var descriptor OutputDescriptor
+// DescribeParquetOutput verifies the output names, order and physical types
+// before it reports the segment identity. It removes an invalid segment.
+func DescribeParquetOutput(ctx context.Context, database *sql.DB, path string, columns []Column) (descriptor OutputDescriptor, err error) {
 	if err := validateRegularFile(path, "the materialized segment"); err != nil {
-		return descriptor, err
+		return descriptor, failure(CodeOutputFailed, "inspect the materialized segment: %v", err)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			err = failure(CodeOutputFailed, "remove the invalid materialized segment: %v", errors.Join(err, removeErr))
+		}
+	}()
+	rows, err := database.QueryContext(ctx, "SELECT * FROM read_parquet(?) LIMIT 0", path)
+	if err != nil {
+		return descriptor, failure(CodeOutputFailed, "inspect the materialized schema: %v", err)
+	}
+	types, typeErr := rows.ColumnTypes()
+	closeErr := rows.Close()
+	if typeErr != nil || closeErr != nil {
+		return descriptor, failure(CodeOutputFailed, "inspect the materialized column types: %v", errors.Join(typeErr, closeErr))
+	}
+	if len(types) != len(columns) {
+		return descriptor, failure(CodeOutputFailed, "the materialized segment has %d columns, expected %d", len(types), len(columns))
+	}
+	for index, column := range columns {
+		declaredType, err := column.declaredType()
+		if err != nil {
+			return descriptor, failure(CodeOutputFailed, "the materialized schema declaration is invalid: %v", err)
+		}
+		if types[index].Name() != column.Name || types[index].DatabaseTypeName() != declaredType {
+			return descriptor, failure(CodeOutputFailed, "materialized column %d does not match the returned name and type", index)
+		}
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return descriptor, fmt.Errorf("open the materialized segment: %w", err)
+		return descriptor, failure(CodeOutputFailed, "open the materialized segment: %v", err)
 	}
 	defer func() { _ = file.Close() }()
 	digest := sha256.New()
 	written, err := io.Copy(digest, file)
 	if err != nil {
-		return descriptor, fmt.Errorf("read the materialized segment: %w", err)
+		return descriptor, failure(CodeOutputFailed, "read the materialized segment: %v", err)
 	}
 	descriptor = OutputDescriptor{
 		Path:   path,
