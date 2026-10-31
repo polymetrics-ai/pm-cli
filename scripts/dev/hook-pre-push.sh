@@ -8,17 +8,7 @@ cd "$root"
 . scripts/dev/hook-lib.sh
 pm_in_image scripts/dev/hook-pre-push.sh "$@"
 
-zero=0000000000000000000000000000000000000000
-pushing=false
-while read -r _local_ref local_sha remote_ref _remote_sha; do
-  case "$remote_ref" in
-    refs/heads/main)
-      printf '%s\n' 'pre-push: do not push to main. Push a branch and open a pull request; only the owner merges.' >&2
-      exit 1
-      ;;
-  esac
-  [ "$local_sha" = "$zero" ] || pushing=true
-done
+pushing=$(python3 -I -B scripts/dev/secret_scan.py push)
 "$pushing" || exit 0
 
 printf '%s\n' 'pre-push: go build ./...'

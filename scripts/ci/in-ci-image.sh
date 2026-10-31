@@ -46,6 +46,8 @@ if [ "${1:-}" = dev ]; then
   [ "${2:-}" = -- ] || usage
   shift 2
   [ "$#" -ge 1 ] || usage
+  # Verify the official host binary before mounting it. The image stays intact.
+  scanner=$(python3 -I -B "$repo_root/scripts/dev/secret_scan.py" binary)
   container="pmcli-dev-$(id -u)-$$"
   cache=${PMCLI_CACHE_DIR:-"$HOME/.cache/pmcli"}
   mkdir -p "$cache" "$cache/home"
@@ -59,6 +61,16 @@ if [ "${1:-}" = dev ]; then
     "$repo_root" | "$repo_root"/*) ;;
     *) set -- --volume "$common:$common" "$@" ;;
   esac
+  # An explicitly selected index can live outside both mounted Git roots.
+  index=$(git -C "$repo_root" rev-parse --path-format=absolute --git-path index)
+  case "$index" in
+    "$repo_root"/* | "$common"/*) ;;
+    *)
+      if [ -f "$index" ]; then
+        set -- --volume "$index:$index:ro" "$@"
+      fi
+      ;;
+  esac
   # Same user, user namespace and limits as the run mode. Stdin stays open for
   # the pre-push hook. GIT_INDEX_FILE names the index of the commit under check
   # (for example, the temporary index of `git commit -a`).
@@ -68,10 +80,12 @@ if [ "${1:-}" = dev ]; then
     --pids-limit "${PMCLI_JOB_PIDS:-4096}" \
     --volume "$repo_root:$repo_root" \
     --volume "$cache:$cache" \
+    --volume "$scanner:/opt/pmcli-gitleaks:ro" \
     --workdir "$repo_root" \
     --env PMCLI_CACHE_DIR="$cache" --env HOME="$cache/home" \
     --env PM_TOOLS_CACHE="$cache/pm-tools" \
     --env PMCLI_IN_IMAGE=1 --env GIT_INDEX_FILE \
+    --env PMCLI_GITLEAKS=/opt/pmcli-gitleaks \
     "$@"
 fi
 
