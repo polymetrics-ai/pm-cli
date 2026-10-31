@@ -25,7 +25,13 @@ Missing prerequisites, test failures and cleanup failures remain failures.
 
 ## Agent branches
 
-Agents push `agent/<issue>-<slug>` branches with git only and hold no GitHub API token. [agent-pr.yml](../../.github/workflows/agent-pr.yml) opens a draft pull request for a new agent branch on a GitHub-hosted runner. It never checks out or runs the pushed code. Only the owner merges, by squash.
+Agents push `agent/<issue>-<slug>` branches with git only and hold no GitHub API token. [agent-pr.yml](../../.github/workflows/agent-pr.yml) manages pull requests when `PM BDD` starts or finishes. It runs from the default branch on a GitHub-hosted runner. It never checks out agent code, downloads artifacts or runs pushed content.
+
+The workflow creates a draft pull request while checks are pending. It marks the pull request ready for owner review only after the latest `PM BDD` run succeeds for the exact current branch revision. The `bdd` job in that run's latest attempt must also succeed. New work, reruns and failed checks return the pull request to draft when their workflow events arrive. Each event reconciles the current branch state, even if GitHub combines pending events. Delayed events cannot promote an older revision. A current revision without a BDD run stays draft. The workflow checks the branch again after promotion and restores draft if the head or checks changed.
+
+This policy manages all open pull requests from this repository's `agent/**` branches, including an owner-created draft. Branches such as `codex/**` need manual readiness changes. Readiness signals that the current BDD gate passed. Successful CI does not prove that every task obligation is complete. The workflow has no separate task completion receipt. Readiness does not replace independent review or authorize a merge. Only the owner merges, manually and by squash. The workflow never merges or enables auto-merge. The owner must check the current revision and checks before merging.
+
+The workflow needs `actions: read`, `contents: read` and `pull-requests: write`. It accepts only owner-authored push runs from this repository's `.github/workflows/bdd.yml`. It becomes active after this workflow change reaches the default branch. Existing completed runs do not replay automatically.
 
 ## Pinned job image and native environment
 
