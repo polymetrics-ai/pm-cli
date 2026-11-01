@@ -21,7 +21,9 @@
         "build/nativeprobe/main.go",
         "build/nativeprobe/native_test.go",
         "tools/dependency_policy.go",
-        "tools/cmd/pm-dependency-check/main.go"
+        "tools/cmd/pm-dependency-check/main.go",
+        "tests/acceptance/main_test.go",
+        "tests/acceptance/steps_cli_test.go"
       ],
       "package": "build",
       "process_owner": "Build/operator",
