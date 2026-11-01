@@ -1,38 +1,141 @@
-name: Agent draft PR
+name: Agent PR review state
 
 on:
-  push:
+  workflow_run:
+    workflows: ["PM BDD"]
     branches: ["agent/**"]
+    types: [requested, in_progress, completed]
 
 permissions:
+  actions: read
   contents: read
   pull-requests: write
 
 concurrency:
-  group: agent-pr-${{ github.ref }}
+  group: agent-pr-${{ github.event.workflow_run.head_branch }}
+  cancel-in-progress: false
 
 jobs:
-  # Agents push with git only and hold no GitHub API token. This job opens a
-  # draft pull request for a new agent branch. It never checks out or runs the
-  # pushed code. Only the owner merges.
-  draft-pr:
-    if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.event.deleted == false
+  # This workflow runs from the default branch. It does not check out code,
+  # download artifacts or execute content from the agent branch.
+  review-state:
+    if: github.repository == 'polymetrics-ai/pm-cli' && github.event.workflow_run.event == 'push' && github.event.workflow_run.head_repository.full_name == github.repository && github.event.workflow_run.actor.login == 'karthik-sivadas' && github.event.workflow_run.triggering_actor.login == 'karthik-sivadas'
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Open a draft pull request if none is open
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
-          BRANCH: ${{ github.ref_name }}
-          SUBJECT: ${{ github.event.head_commit.message }}
-        run: |
-          open=$(gh pr list --head "$BRANCH" --state open --json number --jq 'length')
-          if [ "$open" != 0 ]; then
-            echo "A pull request is already open for $BRANCH."
-            exit 0
-          fi
-          title=$(printf '%s\n' "$SUBJECT" | head -n 1 | cut -c1-200)
-          printf '%s\n' "Opened automatically for the agent branch $BRANCH." "" \
-            "Only the owner merges, by squash." > "$RUNNER_TEMP/body.md"
-          gh pr create --draft --base main --head "$BRANCH" --title "$title" --body-file "$RUNNER_TEMP/body.md"
+      - name: Keep pending work in draft and completed work ready for owner review
+        uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8
+        with:
+          script: |
+            const repository = 'polymetrics-ai/pm-cli';
+            const ownerLogin = 'karthik-sivadas';
+            const repo = context.repo;
+            const eventRun = context.payload.workflow_run;
+            const branch = eventRun.head_branch;
+            if (`${repo.owner}/${repo.repo}` !== repository || !branch?.startsWith('agent/')) {
+              throw new Error('The workflow event is outside the managed repository or branch scope.');
+            }
+            const {data: workflow} = await github.rest.actions.getWorkflow({
+              ...repo, workflow_id: 'bdd.yml'
+            });
+
+            function admitted(run) {
+              return run.event === 'push' && run.path === '.github/workflows/bdd.yml' &&
+                run.workflow_id === workflow.id && run.head_branch === branch &&
+                run.repository?.full_name === repository && run.head_repository?.full_name === repository &&
+                run.actor?.login === ownerLogin && run.triggering_actor?.login === ownerLogin;
+            }
+
+            // Events are wakeups. Concurrency can coalesce pending events, so
+            // always reconcile the current head, even after an older event.
+            async function currentState() {
+              let head;
+              try {
+                ({data: head} = await github.rest.repos.getBranch({...repo, branch}));
+              } catch (error) {
+                if (error.status === 404) return null;
+                throw error;
+              }
+              const {data: runs} = await github.rest.actions.listWorkflowRuns({
+                ...repo, workflow_id: workflow.id, branch, head_sha: head.commit.sha,
+                event: 'push', per_page: 100
+              });
+              if (runs.total_count > 100) throw new Error('Too many matching runs to select the latest run safely.');
+              const latest = runs.workflow_runs.reduce((selected, run) =>
+                !selected || run.run_number > selected.run_number ? run : selected, null);
+              if (!latest) return {sha: head.commit.sha, ready: false, run: null};
+              const {data: run} = await github.rest.actions.getWorkflowRun({...repo, run_id: latest.id});
+              let ready = admitted(run) && run.head_sha === head.commit.sha &&
+                run.status === 'completed' && run.conclusion === 'success';
+              if (ready) {
+                const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
+                  ...repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100
+                });
+                const bdd = jobs.filter(job => job.name === 'bdd');
+                ready = bdd.length === 1 && bdd[0].status === 'completed' &&
+                  bdd[0].conclusion === 'success' && bdd[0].head_sha === head.commit.sha;
+              }
+              return {sha: head.commit.sha, ready, run};
+            }
+
+            if (eventRun.workflow_id !== workflow.id) throw new Error('The event does not identify the PM BDD workflow.');
+            let state = await currentState();
+            if (!state) {
+              core.info('The branch no longer exists. No pull request changed.');
+              return;
+            }
+
+            async function openPull() {
+              const {data: pulls} = await github.rest.pulls.list({
+                ...repo, head: `${repo.owner}:${branch}`, state: 'open', per_page: 100
+              });
+              const matches = pulls.filter(pull => pull.head.repo?.full_name === repository &&
+                pull.head.ref === branch && pull.base.repo?.full_name === repository);
+              if (matches.length > 1) throw new Error('More than one open pull request uses the managed branch.');
+              return matches[0];
+            }
+
+            let pull = await openPull();
+            if (!pull) {
+              const title = (state.run?.head_commit?.message?.split('\n')[0] || 'chore: review agent change').slice(0, 200);
+              try {
+                ({data: pull} = await github.rest.pulls.create({
+                  ...repo, base: 'main', head: branch, draft: true, title,
+                  body: 'PM BDD controls the draft state for this agent branch.\n\n' +
+                    'A successful run for the current branch revision makes this pull request ready for owner review.\n\n' +
+                    'Only the owner merges, manually and by squash. Readiness does not authorize a merge.'
+                }));
+              } catch (error) {
+                // Another actor can create the PR between the read and write.
+                if (error.status !== 422) throw error;
+                pull = await openPull();
+                if (!pull) throw error;
+              }
+            }
+
+            state = await currentState();
+            ({data: pull} = await github.rest.pulls.get({...repo, pull_number: pull.number}));
+            if (pull.state !== 'open') return;
+            const ready = Boolean(state?.ready && pull.head.sha === state.sha);
+            const mutation = ready ? 'markPullRequestReadyForReview' : 'convertPullRequestToDraft';
+            if (pull.draft === ready) {
+              await github.graphql(`mutation($id: ID!) {
+                ${mutation}(input: {pullRequestId: $id}) { pullRequest { id isDraft } }
+              }`, {id: pull.node_id});
+            }
+
+            // GitHub has no expected-head condition for the ready mutation.
+            // Check again after promotion and restore draft if the head moved.
+            if (ready) {
+              const after = await currentState();
+              const {data: checked} = await github.rest.pulls.get({...repo, pull_number: pull.number});
+              if (checked.state === 'open' && !checked.draft &&
+                  (!after?.ready || checked.head.sha !== after.sha)) {
+                await github.graphql(`mutation($id: ID!) {
+                  convertPullRequestToDraft(input: {pullRequestId: $id}) { pullRequest { id isDraft } }
+                }`, {id: checked.node_id});
+                core.info('The branch or checks changed during promotion. The pull request is draft.');
+                return;
+              }
+            }
+            core.info(ready ? 'The pull request is ready for owner review.' : 'The pull request remains draft until PM BDD passes.');
