@@ -1,6 +1,6 @@
 #!/bin/sh
 # Runs the Gherkin acceptance suite inside the pinned CI image. This is the
-# only CI gate. The workflow starts it through scripts/ci/in-ci-image.sh.
+# behavior gate. The workflow starts it through scripts/ci/in-ci-image.sh.
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
@@ -8,6 +8,16 @@ cd "$repo_root"
 : "${GITHUB_RUN_ID:?Actual workflow run identity required}"
 : "${GITHUB_RUN_ATTEMPT:?Actual workflow attempt required}"
 : "${PMCLI_CACHE_DIR:?Persistent CI cache directory required}"
+: "${GITHUB_STEP_SUMMARY:?GitHub job summary file required}"
+# The job container mounts RUNNER_TEMP at its host path, so the runner's
+# summary file is writable only when it is inside RUNNER_TEMP.
+case "$GITHUB_STEP_SUMMARY" in
+  "$RUNNER_TEMP"/*) ;;
+  *)
+    printf '%s\n' 'GITHUB_STEP_SUMMARY is outside RUNNER_TEMP' >&2
+    exit 1
+    ;;
+esac
 export PM_TOOLS_CACHE="$PMCLI_CACHE_DIR/pm-tools"
 export GOCACHE="$PMCLI_CACHE_DIR/go-build"
 export GOMODCACHE="$PMCLI_CACHE_DIR/go-mod"
@@ -30,9 +40,11 @@ CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/
 python3 tools/bootstrap.py exec docker-compose -- version
 
 # Scenarios get the job-owned stack. Strict godog fails on undefined or pending
-# steps; a failed suite is never retried.
+# steps; a failed suite is never retried. The report lists each scenario and
+# the godog totals in the log and in the job summary, also on success.
 python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
-  python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-bdd.json" -- \
+  python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-bdd.json" \
+  --scenarios --summary-file "$GITHUB_STEP_SUMMARY" -- \
   env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
   test -json -p 1 -count=1 -timeout 40m ./tests/acceptance/...
 
