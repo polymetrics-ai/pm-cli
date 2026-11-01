@@ -203,6 +203,41 @@ class SetupContracts(unittest.TestCase):
                 result = self.check(root, inventory)
                 self.assertNotEqual(result.returncode, 0, name + " was accepted")
 
+    def test_checks_job_is_frozen(self):
+        def checks_block(s):
+            return s[s.index("  checks:\n"):]
+
+        cases = {
+            "unknown job": (lambda s: s + checks_block(s).replace("  checks:\n", "  lint:\n", 1),
+                            "unapproved job membership"),
+            "missing checks job": (lambda s: s.split("\n  # The static checks", 1)[0] + "\n",
+                                   "unapproved job membership"),
+            "changed checks step": (lambda s: s.replace(
+                "sh scripts/ci/check-docs.sh", "sh scripts/ci/check-docs.sh gofmt"),
+                "unapproved checks executable step"),
+            "checks outside the CI image": (lambda s: s.replace(
+                "run: sh scripts/ci/in-ci-image.sh run checks -- ", "run: "),
+                "unapproved checks executable step"),
+            "checks waits for bdd": (lambda s: s.replace(
+                "  checks:\n    if:", "  checks:\n    needs: bdd\n    if:"),
+                "unapproved checks job capability"),
+            "checks cleanup skipped on failure": (lambda s: s.replace(
+                "      - name: Clean up the job container\n        if: always()",
+                "      - name: Clean up the job container\n        if: success()"),
+                "unapproved checks cleanup step"),
+        }
+        for name, (mutate, message) in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root, inventory = self.fixture(directory)
+                path = root / WORKFLOW
+                original = path.read_text()
+                changed = mutate(original)
+                self.assertNotEqual(changed, original, name + " did not change the workflow")
+                path.write_text(changed)
+                result = self.check(root, inventory)
+                self.assertNotEqual(result.returncode, 0, name + " was accepted")
+                self.assertIn(message, result.stderr, name + " failed for another reason")
+
     def test_missing_required_tool_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root, inventory = self.fixture(directory)
