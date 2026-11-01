@@ -7,14 +7,11 @@ cd "$root"
 # shellcheck source=scripts/dev/hook-lib.sh disable=SC1091
 . scripts/dev/hook-lib.sh
 
+pm_in_image scripts/dev/hook-pre-commit.sh "$@"
+python3 -I -B scripts/dev/secret_scan.py staged
+
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 [ -n "$staged" ] || exit 0
-
-if command -v gitleaks >/dev/null 2>&1; then
-  gitleaks git --pre-commit --staged --redact --no-banner .
-else
-  printf '%s\n' 'pre-commit: gitleaks is not installed; the secret scan did not run.' >&2
-fi
 
 go_files=$(printf '%s\n' "$staged" | grep '\.go$' | grep -v '/testdata/' || true)
 [ -n "$go_files" ] || exit 0
@@ -28,8 +25,8 @@ if [ -n "$unformatted" ]; then
   exit 1
 fi
 
-app=$(printf '%s\n' "$go_files" | grep -v '^tools/' | xargs -n 1 dirname | sort -u | sed 's#^#./#' || true)
-tools=$(printf '%s\n' "$go_files" | grep '^tools/' | sed 's#^tools/##' | xargs -n 1 dirname | sort -u | sed 's#^#./#' || true)
+app=$(printf '%s\n' "$go_files" | grep -v '^tools/' | while IFS= read -r file; do dirname "$file"; done | sort -u | sed 's#^#./#' || true)
+tools=$(printf '%s\n' "$go_files" | grep '^tools/' | sed 's#^tools/##' | while IFS= read -r file; do dirname "$file"; done | sort -u | sed 's#^#./#' || true)
 
 # shellcheck disable=SC2086
 if [ -n "$app" ]; then
