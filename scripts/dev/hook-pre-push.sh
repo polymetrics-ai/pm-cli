@@ -1,6 +1,7 @@
 #!/bin/sh
 # Git pre-push hook: refuse a push to main, then build, vet and test every
-# package that needs no dependency stack. A failure stops the push.
+# package that needs no dependency stack, and run the static checks one time
+# for the push. A failure stops the push.
 set -eu
 root=$(git rev-parse --show-toplevel)
 cd "$root"
@@ -20,3 +21,5 @@ unit=$(CGO_ENABLED=1 pgo list ./... | sed "s#^$module#.#" | drop_stack_packages)
 printf '%s\n' 'pre-push: go test (packages that need no stack)'
 # shellcheck disable=SC2086
 CGO_ENABLED=1 pgo test -count=1 -timeout 20m $unit
+printf '%s\n' 'pre-push: check-docs.sh (the checks job)'
+sh scripts/ci/check-docs.sh
