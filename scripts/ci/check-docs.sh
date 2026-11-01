@@ -45,18 +45,21 @@ export PM_REPO_ROOT="$repo_root"
 export GOWORK=off
 work=$(mktemp -d "${TMPDIR:-/tmp}/pmcli-checks-XXXXXX")
 trap 'rm -rf "$work"' EXIT
+started=$(date +%s)
 
 pgo() {
   python3 tools/bootstrap.py exec go -- "$@"
 }
 
+# Each step line shows the seconds since the script started.
 step() {
-  printf 'check-docs: %s\n' "$1"
+  printf 'check-docs: [+%ss] %s\n' "$(($(date +%s) - started))" "$1"
 }
 
 # The tools come from the candidate. A warm cache does not guarantee that a
 # previous build left them in .cache/bin.
 build_tools() {
+  step "build $*"
   mkdir -p .cache/bin
   for name in "$@"; do
     case "$name" in
