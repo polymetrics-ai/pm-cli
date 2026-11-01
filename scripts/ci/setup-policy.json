@@ -31,6 +31,7 @@
     ".github/workflows/bdd.yml",
     ".github/workflows/agent-pr.yml",
     "scripts/ci/check-bdd.sh",
+    "scripts/ci/check-docs.sh",
     "scripts/ci/in-ci-image.sh",
     "scripts/ci/go-test-report.py",
     "build/ci/Dockerfile",

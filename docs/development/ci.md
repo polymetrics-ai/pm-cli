@@ -4,10 +4,10 @@
 
 | Where | What runs | Gate |
 | --- | --- | --- |
-| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack | A failure stops the commit |
+| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. Atlas `--check` and the architecture docs validator when a staged path is under `docs/` or `connectors/`, or is a new Go file. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md` | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
-| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack | A failure stops the push |
-| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | The Gherkin acceptance suite in `tests/acceptance` | The only required check, `bdd` |
+| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push | A failure stops the push |
+| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the Gherkin acceptance suite in `tests/acceptance`. Job `checks`: the static checks in `check-docs.sh` | Two required checks, `bdd` and `checks` |
 
 Install the scanner once per user. Install the hooks once per clone:
 
@@ -16,9 +16,11 @@ python3 -I -B scripts/dev/secret_scan.py install
 make hooks
 ```
 
-The hooks are developer checks. Go tests are not acceptance proof (OD-05). Only the Gherkin suite is acceptance proof.
+The hooks are developer checks. Go tests are not acceptance proof (OD-05). Only the Gherkin suite is acceptance proof. The `checks` job runs static checks, not behavior tests.
 
-On Linux, the `pre-commit` and `pre-push` hooks run inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). Developer entry checks the host scanner's checksum and mounts the binary read-only at `/opt/pmcli-gitleaks`. The hooks scan inside the container. The scanner mount does not change the image or its native profile. Generic developer commands do not scan the index. On macOS, the hooks run on the host. The `commit-msg` hook always runs on the host.
+On Linux, the `pre-push` hook runs inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. The `pre-commit` hook selects its checks on the host first. It enters the image only when the staged change has a Go file or a path that a check above names. Other commits run only the secret scan, on the host, and start no container. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). Developer entry checks the host scanner's checksum and mounts the binary read-only at `/opt/pmcli-gitleaks`. A hook that enters the container scans inside the container. The scanner mount does not change the image or its native profile. Generic developer commands do not scan the index. On macOS, the hooks run on the host. For the gated checks, the host then needs ShellCheck, actionlint and the Python packages in `build/ci/requirements.txt`. The `commit-msg` hook always runs on the host.
+
+The hooks treat `PMCLI_IN_IMAGE=1` as "already inside the image" only when `/run/.containerenv` exists. Podman creates that file in each container. On a host, the hooks ignore the variable and enter the image.
 
 The first hook run on a Linux host builds the image and downloads the locked tools into the cache (`PMCLI_CACHE_DIR`, default `~/.cache/pmcli`). Later runs reuse both. The host needs rootless Podman (`PMCLI_CONTAINER_ENGINE`, default `podman`). The developer container mounts the checkout, the cache and the Git common directory of a linked worktree at their host paths. It uses the default network and has no engine socket, so a hook cannot start the dependency stack. It uses the same user and the same `PMCLI_JOB_*` limits as a CI job.
 
@@ -50,19 +52,36 @@ The `bdd` workflow runs on every push to any branch of this repository by the ow
 
 The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci/check-bdd.sh) in the pinned job image. The script starts the job-owned dependency stack and runs `go test ./tests/acceptance/...`. Strict godog fails the run on an undefined or pending step. A failed suite is never retried.
 
+[go-test-report.py](../../scripts/ci/go-test-report.py) `--scenarios` lists each scenario with its result and the godog totals (`N scenarios (...)`, `N steps (...)`). It does this also when the suite passes. The list is at the end of the `bdd` job log and in the job summary on the workflow run page. A passing run fails when the godog scenario total is missing or differs from the number of scenarios in the test stream.
+
 A new push to a working branch cancels the older run for that branch. Runs on `main` are never cancelled. A force-push is admitted on a working branch and refused on `main`.
 
 Missing prerequisites, test failures and cleanup failures remain failures.
 
 [stack-packages.txt](../../scripts/ci/stack-packages.txt) lists the packages that need the dependency stack. The hooks skip them. [check-foundation.sh](../../scripts/ci/check-foundation.sh) still runs every package, including the stack packages, for a full local check.
 
+## The `checks` check
+
+The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate`, `pmgen` and `atlas` from the candidate with the pinned toolchain. Then it runs these checks:
+
+- `atlas`: Atlas `--check` (the Foundation Atlas projections and an owner for each Go file).
+- `docs`: the architecture docs validator and its tests, with the vendored, hash-checked `jsonschema` wheels.
+- `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
+- `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
+- `generate`: `generate.sh --check` for the API and the connectors.
+- `gofmt`: `gofmt -l` on every tracked Go file.
+- `boundaries`: `check-boundaries.sh`.
+- `tools`: `go test` for the tools module.
+
+In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh atlas docs`. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins and govulncheck are not in this job.
+
 ## Agent branches
 
 Agents push `agent/<issue>-<slug>` branches with git only and hold no GitHub API token. [agent-pr.yml](../../.github/workflows/agent-pr.yml) manages pull requests when `PM BDD` starts or finishes. It runs from the default branch on a GitHub-hosted runner. It never checks out agent code, downloads artifacts or runs pushed content.
 
-The workflow creates a draft pull request while checks are pending. It marks the pull request ready for owner review only after the latest `PM BDD` run succeeds for the exact current branch revision. The `bdd` job in that run's latest attempt must also succeed. New work, reruns and failed checks return the pull request to draft when their workflow events arrive. Each event reconciles the current branch state, even if GitHub combines pending events. Delayed events cannot promote an older revision. A current revision without a BDD run stays draft. The workflow checks the branch again after promotion and restores draft if the head or checks changed.
+The workflow creates a draft pull request while checks are pending. It marks the pull request ready for owner review only after the latest `PM BDD` run succeeds for the exact current branch revision. The `bdd` and `checks` jobs in that run's latest attempt must both succeed for that revision. New work, reruns and failed checks return the pull request to draft when their workflow events arrive. Each event reconciles the current branch state, even if GitHub combines pending events. Delayed events cannot promote an older revision. A current revision without a BDD run stays draft. The workflow checks the branch again after promotion and restores draft if the head or checks changed.
 
-This policy manages all open pull requests from this repository's `agent/**` branches, including an owner-created draft. Branches such as `codex/**` need manual readiness changes. Readiness signals that the current BDD gate passed. Successful CI does not prove that every task obligation is complete. The workflow has no separate task completion receipt. Readiness does not replace independent review or authorize a merge. Only the owner merges, manually and by squash. The workflow never merges or enables auto-merge. The owner must check the current revision and checks before merging.
+This policy manages all open pull requests from this repository's `agent/**` branches, including an owner-created draft. Branches such as `codex/**` need manual readiness changes. Readiness signals that the current `bdd` and `checks` gates passed. Successful CI does not prove that every task obligation is complete. The workflow has no separate task completion receipt. Readiness does not replace independent review or authorize a merge. Only the owner merges, manually and by squash. The workflow never merges or enables auto-merge. The owner must check the current revision and checks before merging.
 
 The workflow needs `actions: read`, `contents: read` and `pull-requests: write`. It accepts only owner-authored push runs from this repository's `.github/workflows/bdd.yml`. It becomes active after this workflow change reaches the default branch. Existing completed runs do not replay automatically.
 
