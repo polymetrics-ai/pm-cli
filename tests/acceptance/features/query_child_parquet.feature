@@ -22,10 +22,11 @@ Feature: A Parquet query result has the schema that pm-query returns
   Scenario: Columns without an alias keep their names
     When pm-query selects "call_id, duration, started_at" from "calls" into a Parquet output
     Then the observer reads the footer columns "call_id, duration, started_at" in that order
+    And the footer column types equal the returned column types
 
   Scenario: A duplicate alias is refused before anything is written
     When pm-query selects "call_id AS x, title AS x" from "calls" into a Parquet output
-    Then pm-query refuses the request
+    Then pm-query refuses the request with the code "protocol"
     And the output file does not exist
 
   Scenario: A selection without an output keeps duplicate output names

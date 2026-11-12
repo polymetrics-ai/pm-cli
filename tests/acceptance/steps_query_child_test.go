@@ -244,7 +244,7 @@ func registerQueryChildSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^the observer reads the footer columns "([^"]*)" in that order$`, scenario.footerColumns)
 	sc.Step(`^the footer column types equal the returned column types$`, scenario.footerTypesEqualReturned)
 	sc.Step(`^the observer reads the same rows from the file as pm-query returns, with "([^"]*)" null for "([^"]*)"$`, scenario.sameRows)
-	sc.Step(`^pm-query refuses the request$`, scenario.refuses)
+	sc.Step(`^pm-query refuses the request with the code "([^"]*)"$`, scenario.refuses)
 	sc.Step(`^the output file does not exist$`, scenario.outputAbsent)
 }
 
@@ -822,7 +822,7 @@ func fileCellText(kind string, cell any) string {
 	}
 }
 
-func (s *queryChildScenario) refuses() error {
+func (s *queryChildScenario) refuses(code string) error {
 	run, err := s.lastRun()
 	if err != nil {
 		return err
@@ -832,6 +832,9 @@ func (s *queryChildScenario) refuses() error {
 	}
 	if run.decodeErr != nil || run.response.Refusal == nil || run.response.Refusal.Code == "" {
 		return fmt.Errorf("pm-query wrote no refusal document\n%s", run.describe())
+	}
+	if run.response.Refusal.Code != code {
+		return fmt.Errorf("pm-query refused with the code %q, want %q\n%s", run.response.Refusal.Code, code, run.describe())
 	}
 	if run.response.Columns != nil || run.response.Rows != nil || run.response.Output != nil {
 		return fmt.Errorf("the refusal carries columns, rows or an output\n%s", run.describe())
