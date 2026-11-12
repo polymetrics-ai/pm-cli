@@ -227,6 +227,17 @@ func emitBundle(
 			return nil, sourceError(ErrInvalidSource, "", "/diagnostics", "operation diagnostic refers to an operation outside the source-selected inventory")
 		}
 	}
+	for _, operation := range bundle.Operations {
+		if operation.Execution == nil || operation.Execution.WriteIdentity == nil {
+			continue
+		}
+		readBack := operation.Execution.WriteIdentity.ReadBack.OperationID
+		if _, executable := executableOperations[readBack]; !executable {
+			return nil, sourceError(ErrUnsafeAmendment, "", "/operations", fmt.Sprintf(
+				"write operation %q declares the read-back operation %q, which is not an executable operation of the bundle",
+				operation.OperationID, readBack))
+		}
+	}
 	seenCommandNames := make(map[string]struct{}, len(bundle.Commands))
 	seenCommandOperations := make(map[string]struct{}, len(bundle.Commands))
 	for _, command := range bundle.Commands {
@@ -606,11 +617,13 @@ func emitOperationExecution(normalized NormalizedOperation) *contract.OperationE
 	httpSemantics := effectiveOperationHTTP(normalized)
 	var pagination *Pagination
 	var retry *RetrySemantics
+	var writeIdentity *WriteIdentity
 	if normalized.Semantics != nil {
 		pagination = normalized.Semantics.Pagination
 		retry = normalized.Semantics.Retry
+		writeIdentity = normalized.Semantics.WriteIdentity
 	}
-	if httpSemantics == nil && pagination == nil && retry == nil {
+	if httpSemantics == nil && pagination == nil && retry == nil && writeIdentity == nil {
 		return nil
 	}
 	execution := &contract.OperationExecution{}
@@ -648,6 +661,24 @@ func emitOperationExecution(normalized NormalizedOperation) *contract.OperationE
 			Witness: contract.ExecutionWitness{
 				ProofID:    source.Witness.ProofID,
 				SourceRefs: slices.Clone(source.Witness.SourceRefs),
+			},
+		}
+	}
+	if writeIdentity != nil {
+		execution.WriteIdentity = &contract.OperationWriteIdentity{
+			Dedup: &contract.OperationWriteDedup{
+				FieldID: writeIdentity.Dedup.FieldID,
+				Witness: contract.ExecutionWitness{
+					ProofID:    writeIdentity.Dedup.Witness.ProofID,
+					SourceRefs: slices.Clone(writeIdentity.Dedup.Witness.SourceRefs),
+				},
+			},
+			ReadBack: &contract.OperationWriteReadBack{
+				OperationID: writeIdentity.ReadBack.OperationID,
+				Witness: contract.ExecutionWitness{
+					ProofID:    writeIdentity.ReadBack.Witness.ProofID,
+					SourceRefs: slices.Clone(writeIdentity.ReadBack.Witness.SourceRefs),
+				},
 			},
 		}
 	}

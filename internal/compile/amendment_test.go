@@ -80,7 +80,8 @@ func TestDecodeSemanticsRejectsLossyExecutionFacts(t *testing.T) {
 	witness := `"witness":{"proof_id":"source-reviewed","source_refs":[{"source_id":"root","pointer":"#/paths/~1items/get"}]}`
 	validFacts := `"http":{"origins":["https://api.example.test/v3"],"headers":[{"name":"X-API-Version","value":"2022-11-28"}],` + witness + `},` +
 		`"pagination":{"kind":"cursor","cursor_request_field":"cursor","cursor_response_pointer":"/next",` + witness + `},` +
-		`"retry":{"classification":"unsafe","http_statuses":[429,502],` + witness + `}`
+		`"retry":{"classification":"unsafe","http_statuses":[429,502],` + witness + `},` +
+		`"write_identity":{"dedup":{"field_id":"none",` + witness + `},"read_back":{"operation_id":"getItem",` + witness + `}}`
 	valid := fmt.Sprintf(envelope, strings.Repeat("1", 64), strings.Repeat("2", 64), validFacts)
 	if _, err := DecodeSemantics([]byte(valid)); err != nil {
 		t.Fatalf("valid execution facts were rejected: %v", err)
@@ -124,6 +125,19 @@ func TestDecodeSemanticsRejectsLossyExecutionFacts(t *testing.T) {
 		{
 			name:  "duplicate retry status facts",
 			facts: `"retry":{"classification":"unsafe","http_statuses":[429,429],` + witness + `}`,
+		},
+		{
+			name:  "write identity without read-back",
+			facts: `"write_identity":{"dedup":{"field_id":"none",` + witness + `}}`,
+		},
+		{
+			name:  "null write identity read-back",
+			facts: `"write_identity":{"dedup":{"field_id":"none",` + witness + `},"read_back":null}`,
+		},
+		{
+			name: "unknown write identity member",
+			facts: `"write_identity":{"dedup":{"field_id":"none",` + witness + `},"read_back":{"operation_id":"getItem",` +
+				witness + `},"idempotency_key":"none"}`,
 		},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -716,5 +730,200 @@ func TestCreatedCredentialBindingIsAbsentFromPublicSurfaces(t *testing.T) {
 		return binding.FieldID == "auth.bearer" && binding.Sensitivity == contract.SensitivitySecret
 	}) {
 		t.Fatalf("compiled operation dropped the credential binding: %#v", operation.Inputs)
+	}
+}
+
+// writeIdentityFixture normalizes one synthetic write (POST /items) and one
+// read (GET /items/{id}). When unavailableRead is true, the read declares a
+// response header that no amendment binds, so the read becomes unavailable.
+func writeIdentityFixture(t *testing.T, unavailableRead bool) (*Normalization, *ResolvedSource, SemanticsDocument, string) {
+	t.Helper()
+	readHeaders := ""
+	if unavailableRead {
+		readHeaders = `"headers": {"X-Unrepresented": {"schema": {"type": "string"}}}, `
+	}
+	item := `{"type": "object", "additionalProperties": false, "required": ["id"], "properties": {"id": {"type": "string"}}}`
+	document := []byte(`{
+  "openapi": "3.0.3",
+  "info": {"title": "Write identity fixture", "version": "1.0.0"},
+  "servers": [{"url": "https://api.example.test"}],
+  "paths": {
+    "/items": {"post": {
+      "operationId": "createItem",
+      "requestBody": {"required": true, "content": {"application/json": {"schema": {
+        "type": "object", "additionalProperties": false, "required": ["name", "client_request_id"],
+        "properties": {"name": {"type": "string"}, "client_request_id": {"type": "string"}}
+      }}}},
+      "responses": {"201": {"description": "created", "content": {"application/json": {"schema": ` + item + `}}}}
+    }},
+    "/items/{id}": {"get": {
+      "operationId": "getItem",
+      "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+      "responses": {"200": {"description": "item", ` + readHeaders + `"content": {"application/json": {"schema": ` + item + `}}}}
+    }}
+  }
+}`)
+	lock, captures := testSourceInput(t, DialectOpenAPI30, map[string][]byte{"root": document}, nil, []SourceOperation{
+		testOperation("createItem", "root", "#/paths/~1items/post",
+			[]VariantRef{{Pointer: "#/paths/~1items/post/requestBody/content/application~1json", MediaType: "application/json"}},
+			[]VariantRef{{Pointer: "#/paths/~1items/post/responses/201/content/application~1json", Status: "201", MediaType: "application/json"}}),
+		testOperation("getItem", "root", "#/paths/~1items~1{id}/get", nil,
+			[]VariantRef{{Pointer: "#/paths/~1items~1{id}/get/responses/200/content/application~1json", Status: "200", MediaType: "application/json"}}),
+	})
+	captured, err := CaptureSource(lock, captures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := testResolve(t, captured)
+	loaded, err := LoadDialects(context.Background(), resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalization, err := Normalize(context.Background(), loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dedupFieldID := ""
+	for _, operation := range normalization.Operations {
+		for _, variant := range operation.RequestVariants {
+			for _, binding := range variant.Bindings {
+				if binding.Normalized != nil && binding.Normalized.WireName == "client_request_id" {
+					dedupFieldID = binding.FieldID
+				}
+			}
+		}
+	}
+	if dedupFieldID == "" {
+		t.Fatal("the fixture has no dedup field binding")
+	}
+	writeRefs := []contract.SourceRef{{SourceID: "root", Pointer: "#/paths/~1items/post"}}
+	semantics := SemanticsDocument{
+		SchemaVersion: SemanticsSchemaVersion,
+		ConnectorID:   lock.ConnectorID,
+		SourceDigest:  captured.Digest,
+		Revision:      lock.SemanticsRevision,
+		Operations: []OperationSemantics{{
+			OperationID: "createItem",
+			SourceRefs:  slices.Clone(writeRefs),
+			WriteIdentity: &WriteIdentity{
+				Dedup: &WriteDedup{FieldID: dedupFieldID, Witness: Witness{
+					ProofID:    "create-item-dedup",
+					SourceRefs: []contract.SourceRef{{SourceID: "root", Pointer: "#/paths/~1items/post/requestBody/content/application~1json/schema/properties/client_request_id"}},
+				}},
+				ReadBack: &WriteReadBack{OperationID: "getItem", Witness: Witness{
+					ProofID:    "create-item-read-back",
+					SourceRefs: []contract.SourceRef{{SourceID: "root", Pointer: "#/paths/~1items~1{id}/get"}},
+				}},
+			},
+			Lanes: []LaneSemantics{{Lane: contract.LaneDirectWrite, Classification: LaneEligible, SourceRefs: slices.Clone(writeRefs)}},
+		}},
+	}
+	return normalization, resolved, semantics, dedupFieldID
+}
+
+func TestWriteIdentityAmendment(t *testing.T) {
+	retry := func(classification, condition string) *RetrySemantics {
+		return &RetrySemantics{Classification: classification, Condition: condition, Witness: Witness{
+			ProofID: "create-item-retry", SourceRefs: []contract.SourceRef{{SourceID: "root", Pointer: "#/paths/~1items/post"}},
+		}}
+	}
+	for _, test := range []struct {
+		name            string
+		unavailableRead bool
+		mutate          func(*OperationSemantics)
+		refusal         string
+	}{
+		{name: "declared dedup field and read-back"},
+		{name: "dedup none", mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity.Dedup.FieldID = contract.WriteDedupNone }},
+		{name: "unsafe retry without write identity", mutate: func(amendment *OperationSemantics) {
+			amendment.WriteIdentity, amendment.Retry = nil, retry("unsafe", "")
+		}},
+		{name: "direct_write without write identity", refusal: `write operation "createItem" is eligible for direct_write`,
+			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity = nil }},
+		{name: "reverse_etl without write identity", refusal: `write operation "createItem" is eligible for reverse_etl`,
+			mutate: func(amendment *OperationSemantics) {
+				amendment.WriteIdentity = nil
+				amendment.Lanes[0].Lane = contract.LaneReverseETL
+			}},
+		{name: "binary_upload without write identity", refusal: `write operation "createItem" is eligible for binary_upload`,
+			mutate: func(amendment *OperationSemantics) {
+				amendment.WriteIdentity = nil
+				amendment.Lanes[0].Lane = contract.LaneBinaryUpload
+			}},
+		{name: "safe retry without write identity", refusal: `write operation "createItem" is eligible for direct_write`,
+			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity, amendment.Retry = nil, retry("safe", "") }},
+		{name: "conditional retry without write identity", refusal: `write operation "createItem" is eligible for direct_write`,
+			mutate: func(amendment *OperationSemantics) {
+				amendment.WriteIdentity, amendment.Retry = nil, retry("conditional", "provider-idempotency")
+			}},
+		{name: "unknown dedup field", refusal: `dedup field "body.unknown" is not an input field`,
+			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity.Dedup.FieldID = "body.unknown" }},
+		{name: "unknown read-back", refusal: `read-back operation "deleteItem" of write operation "createItem"`,
+			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity.ReadBack.OperationID = "deleteItem" }},
+		{name: "self read-back", refusal: `read-back operation "createItem" of write operation "createItem"`,
+			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity.ReadBack.OperationID = "createItem" }},
+		{name: "write identity without read-back", refusal: "requires both a dedup field and a read-back operation",
+			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity.ReadBack = nil }},
+		{name: "write identity without dedup", refusal: "requires both a dedup field and a read-back operation",
+			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity.Dedup = nil }},
+		{name: "unavailable read-back", unavailableRead: true,
+			refusal: `write operation "createItem" declares the read-back operation "getItem", which is not an executable operation`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			normalization, resolved, semantics, dedupFieldID := writeIdentityFixture(t, test.unavailableRead)
+			if test.mutate != nil {
+				test.mutate(&semantics.Operations[0])
+			}
+			want := semantics.Operations[0].clone()
+			target := HTTPCompilationTargetFoundations()
+			err := ApplyAmendments(normalization, resolved, &semantics)
+			var encoded []byte
+			if err == nil {
+				// The emitted facts must not alias the authoring input.
+				if semantics.Operations[0].WriteIdentity != nil {
+					semantics.Operations[0].WriteIdentity.Dedup.Witness.SourceRefs[0].Pointer = "#/mutated"
+				}
+				if err = CheckRequirements(normalization, resolved, target); err == nil {
+					encoded, err = EmitBundle(normalization, target)
+				}
+			}
+			if test.refusal != "" {
+				if !errors.Is(err, ErrUnsafeAmendment) || !strings.Contains(err.Error(), test.refusal) {
+					t.Fatalf("error = %v, want an unsafe amendment that says %q", err, test.refusal)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var bundle Bundle
+			if err := json.Unmarshal(encoded, &bundle); err != nil {
+				t.Fatal(err)
+			}
+			index := slices.IndexFunc(bundle.Operations, func(operation contract.Operation) bool { return operation.OperationID == "createItem" })
+			if index < 0 || bundle.Operations[index].Execution == nil {
+				t.Fatalf("bundle has no executable write with execution facts: %#v", bundle.Operations)
+			}
+			execution := bundle.Operations[index].Execution
+			if want.Retry != nil && (execution.Retry == nil || execution.Retry.Classification != contract.OperationRetryUnsafe) {
+				t.Fatalf("emitted retry = %#v", execution.Retry)
+			}
+			if want.WriteIdentity == nil {
+				if execution.WriteIdentity != nil {
+					t.Fatalf("emitted an undeclared write identity: %#v", execution.WriteIdentity)
+				}
+				return
+			}
+			got := execution.WriteIdentity
+			if got == nil || got.Dedup == nil || got.ReadBack == nil ||
+				got.Dedup.FieldID != want.WriteIdentity.Dedup.FieldID ||
+				got.Dedup.Witness.ProofID != want.WriteIdentity.Dedup.Witness.ProofID ||
+				!slices.Equal(got.Dedup.Witness.SourceRefs, want.WriteIdentity.Dedup.Witness.SourceRefs) ||
+				got.ReadBack.OperationID != "getItem" ||
+				got.ReadBack.Witness.ProofID != want.WriteIdentity.ReadBack.Witness.ProofID ||
+				!slices.Equal(got.ReadBack.Witness.SourceRefs, want.WriteIdentity.ReadBack.Witness.SourceRefs) {
+				t.Fatalf("emitted write identity = %#v, want %#v (dedup field %q)", got, want.WriteIdentity, dedupFieldID)
+			}
+		})
 	}
 }

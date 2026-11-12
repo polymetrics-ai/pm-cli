@@ -1162,8 +1162,26 @@ func TestPinnedPostgreSQLConnectorCarriesDeclaredStatementFacts(t *testing.T) {
 			operation.Transport.Method != "" || operation.Transport.Path != "" {
 			t.Fatalf("pinned postgres transport = %#v", operation.Transport)
 		}
-		if operation.Execution != nil || len(operation.Inputs) != 0 || len(operation.RequestVariants) != 0 {
-			t.Fatalf("pinned postgres request/execution shape = %#v", operation)
+		// Only the mapped upsert carries an execution fact: the explicit unsafe
+		// retry classification of a possible COMMIT with a lost reply.
+		wantRetry := contract.OperationRetry{
+			Classification: contract.OperationRetryUnsafe,
+			Witness: contract.ExecutionWitness{
+				ProofID:    "postgres-mapped-upsert-commit-outcome",
+				SourceRefs: []contract.SourceRef{{SourceID: "postgresql-16-protocol-flow", Pointer: "#PROTOCOL-FLOW-EXT-QUERY"}},
+			},
+		}
+		execution := operation.Execution
+		executionMatches := execution == nil
+		if kind == contract.PostgreSQLStatementMappedUpsert {
+			executionMatches = execution != nil && execution.HTTP == nil && execution.Pagination == nil &&
+				execution.WriteIdentity == nil && execution.Retry != nil && execution.Retry.Classification == wantRetry.Classification &&
+				execution.Retry.Condition == "" && len(execution.Retry.HTTPStatuses) == 0 &&
+				execution.Retry.Witness.ProofID == wantRetry.Witness.ProofID &&
+				slices.Equal(execution.Retry.Witness.SourceRefs, wantRetry.Witness.SourceRefs)
+		}
+		if !executionMatches || len(operation.Inputs) != 0 || len(operation.RequestVariants) != 0 {
+			t.Fatalf("pinned postgres request/execution shape = %#v, execution = %#v", operation, execution)
 		}
 		if len(operation.Responses) != 1 || operation.Responses[0].Status != "success" || operation.Responses[0].NoContent ||
 			operation.Responses[0].Schema == nil || operation.Responses[0].MediaType != documentationResponseMediaType {

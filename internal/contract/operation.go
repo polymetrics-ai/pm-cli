@@ -151,9 +151,10 @@ type UnavailableOperation struct {
 }
 
 type OperationExecution struct {
-	HTTP       *OperationHTTP       `json:"http,omitempty"`
-	Pagination *OperationPagination `json:"pagination,omitempty"`
-	Retry      *OperationRetry      `json:"retry,omitempty"`
+	HTTP          *OperationHTTP          `json:"http,omitempty"`
+	Pagination    *OperationPagination    `json:"pagination,omitempty"`
+	Retry         *OperationRetry         `json:"retry,omitempty"`
+	WriteIdentity *OperationWriteIdentity `json:"write_identity,omitempty"`
 }
 
 func (e *OperationExecution) UnmarshalJSON(data []byte) error {
@@ -163,7 +164,7 @@ func (e *OperationExecution) UnmarshalJSON(data []byte) error {
 	}
 	for name, raw := range fields {
 		switch name {
-		case "http", "pagination", "retry":
+		case "http", "pagination", "retry", "write_identity":
 			if strings.TrimSpace(string(raw)) == "null" {
 				return contractError(ErrInvalidContract, "execution."+name, "explicit null cannot stand in for an absent execution fact")
 			}
@@ -243,6 +244,58 @@ func (a *OperationAuthorization) UnmarshalJSON(data []byte) error {
 type ExecutionWitness struct {
 	ProofID    string      `json:"proof_id"`
 	SourceRefs []SourceRef `json:"source_refs"`
+}
+
+// WriteDedupNone is the dedup field identity of a write that has no provider
+// dedup field.
+const WriteDedupNone = "none"
+
+// OperationWriteIdentity tells how PM can find the provider effect of a write
+// again: the provider dedup field, or WriteDedupNone, and the read-back
+// operation. Each fact has a source witness.
+type OperationWriteIdentity struct {
+	Dedup    *OperationWriteDedup    `json:"dedup"`
+	ReadBack *OperationWriteReadBack `json:"read_back"`
+}
+
+func (w *OperationWriteIdentity) UnmarshalJSON(data []byte) error {
+	type wire OperationWriteIdentity
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "dedup", "read_back"); err != nil {
+		return err
+	}
+	*w = OperationWriteIdentity(decoded)
+	return nil
+}
+
+type OperationWriteDedup struct {
+	FieldID string           `json:"field_id"`
+	Witness ExecutionWitness `json:"witness"`
+}
+
+func (d *OperationWriteDedup) UnmarshalJSON(data []byte) error {
+	type wire OperationWriteDedup
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "field_id", "witness"); err != nil {
+		return err
+	}
+	*d = OperationWriteDedup(decoded)
+	return nil
+}
+
+type OperationWriteReadBack struct {
+	OperationID string           `json:"operation_id"`
+	Witness     ExecutionWitness `json:"witness"`
+}
+
+func (r *OperationWriteReadBack) UnmarshalJSON(data []byte) error {
+	type wire OperationWriteReadBack
+	var decoded wire
+	if err := decodeRequiredObject(data, &decoded, "operation_id", "witness"); err != nil {
+		return err
+	}
+	*r = OperationWriteReadBack(decoded)
+	return nil
 }
 
 type OperationPaginationKind string
@@ -382,12 +435,25 @@ type OperationRetry struct {
 	Witness        ExecutionWitness             `json:"witness"`
 }
 
+// Validate admits the execution facts of one operation. HTTP and pagination
+// facts are HTTP-only. Retry and write identity facts are
+// transport-independent, but retry HTTP statuses are HTTP-only.
 func (e OperationExecution) Validate(operation Operation) error {
-	if operation.Transport.Kind != TransportKindHTTP {
-		return contractError(ErrInvalidContract, "execution", "execution semantics are only supported for HTTP operations")
-	}
-	if e.HTTP == nil && e.Pagination == nil && e.Retry == nil {
+	if e.HTTP == nil && e.Pagination == nil && e.Retry == nil && e.WriteIdentity == nil {
 		return contractError(ErrInvalidContract, "execution", "must preserve at least one admitted execution fact")
+	}
+	if operation.Transport.Kind != TransportKindHTTP {
+		if e.HTTP != nil || e.Pagination != nil {
+			return contractError(ErrInvalidContract, "execution", "HTTP and pagination execution facts are only supported for HTTP operations")
+		}
+		if e.Retry != nil && len(e.Retry.HTTPStatuses) != 0 {
+			return contractError(ErrInvalidContract, "execution.retry.http_statuses", "retry HTTP statuses are only supported for HTTP operations")
+		}
+	}
+	if e.WriteIdentity != nil {
+		if err := e.WriteIdentity.Validate(operation); err != nil {
+			return err
+		}
 	}
 	if e.HTTP != nil {
 		if err := e.HTTP.Validate(operation); err != nil {
@@ -739,6 +805,38 @@ func (r OperationRetry) Validate() error {
 		previous = status
 	}
 	return nil
+}
+
+// Validate admits a write identity: both facts are present, the dedup field
+// is WriteDedupNone or an input field of the operation, no input field
+// identity is WriteDedupNone, and the read-back is another operation.
+func (w OperationWriteIdentity) Validate(operation Operation) error {
+	if w.Dedup == nil || w.ReadBack == nil {
+		return contractError(ErrInvalidContract, "execution.write_identity", "must declare both the dedup field and the read-back operation")
+	}
+	inputs := [][]FieldBinding{operation.Inputs}
+	for _, variant := range operation.RequestVariants {
+		inputs = append(inputs, variant.Inputs)
+	}
+	declared := false
+	for _, bindings := range inputs {
+		for _, input := range bindings {
+			if input.FieldID == WriteDedupNone {
+				return contractError(ErrInvalidContract, "execution.write_identity.dedup.field_id", "an input field identity is none, so the dedup declaration is ambiguous")
+			}
+			declared = declared || input.FieldID == w.Dedup.FieldID
+		}
+	}
+	if w.Dedup.FieldID != WriteDedupNone && !declared {
+		return contractError(ErrInvalidContract, "execution.write_identity.dedup.field_id", "must be none or an input field identity of the operation")
+	}
+	if err := w.Dedup.Witness.validate("execution.write_identity.dedup.witness"); err != nil {
+		return err
+	}
+	if !validIdentityPart(w.ReadBack.OperationID) || w.ReadBack.OperationID == operation.OperationID {
+		return contractError(ErrInvalidContract, "execution.write_identity.read_back.operation_id", "must name another stable operation identity")
+	}
+	return w.ReadBack.Witness.validate("execution.write_identity.read_back.witness")
 }
 
 func (w ExecutionWitness) validate(path string) error {
