@@ -3,7 +3,8 @@ Feature: A Parquet query result has the schema that pm-query returns
   pm-query is the restricted query child. For a selection with a Parquet
   output, it returns the column names and kinds of the result. The file that it
   writes must have the same column names, in the same order, with the same
-  types. An observer reads the file with its own DuckDB.
+  types. An observer reads the file with its own DuckDB. A selection without an
+  output returns its rows as before, also when two output names are the same.
 
   Background:
     Given the observer writes a Parquet relation "calls" with these rows:
@@ -26,3 +27,7 @@ Feature: A Parquet query result has the schema that pm-query returns
     When pm-query selects "call_id AS x, title AS x" from "calls" into a Parquet output
     Then pm-query refuses the request
     And the output file does not exist
+
+  Scenario: A selection without an output keeps duplicate output names
+    When pm-query selects "call_id AS x, title AS x" from "calls" without an output
+    Then pm-query succeeds and returns the columns "x, x"

@@ -239,6 +239,7 @@ func registerQueryChildSteps(sc *godog.ScenarioContext) {
 	})
 	sc.Step(`^the observer writes a Parquet relation "([^"]*)" with these rows:$`, scenario.writeRelation)
 	sc.Step(`^pm-query selects "([^"]*)" from "([^"]*)" into a Parquet output$`, scenario.selectIntoParquet)
+	sc.Step(`^pm-query selects "([^"]*)" from "([^"]*)" without an output$`, scenario.selectRows)
 	sc.Step(`^pm-query succeeds and returns the columns "([^"]*)"$`, scenario.returnsColumns)
 	sc.Step(`^the observer reads the footer columns "([^"]*)" in that order$`, scenario.footerColumns)
 	sc.Step(`^the footer column types equal the returned column types$`, scenario.footerTypesEqualReturned)
@@ -441,6 +442,24 @@ func (s *queryChildScenario) selectIntoParquet(projection, from string) error {
 	return nil
 }
 
+// selectRows sends a selection without an output. pm-query returns the rows.
+func (s *queryChildScenario) selectRows(projection, from string) error {
+	if err := s.prepare(); err != nil {
+		return err
+	}
+	project, err := parseProjection(projection)
+	if err != nil {
+		return err
+	}
+	s.from, s.project, s.output = from, project, ""
+	run, err := s.runQuery("query-child-rows", "")
+	if err != nil {
+		return err
+	}
+	s.last = run
+	return nil
+}
+
 // runQuery sends one pm.query/1 selection to a new pm-query process. The
 // environment, the descriptor declaration and the process group are the same
 // as those that the supervisor gives the child. An empty output path selects
@@ -559,6 +578,12 @@ func (s *queryChildScenario) returnsColumns(list string) error {
 	}
 	if want := splitNames(list); !slices.Equal(names, want) {
 		return fmt.Errorf("pm-query returned the columns %q, want %q", names, want)
+	}
+	if s.output == "" {
+		if response.Output != nil {
+			return fmt.Errorf("pm-query described an output for a selection without an output\n%s", run.describe())
+		}
+		return nil
 	}
 	if response.Output == nil || response.Output.Path != s.output {
 		return fmt.Errorf("pm-query did not describe the output %s\n%s", s.output, run.describe())
