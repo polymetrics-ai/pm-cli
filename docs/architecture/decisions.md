@@ -20,6 +20,7 @@ This is a portable index, not a second decision log. The complete accepted ratio
 | Client parity | CLI and browser derive from one public OpenAPI 3.1 contract and share server-side authorization and behavior | [ADR475-13](pm-server/architecture/ADRS.md#adr475-13--public-client-parity) |
 | Durable events | PostgreSQL transactionally owns safe sequence/history; live notification loss cannot erase replayable committed events | [ADR475-14](pm-server/architecture/ADRS.md#adr475-14--durable-events) |
 | Lifecycle and recovery | Operators explicitly own stack lifecycle, coordinated backup, compatibility, and quarantined restore; storage restore does not undo provider effects | [ADR475-15](pm-server/architecture/ADRS.md#adr475-15--operator-lifecycle-and-recovery) |
+| Process ready signal (proposed) | `pm-server` and `pm-worker` send one fixed ready line on a descriptor that the starter names with `--ready-fd`. The worker line means that its pollers started | [0003](../decisions/0003-process-ready-signal.md) |
 
 ## Applying a decision
 
