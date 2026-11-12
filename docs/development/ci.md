@@ -4,10 +4,10 @@
 
 | Where | What runs | Gate |
 | --- | --- | --- |
-| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. Atlas `--check` and the architecture docs validator when a staged path is under `docs/` or `connectors/`, or is a new Go file. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md` | A failure stops the commit |
+| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. Atlas `--check` and the architecture docs validator when a staged path is under `docs/` or `connectors/`, or is a new Go file. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. On macOS, the hook does not run the architecture docs validator (see [macOS hosts](#macos-hosts)) | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
-| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push | A failure stops the push |
-| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the Gherkin acceptance suite in `tests/acceptance`. Job `checks`: the static checks in `check-docs.sh` | Two required checks, `bdd` and `checks` |
+| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push. On macOS, it runs every check except `docs` | A failure stops the push |
+| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the Gherkin acceptance suite in `tests/acceptance`. Job `checks`: the static checks in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
 
 Install the scanner once per user. Install the hooks once per clone:
 
@@ -18,11 +18,24 @@ make hooks
 
 The hooks are developer checks. Go tests are not acceptance proof (OD-05). Only the Gherkin suite is acceptance proof. The `checks` job runs static checks, not behavior tests.
 
-On Linux, the `pre-push` hook runs inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. The `pre-commit` hook selects its checks on the host first. It enters the image only when the staged change has a Go file or a path that a check above names. Other commits run only the secret scan, on the host, and start no container. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). Developer entry checks the host scanner's checksum and mounts the binary read-only at `/opt/pmcli-gitleaks`. A hook that enters the container scans inside the container. The scanner mount does not change the image or its native profile. Generic developer commands do not scan the index. On macOS, the hooks run on the host. For the gated checks, the host then needs ShellCheck, actionlint and the Python packages in `build/ci/requirements.txt`. The `commit-msg` hook always runs on the host.
+On Linux, the `pre-push` hook runs inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. The `pre-commit` hook selects its checks on the host first. It enters the image only when the staged change has a Go file or a path that a check above names. Other commits run only the secret scan, on the host, and start no container. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). Developer entry checks the host scanner's checksum and mounts the binary read-only at `/opt/pmcli-gitleaks`. A hook that enters the container scans inside the container. The scanner mount does not change the image or its native profile. Generic developer commands do not scan the index. On macOS, the hooks run on the host (see [macOS hosts](#macos-hosts)). The `commit-msg` hook always runs on the host.
 
 The hooks treat `PMCLI_IN_IMAGE=1` as "already inside the image" only when `/run/.containerenv` exists. Podman creates that file in each container. On a host, the hooks ignore the variable and enter the image.
 
 The first hook run on a Linux host builds the image and downloads the locked tools into the cache (`PMCLI_CACHE_DIR`, default `~/.cache/pmcli`). Later runs reuse both. The host needs rootless Podman (`PMCLI_CONTAINER_ENGINE`, default `podman`). The developer container mounts the checkout, the cache and the Git common directory of a linked worktree at their host paths. It uses the default network and has no engine socket, so a hook cannot start the dependency stack. It uses the same user and the same `PMCLI_JOB_*` limits as a CI job.
+
+### macOS hosts
+
+On macOS, the hooks run on the host. The `pre-push` hook, and a `pre-commit` hook that runs `check-docs.sh`, need these items:
+
+- Python 3.11 or later that imports `tomllib`, `yaml`, `markdown_it` and `mdurl`. [requirements.txt](../../build/ci/requirements.txt) pins the versions of PyYAML, markdown-it-py and mdurl that CI uses. `tomllib` is in the standard library from Python 3.11. `test_secret_scan.py` imports it.
+- ShellCheck and actionlint on `PATH`, for `check-setup.py`.
+- The Gitleaks scanner (see [Required developer secret scans](#required-developer-secret-scans)).
+- An Apple macOS SDK for cgo, as [developer setup](setup.md) describes.
+
+The hooks select the Python interpreter for `check-docs.sh`. They try `python3`, `python3.13`, `python3.12` and `python3.11` on `PATH`, in that order. They select the first one that is Python 3.11 or later and imports the four modules. The hook prints the version of that interpreter and gives its name to `check-docs.sh` in `PMCLI_PYTHON`. If no interpreter qualifies, the hook prints the prerequisite and stops the commit or push. The hook does not skip the `python` check. Other Python commands still use the first `python3` on `PATH`. Examples are the secret scan, `generate.sh` and `check-boundaries.sh`. CI ignores `PMCLI_PYTHON` and uses `python3`.
+
+The macOS hooks do not run the `docs` check. Its vendored wheels in `third_party/python/architecture-docs` are for Linux x86-64 and Python 3.12 only. A hook that skips the check prints one notice. The CI `checks` job runs all eight checks, including `docs`. A direct `sh scripts/ci/check-docs.sh docs` on macOS still runs the check, and the check fails.
 
 ## Required developer secret scans
 
@@ -73,7 +86,7 @@ The `checks` job is in the same workflow as `bdd`. It has the same admission con
 - `boundaries`: `check-boundaries.sh`.
 - `tools`: `go test` for the tools module.
 
-In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh atlas docs`. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins and govulncheck are not in this job.
+In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh atlas docs`. `check-docs.sh --list` prints the check names. The hooks read the names from it. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins and govulncheck are not in this job.
 
 ## Agent branches
 
