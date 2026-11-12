@@ -213,7 +213,7 @@ func registerPmgenSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^pmgen compiles the connector$`, scenario.compile)
 	sc.Step(`^pmgen checks the checked-in connectors$`, scenario.checkCheckedIn)
 	sc.Step(`^pmgen succeeds$`, scenario.succeeds)
-	sc.Step(`^pmgen refuses to compile "([^"]*)"$`, scenario.refuses)
+	sc.Step(`^pmgen refuses to compile "([^"]*)" because it is eligible for "([^"]*)" without a write identity$`, scenario.refusesWithoutWriteIdentity)
 	sc.Step(`^pmgen writes no bundle$`, scenario.writesNoBundle)
 	sc.Step(`^the bundle operation "([^"]*)" has the dedup field "([^"]*)" with its source witness$`, scenario.bundleHasDedup)
 	sc.Step(`^the bundle operation "([^"]*)" has the read-back operation "([^"]*)" with its source witness$`, scenario.bundleHasReadBack)
@@ -594,8 +594,8 @@ func (s *pmgenScenario) succeeds() error {
 	return nil
 }
 
-// refuses requires a compile refusal that names the refused operation.
-func (s *pmgenScenario) refuses(operationID string) error {
+// refusedFor requires exit code 1 with a compile refusal that states reason.
+func (s *pmgenScenario) refusedFor(reason string) error {
 	run, err := s.lastRun()
 	if err != nil {
 		return err
@@ -603,10 +603,18 @@ func (s *pmgenScenario) refuses(operationID string) error {
 	if run.exitCode != 1 || !strings.HasPrefix(run.stderr, "pmgen: compile: ") {
 		return fmt.Errorf("pmgen exit code %d, want 1 with a compile refusal\n%s", run.exitCode, run.describe())
 	}
-	if !strings.Contains(run.stderr, operationID) {
-		return fmt.Errorf("the refusal does not name %q\n%s", operationID, run.describe())
+	if !strings.Contains(run.stderr, reason) {
+		return fmt.Errorf("the refusal does not state %q\n%s", reason, run.describe())
 	}
 	return nil
+}
+
+// refusesWithoutWriteIdentity requires the refusal of an eligible write that
+// has no write identity and no explicit unsafe retry classification.
+func (s *pmgenScenario) refusesWithoutWriteIdentity(operationID, lane string) error {
+	return s.refusedFor(fmt.Sprintf(
+		"write operation %q is eligible for %s without a write identity or an explicit unsafe retry classification",
+		operationID, lane))
 }
 
 func (s *pmgenScenario) writesNoBundle() error {

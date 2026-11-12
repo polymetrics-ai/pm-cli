@@ -28,29 +28,36 @@ Feature: pmgen keeps the write identity and the read-back of a write operation
     Given the semantics mark "items/create" eligible for "<lane>"
     And the semantics declare no write identity for "items/create"
     When pmgen compiles the connector
-    Then pmgen refuses to compile "items/create"
+    Then pmgen refuses to compile "items/create" because it is eligible for "<lane>" without a write identity
     And pmgen writes no bundle
 
     Examples:
-      | lane         |
-      | direct_write |
-      | reverse_etl  |
+      | lane          |
+      | direct_write  |
+      | reverse_etl   |
+      | binary_upload |
 
   Scenario: A safe retry classification does not replace the write identity
     Given the semantics mark "items/create" eligible for "direct_write"
     And the semantics declare the retry classification "safe" for "items/create" with a source witness
     And the semantics declare no write identity for "items/create"
     When pmgen compiles the connector
-    Then pmgen refuses to compile "items/create"
+    Then pmgen refuses to compile "items/create" because it is eligible for "direct_write" without a write identity
     And pmgen writes no bundle
 
-  Scenario: An explicit unsafe classification admits a write without a write identity
-    Given the semantics mark "items/create" eligible for "direct_write"
+  Scenario Outline: An explicit unsafe classification admits a write without a write identity
+    Given the semantics mark "items/create" eligible for "<lane>"
     And the semantics declare the retry classification "unsafe" for "items/create" with a source witness
     And the semantics declare no write identity for "items/create"
     When pmgen compiles the connector
     Then pmgen succeeds
     And the bundle operation "items/create" has the retry classification "unsafe"
+
+    Examples:
+      | lane          |
+      | direct_write  |
+      | reverse_etl   |
+      | binary_upload |
 
   Scenario: A read operation needs no write identity
     Given the semantics mark "items/get" eligible for "direct_read"
