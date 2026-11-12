@@ -32,7 +32,9 @@ pm_host_checks() {
   shift 2
   for name in "$@"; do
     if [ "$os" = Darwin ] && [ "$name" = docs ]; then
-      printf '%s: skipped check-docs.sh docs on macOS: its vendored dependencies are Linux-only. CI job checks runs it.\n' "$hook" >&2
+      # The backticks in the notice are literal text, not a command.
+      # shellcheck disable=SC2016
+      printf '%s: skipped check-docs.sh docs on macOS: its vendored dependencies are Linux-only. The CI job `checks` runs it.\n' "$hook" >&2
       continue
     fi
     printf '%s\n' "$name"

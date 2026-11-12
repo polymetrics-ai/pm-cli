@@ -281,7 +281,7 @@ class HookCheckSelection(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.split(), expected)
                 notice = (f"{hook}: skipped check-docs.sh docs on macOS: its vendored "
-                          "dependencies are Linux-only. CI job checks runs it.\n")
+                          "dependencies are Linux-only. The CI job `checks` runs it.\n")
                 skipped = system == "Darwin" and "docs" in names
                 self.assertEqual(result.stderr, notice if skipped else "")
 
