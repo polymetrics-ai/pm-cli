@@ -138,8 +138,19 @@ func TestSelectRefusesInvalidOutputNames(t *testing.T) {
 			request.Select.Project = request.Select.Project[:2]
 			request.Select.Project[0].Alias = aliases[0]
 			request.Select.Project[1].Alias = aliases[1]
-			if _, err := RunAnalyticRequest(t.Context(), request); err == nil {
+			_, err := RunAnalyticRequest(t.Context(), request)
+			if err == nil {
 				t.Fatal("invalid output names were accepted")
+			}
+			duplicateReasons := map[[2]string]string{
+				{"x", "x"}: `output column "x" is declared more than once. Give each output column a different name`,
+				{"x", "X"}: `output columns "x" and "X" have the same name when case is ignored. Give each output column a different name`,
+			}
+			if want, checked := duplicateReasons[aliases]; checked {
+				var refusal *Failure
+				if !errors.As(err, &refusal) || refusal.Code != CodeProtocol || refusal.Reason != want {
+					t.Fatalf("duplicate names returned %v, want %s: %s", err, CodeProtocol, want)
+				}
 			}
 			if _, err := os.Lstat(request.Select.Output.Path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("refused output exists or cannot be inspected: %v", err)
@@ -200,6 +211,12 @@ func TestWriteSegmentRefusesSchemaMismatch(t *testing.T) {
 			result, err := engine.writeSegment(t.Context(), request, test.statement, nil, test.columns)
 			if err == nil || FailureCode(err) != CodeOutputFailed {
 				t.Fatalf("schema mismatch returned %v, want CodeOutputFailed", err)
+			}
+			if want := `the materialized segment has column 1 as "actual" BIGINT instead of "expected" BIGINT`; test.name == "name" {
+				var refusal *Failure
+				if !errors.As(err, &refusal) || refusal.Reason != want {
+					t.Fatalf("name mismatch returned %v, want the reason %s", err, want)
+				}
 			}
 			if result.Output != nil {
 				t.Fatal("schema mismatch returned an output descriptor")

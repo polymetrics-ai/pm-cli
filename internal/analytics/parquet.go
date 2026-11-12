@@ -462,21 +462,28 @@ func MaterializeParquet(ctx context.Context, database *sql.DB, columns []Column,
 	if _, err := database.ExecContext(ctx, statement); err != nil {
 		return descriptor, fmt.Errorf("write the admitted Parquet segment: %w", err)
 	}
-	return DescribeParquetOutput(ctx, database, output.Path, columns)
+	return describeParquetOutput(ctx, database, output.Path, columns)
 }
 
-// DescribeParquetOutput verifies the output names, order and physical types
-// before it reports the segment identity. It removes an invalid segment.
-func DescribeParquetOutput(ctx context.Context, database *sql.DB, path string, columns []Column) (descriptor OutputDescriptor, err error) {
+// describeParquetOutput verifies the output names, order and physical types
+// before it reports the segment identity. It removes an invalid segment. Only
+// this package writes a segment, so only this package calls it.
+func describeParquetOutput(ctx context.Context, database *sql.DB, path string, columns []Column) (descriptor OutputDescriptor, err error) {
 	if err := validateRegularFile(path, "the materialized segment"); err != nil {
-		return descriptor, failure(CodeOutputFailed, "inspect the materialized segment: %v", err)
+		return descriptor, failure(CodeOutputFailed, "inspect the materialized segment: %s", strings.TrimPrefix(err.Error(), ErrUnadmittedPath.Error()+": "))
 	}
 	defer func() {
 		if err == nil {
 			return
 		}
 		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
-			err = failure(CodeOutputFailed, "remove the invalid materialized segment: %v", errors.Join(err, removeErr))
+			// The refusal code appears once: join the inner reason, not its Error().
+			reason := err.Error()
+			var inner *Failure
+			if errors.As(err, &inner) {
+				reason = inner.Reason
+			}
+			err = failure(CodeOutputFailed, "%s. The invalid materialized segment was not removed: %v", reason, removeErr)
 		}
 	}()
 	rows, err := database.QueryContext(ctx, "SELECT * FROM read_parquet(?) LIMIT 0", path)
@@ -497,7 +504,9 @@ func DescribeParquetOutput(ctx context.Context, database *sql.DB, path string, c
 			return descriptor, failure(CodeOutputFailed, "the materialized schema declaration is invalid: %v", err)
 		}
 		if types[index].Name() != column.Name || types[index].DatabaseTypeName() != declaredType {
-			return descriptor, failure(CodeOutputFailed, "materialized column %d does not match the returned name and type", index)
+			return descriptor, failure(CodeOutputFailed,
+				"the materialized segment has column %d as %q %s instead of %q %s",
+				index+1, types[index].Name(), types[index].DatabaseTypeName(), column.Name, declaredType)
 		}
 	}
 	file, err := os.Open(path)

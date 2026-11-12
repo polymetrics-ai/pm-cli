@@ -389,7 +389,7 @@ func (selectRequest Select) validate(bounds BoundAnalytics, relations map[string
 	if selectRequest.Limit <= 0 || selectRequest.Limit > MaximumRows {
 		return failure(CodeBoundExceeded, "the declared row limit must be 1..%d", MaximumRows)
 	}
-	outputNames := make(map[string]struct{}, len(selectRequest.Project))
+	outputNames := make(map[string]string, len(selectRequest.Project))
 	for _, projection := range selectRequest.Project {
 		if _, present := relationColumn(relation, projection.Column.Name); !present {
 			return failure(CodeUnknownColumn, "relation %q does not declare column %q", selectRequest.From, projection.Column.Name)
@@ -403,11 +403,18 @@ func (selectRequest Select) validate(bounds BoundAnalytics, relations map[string
 		// identifiers without case, including quoted names. A selection without
 		// an output returns its rows and keeps duplicate names.
 		if selectRequest.Output != nil {
-			name := strings.ToLower(projection.OutputName())
-			if _, duplicate := outputNames[name]; duplicate {
-				return failure(CodeProtocol, "output column %q is declared more than once", projection.OutputName())
+			name := projection.OutputName()
+			key := strings.ToLower(name)
+			if earlier, duplicate := outputNames[key]; duplicate {
+				if earlier == name {
+					return failure(CodeProtocol,
+						"output column %q is declared more than once. Give each output column a different name", name)
+				}
+				return failure(CodeProtocol,
+					"output columns %q and %q have the same name when case is ignored. Give each output column a different name",
+					earlier, name)
 			}
-			outputNames[name] = struct{}{}
+			outputNames[key] = name
 		}
 	}
 	for _, predicate := range selectRequest.Predicates {
@@ -735,7 +742,7 @@ func (engine *engine) writeSegment(ctx context.Context, request Request, stateme
 	if _, err := engine.database.ExecContext(ctx, statement, arguments...); err != nil {
 		return result, failure(CodeOutputFailed, "write the admitted Parquet segment: %v", err)
 	}
-	descriptor, err := DescribeParquetOutput(ctx, engine.database, output.Path, declared)
+	descriptor, err := describeParquetOutput(ctx, engine.database, output.Path, declared)
 	if err != nil {
 		return result, classify(err)
 	}
