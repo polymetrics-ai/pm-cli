@@ -399,12 +399,16 @@ func (selectRequest Select) validate(bounds BoundAnalytics, relations map[string
 				return classify(err)
 			}
 		}
-		// DuckDB compares identifiers without case, including quoted names.
-		name := strings.ToLower(projection.OutputName())
-		if _, duplicate := outputNames[name]; duplicate {
-			return failure(CodeProtocol, "output column %q is declared more than once", projection.OutputName())
+		// A Parquet file needs a different name for each column. DuckDB compares
+		// identifiers without case, including quoted names. A selection without
+		// an output returns its rows and keeps duplicate names.
+		if selectRequest.Output != nil {
+			name := strings.ToLower(projection.OutputName())
+			if _, duplicate := outputNames[name]; duplicate {
+				return failure(CodeProtocol, "output column %q is declared more than once", projection.OutputName())
+			}
+			outputNames[name] = struct{}{}
 		}
-		outputNames[name] = struct{}{}
 	}
 	for _, predicate := range selectRequest.Predicates {
 		if _, present := relationColumn(relation, predicate.Column); !present {
@@ -683,7 +687,7 @@ func (engine *engine) selectRows(ctx context.Context, request Request) (Result, 
 			if !declaredBefore {
 				return result, failure(CodeUnknownColumn, "relation %q does not declare column %q", selectRequest.From, predicate.Column)
 			}
-			clause, clauseArguments, err := predicateClause(column, predicate)
+			clause, clauseArguments, err := predicateClause(from, column, predicate)
 			if err != nil {
 				return result, classify(err)
 			}
@@ -913,12 +917,15 @@ func bindingExpression(column Column, value Value) (string, any, error) {
 	}
 }
 
-// predicateClause renders one closed comparison with bound arguments.
-func predicateClause(column Column, predicate Predicate) (string, []any, error) {
+// predicateClause renders one closed comparison with bound arguments. It
+// qualifies the column with the relation, so that an output alias with the
+// same name never replaces the source column.
+func predicateClause(from string, column Column, predicate Predicate) (string, []any, error) {
 	identifier, err := column.Identifier()
 	if err != nil {
 		return "", nil, err
 	}
+	identifier = from + "." + identifier
 	switch predicate.Operator {
 	case OperatorIsNull:
 		return identifier + " IS NULL", nil, nil

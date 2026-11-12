@@ -14,7 +14,7 @@ import (
 )
 
 func TestSelectParquetSchemaAndValues(t *testing.T) {
-	for _, mode := range []string{"plain", "aliased", "mixed_reordered", "swapped_names", "empty"} {
+	for _, mode := range []string{"plain", "aliased", "mixed_reordered", "swapped_names", "swapped_names_filtered", "empty"} {
 		t.Run(mode, func(t *testing.T) {
 			request, observer := parquetSelectionFixture(t)
 			if mode == "mixed_reordered" {
@@ -26,9 +26,18 @@ func TestSelectParquetSchemaAndValues(t *testing.T) {
 					request.Select.Project[index].Alias = "out_" + request.Select.Project[index].Column.Name
 				}
 			}
-			if mode == "swapped_names" {
+			if mode == "swapped_names" || mode == "swapped_names_filtered" {
 				request.Select.Project[0].Alias = "title"
 				request.Select.Project[1].Alias = "call_id"
+			}
+			if mode == "swapped_names_filtered" {
+				// The predicate names the source column title, which is also the
+				// alias of call_id. It must filter on the source column.
+				first, err := TextValue("First")
+				if err != nil {
+					t.Fatal(err)
+				}
+				request.Select.Predicates = []Predicate{{Column: "title", Operator: OperatorEqual, Value: first}}
 			}
 			if mode == "empty" {
 				request.Select.Predicates = []Predicate{{Column: "call_id", Operator: OperatorEqual, Value: Int64Value(1)}}
@@ -95,6 +104,17 @@ func TestSelectParquetSchemaAndValues(t *testing.T) {
 				}
 				return
 			}
+			if mode == "swapped_names_filtered" {
+				if len(decoded.Rows) != 1 {
+					t.Fatalf("filtered selection returned %d rows, want 1", len(decoded.Rows))
+				}
+				id, idOK := decoded.Rows[0][0].Int64()
+				title, titleOK := decoded.Rows[0][1].Text()
+				if !idOK || id != 9007199254740993 || !titleOK || title != "First" {
+					t.Fatalf("the predicate did not filter on the source column title: %v", decoded.Rows[0][:2])
+				}
+				return
+			}
 			if len(decoded.Rows) != 2 {
 				t.Fatalf("decoded %d rows, want 2", len(decoded.Rows))
 			}
@@ -123,6 +143,35 @@ func TestSelectRefusesInvalidOutputNames(t *testing.T) {
 			}
 			if _, err := os.Lstat(request.Select.Output.Path); !errors.Is(err, os.ErrNotExist) {
 				t.Fatalf("refused output exists or cannot be inspected: %v", err)
+			}
+		})
+	}
+}
+
+func TestSelectWithoutOutputKeepsDuplicateNames(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		project []Projection
+		want    []string
+	}{
+		{"same_alias", []Projection{{Column: Column{Name: "call_id"}, Alias: "x"}, {Column: Column{Name: "title"}, Alias: "x"}}, []string{"x", "x"}},
+		{"case_alias", []Projection{{Column: Column{Name: "call_id"}, Alias: "x"}, {Column: Column{Name: "title"}, Alias: "X"}}, []string{"x", "X"}},
+		{"same_column", []Projection{{Column: Column{Name: "call_id"}}, {Column: Column{Name: "call_id"}}}, []string{"call_id", "call_id"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request, _ := parquetSelectionFixture(t)
+			request.Select.Output = nil
+			request.Select.Project = test.project
+			result, err := RunAnalyticRequest(t.Context(), request)
+			if err != nil {
+				t.Fatalf("a selection without an output refused duplicate names: %v", err)
+			}
+			var names []string
+			for _, column := range result.Columns {
+				names = append(names, column.Name)
+			}
+			if !reflect.DeepEqual(names, test.want) || len(result.Rows) != 2 {
+				t.Fatalf("returned columns %q and %d rows, want %q and 2 rows", names, len(result.Rows), test.want)
 			}
 		})
 	}
