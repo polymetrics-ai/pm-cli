@@ -4,7 +4,10 @@
 #
 #   check-docs.sh            run every check below
 #   check-docs.sh NAME...    run only the named checks (the git hooks use this)
+#   check-docs.sh --list     print the check names, one per line
 #
+# PMCLI_PYTHON names the Python interpreter for the checks (default python3).
+# The macOS git hooks set it. CI ignores it and uses python3.
 # Checks: atlas docs setup python generate gofmt boundaries tools.
 # CI and the Linux git hooks run this script inside the pinned job image
 # (scripts/ci/in-ci-image.sh). See docs/development/ci.md.
@@ -12,6 +15,11 @@ set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
 all='atlas docs setup python generate gofmt boundaries tools'
+if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
+  # shellcheck disable=SC2086
+  printf '%s\n' $all
+  exit 0
+fi
 if [ "$#" -eq 0 ]; then
   # Word splitting of the check list is intended.
   # shellcheck disable=SC2086
@@ -27,7 +35,9 @@ for name in "$@"; do
   esac
 done
 
+py=${PMCLI_PYTHON:-python3}
 if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  py=python3
   # Share the Go caches and resource bounds of the bdd job on the same runner.
   : "${PMCLI_CACHE_DIR:?Persistent CI cache directory required}"
   export PM_TOOLS_CACHE="$PMCLI_CACHE_DIR/pm-tools"
@@ -48,7 +58,7 @@ trap 'rm -rf "$work"' EXIT
 started=$(date +%s)
 
 pgo() {
-  python3 tools/bootstrap.py exec go -- "$@"
+  "$py" tools/bootstrap.py exec go -- "$@"
 }
 
 # Each step line shows the seconds since the script started.
@@ -77,30 +87,30 @@ check_atlas() {
 
 check_docs() {
   step 'architecture docs validator'
-  python3 -I -B scripts/install_architecture_docs_dependencies.py --destination "$work/docs-deps"
-  PYTHONPATH="$work/docs-deps" python3 -B scripts/validate_architecture_docs.py
-  PYTHONPATH="$work/docs-deps" python3 -B scripts/test_validate_architecture_docs.py
+  "$py" -I -B scripts/install_architecture_docs_dependencies.py --destination "$work/docs-deps"
+  PYTHONPATH="$work/docs-deps" "$py" -B scripts/validate_architecture_docs.py
+  PYTHONPATH="$work/docs-deps" "$py" -B scripts/test_validate_architecture_docs.py
 }
 
 check_setup() {
   step 'check-setup.py'
-  python3 -I -B scripts/ci/check-setup.py --root . --policy scripts/ci/setup-policy.json
+  "$py" -I -B scripts/ci/check-setup.py --root . --policy scripts/ci/setup-policy.json
 }
 
 check_python() {
   # The developer container mounts the verified host scanner. A CI job installs
   # the pinned, checksummed scanner into its cache when it is missing.
-  if ! python3 -I -B scripts/dev/secret_scan.py binary >/dev/null 2>&1; then
+  if ! "$py" -I -B scripts/dev/secret_scan.py binary >/dev/null 2>&1; then
     if [ "${GITHUB_ACTIONS:-}" != true ]; then
-      python3 -I -B scripts/dev/secret_scan.py binary
+      "$py" -I -B scripts/dev/secret_scan.py binary
       exit 1
     fi
-    python3 -I -B scripts/dev/secret_scan.py install
+    "$py" -I -B scripts/dev/secret_scan.py install
   fi
   for test in scripts/ci/test_setup.py scripts/ci/test_runner_admission.py \
     scripts/ci/test_stack_fixture.py tools/test_bootstrap.py scripts/dev/test_secret_scan.py; do
     step "$test"
-    python3 -I -B "$test"
+    "$py" -I -B "$test"
   done
 }
 

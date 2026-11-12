@@ -245,5 +245,79 @@ class SetupContracts(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
 
 
+CHECK_DOCS = ROOT / "scripts/ci/check-docs.sh"
+HOOK_LIB = ROOT / "scripts/dev/hook-lib.sh"
+CHECK_NAMES = ["atlas", "docs", "setup", "python", "generate", "gofmt", "boundaries", "tools"]
+
+
+class HookCheckSelection(unittest.TestCase):
+    """Developer checks of the host check selection in scripts/dev/hook-lib.sh."""
+
+    def lib(self, script, *args, env=None):
+        return subprocess.run(
+            ["/bin/sh", "-c", '. "$0"; ' + script, str(HOOK_LIB), *args],
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+
+    def test_check_names_come_from_the_script(self):
+        result = subprocess.run(["/bin/sh", str(CHECK_DOCS), "--list"],
+                                capture_output=True, text=True, timeout=30)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), CHECK_NAMES)
+        self.assertEqual(result.stderr, "")
+
+    def test_macos_hooks_skip_only_docs(self):
+        cases = {
+            ("pre-push", "Darwin", tuple(CHECK_NAMES)): [n for n in CHECK_NAMES if n != "docs"],
+            ("pre-commit", "Darwin", ("atlas", "docs", "setup")): ["atlas", "setup"],
+            ("pre-commit", "Darwin", ("atlas", "docs")): ["atlas"],
+            ("pre-commit", "Darwin", ("setup",)): ["setup"],
+            ("pre-push", "Linux", tuple(CHECK_NAMES)): CHECK_NAMES,
+            ("pre-commit", "Linux", ("atlas", "docs", "setup")): ["atlas", "docs", "setup"],
+        }
+        for (hook, system, names), expected in cases.items():
+            with self.subTest(hook=hook, system=system, names=names):
+                result = self.lib('pm_host_checks "$@"', hook, system, *names)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.split(), expected)
+                notice = (f"{hook}: skipped check-docs.sh docs on macOS: its vendored "
+                          "dependencies are Linux-only. CI job checks runs it.\n")
+                skipped = system == "Darwin" and "docs" in names
+                self.assertEqual(result.stderr, notice if skipped else "")
+
+    def test_macos_python_selection(self):
+        def fake(directory, name, passes, version="3.12.9"):
+            path = Path(directory) / name
+            path.write_text("#!/bin/sh\n" + (
+                f'case "$*" in *platform*) echo {version} ;; esac\nexit 0\n'
+                if passes else "exit 1\n"))
+            path.chmod(0o755)
+
+        script = 'pm_select_python pre-push && printf "selected=%s\\n" "$PMCLI_PYTHON"'
+        with tempfile.TemporaryDirectory() as directory:
+            fake(directory, "python3", passes=False)
+            fake(directory, "python3.12", passes=True)
+            fake(directory, "python3.11", passes=True, version="3.11.11")
+            result = self.lib(script, env={"PATH": directory})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(result.stdout,
+                             "pre-push: check-docs.sh uses Python 3.12.9\nselected=python3.12\n")
+        with tempfile.TemporaryDirectory() as directory:
+            fake(directory, "python3", passes=False)
+            fake(directory, "python3.11", passes=False)
+            result = self.lib(script, env={"PATH": directory})
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(result.stdout, "")
+            self.assertIn("pre-push: no Python 3.11 or later on PATH imports tomllib, yaml, "
+                          "markdown_it and mdurl.", result.stderr)
+
+    def test_python_probe_matches_the_host_check_modules(self):
+        import importlib.util
+        expected = sys.version_info >= (3, 11) and all(
+            importlib.util.find_spec(name) for name in ("tomllib", "yaml", "markdown_it", "mdurl"))
+        result = self.lib('"$1" -I -B -c "$pm_python_probe"', sys.executable)
+        self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+
 if __name__ == "__main__":
     unittest.main()

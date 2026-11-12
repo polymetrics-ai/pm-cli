@@ -65,6 +65,11 @@ fi
 if [ -n "$setup_gate" ]; then
   set -- "$@" setup
 fi
+if [ "$#" -gt 0 ] && [ "$(uname -s)" = Darwin ]; then
+  pm_select_python pre-commit || exit 1
+  # shellcheck disable=SC2046
+  set -- $(pm_host_checks pre-commit Darwin "$@")
+fi
 if [ "$#" -gt 0 ]; then
   printf 'pre-commit: check-docs.sh %s\n' "$*"
   sh scripts/ci/check-docs.sh "$@"
