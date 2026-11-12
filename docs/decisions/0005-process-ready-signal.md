@@ -1,4 +1,4 @@
-# 0003: Ready signal from pm-server and pm-worker to their starter
+# 0005: Ready signal from pm-server and pm-worker to their starter
 
 Date: 2026-11-12. Status: proposed. This record does not authorize application work. Every flag, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #72.
 
