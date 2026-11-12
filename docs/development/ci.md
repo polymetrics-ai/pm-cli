@@ -4,16 +4,45 @@
 
 | Where | What runs | Gate |
 | --- | --- | --- |
-| `pre-commit` hook | `gofmt`, `go vet`, Staticcheck and `go test` on the changed packages that need no stack; `gitleaks` on staged changes when it is installed | A failure stops the commit |
+| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
-| `pre-push` hook | Refuses a push to `main`; `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack | A failure stops the push |
+| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack | A failure stops the push |
 | CI ([bdd.yml](../../.github/workflows/bdd.yml)) | The Gherkin acceptance suite in `tests/acceptance` | The only required check, `bdd` |
 
-Install the hooks once per clone with `make hooks`. The hooks are developer checks. Go tests are not acceptance proof (OD-05); only the Gherkin suite is.
+Install the scanner once per user. Install the hooks once per clone:
 
-On Linux, the `pre-commit` and `pre-push` hooks run inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). The `pre-commit` hook runs `gitleaks` on the host before it enters the image, because the image has no `gitleaks`. On macOS, the hooks run on the host. The `commit-msg` hook always runs on the host.
+```sh
+python3 -I -B scripts/dev/secret_scan.py install
+make hooks
+```
+
+The hooks are developer checks. Go tests are not acceptance proof (OD-05). Only the Gherkin suite is acceptance proof.
+
+On Linux, the `pre-commit` and `pre-push` hooks run inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). Developer entry checks the host scanner's checksum and mounts the binary read-only at `/opt/pmcli-gitleaks`. The hooks scan inside the container. The scanner mount does not change the image or its native profile. Generic developer commands do not scan the index. On macOS, the hooks run on the host. The `commit-msg` hook always runs on the host.
 
 The first hook run on a Linux host builds the image and downloads the locked tools into the cache (`PMCLI_CACHE_DIR`, default `~/.cache/pmcli`). Later runs reuse both. The host needs rootless Podman (`PMCLI_CONTAINER_ENGINE`, default `podman`). The developer container mounts the checkout, the cache and the Git common directory of a linked worktree at their host paths. It uses the default network and has no engine socket, so a hook cannot start the dependency stack. It uses the same user and the same `PMCLI_JOB_*` limits as a CI job.
+
+## Required developer secret scans
+
+[secret_scan.py](../../scripts/dev/secret_scan.py) pins the official Gitleaks 8.30.1 archives and binaries by SHA-256. It supports Linux x86_64 and Apple Silicon macOS. The installer writes `~/.local/bin/gitleaks`. Each scan checks the binary checksum before execution. `PMCLI_GITLEAKS` can select another path, but that binary must match the platform's pin. No scan downloads tools automatically. An unavailable scanner, wrong checksum, scan error or finding blocks the Git operation.
+
+The commit scan reads the Git index, including `GIT_INDEX_FILE` and the temporary index from `git commit -a`. It scans full changed blobs through a private temporary snapshot. Git attributes and diff drivers cannot replace those bytes. An unstaged edit does not replace the staged content. Direct hook execution inside a developer container uses the same required scan. `PMCLI_IN_IMAGE=1` does not disable scanning.
+
+The push scan checks each outgoing range from the remote commit to the local commit. A new branch or unavailable remote commit causes a scan of all history reachable from the local commit. This includes secrets removed before the branch tip. The scan includes merge diffs and disables text conversion, external diff drivers and replacement objects. Shallow history blocks a push until you fetch the missing history. Grafted history also blocks a push. Ref deletion needs no content scan. Each scan has a ten-minute timeout.
+
+The helper uses the pinned default detection rules and fully redacted diagnostics. Its [reviewed configuration](../../scripts/dev/gitleaks.toml) has exact exceptions for known nonsecret values. Each exception requires the rule, exact file and exact value to match. These values are S3 object names, a run identifier, an explicit documentation placeholder and a public GitHub documentation sample. No exception excludes an entire file or directory.
+
+Local `.gitleaks.toml`, environment configuration, `.gitleaksignore` and `gitleaks:allow` comments cannot suppress findings. Investigate each finding before changing the reviewed configuration. Do not add broad exceptions for tests or captured documents.
+
+Run the developer checks with the real scanner:
+
+```sh
+python3 -I -B scripts/dev/test_secret_scan.py
+```
+
+These checks use temporary Git repositories, actual hooks and an invalid synthetic token. They check index selection, missing or changed scanners, scan errors and outgoing history. They are separate from the required Gherkin CI gate.
+
+Secret detection is pattern-based and cannot prove that content has no credentials. Existing history can block a new branch. Review suspected false positives individually. A user who controls the clone can change or disable hooks. GitHub secret scanning and push protection require separate repository settings. If a real credential was published, revoke or rotate it before any history repair.
 
 ## The `bdd` check
 
@@ -29,7 +58,13 @@ Missing prerequisites, test failures and cleanup failures remain failures.
 
 ## Agent branches
 
-Agents push `agent/<issue>-<slug>` branches with git only and hold no GitHub API token. [agent-pr.yml](../../.github/workflows/agent-pr.yml) opens a draft pull request for a new agent branch on a GitHub-hosted runner. It never checks out or runs the pushed code. Only the owner merges, by squash.
+Agents push `agent/<issue>-<slug>` branches with git only and hold no GitHub API token. [agent-pr.yml](../../.github/workflows/agent-pr.yml) manages pull requests when `PM BDD` starts or finishes. It runs from the default branch on a GitHub-hosted runner. It never checks out agent code, downloads artifacts or runs pushed content.
+
+The workflow creates a draft pull request while checks are pending. It marks the pull request ready for owner review only after the latest `PM BDD` run succeeds for the exact current branch revision. The `bdd` job in that run's latest attempt must also succeed. New work, reruns and failed checks return the pull request to draft when their workflow events arrive. Each event reconciles the current branch state, even if GitHub combines pending events. Delayed events cannot promote an older revision. A current revision without a BDD run stays draft. The workflow checks the branch again after promotion and restores draft if the head or checks changed.
+
+This policy manages all open pull requests from this repository's `agent/**` branches, including an owner-created draft. Branches such as `codex/**` need manual readiness changes. Readiness signals that the current BDD gate passed. Successful CI does not prove that every task obligation is complete. The workflow has no separate task completion receipt. Readiness does not replace independent review or authorize a merge. Only the owner merges, manually and by squash. The workflow never merges or enables auto-merge. The owner must check the current revision and checks before merging.
+
+The workflow needs `actions: read`, `contents: read` and `pull-requests: write`. It accepts only owner-authored push runs from this repository's `.github/workflows/bdd.yml`. It becomes active after this workflow change reaches the default branch. Existing completed runs do not replay automatically.
 
 ## Pinned job image and native environment
 
