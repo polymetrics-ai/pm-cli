@@ -29,19 +29,33 @@ PM uses a one-line ready signal on an inherited file descriptor. The starter nam
 
 | Item | Contract |
 | --- | --- |
-| Request | `--ready-fd <n>` on `pm-server` and on `pm-worker`. The value is a decimal number of 3 or more. The flag may appear once. Without the flag, the process sends no signal. |
-| Refusal | A repeated flag, a value below 3, or a descriptor that is not open for writing stops the process with exit code 1. The process does this before it reads its configuration. |
-| Channel | Descriptor `n`, inherited from the starter. The process marks it close-on-exec at once, so that a child process does not hold it. |
-| Signal | The exact bytes `pm-server ready` or `pm-worker ready`, then one line feed, in one write. Then the process closes descriptor `n`. |
+| Request | `--ready-fd <n>` on `pm-server` and on `pm-worker`. The value has only ASCII decimal digits, fits in an `int` and is 3 or more. The flag may appear once. Without the flag, the process sends no signal. |
+| Refusal | The process stops with exit code 1, one line on standard error and no signal. It does this before it opens or reads its configuration. See "Refusals" below for the texts and the order. |
+| Channel | Descriptor `n`, inherited from the starter. When the process checks the flag, it puts the descriptor in one file handle and marks it close-on-exec, so that a child process does not hold it. The process uses only that handle. After it closes the handle, it never uses the number `n` again. |
+| Signal | The exact bytes `pm-server ready` or `pm-worker ready`, then one line feed, in one write. Then the process closes the handle. The write runs apart from the serving path, so a full pipe cannot stop `pm-server` from serving or `pm-worker` from working. The signal then waits until the starter reads. |
 | No signal | End of file with no data. The process exit closes the descriptor. |
 | Content | The fixed text only. No secret, credential, host name, address, endpoint, path or identifier. |
-| Failed write | The process writes `pm-server: ready signal was not delivered` or `pm-worker: ready signal was not delivered` on standard error once. It continues, and its exit code does not change. |
+| Failed write | The process writes `pm-server: the ready signal write failed. The process continues.` or the same text with `pm-worker:` on standard error once. It continues, and its exit code does not change. |
+| Starter | The starter gives the process only the write end of a pipe as descriptor `n`. After it starts the process, it closes its own copy of the write end. Otherwise it never reads end of file. It reads until end of file. |
+
+### Refusals
+
+The process checks in this order and stops at the first failure.
+
+| Order | Case | Text after `pm-server: ` or `pm-worker: ` |
+| --- | --- | --- |
+| 1, while the flags are read | `--ready-fd` with no value | `flag needs an argument: --ready-fd` (the text of the flag parser) |
+| 1, while the flags are read | A second `--ready-fd` | `invalid argument "<value>" for "--ready-fd" flag: --ready-fd may be supplied exactly once` |
+| 1, while the flags are read | A value that is empty, has a character other than an ASCII digit (for example a sign), does not fit in an `int`, or is below 3 | `invalid argument "<value>" for "--ready-fd" flag: --ready-fd requires only the digits 0-9, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | A descriptor that is not open for writing | `--ready-fd requires a descriptor that is open for writing` |
+
+The flag parser adds the `invalid argument … flag: ` prefix and repeats the given value, which is not a secret. The check of a second flag comes before the check of its value. The process accepts a value with only ASCII digits and a leading zero, for example `03`. The flag parser gives "flag needs an argument" only when `--ready-fd` is the last argument. When another argument follows, the parser takes it as the value, so the value check refuses it. The flag parser owns its own texts, so an upgrade of the parser can change them.
 
 A process sends at most one signal in its life. A process that fails before it is ready sends no signal, exits with code 1 and prints its current error text on standard error. A process that the starter stops before it is ready sends no signal, and its exit code stays as it is today.
 
 `pm-server` is ready when its admission probe passed, its state is serving, and its HTTP accept loop calls Accept for the first time. Temporal and the relay are not part of this. `/health/live`, `/health/ready` and the `Readiness` type do not change.
 
-`pm-worker` is ready when the Temporal worker start returned without an error. At that point, the Temporal service answered GetSystemInfo and DescribeNamespace for the configured namespace. The process registered its workflows and activities in its own SDK worker, which makes no Temporal service call, and the workflow and activity pollers started. The signal does not say that the Temporal service lists the poller or answered a poll. Temporal keeps a task in its queue until a poller takes it, inside the task's own timeouts. So work that a client sends after the signal is not lost, but it can wait for the first poll.
+`pm-worker` is ready when the Temporal worker start returned without an error. At that point, the Temporal service answered GetSystemInfo and DescribeNamespace for the configured namespace. The process registered its workflows and activities in its own SDK worker, which makes no Temporal service call, and the workflow and activity pollers started. The signal does not say that the Temporal service lists the poller or answered a poll. This record expects that the Temporal service keeps a task in its queue until a poller takes it, inside the task's own timeouts. Then work that a client sends after the signal waits for the first poll and is not lost. This expectation is not checked: the Temporal server source was not available for this record.
 
 ### Channel options
 
@@ -72,7 +86,7 @@ A process sends at most one signal in its life. A process that fails before it i
 
 ## Consequences
 
-- Two executables get a new operator contract: the flag, its help text, the texts above and an operator section in [setup](../development/setup.md). A later change to it is a breaking change for starters.
+- Two executables get a new operator contract: the flag, its help text, the texts above and an operator section in [setup](../development/setup.md). The operator section also states the duties of the starter. A later change to the contract is a breaking change for starters.
 - The contract needs inherited descriptors. Go `exec.Cmd.ExtraFiles` does not work on Windows. These executables have no Windows target.
 - A systemd unit with `Type=notify` cannot use this signal directly. Packaging (M12) decides an adapter or a second request form.
 - `pm-worker` stops using the SDK `Run` call. It calls `Start` with an `OnFatalError` callback and then waits for its context or a fatal error. Reason: in SDK v1.48.0, `Run` after `Start` panics when a fatal error stopped the worker first. Later changes must keep this. The error texts do not change.
@@ -96,22 +110,28 @@ This record supersedes nothing.
 
 ## Planned proof
 
-Gherkin scenarios that run the real binaries on the job-owned stack. None exists yet. The accepted criteria of issue #72 own the exact titles.
+Gherkin scenarios that run the real binaries. None exists yet. The accepted criteria of issue #72 own the exact titles. Each scenario uses the job-owned stack, except the refusal scenario, which stops before the process reads its configuration.
 
 - `pm-server` answers a request at once after its ready signal.
 - `pm-server` that cannot open its listener sends no ready signal.
 - `pm-worker` sends its ready signal after it starts in its Temporal namespace.
 - `pm-worker` that cannot start in its Temporal namespace sends no ready signal.
-- Each process sends exactly one ready signal in its life.
+- Each process sends exactly one ready signal in its life. The starter reads end of file on the descriptor while the process still runs, which shows that the process closed the descriptor after the signal.
 - The ready signal holds no secret or private value.
-- The acceptance lane waits for the two signals and makes no repeated observation.
-- Proposed, if the criteria accept them: each executable refuses an unusable `--ready-fd` value, and a process continues when its starter closed the ready channel.
+- Each executable refuses an unusable `--ready-fd` value with exit code 1, its refusal text and no signal.
+- A process continues when its starter closed the ready channel, and it prints its diagnostic line.
+
+The acceptance lane waits for the two signals and makes no repeated observation. Review checks R1 to R5 of the issue #72 criteria prove this, not a scenario.
+
+No scenario can prove the close-on-exec rule. Neither executable starts a child process before its signal. The query child starts only for a query or a sync activity, after the signal, and by then the process has closed the descriptor. The query child also closes each inherited descriptor that its supervisor declares. So a scenario gives the same result with or without close-on-exec. The design review of the start code checks the rule. The single-signal scenario shows that the descriptor is closed while the process runs.
 
 ## Evidence
 
 - Read, not run: the start code of both executables, the server lifecycle and relay composition, the worker configuration, the Temporal Go SDK v1.48.0 worker start and poll code, and the Go `os/signal` and `os/exec` documentation for go1.27.1.
 - Run: a local spike on Darwin with go1.26.5. A child process wrote one line to an inherited descriptor and closed it. The starter read the line and then end of file. A child that exited early gave end of file with no data. A write after the starter closed its read end returned EPIPE, and the child continued and exited with code 0. Without close-on-exec, a grandchild held the descriptor, and end of file came about 3 seconds late, when the grandchild exited. With close-on-exec, end of file came at once.
 - Not run: the spike on Linux or with go1.27.1, any Gherkin scenario, and a measurement of the Temporal server long-poll default.
+- Run: an offline `pm-server` built from the current main. A repeated `--config` printed `pm-server: invalid argument "b" for "--config" flag: --config may be supplied exactly once`, and `--config` with no value printed `pm-server: flag needs an argument: --config`. Both exited with code 1. This shows the flag parser texts that the refusals above use.
+- Not checked: that the Temporal service keeps a task in its queue until a poller takes it. The Temporal server source was not read.
 
 ## Revisit trigger
 
