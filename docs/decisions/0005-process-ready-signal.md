@@ -35,7 +35,7 @@ PM uses a one-line ready signal on an inherited file descriptor. The starter nam
 | Signal | The exact bytes `pm-server ready` or `pm-worker ready`, then one line feed, in one write. Then the process closes the handle. The write runs apart from the serving path, so a full pipe cannot stop `pm-server` from serving or `pm-worker` from working. The signal then waits until the starter reads. |
 | No signal | End of file with no data. The process exit closes the descriptor. |
 | Content | The fixed text only. No secret, credential, host name, address, endpoint, path or identifier. |
-| Failed write | The process writes `pm-server: the ready signal write failed. The process continues.` or the same text with `pm-worker:` on standard error once, when standard error is open. It continues, and its exit code does not change. A closed standard error still stops the process with SIGPIPE at that write, as it does today at any write to standard error. |
+| Failed write | The process writes `pm-server: the ready signal write failed. The process continues.` or the same text with `pm-worker:` on standard error once. It continues, and its exit code does not change. A standard error pipe that has no reader still stops the process with SIGPIPE at that write, as it does today at any write to standard error. |
 | Starter | The starter gives the process only the write end of a pipe as descriptor `n`. After it starts the process, it closes its own copy of the write end. Otherwise it never reads end of file. It reads until end of file. |
 
 ### Refusals
