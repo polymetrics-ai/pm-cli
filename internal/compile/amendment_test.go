@@ -830,6 +830,7 @@ func TestWriteIdentityAmendment(t *testing.T) {
 	for _, test := range []struct {
 		name            string
 		unavailableRead bool
+		readBackWrite   contract.Lane
 		mutate          func(*OperationSemantics)
 		refusal         string
 	}{
@@ -868,11 +869,20 @@ func TestWriteIdentityAmendment(t *testing.T) {
 			mutate: func(amendment *OperationSemantics) { amendment.WriteIdentity.Dedup = nil }},
 		{name: "unavailable read-back", unavailableRead: true,
 			refusal: `write operation "createItem" declares the read-back operation "getItem", which is not an executable operation`},
+		{name: "read-back that is itself an eligible write", readBackWrite: contract.LaneBinaryUpload,
+			refusal: `write operation "createItem" declares the read-back operation "getItem", which is itself eligible for binary_upload`},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			normalization, resolved, semantics, dedupFieldID := writeIdentityFixture(t, test.unavailableRead)
 			if test.mutate != nil {
 				test.mutate(&semantics.Operations[0])
+			}
+			if test.readBackWrite != "" {
+				readRefs := []contract.SourceRef{{SourceID: "root", Pointer: "#/paths/~1items~1{id}/get"}}
+				semantics.Operations = append(semantics.Operations, OperationSemantics{
+					OperationID: "getItem", SourceRefs: readRefs, Retry: retry("unsafe", ""),
+					Lanes: []LaneSemantics{{Lane: test.readBackWrite, Classification: LaneEligible, SourceRefs: readRefs}},
+				})
 			}
 			want := semantics.Operations[0].clone()
 			target := HTTPCompilationTargetFoundations()

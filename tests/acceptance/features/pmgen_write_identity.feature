@@ -63,3 +63,13 @@ Feature: pmgen keeps the write identity and the read-back of a write operation
     Given the semantics mark "items/get" eligible for "direct_read"
     When pmgen compiles the connector
     Then pmgen succeeds
+
+  Scenario: A read-back operation that is itself an eligible write is refused
+    Given the semantics mark "items/create" eligible for "direct_write"
+    And the semantics declare the dedup field "none" for "items/create" with a source witness
+    And the semantics declare the read-back operation "items/get" for "items/create" with a source witness
+    And the semantics mark "items/get" eligible for "direct_write"
+    And the semantics declare the retry classification "unsafe" for "items/get" with a source witness
+    When pmgen compiles the connector
+    Then pmgen refuses to compile "items/create" because its read-back operation "items/get" is eligible for "direct_write"
+    And pmgen writes no bundle

@@ -237,6 +237,18 @@ func emitBundle(
 				"write operation %q declares the read-back operation %q, which is not an executable operation of the bundle",
 				operation.OperationID, readBack))
 		}
+		// A read-back reads provider state. An operation that is eligible for
+		// a write lane is a write, so it cannot be a read-back.
+		index := slices.IndexFunc(bundle.Operations, func(candidate contract.Operation) bool { return candidate.OperationID == readBack })
+		for _, lane := range writeLanes {
+			if slices.ContainsFunc(bundle.Operations[index].LaneEligibility, func(eligibility contract.LaneEligibility) bool {
+				return eligibility.Lane == lane && eligibility.Status == contract.LaneEligible
+			}) {
+				return nil, sourceError(ErrUnsafeAmendment, "", "/operations", fmt.Sprintf(
+					"write operation %q declares the read-back operation %q, which is itself eligible for %s",
+					operation.OperationID, readBack, lane))
+			}
+		}
 	}
 	seenCommandNames := make(map[string]struct{}, len(bundle.Commands))
 	seenCommandOperations := make(map[string]struct{}, len(bundle.Commands))

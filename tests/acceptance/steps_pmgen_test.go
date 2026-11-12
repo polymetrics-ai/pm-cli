@@ -214,6 +214,7 @@ func registerPmgenSteps(sc *godog.ScenarioContext) {
 	sc.Step(`^pmgen checks the checked-in connectors$`, scenario.checkCheckedIn)
 	sc.Step(`^pmgen succeeds$`, scenario.succeeds)
 	sc.Step(`^pmgen refuses to compile "([^"]*)" because it is eligible for "([^"]*)" without a write identity$`, scenario.refusesWithoutWriteIdentity)
+	sc.Step(`^pmgen refuses to compile "([^"]*)" because its read-back operation "([^"]*)" is eligible for "([^"]*)"$`, scenario.refusesWriteReadBack)
 	sc.Step(`^pmgen writes no bundle$`, scenario.writesNoBundle)
 	sc.Step(`^the bundle operation "([^"]*)" has the dedup field "([^"]*)" with its source witness$`, scenario.bundleHasDedup)
 	sc.Step(`^the bundle operation "([^"]*)" has the read-back operation "([^"]*)" with its source witness$`, scenario.bundleHasReadBack)
@@ -615,6 +616,14 @@ func (s *pmgenScenario) refusesWithoutWriteIdentity(operationID, lane string) er
 	return s.refusedFor(fmt.Sprintf(
 		"write operation %q is eligible for %s without a write identity or an explicit unsafe retry classification",
 		operationID, lane))
+}
+
+// refusesWriteReadBack requires the refusal of a read-back operation that is
+// itself an eligible write.
+func (s *pmgenScenario) refusesWriteReadBack(operationID, readBackID, lane string) error {
+	return s.refusedFor(fmt.Sprintf(
+		"write operation %q declares the read-back operation %q, which is itself eligible for %s",
+		operationID, readBackID, lane))
 }
 
 func (s *pmgenScenario) writesNoBundle() error {
