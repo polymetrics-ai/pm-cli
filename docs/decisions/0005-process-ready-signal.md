@@ -123,7 +123,19 @@ Gherkin scenarios that run the real binaries. None exists yet. The accepted crit
 
 The acceptance lane waits for the two signals and makes no repeated observation. Review checks R1 to R5 of the issue #72 criteria prove this, not a scenario.
 
-No scenario can prove the close-on-exec rule. Neither executable starts a child process before its signal. The query child starts only for a query or a sync activity, after the signal, and by then the process has closed the descriptor. The query child also closes each inherited descriptor that its supervisor declares. So a scenario gives the same result with or without close-on-exec. The design review of the start code checks the rule. The single-signal scenario shows that the descriptor is closed while the process runs.
+A process can start a query child while it still holds the descriptor. The query child starts for a query or a sync activity. The pollers of `pm-worker` run before its signal and can take a sync activity. `pm-server` serves requests from its first Accept, and a full pipe that the starter does not read keeps the write and the close waiting while the process serves queries. In this window two layers keep the descriptor out of the child:
+
+1. Close-on-exec on the handle. The exec of the child closes the descriptor.
+2. The supervisor of the query child. It declares to the child each inherited descriptor that has no close-on-exec, and the child closes each declared descriptor and refuses to run without the declaration.
+
+No scenario can prove the first layer. The query child reports the descriptors that it inherited only to its supervisor, and no public API response or command output shows that report. So a scenario through the real binaries cannot see whether a child inherited the descriptor. This record does not add a public view of that internal report. The design review of the start code must check these points:
+
+- The process marks the handle close-on-exec when it checks the flag, before it opens its configuration and before any code that can start a child process.
+- The process keeps that one handle and makes no copy of the descriptor without close-on-exec.
+- The process closes the handle after the write on every path, including a failed write, and never uses the number `n` again.
+- The declare-and-close path of the query child supervisor stays in place.
+
+The single-signal scenario shows that the process closes the descriptor after the signal while the process still runs.
 
 ## Evidence
 
