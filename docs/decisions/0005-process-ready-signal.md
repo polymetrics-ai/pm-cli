@@ -110,7 +110,7 @@ This record supersedes nothing.
 
 ## Planned proof
 
-Gherkin scenarios that run the real binaries. None exists yet. The criteria of issue #72, when they are accepted, own the exact titles. Each scenario uses the job-owned stack, except the refusal scenario, which stops before the process reads its configuration.
+Gherkin scenarios that run the real binaries. None exists yet. The acceptance criteria of issue #72, when they are accepted, own the exact titles. Each scenario uses the job-owned stack, except the refusal scenario, which stops before the process reads its configuration.
 
 - `pm-server` answers a request at once after its ready signal.
 - `pm-server` that cannot open its listener sends no ready signal.
@@ -121,7 +121,7 @@ Gherkin scenarios that run the real binaries. None exists yet. The criteria of i
 - Each executable refuses an unusable `--ready-fd` value with exit code 1, its refusal text and no signal.
 - A process continues when its starter closed the ready channel, and it prints its diagnostic line.
 
-The acceptance lane waits for the two signals and makes no repeated observation. No scenario can prove this. Review checks R1 to R5 of the issue #72 criteria check it, and those criteria are not accepted yet.
+The acceptance lane waits for the two signals and makes no repeated observation. No scenario can prove this. The review checks for the lane start in the acceptance criteria of issue #72 check it, and those criteria are not accepted yet.
 
 A process can start a query child while it still holds the descriptor. The query child starts for a query or a sync activity. The pollers of `pm-worker` run before its signal and can take a sync activity. `pm-server` serves requests from its first Accept, and a full pipe that the starter does not read keeps the write and the close waiting while the process serves queries. In this window two layers keep the descriptor out of the child:
 
