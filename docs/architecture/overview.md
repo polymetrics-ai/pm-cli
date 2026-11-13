@@ -48,7 +48,7 @@ The initial inventory covers GitHub, PostgreSQL, Gong, Pylon, and HubSpot across
 - [Normative contracts](pm-server/architecture/CONTRACTS.json), [foundations](pm-server/architecture/FOUNDATIONS.json), and [foundation mappings](pm-server/architecture/FOUNDATION-MAPPINGS.json)
 - [State ownership](pm-server/architecture/STATE-OWNERSHIP.json) and [client parity](pm-server/architecture/CLIENT-PARITY.json)
 - [Technology selections](pm-server/architecture/TECHNOLOGY.json) and [architecture delta](pm-server/architecture/ARCHITECTURE-DELTA.json)
-- [File ownership](pm-server/implementation/FILE-OWNERSHIP.json), [milestones](pm-server/implementation/MILESTONES.json), and [validation matrix](pm-server/implementation/VALIDATION-MATRIX.json)
+- [Milestones](pm-server/implementation/MILESTONES.json) and [validation matrix](pm-server/implementation/VALIDATION-MATRIX.json)
 - [Domain glossary](../agents/domain.md), [decision index](decisions.md), and [configuration ADR](../decisions/0001-cli-configuration.md)
 
 When a summary and a canonical record differ, the accepted issue and canonical record control. A planned path, command, target, or test remains future until its owner creates and exercises it.

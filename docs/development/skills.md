@@ -34,7 +34,7 @@ PM has one Go/Gin/PostgreSQL/Temporal/shared-object architecture. CLI and browse
 | Dependencies, native query child, or authorized CI | `cc-skills-golang:golang-dependency-management`; `golang-continuous-integration` only for owned CI work | [Go modules](https://go.dev/ref/mod), [GitHub Actions security](https://docs.github.com/en/actions/security-for-github-actions/security-guides/security-hardening-for-github-actions) |
 | Safe logs, metrics, and traces | `cc-skills-golang:golang-observability` | [OpenTelemetry Go](https://opentelemetry.io/docs/languages/go/) |
 | Reader-facing prose | [asd-ste100](../../.agents/skills/asd-ste100/SKILL.md) (vendored); `nbj-write-clearly` when available | [Google developer style](https://developers.google.com/style) |
-| Authorized independent Standards/Spec review | Exact Matt Pocock AI Hero `code-review` source recorded in provenance | Accepted review specification; source availability alone is not a review pass |
+| Authorized independent review | Exact Matt Pocock AI Hero `code-review` source recorded in provenance | Accepted review specification; source availability alone is not a review pass |
 | A future approved Viper evaluation | `cc-skills-golang:golang-spf13-viper` | Only after [decision 0001](../decisions/0001-cli-configuration.md)'s reconsideration condition is met |
 
 Resolve installed names through the current host's catalog. Open the selected `SKILL.md`, then only the references needed for the change. Namespaces may render differently across hosts; match source and entrypoint rather than a contributor's home path. If an optional skill is absent, use the linked primary documentation and report that absence. Do not install, update, or globally configure tools unless the task explicitly owns that work.
@@ -49,11 +49,11 @@ CodeGraph or Context7 may assist navigation when already approved and available;
 - Generic retry or Temporal guidance cannot replay an ambiguous external write. Persist physical intent, preserve unknown outcomes, and require the declared occurrence witness for that exact intent.
 - Preserve OpenAPI 3.1 as the public schema source; do not derive a competing contract from handler annotations or create a second browser backend.
 - Follow decision 0001: Cobra plus strict typed presence-aware client/server configuration, no blanket environment binding, offline help, and no Viper initially.
-- Choose focused behavioral checks from ownership, consumers, and risk. Broad suites and actual CI belong to the coherent integration boundary. Reversible prose changes do not need invented application tests.
+- Choose focused behavioral checks from ownership, consumers, and risk. Broad suites and actual CI run on the PR head. Reversible prose changes do not need invented application tests.
 - Do not copy provider data, credentials, private paths, external skill payloads, or historical delivery-controller policy into the repository.
 
 ## Review and provenance
 
-The single [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md) owns review and delivery. OMP is the sole coordinator and integration owner; task-specific model/account routing remains operator-owned outside application documentation. Before authorized review, the issue tracker must supply the pinned base, merge base, head, complete accepted bodies/comments for every grouped issue, immutable context digests, and applicable standards.
+The root [AGENTS.md](../../AGENTS.md) holds the rules in force for review and delivery. Task-specific model/account routing remains operator-owned outside application documentation. Before authorized review, the issue tracker must supply the pinned base, merge base, head, complete accepted bodies/comments for every issue that the PR covers, immutable context digests, and applicable standards.
 
 [Provenance policy](skill-provenance.md) and the [machine-readable manifest](skill-provenance.json) record exact project membership and current hashes, selected installed-no-copy source closure, licenses/notices, PM overrides, and official HTTPS fallbacks. No third-party payload is copied. File/hash checks establish structure only; fresh-worker discovery, independent review, application behavior, CI, and merge require their own actual evidence.

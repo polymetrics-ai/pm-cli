@@ -8,7 +8,7 @@ license: MIT
 
 ## Required context
 
-Read [repository instructions](../../../AGENTS.md), [skill routing](../../../docs/development/skills.md), and the [issue/spec tracker](../../../docs/agents/issue-tracker.md). For Go changes, start with `pm-go`. Obtain the current task's accepted contract, affected connector source revision/reference closure, ownership mapping, and exact acceptance examples. For account metadata or proof reuse, also obtain the scoped schema/dependency evidence. These are task inputs; no private planning file is an implicit repository dependency.
+Read [repository instructions](../../../AGENTS.md), [skill routing](../../../docs/development/skills.md), and the [issue/spec tracker](../../../docs/agents/issue-tracker.md). For Go changes, start with `pm-go`. Obtain the current task's accepted contract, affected connector source revision/reference closure, and exact acceptance examples. For account metadata or proof reuse, also obtain the scoped schema/dependency evidence. These are task inputs; no private planning file is an implicit repository dependency.
 
 Use the accepted F02/F03 decisions in the [canonical contracts](../../../docs/architecture/pm-server/architecture/CONTRACTS.json) and [source-access boundary](../../../docs/architecture/pm-server/SOURCE-ACCESS.md). Their publication does not complete a connector owner's source lock, compiler capture, handler wiring, or provider proof. Work on unaffected accepted behavior can continue while an exact affected-source gap remains explicit.
 

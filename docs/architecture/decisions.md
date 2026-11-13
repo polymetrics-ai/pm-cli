@@ -24,6 +24,6 @@ This is a portable index, not a second decision log. The complete accepted ratio
 
 ## Applying a decision
 
-Start with the accepted issue and its owned files, then read the linked canonical record and [file ownership map](pm-server/implementation/FILE-OWNERSHIP.json). Preserve first-owner and later-update boundaries. If an implementation requires changing a selected decision, do not silently fork it in code or another guide: identify the conflicting contract and return the decision to its named owner.
+Start with the accepted issue, then read the linked canonical record. If an implementation requires changing a selected decision, do not silently fork it in code or another guide: identify the conflicting contract and return the decision to its named owner.
 
 Use [testing guidance](../development/testing.md) for evidence boundaries and [release guidance](../development/release.md) for packaging and recovery qualification. Neither document adds another architecture or review policy.

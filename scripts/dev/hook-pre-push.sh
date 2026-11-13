@@ -23,7 +23,7 @@ printf '%s\n' 'pre-push: go test (packages that need no stack)'
 CGO_ENABLED=1 pgo test -count=1 -timeout 20m $unit
 set --
 if [ "$(uname -s)" = Darwin ]; then
-  # The host runs every check except docs. The names come from the script.
+  # The host runs every check. The names come from the script.
   pm_select_python pre-push || exit 1
   checks=$(sh scripts/ci/check-docs.sh --list)
   # Word splitting of the check names is intended.

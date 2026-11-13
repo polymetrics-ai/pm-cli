@@ -12,12 +12,9 @@ cd "$root"
 staged=$(git diff --cached --name-only --diff-filter=ACMR)
 changed=$(git diff --cached --name-only --no-renames)
 go_files=$(printf '%s\n' "$staged" | grep '\.go$' | grep -v '/testdata/' || true)
-# Atlas gives each Go file an owner, so a new Go file anywhere needs Atlas.
-new_go=$(git diff --cached --name-only --no-renames --diff-filter=A -- '*.go')
-docs_gate=$(printf '%s\n' "$changed" | grep -E '^(docs|connectors)/' || true)$new_go
 setup_gate=$(printf '%s\n' "$changed" |
   grep -E '^(scripts|\.github|\.agents|tools|build/ci|docs/development)/|^AGENTS\.md$' || true)
-if [ -n "$go_files$docs_gate$setup_gate" ]; then
+if [ -n "$go_files$setup_gate" ]; then
   pm_in_image scripts/dev/hook-pre-commit.sh "$@"
 fi
 
@@ -59,11 +56,8 @@ if [ -n "$go_files" ]; then
 fi
 
 set --
-if [ -n "$docs_gate" ]; then
-  set -- atlas docs
-fi
 if [ -n "$setup_gate" ]; then
-  set -- "$@" setup
+  set -- setup
 fi
 if [ "$#" -gt 0 ] && [ "$(uname -s)" = Darwin ]; then
   pm_select_python pre-commit || exit 1

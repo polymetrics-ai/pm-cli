@@ -12,6 +12,11 @@ import sys
 root = Path(sys.argv[1])
 bootstrap = root / "tools/bootstrap.py"
 decoder = json.JSONDecoder()
+module_path = "github.com/polymetrics-ai/pm-cli"
+
+
+def within(path, parent):
+    return path == parent or path.startswith(parent + "/")
 
 
 def packages(module, cgo):
@@ -47,11 +52,21 @@ native_owners = {
     "github.com/polymetrics-ai/pm-cli/internal/analytics",
     "github.com/polymetrics-ai/pm-cli/cmd/pm-query",
 }
+# The store is a lower layer. No non-test package under internal/store may
+# depend on internal/app, internal/auth or their subpackages, directly or
+# through another package. Deps holds the non-test dependencies only, so a
+# store test file does not trigger the rule.
+store_root = f"{module_path}/internal/store"
+consumer_roots = (f"{module_path}/internal/app", f"{module_path}/internal/auth")
+store_violations = []
 for module, cgo in (("application", "1"), ("tools", "0")):
     selected = packages(module, cgo)
     counts[module] = len(selected)
     for package in selected:
         path = package["ImportPath"]
+        if within(path, store_root):
+            store_violations += [(path, p) for p in package.get("Deps", [])
+                                 if any(within(p, c) for c in consumer_roots)]
         native = [p for p in package.get("Deps", [])
                   if p.startswith("github.com/duckdb/")]
         allowed = path in native_owners
@@ -59,5 +74,10 @@ for module, cgo in (("application", "1"), ("tools", "0")):
             raise SystemExit(f"Native analytics outside qualification child: {path}: {native}")
         if package.get("CgoFiles") and not allowed:
             raise SystemExit(f"Direct cgo outside qualification child: {path}")
-print(json.dumps({"native_import_boundary": "PASS", "actual_packages": counts}))
+if store_violations:
+    for store, consumer in store_violations:
+        print(f"Store depends on a consumer package: {store} -> {consumer}", file=sys.stderr)
+    sys.exit(1)
+print(json.dumps({"native_import_boundary": "PASS", "store_dependency_boundary": "PASS",
+                  "actual_packages": counts}))
 PY

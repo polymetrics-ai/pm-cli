@@ -8,18 +8,33 @@ The accepted PM Server context published through PR #47 is landed on `main` at `
 
 Only behavior present in source and actually exercised may be reported. A bounded build/toolchain foundation does not implement PM application services, client commands, generated bundles, connectors, provider effects, packaging, or certification.
 
-Implement only the explicitly authorized issue in its owned files. Preserve other work, first ownership, later integration rights, issue/case identities, and unresolved obligations. The owner is the sole integration owner and the only person who merges. Agent model/account routing is operator-owned outside application documentation; do not encode a route here or make another delivery controller, private runbook, or host setup a worker prerequisite.
+Implement only the explicitly authorized issue. Preserve other work, issue/case identities, and unresolved obligations. The owner is the only person who merges. Agent model/account routing is operator-owned outside application documentation. Do not encode a route here or make another delivery controller, private runbook, or host setup a worker prerequisite.
+
+## Product specification
+
+The product specification is the pm-ruby repository at commit `35e3ee1`. Read its `AGENTS.md`, `docs/requirements.md`, `docs/architecture.md`, `docs/component-decisions.md`, `docs/release.md` and the ADRs 001 to 011 in `docs/adr/`.
+
+The pm-ruby `*.claude.md` files and uncommitted pm-ruby changes are not in force.
+
+If you cannot read pm-ruby, report the gap. Do not guess. If this file and a pm-ruby document differ, report the conflict. Do not choose one.
+
+## Working rules
+
+- One PR changes at most about 2,000 hand-written lines of code and tests. Generated code and captured provider documents do not count, but the PR lists them. A larger issue splits into lettered PRs.
+- One review per PR. A PR does not update an ownership record or the Foundation Atlas.
+- Each PR body says `Closes #<issue>`. Use `Refs #<issue>` for partial work.
+- Controlled peers, for example `pm-github-fixture`, serve developer tests only. A live-provider step reports blocked without access. Blocked is never a pass.
 
 ## Start with authoritative context
 
-1. Read [issue/spec lookup](docs/agents/issue-tracker.md), the complete assigned issue and accepted comments, and every accepted grouped-issue input supplied by the task.
-2. Read the short [architecture overview](docs/architecture/overview.md), [decision index](docs/architecture/decisions.md), and [domain glossary](docs/agents/domain.md), then the relevant canonical records under `docs/architecture/pm-server/`, especially `architecture/PLAN.md` and `implementation/FILE-OWNERSHIP.json`.
+1. Read [issue/spec lookup](docs/agents/issue-tracker.md), the complete assigned issue and accepted comments, and every other accepted input that the task supplies.
+2. Read the short [architecture overview](docs/architecture/overview.md), [decision index](docs/architecture/decisions.md), and [domain glossary](docs/agents/domain.md), then the relevant canonical records under `docs/architecture/pm-server/`, especially `architecture/PLAN.md`.
 3. Read [developer setup](docs/development/setup.md), [testing](docs/development/testing.md), [release](docs/development/release.md), [skill routing](docs/development/skills.md), and [skill provenance](docs/development/skill-provenance.md).
 4. For Go work, start with the sole local [PM Go router](.agents/skills/pm-go/SKILL.md). Add only the bounded procedure the behavior needs: [connector contracts](.agents/skills/pm-connector-contracts/SKILL.md), [durable effects](.agents/skills/pm-durable-effects/SKILL.md), or [release and recovery](.agents/skills/pm-release-recovery/SKILL.md).
-5. Follow the single [engineering and review policy](docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md) for validation, review, and delivery.
+5. This file holds the rules in force for validation, review, and delivery. See [Working rules](#working-rules). The older engineering and review policy under `docs/architecture/pm-server/policy/` is frozen history and is not in force.
 6. Before you write any prose, load the [plain-English skill](.agents/skills/asd-ste100/SKILL.md). See [Writing](#writing).
 
-Files under `docs/architecture/pm-server/instructions/` are synchronized, inactive projections of their mapped actual entrypoints. Do not load them as a second instruction tree. Historical issue drafts, private setup runbooks, controller records, transcripts, and operator paths are evidence, not fresh-worker instruction intake. Do not require them or copy them into the repository.
+Files under `docs/architecture/pm-server/instructions/` are frozen, inactive projections of older entrypoints. Do not load them as a second instruction tree. Historical issue drafts, private setup runbooks, controller records, transcripts, and operator paths are evidence, not fresh-worker instruction intake. Do not require them or copy them into the repository.
 
 ## Writing
 
@@ -63,7 +78,7 @@ Keep every fact, requirement strength (must, should, may), hedge and exact ident
 
 ## Contracts and fidelity
 
-Use the accepted file and package ownership map; do not infer a fixed package count. Keep Cobra in the CLI adapter and Gin in the HTTP adapter. Framework contexts and types do not enter domain or workflow contracts. Server application services own authoritative validation, authorization, admission, and capability composition. Missing wiring is unavailable, never an in-memory or local-engine fallback.
+Do not infer a fixed package count. Keep Cobra in the CLI adapter and Gin in the HTTP adapter. Framework contexts and types do not enter domain or workflow contracts. Server application services own authoritative validation, authorization, admission, and capability composition. Missing wiring is unavailable, never an in-memory or local-engine fallback.
 
 Pinned source captures and source references own provider facts. The compiler must preserve operation identity, field location and encoding, requiredness, unions, arrays, timestamps/time zones, exact identifiers and numbers, and absent/null/false/zero/empty distinctions. Generated bundles and client/catalog projections derive from admitted source; do not hand-edit execution facts, add provider-name branches, or turn Atlas/proof/review records into runtime gates.
 
@@ -83,4 +98,4 @@ If this checkout has `.codegraph/`, use the existing CodeGraph with this checkou
 
 Before production edits, identify the behavior, owner, consumers, and focused causal validation. Use the task's authorized checks and record actual results. All PM command lines, package paths, test names, deployment actions, and validation counts in planning documents are future until the owning implementation creates and runs them. Missing tools, skipped checks, local documentation success, an AI review, or a generated descriptor is not application proof.
 
-Review coherent dependency-ordered candidates rather than each todo. The issue tracker supplies the accepted base, complete grouped issue/comment inputs, and candidate identity; the shared policy owns independent review and delivery. Distinguish the landed PR #47 baseline and its CI from evidence for the current candidate. Report exact changes, executed evidence, and remaining unproven scope without claiming current-candidate CI, merge, full BOOT, provider execution, or certification that did not occur.
+Review each PR one time, as the working rules say. The issue tracker supplies the accepted base, the complete issue and comment inputs, and the candidate identity. Distinguish the landed PR #47 baseline and its CI from evidence for the current candidate. Report exact changes, executed evidence, and remaining unproven scope without claiming current-candidate CI, merge, full BOOT, provider execution, or certification that did not occur.

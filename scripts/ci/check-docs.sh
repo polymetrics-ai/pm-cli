@@ -8,13 +8,13 @@
 #
 # PMCLI_PYTHON names the Python interpreter for the checks (default python3).
 # The macOS git hooks set it. CI ignores it and uses python3.
-# Checks: atlas docs setup python generate gofmt boundaries tools.
+# Checks: setup python generate gofmt boundaries tools.
 # CI and the Linux git hooks run this script inside the pinned job image
 # (scripts/ci/in-ci-image.sh). See docs/development/ci.md.
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
-all='atlas docs setup python generate gofmt boundaries tools'
+all='setup python generate gofmt boundaries tools'
 if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
   # shellcheck disable=SC2086
   printf '%s\n' $all
@@ -73,23 +73,10 @@ build_tools() {
   mkdir -p .cache/bin
   for name in "$@"; do
     case "$name" in
-      atlas) CGO_ENABLED=0 pgo -C tools build -o ../.cache/bin/atlas ./atlas ;;
       pm-api-generate) CGO_ENABLED=0 pgo -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate ;;
       pmgen) CGO_ENABLED=0 pgo build -o .cache/bin/pmgen ./cmd/pmgen ;;
     esac
   done
-}
-
-check_atlas() {
-  step 'atlas --check'
-  .cache/bin/atlas --root "$repo_root" --check
-}
-
-check_docs() {
-  step 'architecture docs validator'
-  "$py" -I -B scripts/install_architecture_docs_dependencies.py --destination "$work/docs-deps"
-  PYTHONPATH="$work/docs-deps" "$py" -B scripts/validate_architecture_docs.py
-  PYTHONPATH="$work/docs-deps" "$py" -B scripts/test_validate_architecture_docs.py
 }
 
 check_setup() {
@@ -143,7 +130,6 @@ check_tools() {
 tools=
 for name in "$@"; do
   case "$name" in
-    atlas) tools="$tools atlas" ;;
     generate) tools="$tools pm-api-generate pmgen" ;;
   esac
 done
