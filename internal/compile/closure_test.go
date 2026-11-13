@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
@@ -1162,8 +1163,26 @@ func TestPinnedPostgreSQLConnectorCarriesDeclaredStatementFacts(t *testing.T) {
 			operation.Transport.Method != "" || operation.Transport.Path != "" {
 			t.Fatalf("pinned postgres transport = %#v", operation.Transport)
 		}
-		if operation.Execution != nil || len(operation.Inputs) != 0 || len(operation.RequestVariants) != 0 {
-			t.Fatalf("pinned postgres request/execution shape = %#v", operation)
+		// Only the mapped upsert carries an execution fact: the explicit unsafe
+		// retry classification of a possible COMMIT with a lost reply.
+		wantRetry := contract.OperationRetry{
+			Classification: contract.OperationRetryUnsafe,
+			Witness: contract.ExecutionWitness{
+				ProofID:    "postgres-mapped-upsert-commit-outcome",
+				SourceRefs: []contract.SourceRef{{SourceID: "postgresql-16-protocol-flow", Pointer: "#PROTOCOL-FLOW-EXT-QUERY"}},
+			},
+		}
+		execution := operation.Execution
+		executionMatches := execution == nil
+		if kind == contract.PostgreSQLStatementMappedUpsert {
+			executionMatches = execution != nil && execution.HTTP == nil && execution.Pagination == nil &&
+				execution.WriteIdentity == nil && execution.Retry != nil && execution.Retry.Classification == wantRetry.Classification &&
+				execution.Retry.Condition == "" && len(execution.Retry.HTTPStatuses) == 0 &&
+				execution.Retry.Witness.ProofID == wantRetry.Witness.ProofID &&
+				slices.Equal(execution.Retry.Witness.SourceRefs, wantRetry.Witness.SourceRefs)
+		}
+		if !executionMatches || len(operation.Inputs) != 0 || len(operation.RequestVariants) != 0 {
+			t.Fatalf("pinned postgres request/execution shape = %#v, execution = %#v", operation, execution)
 		}
 		if len(operation.Responses) != 1 || operation.Responses[0].Status != "success" || operation.Responses[0].NoContent ||
 			operation.Responses[0].Schema == nil || operation.Responses[0].MediaType != documentationResponseMediaType {
@@ -1207,6 +1226,68 @@ func TestPinnedPostgreSQLConnectorCarriesDeclaredStatementFacts(t *testing.T) {
 	}
 	if !readOnly {
 		t.Fatal("pinned postgres connector declares no bounded select operation")
+	}
+}
+
+// TestPostgreSQLOperationRefusesHTTPShapedSemantics checks the requirement
+// check of a native PostgreSQL operation. A retry classification is admitted.
+// HTTP facts, pagination facts and retry HTTP statuses are refused.
+func TestPostgreSQLOperationRefusesHTTPShapedSemantics(t *testing.T) {
+	input := pinnedDocumentationConnectorInput(t, "postgres")
+	lock, err := DecodeSourceLock(input.SourceLock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	captured, err := CaptureSource(lock, input.Captures)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved := testResolve(t, captured)
+	loaded, err := LoadDialects(context.Background(), resolved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	normalization, err := Normalize(context.Background(), loaded)
+	if err != nil {
+		t.Fatal(err)
+	}
+	semantics, err := DecodeSemantics(input.Semantics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplyAmendments(normalization, resolved, &semantics); err != nil {
+		t.Fatal(err)
+	}
+	const upsertID = "relation/mapped-upsert"
+	index := slices.IndexFunc(normalization.Operations, func(operation NormalizedOperation) bool { return operation.OperationID == upsertID })
+	locked := slices.IndexFunc(lock.Operations, func(operation SourceOperation) bool { return operation.SourceOperationID == upsertID })
+	if index < 0 || locked < 0 || normalization.Operations[index].Semantics == nil || normalization.Operations[index].Semantics.Retry == nil {
+		t.Fatalf("the pinned postgres connector has no %s with a retry classification", upsertID)
+	}
+	upsert := normalization.Operations[index]
+	if err := checkPostgreSQLOperation(upsert, lock.Operations[locked], "/operations/0"); err != nil {
+		t.Fatalf("an unsafe retry classification was refused: %v", err)
+	}
+	witness := upsert.Semantics.Retry.Witness
+	for name, mutate := range map[string]func(*OperationSemantics){
+		"retry HTTP statuses": func(semantics *OperationSemantics) { semantics.Retry.HTTPStatuses = []uint16{503} },
+		"HTTP fact": func(semantics *OperationSemantics) {
+			semantics.HTTP = &HTTPSemantics{Origins: []string{"https://db.example.test"}, Witness: witness}
+		},
+		"pagination fact": func(semantics *OperationSemantics) {
+			semantics.Pagination = &Pagination{Kind: "cursor", CursorRequestField: "cursor", CursorResponsePointer: "/next", Witness: witness}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := upsert
+			amended := upsert.Semantics.clone()
+			mutate(&amended)
+			candidate.Semantics = &amended
+			err := checkPostgreSQLOperation(candidate, lock.Operations[locked], "/operations/0")
+			if !errors.Is(err, ErrUnsafeAmendment) || !strings.Contains(err.Error(), "a native PostgreSQL operation carries no HTTP") {
+				t.Fatalf("error = %v, want the native PostgreSQL semantics refusal", err)
+			}
+		})
 	}
 }
 

@@ -24,6 +24,7 @@
         "tools/cmd/pm-dependency-check/main.go",
         "tests/acceptance/main_test.go",
         "tests/acceptance/steps_cli_test.go",
+        "tests/acceptance/steps_pmgen_test.go",
         "tests/acceptance/steps_query_child_test.go"
       ],
       "package": "build",
