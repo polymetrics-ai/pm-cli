@@ -94,7 +94,7 @@ Issue #64 removed the `atlas` and `docs` checks. A Go-only change needs no owner
 - `scripts/test-changed.sh` adds `test-docs` for each changed path, except a Go or module file under `tools/`, a Go file under `build/nativeprobe/` and a Bazel file.
 - The `governance` shard of `scripts/ci/check-foundation.sh` runs the validator, its test and the Atlas check.
 
-From issue #64, the validator and its test fail. Issue #64 changed `docs/architecture/pm-server/README.md` and `docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md`, and these files no longer match their digests in `IMPORT-MANIFEST.json`. So all three targets fail. The `governance` shard also fails after a change that adds a Go file without an ownership record, because it runs Atlas. `make test-docs` and `make check` do not run Atlas.
+From issue #64, the validator and its test fail. Issue #64 changed two frozen files under `docs/architecture/pm-server/`: its `README.md` and its engineering and review policy. These files no longer match their digests in `IMPORT-MANIFEST.json`. So all three targets fail. The `governance` shard also fails after a change that adds a Go file without an ownership record, because it runs Atlas. `make test-docs` and `make check` do not run Atlas.
 
 ## Agent branches
 
