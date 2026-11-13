@@ -46,7 +46,7 @@ Keep every fact, requirement strength (must, should, may), hedge and exact ident
 ## Hooks and CI
 
 - Run `make hooks` once in each clone. The hooks run `gofmt`, `go vet`, the Go developer tests and the commit message check. Do not skip them: never use `--no-verify`.
-- CI runs only the Gherkin acceptance suite in `tests/acceptance` (the required `bdd` check), on our own runners. Go tests are developer checks and never count as acceptance evidence. Gherkin scenarios that run the real binaries are the only proof.
+- CI runs two jobs on our own runners: the Gherkin acceptance suite in `tests/acceptance` (the required `bdd` check) and the static checks (the `checks` job). Go tests are developer checks and never count as acceptance evidence. Gherkin scenarios that run the real binaries are the only proof.
 - See [CI and hooks](docs/development/ci.md).
 
 ## Client, server, and worker boundary

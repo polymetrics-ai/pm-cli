@@ -108,11 +108,11 @@ type SourceDocument struct {
 	// encoding exactly when it is empty and existing source digests stay stable.
 	Dialect     Dialect `json:"dialect,omitempty"`
 	OfficialURL string  `json:"official_url"`
-	Repository  string `json:"repository,omitempty"`
-	Revision    string `json:"revision,omitempty"`
-	Path        string `json:"path"`
-	CapturedAt  string `json:"captured_at"`
-	Pointer     string `json:"pointer,omitempty"`
+	Repository  string  `json:"repository,omitempty"`
+	Revision    string  `json:"revision,omitempty"`
+	Path        string  `json:"path"`
+	CapturedAt  string  `json:"captured_at"`
+	Pointer     string  `json:"pointer,omitempty"`
 	// GitBlob, UpstreamByteLength and UpstreamSHA256 are one explicit triple
 	// recording the accepted upstream document's own identity. ByteLength and
 	// SHA256 below are a different fact: the compiler-verified identity of the
