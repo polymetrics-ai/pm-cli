@@ -4,7 +4,7 @@
 
 | Where | What runs | Gate |
 | --- | --- | --- |
-| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. A change that only adds a Go file runs no check from `check-docs.sh` in this hook | A failure stops the commit |
+| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. A change that only adds Go files runs no check from `check-docs.sh` in this hook, unless a Go file is under `tools/`, `scripts/` or `build/ci/`. Such a file selects `setup` | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
 | `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push. On macOS, it runs all six checks on the host | A failure stops the push |
 | CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the Gherkin acceptance suite in `tests/acceptance`. Job `checks`: the static checks in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
@@ -88,7 +88,13 @@ In CI, the script installs the pinned, checksummed Gitleaks binary into the job 
 
 Issue #64 removed the `atlas` and `docs` checks. A Go-only change needs no ownership record and no new Foundation Atlas projection. The store dependency rule moved from Atlas to `check-boundaries.sh`, and it stays a blocking rule. No non-test package under `internal/store` may depend on `internal/app`, `internal/auth` or their subpackages, directly or through another package. For a violation, the check writes `Store depends on a consumer package: <store package> -> <consumer package>` and exits with code 1.
 
-`tools/atlas`, `scripts/validate_architecture_docs.py` and `scripts/test_validate_architecture_docs.py` stay as history. No CI job and no git hook runs them. `make test-docs`, `make check` and `check-foundation.sh` still run them. These targets are not gates, and they can fail after a change that adds a Go file without an ownership record.
+`tools/atlas`, `scripts/validate_architecture_docs.py` and `scripts/test_validate_architecture_docs.py` stay as history. No CI job and no git hook runs them. Some local targets still run them. None of these targets is a gate:
+
+- `make test-docs` and `make check` run the validator and its test.
+- `scripts/test-changed.sh` adds `test-docs` for each changed path, except a Go or module file under `tools/`, a Go file under `build/nativeprobe/` and a Bazel file.
+- The `governance` shard of `scripts/ci/check-foundation.sh` runs the validator, its test and the Atlas check.
+
+From issue #64, the validator and its test fail. Issue #64 changed `docs/architecture/pm-server/README.md` and `docs/architecture/pm-server/policy/ENGINEERING-REVIEW.md`, and these files no longer match their digests in `IMPORT-MANIFEST.json`. So all three targets fail. The `governance` shard also fails after a change that adds a Go file without an ownership record, because it runs Atlas. `make test-docs` and `make check` do not run Atlas.
 
 ## Agent branches
 
