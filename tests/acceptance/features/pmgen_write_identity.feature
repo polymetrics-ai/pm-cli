@@ -1,11 +1,11 @@
 @pmgen
 Feature: pmgen keeps the write identity and the read-back of a write operation
-  A write operation tells PM how to find its provider effect again. It declares
-  a provider dedup field, or none, and a read-back operation. Each fact has a
-  source witness. A write that is eligible without these facts must have an
-  explicit unsafe classification. pmgen refuses to compile any other eligible
-  write. Each scenario runs the real pmgen process on a synthetic connector
-  source. An observer reads the bundle that pmgen writes.
+  A write operation declares the facts that a later reconciliation can use. It
+  declares a provider dedup field, or none, and a read-back operation. Each
+  fact has a source witness. A write that is eligible without these facts must
+  have an explicit unsafe classification. pmgen refuses to compile any other
+  eligible write. Each scenario runs the real pmgen process on a synthetic
+  connector source. An observer reads the bundle that pmgen writes.
 
   Background:
     Given a connector source "items" with the write operation "items/create" and the read operation "items/get"

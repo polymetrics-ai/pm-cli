@@ -250,9 +250,11 @@ type ExecutionWitness struct {
 // dedup field.
 const WriteDedupNone = "none"
 
-// OperationWriteIdentity tells how PM can find the provider effect of a write
-// again: the provider dedup field, or WriteDedupNone, and the read-back
-// operation. Each fact has a source witness.
+// OperationWriteIdentity declares two source-witnessed facts of a write: the
+// provider dedup field, or WriteDedupNone, and the read-back operation. A
+// later reconciliation can use them. They do not prove which write happened:
+// with WriteDedupNone only the read-back is left, and a read-back of the
+// desired state alone is not an occurrence witness for one exact write.
 type OperationWriteIdentity struct {
 	Dedup    *OperationWriteDedup    `json:"dedup"`
 	ReadBack *OperationWriteReadBack `json:"read_back"`
