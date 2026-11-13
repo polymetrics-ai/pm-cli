@@ -399,7 +399,7 @@ func TestProviderHTTPConfigurationRefusals(t *testing.T) {
 		},
 		{
 			name:     "oversized trust root reference",
-			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":"secret://fixture/`+strings.Repeat("r", 2048)+`"`)),
+			document: configuredProviderHTTPDocument(withProviderHTTPTrustRootPairs(`"tls_trust_root_ref":"secret://fixture/` + strings.Repeat("r", 2048) + `"`)),
 			field:    "provider_http.tls_trust_root_ref",
 			kind:     config.DiagnosticValue,
 		},
