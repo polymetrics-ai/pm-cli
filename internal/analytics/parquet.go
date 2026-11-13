@@ -327,17 +327,25 @@ func validateContainedPath(path, description string, admittedDirectories []strin
 // validateRegularFile refuses a symlink, a FIFO, a device, a directory, or a
 // missing file before the engine can open it.
 func validateRegularFile(path, description string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("%w: %s is not readable: %v", ErrUnadmittedPath, description, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: %s is a symlink", ErrUnadmittedPath, description)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%w: %s is not a regular file (%s)", ErrUnadmittedPath, description, info.Mode().Type())
+	if problem := regularFileProblem(path, description); problem != "" {
+		return fmt.Errorf("%w: %s", ErrUnadmittedPath, problem)
 	}
 	return nil
+}
+
+// regularFileProblem tells why path is not a regular file, or returns "" when
+// it is one. It never follows a symlink. The text starts with description.
+func regularFileProblem(path, description string) string {
+	info, err := os.Lstat(path)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("%s is not readable: %v", description, err)
+	case info.Mode()&os.ModeSymlink != 0:
+		return description + " is a symlink"
+	case !info.Mode().IsRegular():
+		return fmt.Sprintf("%s is not a regular file (%s)", description, info.Mode().Type())
+	}
+	return ""
 }
 
 // validateRegularDirectory refuses a symlink or a non-directory at one
@@ -465,12 +473,23 @@ func MaterializeParquet(ctx context.Context, database *sql.DB, columns []Column,
 	return describeParquetOutput(ctx, database, output.Path, columns)
 }
 
+// keptSegmentReason is the refusal reason when an invalid segment could not be
+// removed. The short removal error comes before the cause, so a cut at the
+// reason bound falls on the end of the cause. The output path is refused while
+// the file exists, so the user must remove it first.
+func keptSegmentReason(removeErr error, reason string) string {
+	return fmt.Sprintf("the invalid materialized segment stays on disk. Remove it before you use this output path again. "+
+		"Removal error: %v. Cause of the refusal: %s", removeErr, reason)
+}
+
 // describeParquetOutput verifies the output names, order and physical types
 // before it reports the segment identity. It removes an invalid segment. Only
 // this package writes a segment, so only this package calls it.
 func describeParquetOutput(ctx context.Context, database *sql.DB, path string, columns []Column) (descriptor OutputDescriptor, err error) {
-	if err := validateRegularFile(path, "the materialized segment"); err != nil {
-		return descriptor, failure(CodeOutputFailed, "inspect the materialized segment: %s", strings.TrimPrefix(err.Error(), ErrUnadmittedPath.Error()+": "))
+	// The removal below is not registered yet: a path that is not a regular
+	// file is refused and left as it is.
+	if problem := regularFileProblem(path, "the materialized segment"); problem != "" {
+		return descriptor, failure(CodeOutputFailed, "%s", problem)
 	}
 	defer func() {
 		if err == nil {
@@ -483,7 +502,7 @@ func describeParquetOutput(ctx context.Context, database *sql.DB, path string, c
 			if errors.As(err, &inner) {
 				reason = inner.Reason
 			}
-			err = failure(CodeOutputFailed, "%s. The invalid materialized segment was not removed: %v", reason, removeErr)
+			err = failure(CodeOutputFailed, "%s", keptSegmentReason(removeErr, reason))
 		}
 	}()
 	rows, err := database.QueryContext(ctx, "SELECT * FROM read_parquet(?) LIMIT 0", path)

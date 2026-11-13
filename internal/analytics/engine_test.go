@@ -228,6 +228,34 @@ func TestWriteSegmentRefusesSchemaMismatch(t *testing.T) {
 	}
 }
 
+func TestDescribeParquetOutputRefusesDirectory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "segment")
+	if err := os.Mkdir(path, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := describeParquetOutput(t.Context(), nil, path, nil)
+	want := "the materialized segment is not a regular file (d---------)"
+	var refusal *Failure
+	if !errors.As(err, &refusal) || refusal.Code != CodeOutputFailed || refusal.Reason != want {
+		t.Fatalf("a directory returned %v, want %s: %s", err, CodeOutputFailed, want)
+	}
+	if descriptor != (OutputDescriptor{}) {
+		t.Fatalf("a directory returned the descriptor %+v", descriptor)
+	}
+	if info, err := os.Lstat(path); err != nil || !info.IsDir() {
+		t.Fatalf("the refused directory was changed or removed: %v", err)
+	}
+}
+
+func TestKeptSegmentReason(t *testing.T) {
+	got := keptSegmentReason(errors.New("remove result.parquet: permission denied"), "the cause")
+	want := "the invalid materialized segment stays on disk. Remove it before you use this output path again. " +
+		"Removal error: remove result.parquet: permission denied. Cause of the refusal: the cause"
+	if got != want {
+		t.Fatalf("reason\n got %s\nwant %s", got, want)
+	}
+}
+
 func parquetSelectionFixture(t *testing.T) (Request, *sql.DB) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
