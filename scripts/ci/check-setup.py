@@ -300,10 +300,37 @@ CLEANUP_RUN = ("sh scripts/ci/in-ci-image.sh stop bdd\n"
                "sh scripts/ci/in-ci-image.sh run bdd-cleanup -- "
                "python3 scripts/ci/with-stack-fixture.py \\\n"
                '  --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n')
+CHECKS_RUN = "sh scripts/ci/in-ci-image.sh run checks -- sh scripts/ci/check-docs.sh"
+CHECKS_CLEANUP_RUN = "sh scripts/ci/in-ci-image.sh stop checks"
+
+
+def frozen_job(jobs, name, timeout, check, cleanup):
+    """Freeze one job: owner pushes, the pinned checkout, one step in the CI image."""
+    job = jobs[name]
+    require(isinstance(job, dict), f"{name} job must be an object")
+    # No `container:` key: it would move the workspace away from the host path.
+    # No `needs:` key: the required jobs run in parallel.
+    require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"}, f"unapproved {name} job capability")
+    require(job["if"] == TRUST, f"unapproved {name} trust boundary")
+    require(job["runs-on"] == RUNNER, f"{name} runner routing changed")
+    require(job["timeout-minutes"] == timeout, f"{name} job timeout changed")
+    steps = job["steps"]
+    require(isinstance(steps, list) and len(steps) == 3, f"unexpected {name} step membership")
+    checkout, run, clean = steps
+    require(isinstance(checkout, dict) and set(checkout) == {"name", "uses", "with"},
+            f"unapproved {name} checkout capability")
+    require(checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+            f"{name} checkout is not the reviewed full action pin")
+    require(checkout["with"] == {"ref": "${{ github.sha }}",
+            "persist-credentials": "false", "fetch-depth": "1",
+            "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
+            f"{name} checkout capabilities changed")
+    require(run == check, f"unapproved {name} executable step")
+    require(clean == cleanup, f"unapproved {name} cleanup step")
 
 
 def workflow_check(path, actionlint):
-    """Freeze the required check: one `bdd` job on owner pushes, in the CI image."""
+    """Freeze the required checks: `bdd` and `checks` on owner pushes, in the CI image."""
     obj = read_yaml(path.read_text())
     require(isinstance(obj, dict), "workflow must be an object")
     require(set(obj) == {"name", "on", "permissions", "concurrency", "jobs"},
@@ -314,28 +341,16 @@ def workflow_check(path, actionlint):
             "group": "bdd-${{ github.ref }}",
             "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}"},
             "unapproved workflow concurrency")
-    require(set(obj["jobs"]) == {"bdd"}, "unapproved job membership")
-    job = obj["jobs"]["bdd"]
-    # No `container:` key: it would move the workspace away from the host path.
-    require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"}, "unapproved job capability")
-    require(job["if"] == TRUST, "unapproved workflow trust boundary")
-    require(job["runs-on"] == RUNNER, "runner routing changed")
-    require(job["timeout-minutes"] == "60", "job timeout changed")
-    steps = job["steps"]
-    require(isinstance(steps, list) and len(steps) == 3, "unexpected step membership")
-    checkout, check, cleanup = steps
-    require(set(checkout) == {"name", "uses", "with"}, "unapproved checkout capability")
-    require(checkout["uses"] == "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
-            "checkout is not the reviewed full action pin")
-    require(checkout["with"] == {"ref": "${{ github.sha }}",
-            "persist-credentials": "false", "fetch-depth": "1",
-            "submodules": "false", "lfs": "false", "set-safe-directory": "false"},
-            "checkout capabilities changed")
-    require(check == {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "50",
-            "run": BDD_RUN}, "unapproved executable step")
-    require(cleanup == {"name": "Clean up the job container and dependency fixture",
-            "if": "always()", "timeout-minutes": "6", "run": CLEANUP_RUN},
-            "unapproved fixture cleanup step")
+    require(isinstance(obj["jobs"], dict) and set(obj["jobs"]) == {"bdd", "checks"},
+            "unapproved job membership")
+    frozen_job(obj["jobs"], "bdd", "60",
+               {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "50", "run": BDD_RUN},
+               {"name": "Clean up the job container and dependency fixture",
+                "if": "always()", "timeout-minutes": "6", "run": CLEANUP_RUN})
+    frozen_job(obj["jobs"], "checks", "20",
+               {"name": "Run the static checks", "timeout-minutes": "17", "run": CHECKS_RUN},
+               {"name": "Clean up the job container",
+                "if": "always()", "timeout-minutes": "2", "run": CHECKS_CLEANUP_RUN})
     config = Path(__file__).with_name("actionlint.yaml")
     workflows = sorted(str(item) for item in path.parent.glob("*.yml"))
     command([actionlint, "-no-color", "-config-file", str(config), *workflows], path.parent)
