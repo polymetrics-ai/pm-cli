@@ -208,6 +208,12 @@ func ApplyAmendments(
 				return err
 			}
 		}
+		if amendment.WriteIdentity != nil {
+			pointer := fmt.Sprintf("/operations/%d/write_identity", semanticsIndex)
+			if err := validateWriteIdentityAmendment(source, operation, operationIndex, amendment.WriteIdentity, pointer); err != nil {
+				return err
+			}
+		}
 		for _, lane := range amendment.Lanes {
 			if err := validateAmendmentSourceRefs(source, lane.SourceRefs); err != nil {
 				return err
@@ -249,6 +255,50 @@ func validateAmendmentSourceRefs(source *ResolvedSource, references []contract.S
 			return sourceError(ErrUnsafeAmendment, reference.SourceID, reference.Pointer, "semantic amendment source reference is duplicated")
 		}
 		seen[key] = struct{}{}
+	}
+	return nil
+}
+
+// validateWriteIdentityAmendment admits one write identity against the
+// normalized inventory. The dedup field is none or the field identity of one
+// binding of the operation, and no binding has the field identity none. The
+// read-back is another source-selected operation. Each witness is inside the
+// captured closure.
+func validateWriteIdentityAmendment(
+	source *ResolvedSource,
+	operation *NormalizedOperation,
+	operationIndex map[string]int,
+	identity *WriteIdentity,
+	pointer string,
+) error {
+	if err := validateAmendmentSourceRefs(source, identity.Dedup.Witness.SourceRefs); err != nil {
+		return err
+	}
+	if err := validateAmendmentSourceRefs(source, identity.ReadBack.Witness.SourceRefs); err != nil {
+		return err
+	}
+	bindings := [][]BindingFact{operation.CommonBindings}
+	for _, variant := range operation.RequestVariants {
+		bindings = append(bindings, variant.Bindings)
+	}
+	declared := false
+	for _, group := range bindings {
+		for _, binding := range group {
+			if binding.FieldID == contract.WriteDedupNone {
+				return sourceError(ErrUnsafeAmendment, "", pointer+"/dedup/field_id", fmt.Sprintf(
+					"operation %q has an input field with the identity none, so the dedup declaration is ambiguous", operation.OperationID))
+			}
+			declared = declared || binding.FieldID == identity.Dedup.FieldID
+		}
+	}
+	if identity.Dedup.FieldID != contract.WriteDedupNone && !declared {
+		return sourceError(ErrUnsafeAmendment, "", pointer+"/dedup/field_id", fmt.Sprintf(
+			"dedup field %q is not an input field of operation %q", identity.Dedup.FieldID, operation.OperationID))
+	}
+	readBack := identity.ReadBack.OperationID
+	if _, selected := operationIndex[readBack]; !selected || readBack == operation.OperationID {
+		return sourceError(ErrUnsafeAmendment, "", pointer+"/read_back/operation_id", fmt.Sprintf(
+			"read-back operation %q of write operation %q must be another source-selected operation", readBack, operation.OperationID))
 	}
 	return nil
 }

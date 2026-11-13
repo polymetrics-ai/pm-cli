@@ -73,13 +73,40 @@
       "properties": {
         "http": {"$ref": "#/$defs/operationHTTP"},
         "pagination": {"$ref": "#/$defs/operationPagination"},
-        "retry": {"$ref": "#/$defs/operationRetry"}
+        "retry": {"$ref": "#/$defs/operationRetry"},
+        "write_identity": {"$ref": "#/$defs/operationWriteIdentity"}
       },
       "anyOf": [
         {"required": ["http"]},
         {"required": ["pagination"]},
-        {"required": ["retry"]}
+        {"required": ["retry"]},
+        {"required": ["write_identity"]}
       ]
+    },
+    "operationWriteIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dedup", "read_back"],
+      "properties": {
+        "dedup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field_id", "witness"],
+          "properties": {
+            "field_id": {"$ref": "#/$defs/contractIdentity"},
+            "witness": {"$ref": "#/$defs/executionWitness"}
+          }
+        },
+        "read_back": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation_id", "witness"],
+          "properties": {
+            "operation_id": {"$ref": "#/$defs/contractIdentity"},
+            "witness": {"$ref": "#/$defs/executionWitness"}
+          }
+        }
+      }
     },
     "operationHTTP": {
       "type": "object",
