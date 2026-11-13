@@ -67,9 +67,35 @@
         "record_extraction": {"$ref": "#/$defs/recordExtraction"},
         "pagination": {"$ref": "#/$defs/pagination"},
         "retry": {"$ref": "#/$defs/retry"},
+        "write_identity": {"$ref": "#/$defs/writeIdentity"},
         "lanes": {
           "type": "array",
           "items": {"$ref": "#/$defs/laneSemantics"}
+        }
+      }
+    },
+    "writeIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dedup", "read_back"],
+      "properties": {
+        "dedup": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["field_id", "witness"],
+          "properties": {
+            "field_id": {"$ref": "#/$defs/identity"},
+            "witness": {"$ref": "#/$defs/witness"}
+          }
+        },
+        "read_back": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["operation_id", "witness"],
+          "properties": {
+            "operation_id": {"$ref": "#/$defs/identity"},
+            "witness": {"$ref": "#/$defs/witness"}
+          }
         }
       }
     },

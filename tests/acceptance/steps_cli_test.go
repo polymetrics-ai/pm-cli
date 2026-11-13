@@ -24,6 +24,7 @@ type cliRun struct {
 }
 
 func registerCLISteps(sc *godog.ScenarioContext, bins binaries) {
+	registerPmgenSteps(sc)
 	run := &cliRun{bins: bins}
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		home, err := os.MkdirTemp("", "pm-acceptance-home-")

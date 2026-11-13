@@ -928,6 +928,80 @@ func TestResponseVariantsAndPostgreSQLTransport(t *testing.T) {
 	}
 }
 
+func TestWriteIdentityAndTransportIndependentExecutionFacts(t *testing.T) {
+	witness := ExecutionWitness{ProofID: "write-identity-proof", SourceRefs: []SourceRef{{SourceID: "fixture-source", Pointer: "#/write"}}}
+	identity := func(fieldID, readBack string) *OperationWriteIdentity {
+		return &OperationWriteIdentity{
+			Dedup:    &OperationWriteDedup{FieldID: fieldID, Witness: witness},
+			ReadBack: &OperationWriteReadBack{OperationID: readBack, Witness: witness},
+		}
+	}
+	httpOperation := decodeOperationForTest(t, validOperationDocumentForTest())
+	httpOperation.Execution = nil
+	postgres := httpOperation
+	postgres.Transport = Transport{Kind: TransportKindPostgreSQL, StatementKind: PostgreSQLStatementSelect, RelationBinding: "fixture-relation"}
+	postgres.Inputs = []FieldBinding{}
+	postgres.Responses = []Response{{
+		Status: "success", MediaType: "application/json", SourceRefs: witness.SourceRefs,
+		Schema: &Schema{Type: SchemaTypeArray, Items: &Schema{Type: SchemaTypeObject, Properties: map[string]Schema{}}},
+	}}
+	noneInput := httpOperation
+	noneInput.Inputs = slices.Clone(httpOperation.Inputs)
+	noneInput.Inputs[1].FieldID = WriteDedupNone
+	unsafeRetry := &OperationRetry{Classification: OperationRetryUnsafe, Witness: witness}
+	for _, test := range []struct {
+		name      string
+		operation Operation
+		execution OperationExecution
+		valid     bool
+	}{
+		{name: "PostgreSQL unsafe retry", operation: postgres, execution: OperationExecution{Retry: unsafeRetry}, valid: true},
+		{name: "PostgreSQL write identity", operation: postgres, execution: OperationExecution{WriteIdentity: identity(WriteDedupNone, "relation/select")}, valid: true},
+		{name: "HTTP write identity", operation: httpOperation, execution: OperationExecution{WriteIdentity: identity("owner", "issues/get")}, valid: true},
+		{name: "PostgreSQL HTTP fact", operation: postgres, execution: OperationExecution{HTTP: &OperationHTTP{Origins: []string{"https://api.github.example"}, Witness: witness}}},
+		{name: "PostgreSQL pagination", operation: postgres, execution: OperationExecution{Pagination: &OperationPagination{Kind: OperationPaginationCursor, Witness: witness}}},
+		{name: "PostgreSQL retry HTTP statuses", operation: postgres, execution: OperationExecution{Retry: &OperationRetry{Classification: OperationRetryUnsafe, HTTPStatuses: []uint16{503}, Witness: witness}}},
+		{name: "unknown dedup field", operation: httpOperation, execution: OperationExecution{WriteIdentity: identity("unknown", "issues/get")}},
+		{name: "input field named none", operation: noneInput, execution: OperationExecution{WriteIdentity: identity(WriteDedupNone, "issues/get")}},
+		{name: "self read-back", operation: httpOperation, execution: OperationExecution{WriteIdentity: identity("owner", httpOperation.OperationID)}},
+		{name: "missing read-back", operation: httpOperation, execution: OperationExecution{WriteIdentity: &OperationWriteIdentity{Dedup: identity("owner", "x").Dedup}}},
+		{name: "missing dedup", operation: httpOperation, execution: OperationExecution{WriteIdentity: &OperationWriteIdentity{ReadBack: identity("owner", "issues/get").ReadBack}}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			candidate := test.operation
+			execution := test.execution
+			candidate.Execution = &execution
+			err := candidate.Validate(supportedFoundationsForTest())
+			if test.valid && err != nil {
+				t.Fatalf("valid execution facts were refused: %v", err)
+			}
+			if !test.valid && err == nil {
+				t.Fatal("invalid execution facts were admitted")
+			}
+		})
+	}
+
+	postgres.Execution = &OperationExecution{Retry: unsafeRetry, WriteIdentity: identity(WriteDedupNone, "relation/select")}
+	document, err := json.Marshal(postgres)
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := DecodeOperation(document, supportedFoundationsForTest())
+	if err != nil || !reflect.DeepEqual(decoded.Execution, postgres.Execution) {
+		t.Fatalf("write identity round trip = %#v, %v", decoded.Execution, err)
+	}
+	for _, lossy := range []string{
+		`{"write_identity":null}`,
+		`{"write_identity":{"dedup":{"field_id":"none","witness":{"proof_id":"p","source_refs":[{"source_id":"s","pointer":"#/p"}]}}}}`,
+		`{"write_identity":{"dedup":{"field_id":"none"},"read_back":{"operation_id":"o","witness":{"proof_id":"p","source_refs":[{"source_id":"s","pointer":"#/p"}]}}}}`,
+	} {
+		var execution OperationExecution
+		if err := json.Unmarshal([]byte(lossy), &execution); err == nil {
+			t.Fatalf("lossy write identity was decoded: %s", lossy)
+		}
+	}
+}
+
 func TestPublishedSourceSchemas(t *testing.T) {
 	compiler := jsonschema.NewCompiler()
 	compiler.DefaultDraft(jsonschema.Draft2020)
@@ -1057,6 +1131,26 @@ func TestPublishedSourceSchemas(t *testing.T) {
 			"lanes": []any{},
 		}},
 	})
+	writeIdentitySemantics := func(writeIdentity map[string]any) map[string]any {
+		return map[string]any{
+			"schema_version": "pm.semantics/v1",
+			"connector_id":   "items",
+			"source_digest":  "sha256:" + strings.Repeat("1", 64),
+			"revision":       "sha256:" + strings.Repeat("2", 64),
+			"operations": []map[string]any{{
+				"operation_id":   "items/create",
+				"source_refs":    semanticsWitness["source_refs"],
+				"write_identity": writeIdentity,
+				"lanes":          []any{},
+			}},
+		}
+	}
+	dedup := map[string]any{"field_id": "none", "witness": semanticsWitness}
+	readBack := map[string]any{"operation_id": "items/get", "witness": semanticsWitness}
+	check("semantics", compiled["semantics"], writeIdentitySemantics(map[string]any{"dedup": dedup, "read_back": readBack}))
+	checkInvalid("semantics write identity without read-back", compiled["semantics"], writeIdentitySemantics(map[string]any{"dedup": dedup}))
+	checkInvalid("semantics write identity with an unknown member", compiled["semantics"],
+		writeIdentitySemantics(map[string]any{"dedup": dedup, "read_back": readBack, "retry": true}))
 	checkInvalid("semantics", compiled["semantics"], map[string]any{
 		"schema_version": "pm.semantics/v1",
 		"connector_id":   "github",
@@ -1169,6 +1263,23 @@ func TestPublishedSourceSchemas(t *testing.T) {
 	}
 	executableOnly["unavailable_operations"] = []UnavailableOperation{}
 	check("executable-only bundle", compiled["bundle"], executableOnly)
+	writeOperation := safeOperation
+	writeOperation.Execution = &OperationExecution{WriteIdentity: &OperationWriteIdentity{
+		Dedup:    &OperationWriteDedup{FieldID: "owner", Witness: safeOperation.Execution.Retry.Witness},
+		ReadBack: &OperationWriteReadBack{OperationID: "issues/get", Witness: safeOperation.Execution.Retry.Witness},
+	}}
+	if err := writeOperation.Validate(supportedFoundationsForTest()); err != nil {
+		t.Fatalf("write identity operation fixture: %v", err)
+	}
+	writeOnly := make(map[string]any, len(executableOnly))
+	for name, value := range executableOnly {
+		writeOnly[name] = value
+	}
+	writeOnly["operations"] = []Operation{writeOperation}
+	check("bundle with only a write identity execution fact", compiled["bundle"], writeOnly)
+	writeOperation.Execution.WriteIdentity.ReadBack = nil
+	writeOnly["operations"] = []Operation{writeOperation}
+	checkInvalid("bundle write identity without read-back", compiled["bundle"], writeOnly)
 	unavailableOnly := make(map[string]any, len(bundleValue))
 	for name, value := range bundleValue {
 		unavailableOnly[name] = value
