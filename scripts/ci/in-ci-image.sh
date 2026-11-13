@@ -156,4 +156,5 @@ exec "$engine" run --rm --init --pull never --name "$container" \
   --env CI --env GITHUB_ACTIONS --env GITHUB_WORKSPACE --env GITHUB_REPOSITORY \
   --env GITHUB_SHA --env GITHUB_REF --env GITHUB_EVENT_NAME --env GITHUB_EVENT_PATH \
   --env GITHUB_RUN_ID --env GITHUB_RUN_ATTEMPT --env RUNNER_TEMP --env RUNNER_NAME \
+  --env GITHUB_STEP_SUMMARY \
   "$image" "$@"
