@@ -24,7 +24,8 @@
         "tools/cmd/pm-dependency-check/main.go",
         "tests/acceptance/main_test.go",
         "tests/acceptance/steps_cli_test.go",
-        "tests/acceptance/steps_pmgen_test.go"
+        "tests/acceptance/steps_pmgen_test.go",
+        "tests/acceptance/steps_query_child_test.go"
       ],
       "package": "build",
       "process_owner": "Build/operator",
@@ -5824,7 +5825,8 @@
         "internal/analytics/engine.go",
         "internal/analytics/parquet.go",
         "internal/analytics/values.go",
-        "internal/analytics/limits.go"
+        "internal/analytics/limits.go",
+        "internal/analytics/engine_test.go"
       ],
       "package": "analytics",
       "process_owner": "Analytical child only",
