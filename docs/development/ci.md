@@ -1,12 +1,12 @@
-# CI events and owner-account merge
+# CI events and owner merge
 
 ## What runs where
 
 | Where | What runs | Gate |
 | --- | --- | --- |
-| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. Atlas `--check` and the architecture docs validator when a staged path is under `docs/` or `connectors/`, or is a new Go file. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. On macOS, the hook does not run the architecture docs validator (see [macOS hosts](#macos-hosts)) | A failure stops the commit |
+| `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. A change that only adds Go files runs no check from `check-docs.sh` in this hook, unless a Go file is under `tools/`, `scripts/` or `build/ci/`. Such a file selects `setup` | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
-| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push. On macOS, it runs every check except `docs` | A failure stops the push |
+| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push. On macOS, it runs all six checks on the host | A failure stops the push |
 | CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the Gherkin acceptance suite in `tests/acceptance`. Job `checks`: the static checks in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
 
 Install the scanner once per user. Install the hooks once per clone:
@@ -35,7 +35,7 @@ On macOS, the hooks run on the host. The `pre-push` hook, and a `pre-commit` hoo
 
 The hooks select the Python interpreter for `check-docs.sh`. They try `python3`, `python3.13`, `python3.12` and `python3.11` on `PATH`, in that order. They select the first one that is Python 3.11 or later and imports the four modules. The hook prints the version of that interpreter and gives its name to `check-docs.sh` in `PMCLI_PYTHON`. If no interpreter qualifies, the hook prints the prerequisite and stops the commit or push. The hook does not skip the `python` check. Other Python commands still use the first `python3` on `PATH`. Examples are the secret scan, `generate.sh` and `check-boundaries.sh`. CI ignores `PMCLI_PYTHON` and uses `python3`.
 
-The macOS hooks do not run the `docs` check. Its vendored wheels in `third_party/python/architecture-docs` are for Linux x86-64 and Python 3.12 only. A hook that skips the check prints one notice. The CI `checks` job runs all eight checks, including `docs`. A direct `sh scripts/ci/check-docs.sh docs` on macOS still runs the check, and the check fails.
+The macOS hooks skip no check. They run the same six checks as the CI `checks` job, and they print no skip notice.
 
 ## Required developer secret scans
 
@@ -75,18 +75,26 @@ Missing prerequisites, test failures and cleanup failures remain failures.
 
 ## The `checks` check
 
-The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate`, `pmgen` and `atlas` from the candidate with the pinned toolchain. Then it runs these checks:
+The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these six checks:
 
-- `atlas`: Atlas `--check` (the Foundation Atlas projections and an owner for each Go file).
-- `docs`: the architecture docs validator and its tests, with the vendored, hash-checked `jsonschema` wheels.
 - `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
 - `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
 - `generate`: `generate.sh --check` for the API and the connectors.
 - `gofmt`: `gofmt -l` on every tracked Go file.
-- `boundaries`: `check-boundaries.sh`.
+- `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
 - `tools`: `go test` for the tools module.
 
-In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh atlas docs`. `check-docs.sh --list` prints the check names. The hooks read the names from it. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins and govulncheck are not in this job.
+In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh setup boundaries`. `check-docs.sh --list` prints the check names. The hooks read the names from it. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins and govulncheck are not in this job.
+
+Issue #64 removed the `atlas` and `docs` checks. A Go-only change needs no ownership record and no new Foundation Atlas projection. The store dependency rule moved from Atlas to `check-boundaries.sh`, and it stays a blocking rule. No non-test package under `internal/store` may depend on `internal/app`, `internal/auth` or their subpackages, directly or through another package. For a violation, the check writes `Store depends on a consumer package: <store package> -> <consumer package>` and exits with code 1.
+
+`tools/atlas`, `scripts/validate_architecture_docs.py` and `scripts/test_validate_architecture_docs.py` stay as history. No CI job and no git hook runs them. Some local targets still run them. None of these targets is a gate:
+
+- `make test-docs` and `make check` run the validator and its test.
+- `scripts/test-changed.sh` adds `test-docs` for each changed path, except a Go or module file under `tools/`, a Go file under `build/nativeprobe/` and a Bazel file.
+- The `governance` shard of `scripts/ci/check-foundation.sh` runs the validator, its test and the Atlas check.
+
+From issue #64, the validator and its test fail. Issue #64 changed two frozen files under `docs/architecture/pm-server/`: its `README.md` and its engineering and review policy. These files no longer match their digests in `IMPORT-MANIFEST.json`. So all three targets fail. The `governance` shard also fails after a change that adds a Go file without an ownership record, because it runs Atlas. `make test-docs` and `make check` do not run Atlas.
 
 ## Agent branches
 
@@ -246,15 +254,10 @@ runners and `foundation` is required.
 
 ## Merge authority and enforcement prerequisites
 
-Only the GitHub account `karthik-sivadas` may merge. The account owner explicitly
-authorizes agents to merge using this account when the PR's declared scope is
-correctly implemented, its agreed BDD/acceptance tests pass, independent review
-findings are resolved, and genuine final-candidate CI is green. No human-only
-click or additional routine approval is required. Missing, skipped, stale,
-different-head or failed required checks do not qualify. Do not use an
-administrator bypass or force a merge. Keep automatic merge off; each merge
-requires this explicit verification. This supersedes the earlier human-only
-interpretation.
+Only the owner merges, by squash. An agent does not merge and does not use the
+owner's GitHub account to merge. Missing, skipped, stale, different-head or
+failed required checks do not qualify a pull request for merge. Do not use an
+administrator bypass or force a merge. Keep automatic merge off.
 
 On an eligible private-repository organization plan, configure main protection
 to require the `foundation` check against
@@ -265,10 +268,10 @@ independent AI review and the authorized merge decision are separate controls.
 
 Private repositories on GitHub Free for organizations cannot enforce that
 branch-protection policy. A paid organization plan or separately authorized
-visibility change is required; documentation is not enforcement. GitHub sees an
-agent using the owner's credential as the same account, which matches this
-account-based policy. Do not revoke shared credentials, change billing or make
-the repository public as an implicit CI repair.
+visibility change is required. Documentation is not enforcement. GitHub cannot
+separate the owner from another user of the owner's credential. Do not revoke
+shared credentials, change billing or make the repository public as an implicit
+CI repair.
 
 See GitHub's [protected branch documentation](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
 [default variables](https://docs.github.com/en/actions/reference/workflows-and-actions/variables),

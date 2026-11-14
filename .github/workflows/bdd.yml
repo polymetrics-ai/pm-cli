@@ -40,9 +40,9 @@ jobs:
           sh scripts/ci/in-ci-image.sh run bdd-cleanup -- python3 scripts/ci/with-stack-fixture.py \
             --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
 
-  # The static checks: Atlas, architecture documents, setup, generated code,
-  # gofmt, import boundaries and the tools module tests. They run no behavior
-  # test and do not wait for bdd. See docs/development/ci.md.
+  # The static checks: setup, the Python script tests, generated code, gofmt,
+  # import boundaries and the tools module tests. They run no behavior test
+  # and do not wait for bdd. See docs/development/ci.md.
   checks:
     if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
     runs-on: [self-hosted, Linux, X64, pm-cli-vps]

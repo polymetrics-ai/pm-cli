@@ -1,6 +1,6 @@
 # Testing and evidence
 
-PM tests observable contracts at their owners and consumers. The canonical [validation matrix](../architecture/pm-server/implementation/VALIDATION-MATRIX.json), accepted issue, and [file ownership map](../architecture/pm-server/implementation/FILE-OWNERSHIP.json) select the required checks. The shared [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md) owns integration and review sequencing; this guide does not create a second gate.
+PM tests observable contracts at their owners and consumers. The canonical [validation matrix](../architecture/pm-server/implementation/VALIDATION-MATRIX.json) and the accepted issue select the required checks. The root [AGENTS.md](../../AGENTS.md) holds the rules in force for review and delivery. This guide does not create a second gate.
 
 ## Choose the causal check
 
@@ -27,12 +27,12 @@ Keep fake and live evidence separately labeled. Preserve exact component, source
 
 For every claimed check, retain the exact command or action, selected test/case IDs, repository and commit/head, environment and architecture, relevant dependency/fixture identities, start and finish time, exit state, skips, and sanitized output or receipt location. Never record secrets, raw provider credentials, private operator routing, or mutable local paths as product evidence.
 
-Run focused checks before integration. Broad suites and genuine CI run once at the coherent candidate boundary, with affected checks and targeted review after material fixes. Independent Standards and Spec review is separate from testing and cannot turn a missing check into green.
+Run focused checks before integration. Broad suites and genuine CI run once on the PR head, with affected checks and targeted review after material fixes. Independent review is separate from testing and cannot turn a missing check into green.
 
 ## Build and toolchain entry points
 
 The [CI event and merge policy](ci.md) defines exact-revision PR checks,
-post-merge main checks, safe runner admission and owner-account merge authority.
+post-merge main checks, safe runner admission and the owner-only merge rule.
 
 The issue #3 foundation commands and current build target are source-present. From the repository root, use the pinned entry points below. The all-target Bazel test command also selects the physical stack, control-store and authenticated-server checks: prepare and export their [explicitly owned fixture inputs](setup.md#explicit-dependency-operator-and-physical-qualification) first. Missing inputs fail rather than skip.
 
@@ -423,6 +423,6 @@ The benchmark completed one cold-output/action-cache build in **47.086722667 sec
 
 ### Limits of the Darwin build observations
 
-The Darwin observations do not qualify a Linux target, release artifact, backend, service process, or deployment. Independent Standards and Spec review, exact-head Linux CI, and merge require their own records. Full BOOT completion must bind those results rather than infer success from this local checkpoint.
+The Darwin observations do not qualify a Linux target, release artifact, backend, service process, or deployment. Independent review, exact-head Linux CI, and merge require their own records. Full BOOT completion must bind those results rather than infer success from this local checkpoint.
 
 The historical foundation build/toolchain evidence in this Darwin subsection establishes no additional PM server, worker, client, connector, provider execution, or demo behavior. The selected dependency operator and its independently exercised storage/database checks have a separate [fixture boundary](setup.md#explicit-dependency-operator-and-physical-qualification); they do not complete provider-workflow obligations. Source locks, successful downloads, module resolution, SBOM inventory, and developer-tool navigation cannot replace the actual product, same-stack, provider, recovery, release, and two-real-demo checks owned by their accepted issues.

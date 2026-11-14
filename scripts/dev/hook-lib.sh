@@ -24,21 +24,10 @@ pm_in_image() {
 
 # pm_host_checks HOOK OS NAME... prints the check-docs.sh checks from NAME...
 # that the hook runs on the host OS (the output of `uname -s`), one per line.
-# On Darwin it removes `docs` and writes one notice to stderr: the vendored
-# wheels of the docs check are Linux-only. The CI `checks` job runs it.
+# Each host runs every named check, so it prints NAME... and writes no notice.
 pm_host_checks() {
-  hook=$1
-  os=$2
   shift 2
-  for name in "$@"; do
-    if [ "$os" = Darwin ] && [ "$name" = docs ]; then
-      # The backticks in the notice are literal text, not a command.
-      # shellcheck disable=SC2016
-      printf '%s: skipped check-docs.sh docs on macOS: its vendored dependencies are Linux-only. The CI job `checks` runs it.\n' "$hook" >&2
-      continue
-    fi
-    printf '%s\n' "$name"
-  done
+  printf '%s\n' "$@"
 }
 
 # pm_python_probe passes for Python 3.11 or later that imports the modules of

@@ -2,7 +2,7 @@
 
 PM tracks accepted work in the private GitHub repository [`polymetrics-ai/pm-cli`](https://github.com/polymetrics-ai/pm-cli). Use the actual issue identity supplied by the authorized task. This guide defines read-only intake and traceability; it does not authorize triage, issue mutation, publication, implementation, push, merge, or provider/host access.
 
-The single [engineering and review policy](../architecture/pm-server/policy/ENGINEERING-REVIEW.md) owns validation, independent review, and delivery. Repository instructions and the accepted issue set own product scope. OMP is the sole coordinator and integration owner; model/account routing is supplied separately by the operator and is not issue content.
+The root [AGENTS.md](../../AGENTS.md) holds the rules in force for validation, review, and delivery. Repository instructions and the accepted issue set own product scope. The operator supplies model/account routing separately. It is not issue content.
 
 ## Read the assigned issue
 
@@ -39,16 +39,16 @@ If complete accepted bytes or an approved digest cannot be obtained, report the 
 
 ## Bind review to accepted inputs
 
-Before independent review begins, the coordinator must supply one complete review envelope so reviewers do not need to ask for routine context:
+Before independent review begins, the task must supply one complete review envelope so the reviewer does not need to ask for routine context:
 
 - target repository and default branch;
 - accepted comparison base, target-branch SHA recorded at intake, actual merge base, included commits, candidate head, and nonempty diff identity;
-- the full decoded body and accepted comments/amendments, identities, byte lengths, and hashes for **every** issue grouped into the candidate, not only the first or closing issue;
+- the full decoded body and accepted comments/amendments, identities, byte lengths, and hashes for **every** issue that the PR covers, not only the first or closing issue;
 - the immutable accepted context commit, required paths and per-file digests for the affected scope, plus source/decision provenance where required;
-- applicable repository instructions, ownership records, and standards;
-- explicit included and excluded scope, dependencies, first-owner/later-update rights, validation evidence, and unresolved gaps.
+- applicable repository instructions and standards;
+- explicit included and excluded scope, dependencies, validation evidence, and unresolved gaps.
 
-The Spec reviewer receives all originating grouped issues and accepted amendments. The Standards reviewer receives the applicable PM instructions and standards. Both receive the same accepted base/head/diff identity. Use the upstream `code-review` skill unchanged when the shared policy authorizes review. A changed head requires coverage of the resulting diff. Missing issue bytes, accepted comments, immutable context, base, or applicable diff blocks a claimed review pass.
+The reviewer receives every issue that the PR covers, its accepted amendments, and the applicable PM instructions and standards. The reviewer also receives the accepted base/head/diff identity. Use the upstream `code-review` skill unchanged when the task authorizes review. A changed head requires coverage of the resulting diff. Missing issue bytes, accepted comments, immutable context, base, or applicable diff blocks a claimed review pass.
 
 A local candidate, task brief, worker report, review result, successful documentation check, or retrievable unmerged commit is not an approved landed baseline. Dependent application work requires the accepted default-branch context revision identified by its task.
 
@@ -63,14 +63,14 @@ Closes #N
 Refs #M
 ```
 
-Use `Closes #N` only when that candidate fully satisfies issue #N and is intended to close it on default-branch merge. Use `Refs #N` for partial work, setup contributions, administrative amendments, or any issue whose obligations remain. A grouped candidate may include several separate `Closes` and/or `Refs` lines; never hide multiple issues in a range or treat one issue as the specification for the others.
+Use `Closes #N` only when that candidate fully satisfies issue #N and is intended to close it on default-branch merge. Use `Refs #N` for partial work, setup contributions, administrative amendments, or any issue whose obligations remain. A PR that covers several issues may include several separate `Closes` and/or `Refs` lines; never hide multiple issues in a range or treat one issue as the specification for the others.
 
 A stacked pull request that targets another feature branch must use `Refs #N`, record its actual base/parent PR and dependency, and identify which later default-branch candidate will carry closure after the full issue is satisfied. Keep that tracking current when a stack is rebased or regrouped. Do not put premature closure language on an intermediate stack member.
 
-PR #47's reviewed publication tree at `3516a84aef9eb9a880408e6b5ab56ab911276429` landed normally on `main` in merge commit `d8e84e1fc78561173feac8abfd64ce669f09f373`. BOOT-1 readback authenticated the approved original staging and verified that exact reviewed tree in the landed baseline. The historical outer manifest is not the digest of later transformed target bytes. Bounded Darwin foundation checks and fresh-worker discovery for the combined issue #2/#3 candidate are recorded in [developer setup](../development/setup.md); independent Standards/Spec review and genuine final-head CI remain separate completion obligations. Source presence or those local observations alone cannot close either issue or establish application, provider, or backend release qualification.
+PR #47's reviewed publication tree at `3516a84aef9eb9a880408e6b5ab56ab911276429` landed normally on `main` in merge commit `d8e84e1fc78561173feac8abfd64ce669f09f373`. BOOT-1 readback authenticated the approved original staging and verified that exact reviewed tree in the landed baseline. The historical outer manifest is not the digest of later transformed target bytes. Bounded Darwin foundation checks and fresh-worker discovery for the combined issue #2/#3 candidate are recorded in [developer setup](../development/setup.md). Independent review and genuine final-head CI remain separate completion obligations. Source presence or those local observations alone cannot close either issue or establish application, provider, or backend release qualification.
 
 ### Fresh-worker intake boundary
 
-Fresh workers use the active [root instructions](../../AGENTS.md), this tracker, [skill routing](../development/skills.md), [skill provenance](../development/skill-provenance.md), [developer setup](../development/setup.md), the sole [PM Go router](../../.agents/skills/pm-go/SKILL.md), the active [configuration ADR](../decisions/0001-cli-configuration.md), the [architecture overview](../architecture/overview.md), and the canonical PM Server contracts. Files under `docs/architecture/pm-server/instructions/` are synchronized inactive projections only. Historical issue drafts, private setup/controller runbooks, transition evidence, transcripts, and operator configuration are excluded from instruction intake without deleting their retained evidence bytes.
+Fresh workers use the active [root instructions](../../AGENTS.md), this tracker, [skill routing](../development/skills.md), [skill provenance](../development/skill-provenance.md), [developer setup](../development/setup.md), the sole [PM Go router](../../.agents/skills/pm-go/SKILL.md), the active [configuration ADR](../decisions/0001-cli-configuration.md), the [architecture overview](../architecture/overview.md), and the canonical PM Server contracts. Files under `docs/architecture/pm-server/instructions/` are frozen, inactive projections only. Historical issue drafts, private setup/controller runbooks, transition evidence, transcripts, and operator configuration are excluded from instruction intake without deleting their retained evidence bytes.
 
 Under this guide, do not create, edit, comment on, label, assign, close, or publish issues; do not push or merge; and do not dispatch product work. Escalate only a genuinely missing accepted input or material unresolved product/security decision through the current task owner.

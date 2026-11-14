@@ -4,7 +4,7 @@
     {
       "name": "pm-connector-contracts",
       "path": ".agents/skills/pm-connector-contracts/SKILL.md",
-      "sha256": "e500c4b12d9c979668966fb6e22488eed6f1d2d5d61a55d720ab97f01a3ae39f",
+      "sha256": "6200ca7a2c465ab8e528545256c2dcaaa8a4ddbef0727ca070a15e3cde973846",
       "origin": "repository-original",
       "license": "MIT",
       "references": [
@@ -38,7 +38,7 @@
     {
       "name": "pm-go",
       "path": ".agents/skills/pm-go/SKILL.md",
-      "sha256": "12a3678985b0925437608a9ce3ed2ea54650828ec9b43dac87d09f8c245012c7",
+      "sha256": "3023acaef585301740e972bba97290d0a4c780ff93cc181c8c49fb743b99af08",
       "origin": "repository-original",
       "license": "MIT",
       "references": [
@@ -55,7 +55,7 @@
     {
       "name": "pm-release-recovery",
       "path": ".agents/skills/pm-release-recovery/SKILL.md",
-      "sha256": "f8ca70d1f84a1a1f11c69e1cdebc848f54ce9183122bfb453142f0a7274c8de5",
+      "sha256": "dbbde48ef154e1f1bccb90fac06da79d93503fc73dfc73db7e90380c4b3454f0",
       "origin": "repository-original",
       "license": "MIT",
       "references": [
