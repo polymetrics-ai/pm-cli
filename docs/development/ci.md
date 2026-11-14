@@ -71,7 +71,7 @@ A new push to a working branch cancels the older run for that branch. Runs on `m
 
 Missing prerequisites, test failures and cleanup failures remain failures.
 
-[stack-packages.txt](../../scripts/ci/stack-packages.txt) lists the packages that need the dependency stack. The hooks skip them. [check-foundation.sh](../../scripts/ci/check-foundation.sh) still runs every package, including the stack packages, for a full local check.
+[stack-packages.txt](../../scripts/ci/stack-packages.txt) lists the packages that need the dependency stack. The hooks skip them. [check-foundation.sh](../../scripts/ci/check-foundation.sh) still runs every package, including the stack packages. The shards need a GitHub Actions environment. A developer cannot run them locally as they are.
 
 ## The `checks` check
 
@@ -88,13 +88,9 @@ In CI, the script installs the pinned, checksummed Gitleaks binary into the job 
 
 Issue #64 removed the `atlas` and `docs` checks. A Go-only change needs no ownership record and no new Foundation Atlas projection. The store dependency rule moved from Atlas to `check-boundaries.sh`, and it stays a blocking rule. No non-test package under `internal/store` may depend on `internal/app`, `internal/auth` or their subpackages, directly or through another package. For a violation, the check writes `Store depends on a consumer package: <store package> -> <consumer package>` and exits with code 1.
 
-`tools/atlas`, `scripts/validate_architecture_docs.py` and `scripts/test_validate_architecture_docs.py` stay as history. No CI job and no git hook runs them. Some local targets still run them. None of these targets is a gate:
+`tools/atlas`, `scripts/validate_architecture_docs.py` and `scripts/test_validate_architecture_docs.py` stay as history. No CI job, git hook, Makefile target or local script runs the validator, its test or the Atlas check. Issue #268 removed the `make test-docs` target, so `make check` and `scripts/test-changed.sh` do not select it. The `governance` shard of `scripts/ci/check-foundation.sh` keeps its Bazel build and test, `check-dependencies.py` and `benchmark.py`.
 
-- `make test-docs` and `make check` run the validator and its test.
-- `scripts/test-changed.sh` adds `test-docs` for each changed path, except a Go or module file under `tools/`, a Go file under `build/nativeprobe/` and a Bazel file.
-- The `governance` shard of `scripts/ci/check-foundation.sh` runs the validator, its test and the Atlas check.
-
-From issue #64, the validator and its test fail. Issue #64 changed two frozen files under `docs/architecture/pm-server/`: its `README.md` and its engineering and review policy. These files no longer match their digests in `IMPORT-MANIFEST.json`. So all three targets fail. The `governance` shard also fails after a change that adds a Go file without an ownership record, because it runs Atlas. `make test-docs` and `make check` do not run Atlas.
+Run by hand, the validator and its test fail on the live tree. Issue #64 changed two frozen files under `docs/architecture/pm-server/`: its `README.md` and its engineering and review policy. These files no longer match their digests in `IMPORT-MANIFEST.json`. Run by hand, the Atlas check fails for a Go file that has no ownership record.
 
 ## Agent branches
 

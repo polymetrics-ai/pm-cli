@@ -5,7 +5,7 @@ BAZEL = $(TOOLS) exec bazelisk --
 PM_TOOLS_CACHE ?= $(CURDIR)/.cache/pm-tools
 export PM_TOOLS_CACHE
 
-.PHONY: all hooks acceptance build build-api-generator generate check-generated test test-tools test-native test-setup test-docs vet boundaries bazel-build bazel-test gazelle benchmark check
+.PHONY: all hooks acceptance build build-api-generator generate check-generated test test-tools test-native test-setup vet boundaries bazel-build bazel-test gazelle benchmark check
 .PHONY: browser-deps build-browser generate-browser check-generated-browser
 
 all: build
@@ -68,10 +68,6 @@ test-setup:
 	$(PYTHON) -I -B scripts/ci/test_stack_fixture.py
 	$(PYTHON) -I -B tools/test_bootstrap.py
 
-test-docs:
-	$(PYTHON) -B scripts/test_validate_architecture_docs.py
-	$(PYTHON) -B scripts/validate_architecture_docs.py
-
 vet:
 	CGO_ENABLED=1 $(GO) vet ./...
 	CGO_ENABLED=0 $(GO) -C tools vet ./...
@@ -91,4 +87,4 @@ gazelle:
 benchmark:
 	$(PYTHON) scripts/ci/benchmark.py
 
-check: test-setup test-docs build check-generated test vet boundaries bazel-build bazel-test
+check: test-setup build check-generated test vet boundaries bazel-build bazel-test

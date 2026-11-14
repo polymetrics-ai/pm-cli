@@ -122,15 +122,8 @@ stack_shard() {
     test -json -p 1 -count=1 -timeout 15m "$@"
 }
 
-# Atlas, architecture documents, Bazel and supply-chain reports. Not required.
+# Bazel and supply-chain reports. Not required.
 governance_shard() {
-  python3 scripts/install_architecture_docs_dependencies.py \
-    --destination "$RUNNER_TEMP/foundation-docs-deps"
-  PYTHONPATH="$RUNNER_TEMP/foundation-docs-deps" python3 -B scripts/test_validate_architecture_docs.py
-  PYTHONPATH="$RUNNER_TEMP/foundation-docs-deps" python3 -B scripts/validate_architecture_docs.py
-  mkdir -p .cache/bin
-  CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/atlas ./atlas
-  .cache/bin/atlas --root "$repo_root" --check
   build_stack_tools
   sh scripts/browser.sh install
   python3 tools/bootstrap.py exec bazelisk -- --batch build //...
