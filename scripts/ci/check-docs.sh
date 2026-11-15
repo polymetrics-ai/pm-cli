@@ -137,8 +137,12 @@ check_tools() {
 # rule, so a new package runs here with no list edit. A failed or skipped test
 # fails the check. A package with no test files is not a test skip. The report
 # lists each package with its result and time, in the log and, in CI, in the
-# job summary. The -timeout bounds each test binary; the step limit of the
-# `checks` job (17 minutes) bounds the job.
+# job summary. go-test-report.py --expect fails the check when a selected
+# package has no result or more than one result, or when the stream is empty.
+# The command uses no -run and no build-tag filter, and go-test-report.py
+# refuses one. The -timeout bounds each test binary. --timeout stops the
+# whole run after 10 minutes and still reports, inside the 17-minute step
+# limit of the `checks` job.
 check_unit() {
   step 'go test (unit run: root-module packages outside the stack list)'
   # shellcheck source=scripts/ci/go-packages.sh disable=SC1091
@@ -153,7 +157,9 @@ check_unit() {
   fi
   printf 'check-docs: unit run packages (%s):\n' "$(wc -l < "$work/unit-packages" | tr -d ' ')"
   sed 's/^/  /' "$work/unit-packages"
+  sed "s#^\.#$module#" "$work/unit-packages" > "$work/unit-expected"
   set -- --output "$work/go-test-unit.json" --fail-on-skip \
+    --expect "$work/unit-expected" --timeout 600 \
     --title 'Go developer tests: unit run (checks job). Developer checks, not acceptance proof.'
   if [ "${GITHUB_ACTIONS:-}" = true ]; then
     set -- "$@" --summary-file "${GITHUB_STEP_SUMMARY:?GitHub job summary file required}"

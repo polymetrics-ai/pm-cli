@@ -6,6 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 
 
@@ -290,6 +291,16 @@ class HookCheckSelection(unittest.TestCase):
                 self.assertEqual(result.stdout.split(), expected)
                 self.assertEqual(result.stderr, "")
 
+    def test_pre_push_runs_one_unit_run_on_each_os(self):
+        expected = [name for name in CHECK_NAMES if name != "unit"]
+        for system in ("Darwin", "Linux"):
+            with self.subTest(system=system):
+                result = subprocess.run(
+                    ["/bin/sh", "-c", '. "$0"; pm_push_checks "$1"', str(HOOK_LIB), system],
+                    capture_output=True, text=True, timeout=30, cwd=ROOT)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout.split(), expected)
+
     def test_macos_python_selection(self):
         def fake(directory, name, passes, version="3.12.9"):
             path = Path(directory) / name
@@ -339,19 +350,25 @@ def go_event(action, package, test=None, **extra):
 class GoTestReport(unittest.TestCase):
     """Developer checks of scripts/ci/go-test-report.py with synthetic events."""
 
-    def report(self, events, *options, exit_status=0):
+    def report(self, events, *options, exit_status=0, raw=None, expect=None, command=None,
+               env=None):
         with tempfile.TemporaryDirectory() as directory:
             stream = Path(directory) / "events.json"
-            stream.write_text("\n".join(events) + "\n")
+            stream.write_text(raw if raw is not None else "\n".join(events) + ("\n" if events else ""))
             summary = Path(directory) / "summary.md"
-            fake = [sys.executable, "-c",
-                    "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))",
-                    str(stream), str(exit_status)]
+            fake = command or [sys.executable, "-c",
+                               "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))",
+                               str(stream), str(exit_status), "-count=1"]
+            if expect is not None:
+                expected = Path(directory) / "expected.txt"
+                expected.write_text("".join(f"{line}\n" for line in expect))
+                options = ("--expect", str(expected), *options)
             options = [str(summary) if option == "SUMMARY" else option for option in options]
             result = subprocess.run(
                 [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
                  *options, "--", *fake],
-                capture_output=True, text=True, timeout=30)
+                capture_output=True, text=True, timeout=120,
+                env=dict(os.environ, **(env or {})))
             text = summary.read_text() if summary.exists() else ""
         return result, text
 
@@ -395,6 +412,119 @@ class GoTestReport(unittest.TestCase):
         result, _ = self.report(broken)
         self.assertEqual(result.returncode, 1)
         self.assertIn("::group::FAIL m/q [m/q.test]", result.stdout)
+
+    def passing(self, *packages):
+        events = []
+        for package in packages:
+            events += [go_event("run", package, "TestOK"), go_event("pass", package, "TestOK"),
+                       go_event("pass", package, Elapsed=0.1)]
+        return events
+
+    def test_expected_packages_pass_once_each(self):
+        result, summary = self.report(self.passing("m/a", "m/b"), "--title", "Run",
+                                      "--summary-file", "SUMMARY", expect=["m/a", "m/b"])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("Result: PASSED.", summary)
+        count = "intended set: 2 packages from go list; package results: 2"
+        self.assertIn(f"go test: {count}", result.stdout)
+        self.assertIn(f"The {count}.", summary)
+
+    def test_missing_duplicated_and_unexpected_package_results_fail(self):
+        cases = {
+            "no package result for m/b": (self.passing("m/a"), ["m/a", "m/b"]),
+            "2 package results for m/a": (self.passing("m/a", "m/a"), ["m/a"]),
+            "a package result for m/c, which is not in the expected list":
+                (self.passing("m/a", "m/c"), ["m/a"]),
+        }
+        for message, (events, expect) in cases.items():
+            with self.subTest(message=message):
+                result, summary = self.report(events, "--title", "Run", "--summary-file", "SUMMARY",
+                                              expect=expect)
+                self.assertEqual(result.returncode, 1)
+                self.assertIn(f"go test: {message}", result.stdout)
+                self.assertIn(f"- {message}", summary)
+                self.assertIn("Result: FAILED.", summary)
+
+    def test_empty_and_truncated_streams_fail(self):
+        result, _ = self.report([], expect=["m/a"])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("go test: the go test event stream is empty", result.stdout)
+        self.assertIn("go test: no package result for m/a", result.stdout)
+        events = self.passing("m/a")
+        truncated = "\n".join(events + [go_event("run", "m/b", "TestOK")]) + '\n{"Action":"pa'
+        result, _ = self.report([], raw=truncated, expect=["m/a", "m/b"])
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("go test: the stream has 1 lines that are not JSON events", result.stdout)
+        self.assertIn("go test: no package result for m/b", result.stdout)
+
+    def test_nonzero_command_status_fails_with_a_passing_stream(self):
+        result, _ = self.report(self.passing("m/a"), expect=["m/a"], exit_status=3)
+        self.assertEqual(result.returncode, 3)
+
+    def test_test_filters_are_refused(self):
+        for options, env in ((["-run=TestOK"], None), (["-tags", "x"], None), ([], {"GOFLAGS": "-p=2 -short"})):
+            with self.subTest(options=options, env=env):
+                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                result, _ = self.report([], expect=["m/a"], command=command, env=env)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("refused: the command selects or filters tests", result.stderr)
+        command = [sys.executable, "-c", "raise SystemExit(0)"]
+        result, _ = self.report([], expect=["m/a"], command=command)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("refused: the command does not contain -count=1", result.stderr)
+
+    def test_deadline_stops_the_command_and_still_reports(self):
+        script = ("import json, sys, time\n"
+                  "print(json.dumps({'Action': 'pass', 'Package': 'm/a', 'Elapsed': 0.1}), flush=True)\n"
+                  "time.sleep(60)\n")
+        command = [sys.executable, "-c", script, "-count=1"]
+        started = time.monotonic()
+        result, summary = self.report([], "--deadline", str(int(time.time()) + 2), "--title", "Run",
+                                      "--summary-file", "SUMMARY", expect=["m/a", "m/b"], command=command)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("go test: the command did not end before its deadline and was stopped (exit 124)",
+                      result.stdout)
+        self.assertIn("PASS      0.1s m/a", result.stdout)
+        self.assertIn("go test: no package result for m/b", result.stdout)
+        self.assertIn("Result: FAILED.", summary)
+
+    def test_timeout_stops_the_command_and_still_reports(self):
+        script = ("import json, time\n"
+                  "print(json.dumps({'Action': 'pass', 'Package': 'm/a', 'Elapsed': 0.1}), flush=True)\n"
+                  "time.sleep(60)\n")
+        command = [sys.executable, "-c", script, "-count=1"]
+        started = time.monotonic()
+        result, _ = self.report([], "--timeout", "2", "--deadline", str(int(time.time()) + 600),
+                                expect=["m/a"], command=command)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("go test: the command did not end before its deadline", result.stdout)
+        self.assertIn("go test: intended set: 1 packages from go list; package results: 1", result.stdout)
+
+    def test_no_test_process_outlives_the_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pidfile = Path(directory) / "pid"
+            script = (f'sleep 60 & echo $! > "{pidfile}"; '
+                      "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+            command = ["/bin/sh", "-c", script, "sh", "-count=1"]
+            result, _ = self.report([], expect=["m/a"], command=command)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            pid = int(pidfile.read_text())
+            for _ in range(50):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("the background process of the command is still alive")
+
+    def test_command_stopped_by_a_signal_fails(self):
+        command = [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
+                   "-count=1"]
+        result, _ = self.report([], expect=["m/a"], command=command)
+        self.assertEqual(result.returncode, 143)
 
     def test_summary_file_needs_a_title_or_scenarios(self):
         result, _ = self.report([], "--summary-file", "SUMMARY")
