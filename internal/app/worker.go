@@ -486,21 +486,30 @@ func (service *WorkerService) ExecuteUnit(
 	} else {
 		observation, callbackErr = plan.handler.Execute(callbackCtx, plan.request)
 	}
-	continuationPublication, continuationPublicationErr := plan.request.continuation.preparedForResult(observation.Result)
+	// The transport limit bounds the provider callback only. The publication of
+	// PM's own objects starts after the provider callback context ends.
+	cancel()
+
+	acceptedDeadline := plan.state.deadline
+	if plan.reconcile {
+		acceptedDeadline = time.Time{}
+	}
+	publicationCtx, publicationCancel := workerPublicationContext(
+		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+	)
+	continuationPublication, continuationPublicationErr := plan.request.continuation.publishForResult(
+		publicationCtx, observation.Result,
+	)
 	resultForPublication := observation.Result
 	if continuationPublicationErr != nil {
 		resultForPublication = nil
 	}
-	publication, resultPublicationErr := service.prepareWorkerResult(callbackCtx, plan, resultForPublication)
+	publication, resultPublicationErr := service.prepareWorkerResult(publicationCtx, plan, resultForPublication)
 	publicationErr := errors.Join(continuationPublicationErr, resultPublicationErr)
-	cancel()
+	publicationCancel()
 
-	settlementDeadline := plan.state.deadline
-	if plan.reconcile {
-		settlementDeadline = time.Time{}
-	}
 	settleCtx, settleCancel := workerSettlementContext(
-		ctx, settlementDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 	)
 	defer settleCancel()
 	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, publication, continuationPublication, publicationErr, callbackErr)
@@ -2465,14 +2474,49 @@ func workerSettlementContext(
 		deadline = acceptedDeadline
 	}
 	if activityDeadline, ok := ctx.Deadline(); ok {
-		reserve := minWorkerDuration(heartbeatTimeout/2, transportTimeout/2)
-		if reserve <= 0 {
-			reserve = time.Nanosecond
-		}
-		activitySettlementDeadline := activityDeadline.Add(-reserve)
+		activitySettlementDeadline := activityDeadline.Add(-workerSettlementReserve(heartbeatTimeout, transportTimeout))
 		if activitySettlementDeadline.Before(deadline) {
 			deadline = activitySettlementDeadline
 		}
 	}
 	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
+}
+
+// workerPublicationContext bounds the publication of PM's own objects for one
+// unit: the continuation envelope and the result. The transport limit
+// (worker.activity_timeouts.transport) bounds the provider callback only, so
+// this context does not inherit the callback deadline. The publication step
+// ends at the accepted run deadline. It also ends two settlement reserves
+// before the activity attempt deadline, so the settlement that follows keeps
+// one reserve to commit and one reserve before the attempt ends. Each
+// object-store request in the step keeps its own bound,
+// artifacts.execution.request_timeout, in the object-store adapter.
+func workerPublicationContext(
+	ctx context.Context,
+	acceptedDeadline time.Time,
+	heartbeatTimeout time.Duration,
+	transportTimeout time.Duration,
+) (context.Context, context.CancelFunc) {
+	deadline := acceptedDeadline
+	if activityDeadline, ok := ctx.Deadline(); ok {
+		reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+		publicationDeadline := activityDeadline.Add(-2 * reserve)
+		if deadline.IsZero() || publicationDeadline.Before(deadline) {
+			deadline = publicationDeadline
+		}
+	}
+	if deadline.IsZero() {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, deadline)
+}
+
+// workerSettlementReserve is the part of the activity attempt that the worker
+// keeps free after the settlement deadline.
+func workerSettlementReserve(heartbeatTimeout, transportTimeout time.Duration) time.Duration {
+	reserve := minWorkerDuration(heartbeatTimeout/2, transportTimeout/2)
+	if reserve <= 0 {
+		reserve = time.Nanosecond
+	}
+	return reserve
 }

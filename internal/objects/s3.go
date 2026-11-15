@@ -3,16 +3,19 @@ package objects
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -154,7 +157,9 @@ func (backend *S3) Upload(ctx context.Context, attempt Attempt) (VerifiedObject,
 	if descriptor.ByteLength > backend.bounds.MaxObjectBytes {
 		return VerifiedObject{}, ErrObjectLimit
 	}
+	slotStart := time.Now()
 	operationContext, release, err := backend.begin(ctx)
+	diagnosticTiming279("slot", descriptor, slotStart, err)
 	if err != nil {
 		return VerifiedObject{}, err
 	}
@@ -163,6 +168,7 @@ func (backend *S3) Upload(ctx context.Context, attempt Attempt) (VerifiedObject,
 	if err != nil {
 		return VerifiedObject{}, ErrInvalidObject
 	}
+	putStart := time.Now()
 	response, err := backend.client.PutObject(operationContext, &s3.PutObjectInput{
 		Bucket:         aws.String(backend.bucket),
 		Key:            aws.String(descriptor.ObjectAttemptKey),
@@ -172,6 +178,7 @@ func (backend *S3) Upload(ctx context.Context, attempt Attempt) (VerifiedObject,
 		ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(digest)),
 		IfNoneMatch:    aws.String("*"),
 	})
+	diagnosticTiming279("put", descriptor, putStart, err)
 	if err != nil {
 		var apiError smithy.APIError
 		if errors.As(err, &apiError) && (apiError.ErrorCode() == "PreconditionFailed" || apiError.ErrorCode() == "ConditionalRequestConflict") {
@@ -196,8 +203,11 @@ func (backend *S3) Upload(ctx context.Context, attempt Attempt) (VerifiedObject,
 	if err := ref.Validate(); err != nil {
 		return VerifiedObject{}, ErrObjectIntegrity
 	}
-	if err := backend.verifyRemote(operationContext, ref, io.Discard); err != nil {
-		return VerifiedObject{}, err
+	readbackStart := time.Now()
+	readbackErr := backend.verifyRemote(operationContext, ref, io.Discard)
+	diagnosticTiming279("readback", descriptor, readbackStart, readbackErr)
+	if readbackErr != nil {
+		return VerifiedObject{}, readbackErr
 	}
 	return VerifiedObject{ref: ref}, nil
 }
@@ -356,4 +366,27 @@ func validCredential(value string, allowEmpty bool) bool {
 		return allowEmpty
 	}
 	return len(value) <= 64<<10 && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "\x00\r\n")
+}
+
+// diagnosticTiming279 is a diagnostic for issue #279 only. It is never merged.
+// It writes one line for each step of one object upload: the stage, the media
+// type, the byte length, a short hash of the random attempt key, the start
+// time, the elapsed time and the outcome. It writes no key, identifier,
+// credential or endpoint.
+func diagnosticTiming279(stage string, descriptor UploadDescriptor, start time.Time, err error) {
+	attempt := sha256.Sum256([]byte(descriptor.ObjectAttemptKey))
+	outcome := "ok"
+	switch {
+	case err == nil:
+	case errors.Is(err, context.DeadlineExceeded):
+		outcome = "deadline"
+	case errors.Is(err, context.Canceled):
+		outcome = "canceled"
+	default:
+		outcome = "error"
+	}
+	fmt.Fprintf(os.Stderr,
+		"pm-279-timing stage=%s media=%s bytes=%d attempt=%x start=%s elapsed_ms=%.1f outcome=%s\n",
+		stage, descriptor.MediaType, descriptor.ByteLength, attempt[:4],
+		start.UTC().Format(time.RFC3339Nano), float64(time.Since(start).Microseconds())/1000, outcome)
 }

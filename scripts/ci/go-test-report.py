@@ -329,6 +329,15 @@ def main():
         print("::endgroup::")
         if args.fail_on_skip:
             print(f"go test: skipped test fails this run: {test_name(key)}")
+    # Diagnostic for issue #279 only. It is never merged. It prints the
+    # object-store publication timings of every test, passed or failed.
+    timing = [(test_name(key), text) for key in order for text in output.get(key, [])
+              if "pm-279-timing " in text]
+    if timing:
+        print("::group::pm-279-timing: object-store publication timings (diagnostic only)")
+        for name, text in timing:
+            sys.stdout.write(f"{name}: {text}" if text.endswith("\n") else f"{name}: {text}\n")
+        print("::endgroup::")
     if expected is not None:
         print(f"go test: {intended}")
     for problem in problems:

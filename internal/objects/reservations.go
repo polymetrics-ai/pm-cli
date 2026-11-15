@@ -3,6 +3,7 @@ package objects
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
@@ -145,11 +146,13 @@ func (publisher *Publisher) Upload(ctx context.Context, actor contract.Actor, sc
 		ByteLength: descriptor.ByteLength, MediaType: descriptor.MediaType,
 	}
 	var reservation store.ObjectReservation
+	bindStart := time.Now()
 	err = store.WithinScope(ctx, publisher.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
 		var bindErr error
 		reservation, bindErr = store.BindObjectAttempt(ctx, tx, reservationID, binding)
 		return bindErr
 	})
+	diagnosticTiming279("bind", descriptor, bindStart, err)
 	if errors.Is(err, store.ErrCommitOutcomeUnknown) {
 		var retained store.ObjectReservation
 		reconcileErr := store.WithinScope(ctx, publisher.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
