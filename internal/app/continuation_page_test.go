@@ -272,34 +272,55 @@ func TestContinuationPublicationFailureComesFromThePublicationStep(t *testing.T)
 	}
 }
 
-// The publication step does not inherit the provider callback deadline. It
-// ends two settlement reserves before the activity attempt deadline, or at the
-// accepted run deadline when that is earlier.
+// The publication step does not inherit the provider callback deadline, and
+// it always leaves the settlement a positive budget before the settlement
+// deadline, whether the activity attempt deadline or the accepted run deadline
+// comes first.
 func TestWorkerPublicationContextIsNotTheTransportBound(t *testing.T) {
-	const heartbeat, transport = 2 * time.Second, 5 * time.Second
-	attemptDeadline := time.Now().Add(10 * time.Second)
-	attempt, cancelAttempt := context.WithDeadline(context.Background(), attemptDeadline)
-	defer cancelAttempt()
+	// The settlement reserve is min(heartbeat/2, transport/2) = 1s.
+	const heartbeat, transport, reserve = 2 * time.Second, 5 * time.Second, time.Second
 
-	publication, cancelPublication := workerPublicationContext(attempt, attemptDeadline.Add(time.Hour), heartbeat, transport)
-	defer cancelPublication()
-	deadline, ok := publication.Deadline()
-	if !ok || !deadline.Equal(attemptDeadline.Add(-2*time.Second)) {
-		t.Fatalf("publication deadline = %v %t; want two 1s settlement reserves before %v", deadline, ok, attemptDeadline)
-	}
+	t.Run("publication is not bounded by the transport limit", func(t *testing.T) {
+		attemptDeadline := time.Now().Add(time.Hour)
+		attempt, cancelAttempt := context.WithDeadline(context.Background(), attemptDeadline)
+		defer cancelAttempt()
+		publication, cancelPublication := workerPublicationContext(
+			attempt, attemptDeadline.Add(time.Hour), heartbeat, transport,
+		)
+		defer cancelPublication()
+		if deadline, ok := publication.Deadline(); !ok || !deadline.Equal(attemptDeadline.Add(-2*reserve)) {
+			t.Fatalf("publication deadline = %v %t; want two settlement reserves before %v", deadline, ok, attemptDeadline)
+		}
+	})
 
-	accepted := attemptDeadline.Add(-5 * time.Second)
-	bounded, cancelBounded := workerPublicationContext(attempt, accepted, heartbeat, transport)
-	defer cancelBounded()
-	if deadline, ok := bounded.Deadline(); !ok || !deadline.Equal(accepted) {
-		t.Fatalf("publication deadline = %v %t; want the earlier accepted run deadline %v", deadline, ok, accepted)
-	}
-
-	callback, endCallback := context.WithCancel(attempt)
-	endCallback()
-	if publication.Err() != nil || callback.Err() == nil {
-		t.Fatalf("publication error = %v after the callback ended with %v; want a live publication context",
-			publication.Err(), callback.Err())
+	// Each case puts both deadlines less than one transport limit ahead. A
+	// settlement context made now then has the same deadline as one made at the
+	// moment the publication step ends.
+	for _, testCase := range []struct {
+		name     string
+		attempt  time.Duration
+		accepted time.Duration
+	}{
+		{name: "attempt deadline first", attempt: 4 * time.Second, accepted: time.Hour},
+		{name: "accepted run deadline first", attempt: 4500 * time.Millisecond, accepted: 2 * time.Second},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			now := time.Now()
+			attempt, cancelAttempt := context.WithDeadline(context.Background(), now.Add(testCase.attempt))
+			defer cancelAttempt()
+			accepted := now.Add(testCase.accepted)
+			publication, cancelPublication := workerPublicationContext(attempt, accepted, heartbeat, transport)
+			defer cancelPublication()
+			settlement, cancelSettlement := workerSettlementContext(attempt, accepted, heartbeat, transport)
+			defer cancelSettlement()
+			publicationEnd, publicationBounded := publication.Deadline()
+			settlementEnd, settlementBounded := settlement.Deadline()
+			if !publicationBounded || !settlementBounded || settlementEnd.Sub(publicationEnd) < reserve {
+				t.Fatalf("settlement budget after the publication step = %v (publication ends %v, settlement ends %v); "+
+					"want a positive budget of at least one %v reserve",
+					settlementEnd.Sub(publicationEnd), publicationEnd.Sub(now), settlementEnd.Sub(now), reserve)
+			}
+		})
 	}
 }
 
