@@ -19,4 +19,3 @@
 ./internal/warehouse
 ./tests/client-parity
 ./tests/acceptance
-./internal/canary-b5-does-not-exist
