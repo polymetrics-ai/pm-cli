@@ -50,7 +50,9 @@ step() {
 # (bdd.yml). The script keeps 3 minutes of it for the start and stop of the
 # job container, so its own work ends within 47 minutes of its start, on the
 # failure path too. go-test-report.py --deadline stops each run at an absolute
-# time and still reports. The allowances are upper bounds of the phases of
+# time and still reports. --timeout 1140 also stops each run 19 minutes after
+# its start, before the 20-minute command limit of with-stack-fixture.py
+# (CHILD_TIMEOUT), so that the reporter, not the wrapper, ends the run. The allowances are upper bounds of the phases of
 # with-stack-fixture.py: a fixture start (generator 60 s, `pm-stack up` 600 s
 # and its 30-second Docker calls) and a fixture cleanup (drain 120 s, container
 # stop 75 s, cleanup helper 60 s and its 30-second Docker calls). A run that
@@ -68,6 +70,9 @@ step() {
 # once. The end bound holds for a prelude of 8 minutes or less. The Gherkin run
 # gets 5 minutes or more of test time when the prelude and the stack fixture
 # start end by +15. See docs/development/ci.md.
+# Each live fixture stays under the one manifest path that the frozen cleanup
+# step of bdd.yml reads ($manifest below). See "Cleanup after an abrupt stop"
+# in docs/development/ci.md.
 budget=2820
 start_allowance=720
 cleanup_allowance=360
@@ -97,6 +102,7 @@ step 'select the Go test packages'
 # shellcheck source=scripts/ci/go-packages.sh disable=SC1091
 . scripts/ci/go-packages.sh
 stack_status=0
+stack_ran=true
 if module=$(python3 tools/bootstrap.py exec go -- list -m) &&
   CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- list ./... > "$RUNNER_TEMP/bdd-go-packages.txt" &&
   pm_stack_entries > "$RUNNER_TEMP/bdd-stack-entries.txt" &&
@@ -147,7 +153,8 @@ if [ "$stack_status" -eq 0 ]; then
   # shellcheck disable=SC2046
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-stack.json" \
-    --fail-on-skip --expect "$RUNNER_TEMP/bdd-stack-expected.txt" --deadline "$stack_deadline" \
+    --fail-on-skip --expect "$RUNNER_TEMP/bdd-stack-expected.txt" \
+    --deadline "$stack_deadline" --timeout 1140 \
     --summary-file "$GITHUB_STEP_SUMMARY" \
     --title 'Go developer tests: stack run (bdd job). Developer checks, not acceptance proof.' -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
@@ -161,7 +168,8 @@ if [ "$stack_status" -eq 0 ]; then
       ;;
   esac
 else
-  printf '%s\n' 'check-bdd: the stack run does not start, because its package selection failed' >&2
+  printf '%s\n' 'check-bdd: the stack run did not run: its package selection failed' >&2
+  stack_ran=false
 fi
 
 # The Gherkin run starts on a fresh stack. The stack run's fixture is cleaned
@@ -176,7 +184,7 @@ if [ -e "$manifest" ]; then
     mv "$manifest" "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.stack-run-receipt.json"; then
     :
   else
-    printf 'check-bdd: the stack run fixture is not clean; its manifest stays at %s for the cleanup step, and the Gherkin run cannot start a fresh stack\n' \
+    printf 'check-bdd: the Gherkin run did not run: the stack run fixture is not clean, so its manifest stays at %s for the cleanup step, and no fresh stack can start on that path\n' \
       "$manifest" >&2
     gherkin_ready=false
     [ "$stack_status" -ne 0 ] || stack_status=1
@@ -193,7 +201,8 @@ if "$gherkin_ready"; then
   gherkin_status=0
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-bdd.json" \
-    --scenarios --deadline "$gherkin_deadline" --summary-file "$GITHUB_STEP_SUMMARY" -- \
+    --scenarios --deadline "$gherkin_deadline" --timeout 1140 \
+    --summary-file "$GITHUB_STEP_SUMMARY" -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 40m "$pm_gherkin_package/..." ||
     gherkin_status=$?
@@ -202,8 +211,10 @@ fi
 
 step 'compare the toolchain identity'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain-after.json"
-printf 'check-bdd: stack run (Go developer tests) exit %s; Gherkin run (acceptance suite) exit %s\n' \
-  "$stack_status" "$gherkin_status"
+if "$stack_ran"; then stack_result="exit $stack_status"; else stack_result='did not run'; fi
+if "$gherkin_ready"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
+printf 'check-bdd: stack run (Go developer tests) %s; Gherkin run (acceptance suite) %s\n' \
+  "$stack_result" "$gherkin_result"
 if ! cmp -s "$RUNNER_TEMP/bdd-toolchain.json" "$RUNNER_TEMP/bdd-toolchain-after.json"; then
   printf '%s\n' 'BDD native/tool identity drifted during execution' >&2
   exit 1

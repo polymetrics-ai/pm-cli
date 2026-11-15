@@ -3,7 +3,7 @@
 
 Usage: go-test-report.py --output FILE [--scenarios] [--title TEXT]
                          [--fail-on-skip] [--expect FILE] [--deadline TIME]
-                         [--summary-file FILE] -- COMMAND...
+                         [--timeout SECONDS] [--summary-file FILE] -- COMMAND...
 
 COMMAND must print `go test -json` events. The summary lists each package
 with its result and elapsed time (input for shard balancing) and repeats the
@@ -19,15 +19,19 @@ failure: the exit status is 1, and the log and the summary name the test.
 With --expect FILE, FILE lists one import path on each line. Each listed
 package must have exactly one package result in the stream. A missing,
 duplicated or unexpected package result, an empty stream or a line that is not
-a JSON event fails the run. The command must contain -count=1 and must not
+a JSON event fails the run. The log and the summary give the size of the
+intended set and the number of package results. The command must contain
+-count=1 and must not
 select or filter tests (-run, -skip, -list, -short, -failfast, -tags), also not
 through GOFLAGS. Such a command is refused before it runs.
 
-With --deadline TIME (Unix time in seconds), the command stops at TIME: the
-script sends SIGTERM to its process group, then SIGKILL after 30 seconds. The
-exit status is then 124, and the report still lists the results in the stream.
+With --deadline TIME (Unix time in seconds) or --timeout SECONDS, the command
+stops at TIME or SECONDS after its start, whichever comes first: the script
+sends SIGTERM to its process group, then SIGKILL after 30 seconds. The exit
+status is then 124, and the report still lists the results in the stream.
 The script runs COMMAND in its own process group and forwards SIGTERM, SIGINT
-and SIGHUP to it.
+and SIGHUP to it. When COMMAND exits, the script sends SIGKILL to the rest of
+that process group, so that no test process of the run stays alive.
 
 With --title, --summary-file appends a Markdown section with that title: the
 result, the totals, each package with its result and elapsed time, each failed
@@ -145,7 +149,7 @@ def filter_problem(command):
     return None
 
 
-def run_command(command, output, deadline):
+def run_command(command, output, deadline, limit):
     """Run COMMAND with stdout in OUTPUT. Return (status, timed_out)."""
     with output.open("wb") as stream:
         try:
@@ -153,6 +157,9 @@ def run_command(command, output, deadline):
         except OSError as exc:
             print(f"go test: cannot start the command: {exc}")
             return 1, False
+        if limit is not None:
+            relative = time.time() + limit
+            deadline = relative if deadline is None else min(deadline, relative)
 
         def forward(signum, _frame):
             try:
@@ -179,6 +186,8 @@ def run_command(command, output, deadline):
         finally:
             for number, handler in previous.items():
                 signal.signal(number, handler)
+            # A test process that outlives the command must not keep running.
+            forward(signal.SIGKILL, None)
     if status < 0:
         status = 128 - status
     return status, timed_out
@@ -206,9 +215,12 @@ def expect_problems(expected, counts, events, malformed):
     return problems
 
 
-def package_markdown(title, packages, failures, skips, fail_on_skip, status, problems):
+def package_markdown(title, packages, failures, skips, fail_on_skip, status, problems,
+                     intended=None):
     failed = bool(status or failures or problems or (fail_on_skip and skips))
     lines = [f"### {title}", "", f"Result: {'FAILED' if failed else 'PASSED'}.  "]
+    if intended:
+        lines.append(f"The {intended}.  ")
     counts = {}
     for action, _ in packages.values():
         counts[action] = counts.get(action, 0) + 1
@@ -246,6 +258,8 @@ def main():
                         help="a file of import paths that must each have exactly one package result")
     parser.add_argument("--deadline", type=int,
                         help="Unix time in seconds at which the command stops")
+    parser.add_argument("--timeout", type=int,
+                        help="seconds after its start at which the command stops")
     parser.add_argument("--summary-file", type=Path,
                         help="append the report as Markdown (requires --title or --scenarios)")
     parser.add_argument("command", nargs=argparse.REMAINDER)
@@ -263,7 +277,7 @@ def main():
         refused = filter_problem(command)
         if refused:
             parser.error(f"refused: {refused}")
-    status, timed_out = run_command(command, args.output, args.deadline)
+    status, timed_out = run_command(command, args.output, args.deadline, args.timeout)
     packages, failures, output = {}, [], {}
     order, results, skips = [], {}, []
     counts, events, malformed = {}, 0, 0
@@ -299,6 +313,8 @@ def main():
         problems.append(f"the command did not end before its deadline and was stopped (exit {status})")
     if expected is not None:
         problems += expect_problems(expected, counts, events, malformed)
+        intended = (f"intended set: {len(set(expected))} packages from go list; "
+                    f"package results: {sum(counts.values())}")
     if args.title:
         print(args.title)
     for package, (action, elapsed) in sorted(packages.items(), key=lambda item: -item[1][1]):
@@ -313,13 +329,16 @@ def main():
         print("::endgroup::")
         if args.fail_on_skip:
             print(f"go test: skipped test fails this run: {test_name(key)}")
+    if expected is not None:
+        print(f"go test: {intended}")
     for problem in problems:
         print(f"go test: {problem}")
     skip_failure = bool(args.fail_on_skip and skips)
     if args.title and args.summary_file:
         with args.summary_file.open("a", encoding="utf-8") as summary:
             summary.write(package_markdown(args.title, packages, failures, skips,
-                                           args.fail_on_skip, status, problems))
+                                           args.fail_on_skip, status, problems,
+                                           intended if expected is not None else None))
     problem = None
     if args.scenarios:
         rows, totals = scenario_report(order, results, output)

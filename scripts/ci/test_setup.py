@@ -425,6 +425,9 @@ class GoTestReport(unittest.TestCase):
                                       "--summary-file", "SUMMARY", expect=["m/a", "m/b"])
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("Result: PASSED.", summary)
+        count = "intended set: 2 packages from go list; package results: 2"
+        self.assertIn(f"go test: {count}", result.stdout)
+        self.assertIn(f"The {count}.", summary)
 
     def test_missing_duplicated_and_unexpected_package_results_fail(self):
         cases = {
@@ -485,6 +488,37 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("PASS      0.1s m/a", result.stdout)
         self.assertIn("go test: no package result for m/b", result.stdout)
         self.assertIn("Result: FAILED.", summary)
+
+    def test_timeout_stops_the_command_and_still_reports(self):
+        script = ("import json, time\n"
+                  "print(json.dumps({'Action': 'pass', 'Package': 'm/a', 'Elapsed': 0.1}), flush=True)\n"
+                  "time.sleep(60)\n")
+        command = [sys.executable, "-c", script, "-count=1"]
+        started = time.monotonic()
+        result, _ = self.report([], "--timeout", "2", "--deadline", str(int(time.time()) + 600),
+                                expect=["m/a"], command=command)
+        self.assertLess(time.monotonic() - started, 30)
+        self.assertEqual(result.returncode, 124)
+        self.assertIn("go test: the command did not end before its deadline", result.stdout)
+        self.assertIn("go test: intended set: 1 packages from go list; package results: 1", result.stdout)
+
+    def test_no_test_process_outlives_the_command(self):
+        with tempfile.TemporaryDirectory() as directory:
+            pidfile = Path(directory) / "pid"
+            script = (f'sleep 60 & echo $! > "{pidfile}"; '
+                      "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+            command = ["/bin/sh", "-c", script, "sh", "-count=1"]
+            result, _ = self.report([], expect=["m/a"], command=command)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            pid = int(pidfile.read_text())
+            for _ in range(50):
+                try:
+                    os.kill(pid, 0)
+                except ProcessLookupError:
+                    break
+                time.sleep(0.1)
+            else:
+                self.fail("the background process of the command is still alive")
 
     def test_command_stopped_by_a_signal_fails(self):
         command = [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
