@@ -64,10 +64,12 @@ pgo() {
 }
 
 # drop_stack_packages reads ./relative package paths on stdin and removes the
-# packages in scripts/ci/stack-packages.txt, which need the dependency stack.
+# packages in scripts/ci/stack-packages.txt, which need the dependency stack,
+# and the packages that CI excludes from its Go test runs. The rule is in
+# scripts/ci/go-packages.sh, which the CI jobs also use. Call it from the
+# repository root.
 drop_stack_packages() {
-  stack_list=$(mktemp)
-  grep -v '^#' scripts/ci/stack-packages.txt | sed '/^$/d' > "$stack_list"
-  grep -v -x -F -f "$stack_list" || true
-  rm -f "$stack_list"
+  # shellcheck source=scripts/ci/go-packages.sh disable=SC1091
+  . scripts/ci/go-packages.sh
+  pm_drop_stack_packages
 }

@@ -247,7 +247,7 @@ class SetupContracts(unittest.TestCase):
 
 CHECK_DOCS = ROOT / "scripts/ci/check-docs.sh"
 HOOK_LIB = ROOT / "scripts/dev/hook-lib.sh"
-CHECK_NAMES = ["setup", "python", "generate", "gofmt", "boundaries", "tools"]
+CHECK_NAMES = ["setup", "python", "generate", "gofmt", "boundaries", "tools", "unit"]
 
 
 class HookCheckSelection(unittest.TestCase):
@@ -322,6 +322,132 @@ class HookCheckSelection(unittest.TestCase):
             importlib.util.find_spec(name) for name in ("tomllib", "yaml", "markdown_it", "mdurl"))
         result = self.lib('"$1" -I -B -c "$pm_python_probe"', sys.executable)
         self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+
+REPORT = ROOT / "scripts/ci/go-test-report.py"
+GO_PACKAGES = ROOT / "scripts/ci/go-packages.sh"
+
+
+def go_event(action, package, test=None, **extra):
+    event = {"Action": action, "Package": package}
+    if test:
+        event["Test"] = test
+    event.update(extra)
+    return json.dumps(event)
+
+
+class GoTestReport(unittest.TestCase):
+    """Developer checks of scripts/ci/go-test-report.py with synthetic events."""
+
+    def report(self, events, *options, exit_status=0):
+        with tempfile.TemporaryDirectory() as directory:
+            stream = Path(directory) / "events.json"
+            stream.write_text("\n".join(events) + "\n")
+            summary = Path(directory) / "summary.md"
+            fake = [sys.executable, "-c",
+                    "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))",
+                    str(stream), str(exit_status)]
+            options = [str(summary) if option == "SUMMARY" else option for option in options]
+            result = subprocess.run(
+                [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                 *options, "--", *fake],
+                capture_output=True, text=True, timeout=30)
+            text = summary.read_text() if summary.exists() else ""
+        return result, text
+
+    def test_package_without_test_files_is_not_a_test_skip(self):
+        events = [go_event("skip", "m/empty", Elapsed=0),
+                  go_event("run", "m/full", "TestOK"), go_event("pass", "m/full", "TestOK"),
+                  go_event("pass", "m/full", Elapsed=1.5)]
+        result, summary = self.report(events, "--fail-on-skip", "--title", "Unit run",
+                                      "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("SKIP      0.0s m/empty (no test files)", result.stdout)
+        self.assertIn("PASS      1.5s m/full", result.stdout)
+        self.assertIn("### Unit run", summary)
+        self.assertIn("Result: PASSED.", summary)
+        self.assertIn("| SKIP (no test files) | 0.0s | `m/empty` |", summary)
+        self.assertIn("| PASS | 1.5s | `m/full` |", summary)
+
+    def test_skipped_test_fails_only_with_fail_on_skip(self):
+        events = [go_event("run", "m/p", "TestSkip"),
+                  go_event("output", "m/p", "TestSkip", Output="    p_test.go:9: canary\n"),
+                  go_event("skip", "m/p", "TestSkip"), go_event("pass", "m/p", Elapsed=0.2)]
+        result, summary = self.report(events, "--fail-on-skip", "--title", "Stack run",
+                                      "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("go test: skipped test fails this run: m/p TestSkip", result.stdout)
+        self.assertIn("p_test.go:9: canary", result.stdout)
+        self.assertIn("Result: FAILED.", summary)
+        self.assertIn("- `m/p TestSkip`", summary)
+        result, _ = self.report(events)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("1 skipped tests", result.stdout)
+
+    def test_failed_test_and_build_failure_fail(self):
+        failed = [go_event("run", "m/p", "TestBad"), go_event("fail", "m/p", "TestBad"),
+                  go_event("fail", "m/p", Elapsed=0.1)]
+        result, summary = self.report(failed, "--title", "Unit run", "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("::group::FAIL m/p TestBad", result.stdout)
+        self.assertIn("- `m/p TestBad`", summary)
+        broken = [json.dumps({"Action": "build-fail", "ImportPath": "m/q [m/q.test]"})]
+        result, _ = self.report(broken)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("::group::FAIL m/q [m/q.test]", result.stdout)
+
+    def test_summary_file_needs_a_title_or_scenarios(self):
+        result, _ = self.report([], "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--summary-file requires --title or --scenarios", result.stderr)
+
+
+class GoPackageSelection(unittest.TestCase):
+    """Developer checks of the package rule in scripts/ci/go-packages.sh."""
+
+    def sh(self, script, stdin="", cwd=ROOT):
+        return subprocess.run(["/bin/sh", "-c", '. "$0"; ' + script, str(GO_PACKAGES)],
+                              input=stdin, capture_output=True, text=True, timeout=30, cwd=cwd)
+
+    def lines(self, script, stdin=""):
+        result = self.sh(script, stdin)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.split()
+
+    def test_each_package_has_exactly_one_place(self):
+        entries = self.lines("pm_stack_entries")
+        excluded = [line.split()[0] for line in self.lines_raw("pm_excluded_packages")]
+        self.assertEqual(excluded, ["./tests/client-parity"])
+        packages = sorted(set(entries) | set(excluded) | {
+            "./cmd/pm", "./internal/compile", "./tests/starter", "./tests/acceptance"})
+        unit = self.lines("pm_drop_stack_packages", "\n".join(packages) + "\n")
+        stack = self.lines("pm_stack_entries | pm_stack_run_packages")
+        gherkin = self.lines('printf "%s\\n" "$pm_gherkin_package"')
+        self.assertEqual(gherkin, ["./tests/acceptance"])
+        self.assertIn("./tests/starter", unit)
+        places = unit + stack + gherkin + excluded
+        self.assertEqual(sorted(places), packages)
+        self.assertEqual(len(places), len(set(places)))
+
+    def lines_raw(self, script):
+        result = self.sh(script)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.splitlines()
+
+    def test_hook_uses_the_same_rule(self):
+        packages = "./cmd/pm\n./internal/store\n./tests/client-parity\n./tests/starter\n"
+        result = subprocess.run(
+            ["/bin/sh", "-c", '. "$0"; drop_stack_packages', str(HOOK_LIB)],
+            input=packages, capture_output=True, text=True, timeout=30, cwd=ROOT)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.split(), ["./cmd/pm", "./tests/starter"])
+
+    def test_missing_stack_list_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            result = self.sh("pm_drop_stack_packages", "./cmd/pm\n", cwd=directory)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("scripts/ci/stack-packages.txt is missing", result.stderr)
+        self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":
