@@ -233,3 +233,81 @@ type pageCheckDialer struct{ address string }
 func (dialer pageCheckDialer) DialContext(ctx context.Context, network, _ string) (net.Conn, error) {
 	return (&net.Dialer{}).DialContext(ctx, network, dialer.address)
 }
+
+// The page step seals a continuation even when the provider callback context
+// has already ended, and the object-store failure surfaces only from the
+// publication step, as a publication error.
+func TestContinuationPublicationFailureComesFromThePublicationStep(t *testing.T) {
+	binding := pmruntime.ContinuationBinding{
+		Scope:        contract.Scope{OrgID: "org-fixture", WorkspaceID: "workspace-fixture"},
+		ConnectionID: "connection-fixture", OperationID: "fixture.http.page-check",
+		OperationRevision: "operation-revision-fixture", RunID: "run-fixture",
+	}
+	codec := pageCheckUnpublishableCodec(t, binding)
+	record := contract.NewObjectValue(map[string]contract.PresentValue{"id": pageCheckInteger(t, "3")})
+	callback, endCallback := context.WithCancel(context.Background())
+	endCallback()
+	token, err := codec.SealContinuation(callback, binding, pmruntime.ContinuationState{
+		MediaType: "application/json", UnreadTail: []contract.PresentValue{record},
+		NextInputs: map[string]contract.PresentValue{},
+	})
+	if err != nil || !token.Equal(contract.NewStringValue(codec.reservation.Request.ArtifactID)) {
+		t.Fatalf("seal after the provider callback ended = %#v error=%v; want the reserved identity", token, err)
+	}
+	result := &contract.ActionResult{
+		MediaType: "application/json",
+		Data:      contract.NewArrayValue([]contract.PresentValue{}),
+		Pagination: &contract.ResultPagination{
+			Continuation: token, UnreadTail: []contract.PresentValue{record},
+		},
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	publication, err := codec.publishForResult(ctx, result)
+	if err == nil || publication != nil {
+		t.Fatalf("publication through an unavailable object store = %#v error=%v; want a publication error", publication, err)
+	}
+	if _, err := codec.publishForResult(ctx, result); !errors.Is(err, ErrContinuationInvalid) {
+		t.Fatalf("second publication of one sealed continuation error = %v; want a refusal", err)
+	}
+}
+
+// The publication step does not inherit the provider callback deadline. It
+// ends two settlement reserves before the activity attempt deadline, or at the
+// accepted run deadline when that is earlier.
+func TestWorkerPublicationContextIsNotTheTransportBound(t *testing.T) {
+	const heartbeat, transport = 2 * time.Second, 5 * time.Second
+	attemptDeadline := time.Now().Add(10 * time.Second)
+	attempt, cancelAttempt := context.WithDeadline(context.Background(), attemptDeadline)
+	defer cancelAttempt()
+
+	publication, cancelPublication := workerPublicationContext(attempt, attemptDeadline.Add(time.Hour), heartbeat, transport)
+	defer cancelPublication()
+	deadline, ok := publication.Deadline()
+	if !ok || !deadline.Equal(attemptDeadline.Add(-2*time.Second)) {
+		t.Fatalf("publication deadline = %v %t; want two 1s settlement reserves before %v", deadline, ok, attemptDeadline)
+	}
+
+	accepted := attemptDeadline.Add(-5 * time.Second)
+	bounded, cancelBounded := workerPublicationContext(attempt, accepted, heartbeat, transport)
+	defer cancelBounded()
+	if deadline, ok := bounded.Deadline(); !ok || !deadline.Equal(accepted) {
+		t.Fatalf("publication deadline = %v %t; want the earlier accepted run deadline %v", deadline, ok, accepted)
+	}
+
+	callback, endCallback := context.WithCancel(attempt)
+	endCallback()
+	if publication.Err() != nil || callback.Err() == nil {
+		t.Fatalf("publication error = %v after the callback ended with %v; want a live publication context",
+			publication.Err(), callback.Err())
+	}
+}
+
+func pageCheckInteger(t *testing.T, exact string) contract.PresentValue {
+	t.Helper()
+	value, err := contract.NewIntegerValue(exact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return value
+}
