@@ -70,11 +70,24 @@ The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci
 
 The Gherkin run also runs when the stack run fails, and the stack run does not stop for a Gherkin failure. The job fails when either run fails. The log shows two fixture starts, one for each run. The script compares the toolchain identity before the first run and after the last run.
 
-The stack run is a developer check. It is not acceptance proof of PM behavior. A failed test fails the run. A test that calls `t.Skip` also fails the run, and the log and the job summary name it. Before the stack run, the script builds `.cache/bin/pm-api-generate`, because the `internal/api` tests need it.
+The stack run is a developer check. It is not acceptance proof of PM behavior. A failed test fails the run. A test that calls `t.Skip` also fails the run, and the log and the job summary name it. Before the stack run, the script builds `.cache/bin/pm-api-generate` from the candidate and unsets `PM_API_GENERATE`, because the `internal/api` tests use the generator at that default path. Each step line of the log shows the seconds since the script started, so the log shows the order of the phases.
+
+### Time budget of the `bdd` job
+
+The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops each run at an absolute time and still reports. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. The allowances are upper bounds of the phases of `with-stack-fixture.py`:
+
+| Phase | Allowance | Source of the bound |
+| --- | --- | --- |
+| Prelude: tool builds and package selection | 8 minutes or less (assumed) | none |
+| Fixture start | 12 minutes | generator 60 s, `pm-stack up` 600 s, 30-second Docker calls |
+| Fixture cleanup | 6 minutes | drain 120 s, container stop 75 s, cleanup helper 60 s, 30-second Docker calls |
+| Report, receipt move, toolchain check | 1 minute | none |
+
+The stack run stops 15 minutes after the start. The Gherkin run stops 39.5 minutes after the start. In the worst case, the script ends 47 minutes after the start. The Gherkin run then gets at least 5 minutes of test time, if the prelude and the stack fixture start end within 15 minutes. The log has one `starting a fresh job-owned stack` line before each fixture start. A cold image build happens in the same step before `check-bdd.sh` starts, and this budget does not include it.
 
 [go-test-report.py](../../scripts/ci/go-test-report.py) `--scenarios` lists each scenario with its result and the godog totals (`N scenarios (...)`, `N steps (...)`). It does this also when the suite passes. The list is at the end of the `bdd` job log and in the job summary on the workflow run page. A passing run fails when the godog scenario total is missing or differs from the number of scenarios in the test stream.
 
-For the stack run and the unit run, `go-test-report.py --title` adds a separate section to the job summary. The section has the Go test totals, each package with its result and time, and each failed or skipped test. The `bdd` job summary keeps this section apart from the Gherkin section with the godog totals. With `--fail-on-skip`, a skipped test fails the run. A package with no test files shows as `SKIP (no test files)`. That is not a test skip, and it does not fail the run.
+For the stack run and the unit run, `go-test-report.py --title` adds a separate section to the job summary. The section has the Go test totals, each package with its result and time, each failed or skipped test and each problem. `--expect` gives the import paths that the run selected. Each one must have exactly one package result. A missing, duplicated or unexpected package result, an empty stream or a line that is not a JSON event fails the run. The two runs use no `-run` and no build-tag filter. `--expect` refuses a command with a test filter (`-run`, `-skip`, `-list`, `-short`, `-failfast`, `-tags`, also in `GOFLAGS`) or without `-count=1`. A nonzero exit of the command, of the fixture wrapper or of its cleanup fails the run. The `bdd` job summary keeps this section apart from the Gherkin section with the godog totals. With `--fail-on-skip`, a skipped test fails the run. A package with no test files shows as `SKIP (no test files)`. That is not a test skip, and it does not fail the run.
 
 A new push to a working branch cancels the older run for that branch. Runs on `main` are never cancelled. A force-push is admitted on a working branch and refused on `main`.
 
@@ -105,7 +118,7 @@ The `checks` job is in the same workflow as `bdd`. It has the same admission con
 - `gofmt`: `gofmt -l` on every tracked Go file.
 - `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
 - `tools`: `go test` for the tools module.
-- `unit`: the unit run. `go test -json -count=1 -timeout 10m` of every root-module package outside the stack list and the exclusion list (see [Go test package selection](#go-test-package-selection)). A failed or skipped test fails the check. The log and the job summary list each package with its result and time. These tests are developer checks, not acceptance proof.
+- `unit`: the unit run. `go test -json -count=1 -timeout 10m` of every root-module package outside the stack list and the exclusion list (see [Go test package selection](#go-test-package-selection)). `go-test-report.py --deadline` stops the run after 10 minutes and still reports. A failed or skipped test fails the check, and so does a missing or duplicated package result. The log and the job summary list each package with its result and time. These tests are developer checks, not acceptance proof. The `pre-push` hook does not select `unit`, because it runs the same packages itself (`pm_push_checks` in `scripts/dev/hook-lib.sh`).
 
 In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh setup boundaries`. `check-docs.sh --list` prints the check names. The hooks read the names from it. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins, `go vet`, Staticcheck and govulncheck are not in this job. The stack-package Go tests run in the `bdd` job.
 
