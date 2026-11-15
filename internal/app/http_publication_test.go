@@ -123,6 +123,80 @@ func TestContinuationUploadFailureIsAPublicationFailure(t *testing.T) {
 		"/v1/workspaces/"+fixture.Scope.WorkspaceID+"/runs/"+admitted.RunRef+"/result", http.StatusServiceUnavailable)
 }
 
+// TestRefusedLocalTailContinuationIsAPublicationFailure runs a second unit that
+// serves its records from the unread tail of a continuation, with no provider
+// call. The object store refuses the new continuation that this unit seals.
+// The failure is a publication failure: the unit settles succeeded, the member
+// outcome stays succeeded, the settlement records the verified local result and
+// the publication failure, the unused account permit is released, and the
+// refused continuation reservation stays bound and unpublished.
+func TestRefusedLocalTailContinuationIsAPublicationFailure(t *testing.T) {
+	temporal := newPermitTemporalHarness(t)
+	objectStore := newGatedObjectStore(t)
+	objectStore.open()
+	var providerCalls atomic.Int32
+	origin, tlsConfig, dialer := newHTTPDirectReadTLSPeer(t, publicationCheckProvider(&providerCalls))
+	authority := &durableContinuationAuthority{
+		selection: durableHTTPContinuationSelection("fixture.http.local-tail-publication-failure", origin),
+		policy:    httpDirectReadPolicy(origin),
+	}
+	fixture, publisher := newDurableContinuationFixture(t, authority, app.HTTPDirectReadDependencies{
+		ClientIdentity: testClientIdentity, Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
+	}, objectStore.resources, objectStore.resources, objectStore.limits)
+	service := workerResultService(t, fixture, temporal, publisher, durableContinuationObjectBytes)
+
+	recordCap := uint64(2)
+	first := admitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope, fixture.Connection.ConnectionID,
+		"local-tail-publication-first", durableContinuationInput(t, "chain", 1),
+		contract.ResultControls{TotalRecordCap: &recordCap},
+	)
+	firstRun := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, first)
+	firstUnit, err := executePermitWorkerUnit(t, service, firstRun)
+	if err != nil || firstUnit.State != contract.RunStateSucceeded || providerCalls.Load() != 1 {
+		t.Fatalf("first unit = %#v error=%v provider_calls=%d; want one succeeded provider read",
+			firstUnit, err, providerCalls.Load())
+	}
+	firstToken := requireDurableContinuationToken(t, loadDurableContinuationResult(t, fixture, first.RunRef))
+
+	objectStore.refuse(publicationCheckContinuationMediaType)
+	second := admitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope, fixture.Connection.ConnectionID,
+		"local-tail-publication-second", contract.NewObjectValue(map[string]contract.PresentValue{}),
+		continuationControls(firstToken),
+	)
+	secondRun := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, second)
+	secondUnit, err := executePermitWorkerUnit(t, service, secondRun)
+	if err != nil || secondUnit.State != contract.RunStateSucceeded || secondUnit.UnknownEffectCount != 0 ||
+		providerCalls.Load() != 1 {
+		t.Fatalf("local-tail unit whose continuation upload failed = %#v error=%v provider_calls=%d; "+
+			"want a succeeded local result and no provider call", secondUnit, err, providerCalls.Load())
+	}
+	if refusals := objectStore.refusalCount(); refusals != 1 {
+		t.Fatalf("refused continuation uploads = %d; want exactly one", refusals)
+	}
+	for _, outcome := range publicationCheckOutcomes(t, fixture, second.RunRef, secondRun) {
+		if outcome.State != contract.OutcomeSucceeded {
+			t.Fatalf("member outcome of the local-tail unit = %#v; want succeeded", outcome)
+		}
+	}
+	reasons := publicationCheckSettlementReasons(t, fixture, second.RunRef)
+	for _, reason := range []string{"verified_local_continuation_result", "result_publication_unavailable"} {
+		if !slices.Contains(reasons, reason) {
+			t.Fatalf("settlement reason codes = %q; want %s", reasons, reason)
+		}
+	}
+	assertLatestRunPermitState(t, fixture, second.RunRef, store.AccountPermitReleased)
+	if states := publicationCheckContinuationReservationStates(t, fixture); !slices.Equal(states, []string{
+		string(store.ObjectReservationPublished), string(store.ObjectReservationBound),
+	}) {
+		t.Fatalf("continuation reservation states in reservation order = %q; "+
+			"want the first published and the refused one bound", states)
+	}
+	workerResultGET(t, fixture,
+		"/v1/workspaces/"+fixture.Scope.WorkspaceID+"/runs/"+second.RunRef+"/result", http.StatusServiceUnavailable)
+}
+
 func publicationCheckProvider(calls *atomic.Int32) http.Handler {
 	return http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
@@ -208,6 +282,25 @@ func publicationCheckSettlementReasons(t *testing.T, fixture *testfixture.Fixtur
 		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, runID).Scan(&reasons)
 	})
 	return reasons
+}
+
+// publicationCheckContinuationReservationStates returns the state of every
+// continuation reservation in the fixture workspace, in reservation order.
+func publicationCheckContinuationReservationStates(t *testing.T, fixture *testfixture.Fixture) []string {
+	t.Helper()
+	var states []string
+	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT array(
+				SELECT reservation.state
+				FROM pm.object_reservations AS reservation
+				WHERE reservation.org_id = $1 AND reservation.workspace_id = $2
+				  AND reservation.purpose = 'continuation'
+				ORDER BY reservation.reserved_at, reservation.reservation_id
+			)
+		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID).Scan(&states)
+	})
+	return states
 }
 
 // gatedObjectStore is a controlled S3-compatible object store for the worker
