@@ -55,7 +55,7 @@ type commandResult struct {
 // registerStackSteps registers each step that two or more slices use: the
 // steps that start and observe pm-server and pm-worker through the shared
 // starter, and the result steps of the shared result state.
-func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness) {
+func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *lane) {
 	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}}
 	sc.After(func(ctx context.Context, _ *godog.Scenario, err error) (context.Context, error) {
 		return ctx, errors.Join(err, scenario.close())
@@ -74,6 +74,7 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness) {
 	sc.Step(`^the lane command stdout contains the lane deployment ID$`, scenario.result.stdoutHasDeploymentID)
 	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.result.stderrContains)
 	registerStartedServerSteps(sc, scenario)
+	registerLaneSteps(sc, scenario, lane)
 }
 
 // newConfiguration is step 1. It runs the shared build and migration step,

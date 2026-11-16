@@ -23,9 +23,9 @@ type cliRun struct {
 	ran      bool
 }
 
-func registerCLISteps(sc *godog.ScenarioContext, bins binaries, stack *stackHarness) {
+func registerCLISteps(sc *godog.ScenarioContext, bins binaries, stack *stackHarness, lane *lane) {
 	registerPmgenSteps(sc)
-	registerStackSteps(sc, stack)
+	registerStackSteps(sc, stack, lane)
 	run := &cliRun{bins: bins}
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		home, err := os.MkdirTemp("", "pm-acceptance-home-")
