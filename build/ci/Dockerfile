@@ -87,7 +87,7 @@ RUN set -eu; python3 -m venv /opt/pmcli/venv; \
 # A failed install or a failed step fails the image build.
 RUN set -eu; apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      dbus-daemon dbus-bin dbus-session-bus-common gnome-keyring; \
+      dbus-daemon dbus-bin dbus-session-bus-common gnome-keyring dbus-x11; \
     rm /usr/share/dbus-1/services/org.freedesktop.secrets.service \
       /usr/share/dbus-1/services/org.freedesktop.impl.portal.Secret.service \
       /usr/share/dbus-1/services/org.gnome.keyring.service; \
