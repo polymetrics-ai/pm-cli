@@ -1,7 +1,6 @@
 package acceptance
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -94,6 +93,7 @@ type bootstrapScenario struct {
 	shared *stackScenario
 	dir    string
 	files  int
+	runs   int
 
 	// second is the second deployment of K5.
 	second *deployment
@@ -239,24 +239,34 @@ func makeInput(d *deployment, subject, connector string) bootstrapInput {
 // writeInput writes the input as a new file in the scenario directory and
 // makes it the current input.
 func (s *bootstrapScenario) writeInput(input bootstrapInput) error {
-	if s.dir == "" {
-		dir, err := os.MkdirTemp("", "pm-acceptance-bootstrap-")
-		if err != nil {
-			return fmt.Errorf("create the bootstrap input directory: %w", err)
-		}
-		s.dir = dir
+	directory, err := s.directory()
+	if err != nil {
+		return err
 	}
 	encoded, err := json.MarshalIndent(input, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode the bootstrap input: %w", err)
 	}
 	s.files++
-	path := filepath.Join(s.dir, fmt.Sprintf("bootstrap-input-%d.json", s.files))
+	path := filepath.Join(directory, fmt.Sprintf("bootstrap-input-%d.json", s.files))
 	if err := writePrivateFile(path, append(encoded, '\n')); err != nil {
 		return err
 	}
 	s.input, s.inputFile = &input, path
 	return nil
+}
+
+// directory makes the scenario directory of the input and output files at
+// the first call. close removes it.
+func (s *bootstrapScenario) directory() (string, error) {
+	if s.dir == "" {
+		dir, err := os.MkdirTemp("", "pm-acceptance-bootstrap-")
+		if err != nil {
+			return "", fmt.Errorf("create the bootstrap scenario directory: %w", err)
+		}
+		s.dir = dir
+	}
+	return s.dir, nil
 }
 
 func (s *bootstrapScenario) newInput(connector string) error {
@@ -317,8 +327,13 @@ func (s *bootstrapScenario) secondOrganizationFirstAdmin() error {
 
 // run runs pm-server bootstrap once as a separate process, with the clean
 // environment of the deployment. It waits once for the exit, with the limit
-// of one lane command. It records the exit code and the whole stdout and
-// stderr.
+// of one lane command, and records the exit code, stdout and stderr.
+//
+// stdout and stderr go to files that the step owns, as in the starter. A
+// file needs no copy goroutine, so the wait ends with the exit of the
+// process, or at the limit when exec kills it. A descendant that keeps a
+// descriptor open cannot hold the step past the limit. The step reads each
+// file once after the wait, at most laneFileLimit bytes.
 func (s *bootstrapScenario) run(parent context.Context, d *deployment, input bootstrapInput, file string) error {
 	binary, err := s.shared.harness.binary("pm-server")
 	if err != nil {
@@ -328,15 +343,29 @@ func (s *bootstrapScenario) run(parent context.Context, d *deployment, input boo
 	if err != nil {
 		return err
 	}
+	directory, err := s.directory()
+	if err != nil {
+		return err
+	}
+	s.runs++
+	stdoutFile, err := os.Create(filepath.Join(directory, fmt.Sprintf("bootstrap-%d.stdout", s.runs)))
+	if err != nil {
+		return fmt.Errorf("create the bootstrap stdout file: %w", err)
+	}
+	defer stdoutFile.Close()
+	stderrFile, err := os.Create(filepath.Join(directory, fmt.Sprintf("bootstrap-%d.stderr", s.runs)))
+	if err != nil {
+		return fmt.Errorf("create the bootstrap stderr file: %w", err)
+	}
+	defer stderrFile.Close()
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, "bootstrap",
 		"--config", configuration, "--secrets-directory", d.secrets, "--input", file)
 	command.Env = d.processEnvironment()
 	command.Dir = d.home()
-	var stdout, stderr bytes.Buffer
-	command.Stdout = &stdout
-	command.Stderr = &stderr
+	command.Stdout = stdoutFile
+	command.Stderr = stderrFile
 	runErr := command.Run()
 	if ctx.Err() != nil {
 		return fmt.Errorf("pm-server bootstrap did not finish within %s", laneCommandTimeout)
@@ -350,8 +379,29 @@ func (s *bootstrapScenario) run(parent context.Context, d *deployment, input boo
 	default:
 		return fmt.Errorf("start pm-server bootstrap: %w", runErr)
 	}
-	s.last = &bootstrapRun{deployment: d, input: input, exitCode: code, stdout: stdout.String(), stderr: stderr.String()}
+	stdout, err := readOutputFile(stdoutFile, "stdout")
+	if err != nil {
+		return err
+	}
+	stderr, err := readOutputFile(stderrFile, "stderr")
+	if err != nil {
+		return err
+	}
+	s.last = &bootstrapRun{deployment: d, input: input, exitCode: code, stdout: stdout, stderr: stderr}
 	return nil
+}
+
+// readOutputFile reads an output file from its start, at most laneFileLimit
+// bytes. An empty file is an empty output. A larger file fails the step.
+func readOutputFile(file *os.File, name string) (string, error) {
+	contents, err := io.ReadAll(io.NewSectionReader(file, 0, laneFileLimit+1))
+	if err != nil {
+		return "", fmt.Errorf("read the bootstrap %s file: %w", name, err)
+	}
+	if len(contents) > laneFileLimit {
+		return "", fmt.Errorf("the bootstrap %s is larger than %d bytes", name, laneFileLimit)
+	}
+	return string(contents), nil
 }
 
 func (s *bootstrapScenario) runWithInput(ctx context.Context) error {
