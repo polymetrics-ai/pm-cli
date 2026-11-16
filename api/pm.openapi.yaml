@@ -85,11 +85,11 @@ paths:
         "403":
           $ref: "#/components/responses/Problem403"
         "409":
-          $ref: "#/components/responses/Problem409"
+          $ref: "#/components/responses/DevicePoll409"
         "410":
           $ref: "#/components/responses/Problem410"
         "429":
-          $ref: "#/components/responses/Problem429"
+          $ref: "#/components/responses/DevicePoll429"
         "503":
           $ref: "#/components/responses/Problem503"
   /v1/sessions/device/approve:
@@ -1200,6 +1200,59 @@ paths:
           $ref: "#/components/responses/Problem428"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/memberships/{id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ResourceID"
+    patch:
+      tags: [access]
+      summary: Add connections to a workspace membership
+      operationId: updateMembership
+      description: >-
+        Adds active connections of the workspace to the membership under its current
+        control revision. An actor that holds workspace.access.manage and connection.manage
+        can add a connection to its own membership. For another membership, the actor can
+        add only connections that its own current grants hold.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MembershipUpdateRequest"
+      responses:
+        "200":
+          description: Original updated or unchanged result, or exact safe replay
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MutationResultResponse"
+                  - $ref: "#/components/schemas/MutationReplayResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/memberships/{id}/revoke:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -1929,6 +1982,16 @@ components:
         pattern: '^bytes ([0-9]+-[0-9]+|\*)/[0-9]+$'
         minLength: 9
         maxLength: 128
+    DevicePollRetryAfter:
+      description: >-
+        Whole seconds until the stored next poll time of the device challenge,
+        rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it
+        with device_authorization_pending and device_poll_too_soon only.
+      schema:
+        type: string
+        pattern: '^([1-9]|[1-5][0-9]|60)$'
+        minLength: 1
+        maxLength: 2
   responses:
     Problem400:
       description: Malformed or unsupported typed request
@@ -1956,6 +2019,17 @@ components:
             $ref: "#/components/schemas/Problem"
     Problem409:
       description: Intent, capability, specification, resume, or foundation conflict
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    DevicePoll409:
+      description: >-
+        Device login conflict. A device_authorization_pending answer carries
+        Retry-After. A login_challenge_used answer does not.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/DevicePollRetryAfter"
       content:
         application/problem+json:
           schema:
@@ -1993,6 +2067,17 @@ components:
             $ref: "#/components/schemas/Problem"
     Problem429:
       description: A workspace pending-count or oldest-pending-age limit is reached
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    DevicePoll429:
+      description: >-
+        Device login limit. A device_poll_too_soon answer carries Retry-After.
+        An authentication_rate_limited answer does not.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/DevicePollRetryAfter"
       content:
         application/problem+json:
           schema:
@@ -3376,6 +3461,32 @@ components:
             expires_at:
               type: [string, "null"]
               format: date-time
+    MembershipUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, membership]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        membership:
+          type: object
+          additionalProperties: false
+          required: [membership_ref, add_connection_ids]
+          properties:
+            membership_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            add_connection_ids:
+              type: array
+              description: Strictly sorted, unique connection IDs to add.
+              minItems: 1
+              maxItems: 256
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
     ServiceAccountCreateRequest:
       type: object
       additionalProperties: false
@@ -3514,7 +3625,7 @@ components:
               format: date-time
     MutationResultDisposition:
       type: string
-      enum: [created, revoked, unchanged]
+      enum: [created, updated, revoked, unchanged]
     MutationResultResponse:
       type: object
       additionalProperties: false

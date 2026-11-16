@@ -620,6 +620,15 @@
       "requires_if_match": true
     },
     {
+      "operation_id": "updateMembership",
+      "method": "PATCH",
+      "path": "/v1/workspaces/{workspace_id}/memberships/{id}",
+      "required_body_fields": ["membership", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
       "operation_id": "uploadArtifact",
       "method": "POST",
       "path": "/v1/workspaces/{workspace_id}/artifacts",

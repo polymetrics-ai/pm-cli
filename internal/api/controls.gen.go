@@ -135,6 +135,7 @@ var operationControls = map[string]OperationControl{
 	"startDeviceLogin":         {OperationID: "startDeviceLogin", Method: "POST", Path: "/v1/sessions/device", RequiredBodyFields: []string{"device_id"}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: true, HasProtocol: false, QueryFields: []string{}},
 	"submitInvocation":         {OperationID: "submitInvocation", Method: "POST", Path: "/v1/workspaces/{workspace_id}/invocations", RequiredBodyFields: []string{"connection_ref", "input", "lane", "operation_ref", "protocol", "result_controls"}, OptionalBodyFields: []string{"approval_ref"}, RequiresIdempotencyKey: true, RequiresIfMatch: false, HasBody: true, HasProtocol: true, QueryFields: []string{}},
 	"updateConnection":         {OperationID: "updateConnection", Method: "PATCH", Path: "/v1/workspaces/{workspace_id}/connections/{connection_id}", RequiredBodyFields: []string{"connection", "protocol"}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: true, RequiresIfMatch: true, HasBody: true, HasProtocol: true, QueryFields: []string{}},
+	"updateMembership":         {OperationID: "updateMembership", Method: "PATCH", Path: "/v1/workspaces/{workspace_id}/memberships/{id}", RequiredBodyFields: []string{"membership", "protocol"}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: true, RequiresIfMatch: true, HasBody: true, HasProtocol: true, QueryFields: []string{}},
 	"uploadArtifact":           {OperationID: "uploadArtifact", Method: "POST", Path: "/v1/workspaces/{workspace_id}/artifacts", RequiredBodyFields: []string{}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: false, HasProtocol: false, QueryFields: []string{}},
 	"watchRunEvents":           {OperationID: "watchRunEvents", Method: "GET", Path: "/v1/workspaces/{workspace_id}/runs/{run_id}/events", RequiredBodyFields: []string{}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: false, HasProtocol: false, QueryFields: []string{}},
 	"getConnectionSchema":      {OperationID: "getConnectionSchema", Method: "GET", Path: "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema", RequiredBodyFields: []string{}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: false, HasProtocol: false, QueryFields: []string{"permission_revision", "provider_account_id", "resource", "snapshot_id", "source_revision"}},
@@ -192,6 +193,8 @@ var operationIDsByRoute = map[string]string{
 	"GET /v1/workspaces/:workspace_id/tasks/:task_id":                                                   "getTask",
 	"PATCH /v1/workspaces/{workspace_id}/connections/{connection_id}":                                   "updateConnection",
 	"PATCH /v1/workspaces/:workspace_id/connections/:connection_id":                                     "updateConnection",
+	"PATCH /v1/workspaces/{workspace_id}/memberships/{id}":                                              "updateMembership",
+	"PATCH /v1/workspaces/:workspace_id/memberships/:id":                                                "updateMembership",
 	"POST /v1/sessions/browser":                                                                         "completeBrowserLogin",
 	"POST /v1/sessions/browser/challenges":                                                              "startBrowserLogin",
 	"POST /v1/sessions/device":                                                                          "startDeviceLogin",
@@ -329,6 +332,11 @@ var operationObjectControls = map[string]map[string]JSONFieldControl{
 	"updateConnection": {
 		"":            {AllowedFields: []string{"connection", "protocol"}, RequiredFields: []string{"connection", "protocol"}, Nullable: false},
 		"/connection": {AllowedFields: []string{"display_name"}, RequiredFields: []string{"display_name"}, Nullable: false},
+		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
+	},
+	"updateMembership": {
+		"":            {AllowedFields: []string{"membership", "protocol"}, RequiredFields: []string{"membership", "protocol"}, Nullable: false},
+		"/membership": {AllowedFields: []string{"add_connection_ids", "membership_ref"}, RequiredFields: []string{"add_connection_ids", "membership_ref"}, Nullable: false},
 		"/protocol":   {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
 	},
 	"uploadArtifact":      {},

@@ -46,6 +46,7 @@ go_test(
         "admin_test.go",
         "artifacts_test.go",
         "events_test.go",
+        "membership_update_test.go",
         "protocol_test.go",
         "route_policy_test.go",
         "strict_test.go",

@@ -35,6 +35,8 @@ type Options struct {
 	DynamicInvoke DynamicInvoker
 	prepared      *preparedCatalog
 	Version       string
+	// devicePollPause replaces the device login wait in developer checks.
+	devicePollPause func(context.Context, time.Duration) error
 }
 
 type rootFlags struct {

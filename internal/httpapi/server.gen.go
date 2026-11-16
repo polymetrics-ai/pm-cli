@@ -110,6 +110,9 @@ type ServerInterface interface {
 	// GrantMembership Grant a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships)
 	GrantMembership(c *gin.Context, workspaceId WorkspaceID, params GrantMembershipParams)
+	// UpdateMembership Add connections to a workspace membership
+	// (PATCH /v1/workspaces/{workspace_id}/memberships/{id})
+	UpdateMembership(c *gin.Context, workspaceId WorkspaceID, id ResourceID, params UpdateMembershipParams)
 	// RevokeMembership Revoke a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships/{id}/revoke)
 	RevokeMembership(c *gin.Context, workspaceId WorkspaceID, id ResourceID, params RevokeMembershipParams)
@@ -1779,6 +1782,105 @@ func (siw *ServerInterfaceWrapper) GrantMembership(c *gin.Context) {
 	siw.Handler.GrantMembership(c, workspaceId, params)
 }
 
+// UpdateMembership operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMembership(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", c.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateMembershipParams
+
+	headers := c.Request.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		siw.ErrorHandler(c, fmt.Errorf("Header parameter Idempotency-Key is required, but not found"), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for If-Match, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter If-Match: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for X-CSRF-Token, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter X-CSRF-Token: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.UpdateMembership(c, workspaceId, id, params)
+}
+
 // RevokeMembership operation middleware
 func (siw *ServerInterfaceWrapper) RevokeMembership(c *gin.Context) {
 
@@ -2574,6 +2676,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/invocations", wrapper.SubmitInvocation)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/memberships", wrapper.ListMemberships)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/memberships", wrapper.GrantMembership)
+	router.PATCH(options.BaseURL+"/v1/workspaces/:workspace_id/memberships/:id", wrapper.UpdateMembership)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/memberships/:id/revoke", wrapper.RevokeMembership)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/runs", wrapper.ListRuns)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/runs/:run_id", wrapper.GetRun)
@@ -2585,6 +2688,24 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/service-accounts", wrapper.CreateServiceAccount)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/service-accounts/:id/revoke", wrapper.RevokeServiceAccount)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/tasks/:task_id", wrapper.GetTask)
+}
+
+type DevicePoll409ResponseHeaders struct {
+	RetryAfter *string
+}
+type DevicePoll409ApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers DevicePoll409ResponseHeaders
+}
+
+type DevicePoll429ResponseHeaders struct {
+	RetryAfter *string
+}
+type DevicePoll429ApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers DevicePoll429ResponseHeaders
 }
 
 type Problem400ApplicationProblemPlusJSONResponse Problem
@@ -3423,16 +3544,19 @@ func (response ExchangeDeviceLogin403ApplicationProblemPlusJSONResponse) VisitEx
 }
 
 type ExchangeDeviceLogin409ApplicationProblemPlusJSONResponse struct {
-	Problem409ApplicationProblemPlusJSONResponse
+	DevicePoll409ApplicationProblemPlusJSONResponse
 }
 
 func (response ExchangeDeviceLogin409ApplicationProblemPlusJSONResponse) VisitExchangeDeviceLoginResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
 	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
@@ -3455,16 +3579,19 @@ func (response ExchangeDeviceLogin410ApplicationProblemPlusJSONResponse) VisitEx
 }
 
 type ExchangeDeviceLogin429ApplicationProblemPlusJSONResponse struct {
-	Problem429ApplicationProblemPlusJSONResponse
+	DevicePoll429ApplicationProblemPlusJSONResponse
 }
 
 func (response ExchangeDeviceLogin429ApplicationProblemPlusJSONResponse) VisitExchangeDeviceLoginResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
 	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
@@ -6242,6 +6369,175 @@ func (response GrantMembership503ApplicationProblemPlusJSONResponse) VisitGrantM
 	return err
 }
 
+type UpdateMembershipRequestObject struct {
+	WorkspaceId WorkspaceID `json:"workspace_id"`
+	Id          ResourceID  `json:"id"`
+	Params      UpdateMembershipParams
+	Body        *UpdateMembershipJSONRequestBody
+}
+
+type UpdateMembershipResponseObject interface {
+	VisitUpdateMembershipResponse(w http.ResponseWriter) error
+}
+
+type UpdateMembership200JSONResponse UpdateMembership200JSONResponseBody
+
+func (response UpdateMembership200JSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(UpdateMembership200JSONResponseBody(response)); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership400ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership401ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership403ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership404ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership409ApplicationProblemPlusJSONResponse struct {
+	Problem409ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership409ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership410ApplicationProblemPlusJSONResponse struct {
+	Problem410ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership410ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership412ApplicationProblemPlusJSONResponse struct {
+	Problem412ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership412ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(412)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership428ApplicationProblemPlusJSONResponse struct {
+	Problem428ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership428ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(428)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership503ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
 type RevokeMembershipRequestObject struct {
 	WorkspaceId WorkspaceID `json:"workspace_id"`
 	Id          ResourceID  `json:"id"`
@@ -7844,6 +8140,9 @@ type StrictServerInterface interface {
 	// GrantMembership Grant a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships)
 	GrantMembership(ctx context.Context, request GrantMembershipRequestObject) (GrantMembershipResponseObject, error)
+	// UpdateMembership Add connections to a workspace membership
+	// (PATCH /v1/workspaces/{workspace_id}/memberships/{id})
+	UpdateMembership(ctx context.Context, request UpdateMembershipRequestObject) (UpdateMembershipResponseObject, error)
 	// RevokeMembership Revoke a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships/{id}/revoke)
 	RevokeMembership(ctx context.Context, request RevokeMembershipRequestObject) (RevokeMembershipResponseObject, error)
@@ -8875,6 +9174,41 @@ func (sh *strictHandler) GrantMembership(ctx *gin.Context, workspaceId Workspace
 	}
 }
 
+// UpdateMembership operation middleware
+func (sh *strictHandler) UpdateMembership(ctx *gin.Context, workspaceId WorkspaceID, id ResourceID, params UpdateMembershipParams) {
+	var request UpdateMembershipRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Id = id
+	request.Params = params
+
+	var body UpdateMembershipJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateMembership(ctx.Request.Context(), request.(UpdateMembershipRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateMembership")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(UpdateMembershipResponseObject); ok {
+		if err := validResponse.VisitUpdateMembershipResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // RevokeMembership operation middleware
 func (sh *strictHandler) RevokeMembership(ctx *gin.Context, workspaceId WorkspaceID, id ResourceID, params RevokeMembershipParams) {
 	var request RevokeMembershipRequestObject
@@ -9273,6 +9607,8 @@ type DenyDeviceLoginJSONRequestBody = api.DenyDeviceLoginJSONRequestBody
 type DenyDeviceLoginParams = api.DenyDeviceLoginParams
 type DeviceApproval = api.DeviceApproval
 type DeviceChallenge = api.DeviceChallenge
+type DevicePoll409 = api.DevicePoll409
+type DevicePoll429 = api.DevicePoll429
 type DeviceProof = api.DeviceProof
 type DeviceStart = api.DeviceStart
 type DiscoverConnectionSchemaJSONRequestBody = api.DiscoverConnectionSchemaJSONRequestBody
@@ -9312,6 +9648,7 @@ type Membership = api.Membership
 type MembershipGrantRequest = api.MembershipGrantRequest
 type MembershipPage = api.MembershipPage
 type MembershipRevokeRequest = api.MembershipRevokeRequest
+type MembershipUpdateRequest = api.MembershipUpdateRequest
 type MutationReplayResponse = api.MutationReplayResponse
 type MutationReplayResponseReplay = api.MutationReplayResponseReplay
 type MutationReplayResponseResultDisposition = api.MutationReplayResponseResultDisposition
@@ -9411,6 +9748,9 @@ type TaskViewLane = api.TaskViewLane
 type TypedSchema = api.TypedSchema
 type UpdateConnectionJSONRequestBody = api.UpdateConnectionJSONRequestBody
 type UpdateConnectionParams = api.UpdateConnectionParams
+type UpdateMembership200JSONResponseBody = api.UpdateMembership200JSONResponseBody
+type UpdateMembershipJSONRequestBody = api.UpdateMembershipJSONRequestBody
+type UpdateMembershipParams = api.UpdateMembershipParams
 type WarehouseColumn = api.WarehouseColumn
 type WarehouseColumnKind = api.WarehouseColumnKind
 type WarehouseDatasetSnapshot = api.WarehouseDatasetSnapshot
