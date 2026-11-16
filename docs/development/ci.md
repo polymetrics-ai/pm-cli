@@ -63,7 +63,7 @@ Secret detection is pattern-based and cannot prove that content has no credentia
 
 The `bdd` workflow runs on every push to any branch of this repository by the owner account. A pull request shows the result of its head commit, because a status belongs to a commit. Pull request events do not start CI, so a fork pull request never reaches the self-hosted runners. Only collaborators can push branches or open pull requests.
 
-The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci/check-bdd.sh) in the pinned job image. The script runs two Go test runs. Each run gets its own job-owned dependency stack:
+The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci/check-bdd.sh) in the pinned job image. The script first runs `check-ci-image.py`, so the required job checks the keyring layer of its own image (see [The keyring layer](#the-keyring-layer)). A failure fails the job. The script then runs two Go test runs. Each run gets its own job-owned dependency stack:
 
 1. The stack run: the Go developer tests of the stack packages. The script starts a stack and runs `go test -json -p 1 -count=1 -timeout 15m` of these packages. The packages share one schema, its roles and one Temporal history, so they run one package at a time.
 2. The Gherkin run: the script starts a fresh stack and runs `go test ./tests/acceptance/...`. No stack-run test runs on this stack. Strict godog fails the run on an undefined or pending step. A failed suite is never retried.
@@ -123,7 +123,7 @@ The rule selects the packages, so a new package goes to the unit run with no lis
 The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these eight checks:
 
 - `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
-- `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
+- `python`: `test_setup.py`, `test_runner_admission.py`, `test_ci_image.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`. `test_ci_image.py` tests the fail paths of `check-ci-image.py` with fixtures. It is a developer check, not acceptance proof.
 - `generate`: `generate.sh --check` for the API and the connectors.
 - `gofmt`: `gofmt -l` on every tracked Go file.
 - `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
@@ -198,23 +198,29 @@ fails at `bootstrap: native environment drift`.
 The last package layer of the image gives a private Secret Service to the `pm`
 `os` session store (#323, LOGIN condition D1-9). It installs `dbus-daemon`,
 `dbus-bin`, `dbus-session-bus-common` and `gnome-keyring` from the same
-snapshot, with no recommended packages.
+snapshot, with no recommended packages: 72 packages, 113,958 KiB (about
+111 MiB) by their `Installed-Size` fields.
 [keyring-packages.txt](../../build/ci/keyring-packages.txt) records each
 package that the layer installs, with its version. The layer starts no
 process. A job harness starts `/usr/bin/dbus-daemon` with its own
 configuration and no service directory, and then `/usr/bin/gnome-keyring-daemon`.
 
-The layer gives these guarantees, and the `image` check of the `checks` job
-verifies each one in the image:
+The layer gives these guarantees. The `image` check verifies each one in the
+image, in the `checks` job and at the start of the required `bdd` job:
 
 - `dbus-x11` is not installed, and no `dbus-launch` file is on a binary path.
 - No D-Bus service file activates `org.freedesktop.secrets` or starts
   `gnome-keyring-daemon`. The layer removes the three service files of
   `gnome-keyring`.
-- No file of a recorded package has a setuid bit, a setgid bit or a file
-  capability. The `dbus` package makes `dbus-daemon-launch-helper` setuid root
+- On the whole root file system of the image (one device, as `find -xdev`),
+  no file has a file capability. The setuid and setgid files are exactly the
+  12 files of the Ubuntu base in
+  [privileged-files.txt](../../build/ci/privileged-files.txt), with their mode
+  and owner. The `dbus` package makes `dbus-daemon-launch-helper` setuid root
   through `dpkg-statoverride`. The layer replaces that statoverride with mode
-  `0754`.
+  `0754`. The check runs as the job user, so it cannot read some directories.
+  Each of them must be a recorded `closed` directory whose mode denies read or
+  search to others.
 - Each recorded package has its recorded version, and both daemons print
   their version.
 
