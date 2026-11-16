@@ -28,6 +28,9 @@ go_test(
 
 go_test(
     name = "stack_test",
-    srcs = ["identity_test.go"],
+    srcs = [
+        "identity_test.go",
+        "image_lock_test.go",
+    ],
     embed = [":stack"],
 )
