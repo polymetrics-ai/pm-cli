@@ -74,3 +74,22 @@ RUN set -eu; python3 -m venv /opt/pmcli/venv; \
 ENV PATH=/opt/pmcli/venv/bin:/opt/pmcli/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1
+
+# SPIKE ONLY (#72 login spike, branch t3/72-login-spike; never merge). A private
+# Secret Service for the pm os session store: dbus-daemon and gnome-keyring
+# from the same pinned snapshot. dbus-x11 satisfies the session-bus dependency
+# without systemd. The keyring daemon is copied to drop the setuid bit or file
+# capability that its package scripts may set, because a rootless job container
+# runs it as the runner user. An install failure is recorded, not fatal, so
+# the spike can report it as FAIL.
+RUN set -eu; apt-get update; \
+    if DEBIAN_FRONTEND=noninteractive apt-get install -y \
+        dbus-daemon dbus-bin dbus-session-bus-common dbus-x11 gnome-keyring \
+        > /opt/pmcli/login-spike-apt.log 2>&1; then \
+      install -m 0755 /usr/bin/gnome-keyring-daemon /usr/bin/gnome-keyring-daemon.plain; \
+      mv -f /usr/bin/gnome-keyring-daemon.plain /usr/bin/gnome-keyring-daemon; \
+      echo installed > /opt/pmcli/login-spike-apt.status; \
+    else \
+      echo failed > /opt/pmcli/login-spike-apt.status; \
+    fi; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin

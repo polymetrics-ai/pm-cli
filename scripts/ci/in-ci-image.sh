@@ -136,6 +136,28 @@ chmod 700 "$cache"
 
 ci_image
 
+set -- "$image" "$@"
+# SPIKE ONLY (#72 login spike, branch t3/72-login-spike; never merge). This
+# block stands in for a CI secret. A real job would have the workflow step
+# `env: PM_W2_TOKEN: ${{ secrets.PM_W2_TOKEN }}` and write that value here.
+# File channel: the host writes the value with the shell builtin printf (no
+# process argument) to a 0600 file in a 0700 directory under RUNNER_TEMP, and
+# passes only the file path. The spike reads the file once and removes it.
+# Environment channel, for comparison only: a second dummy value passes by
+# name with `--env NAME`, so the value is not in the podman arguments.
+if [ "$name" = bdd ]; then
+  spike_dir="$RUNNER_TEMP/pm-login-spike-w2-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+  rm -rf "$spike_dir"
+  mkdir -m 700 "$spike_dir"
+  spike_random() { od -An -tx1 -N20 /dev/urandom | tr -d ' \n'; }
+  spike_value="pmdummy_$(spike_random)"
+  (umask 077 && printf '%s' "$spike_value" > "$spike_dir/w2-token")
+  spike_value=
+  PM_SPIKE_ENV_CHANNEL="pmenvdummy_$(spike_random)"
+  export PM_SPIKE_ENV_CHANNEL
+  set -- --env "PM_SPIKE_W2_TOKEN_FILE=$spike_dir/w2-token" --env PM_SPIKE_ENV_CHANNEL "$@"
+fi
+
 # PM_TOOLS_CACHE matches check-foundation.sh, so a separate cleanup container
 # (with-stack-fixture.py --cleanup after an abrupt stop) finds the pinned Compose.
 # Run as the runner user (same UID inside and outside), not as the user
@@ -157,4 +179,4 @@ exec "$engine" run --rm --init --pull never --name "$container" \
   --env GITHUB_SHA --env GITHUB_REF --env GITHUB_EVENT_NAME --env GITHUB_EVENT_PATH \
   --env GITHUB_RUN_ID --env GITHUB_RUN_ATTEMPT --env RUNNER_TEMP --env RUNNER_NAME \
   --env GITHUB_STEP_SUMMARY \
-  "$image" "$@"
+  "$@"
