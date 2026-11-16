@@ -27,6 +27,7 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
 
 // Timer is a one-shot timer. It has no Reset, so the starter cannot re-arm a
@@ -104,6 +105,10 @@ type Config struct {
 	// StdoutTee and StderrTee, when set, also receive each output chunk.
 	StdoutTee io.Writer
 	StderrTee io.Writer
+
+	// reap waits for the process and reaps it. Nil means cmd.Wait. The Go
+	// developer tests use it to hold the reaper.
+	reap func(*exec.Cmd) error
 }
 
 func (c Config) check() error {
@@ -310,8 +315,12 @@ func Start(config Config) (*Process, error) {
 	}
 	closeAll(readyWrite, stdoutWrite, stderrWrite)
 
+	reap := config.reap
+	if reap == nil {
+		reap = (*exec.Cmd).Wait
+	}
 	go func() {
-		_ = cmd.Wait()
+		_ = reap(cmd)
 		close(process.exited)
 	}()
 	process.readers.Add(2)
@@ -358,14 +367,42 @@ func (p *Process) PID() int { return p.cmd.Process.Pid }
 // the starter reported it, or the stop sequence ended.
 func (p *Process) Done() bool { return p.done }
 
-// Running reports, without a wait, whether the process has not exited.
+// Running reports, with one observation and no wait, whether the process has
+// not exited. It does not depend on the reaper goroutine: when the exit
+// observation is still open, it asks the kernel once (exitedWithoutReaping).
 func (p *Process) Running() bool {
 	select {
 	case <-p.exited:
 		return false
 	default:
+	}
+	return !exitedWithoutReaping(p.cmd.Process.Pid)
+}
+
+// idTypePID is the waitid id type P_PID: 1 on Linux and on Darwin.
+const idTypePID = 1
+
+// siginfo holds a siginfo_t: 128 bytes on Linux and 104 bytes on Darwin.
+// Only si_signo, the first int of the structure on both, is read.
+type siginfo struct {
+	signo int32
+	_     [63]int32
+}
+
+// exitedWithoutReaping makes one waitid call with WEXITED, WNOHANG and
+// WNOWAIT. The call reports an exited child without reaping it, so the reaper
+// still gets the exit status. With WNOHANG and no exited child, si_signo stays
+// 0; for an exited child it is SIGCHLD. ECHILD means that the reaper already
+// reaped the child. Any other error counts as an exit, so that a check of a
+// running process fails rather than passes.
+func exitedWithoutReaping(pid int) bool {
+	var info siginfo
+	_, _, errno := syscall.Syscall6(syscall.SYS_WAITID, idTypePID, uintptr(pid),
+		uintptr(unsafe.Pointer(&info)), syscall.WEXITED|syscall.WNOHANG|syscall.WNOWAIT, 0, 0)
+	if errno != 0 {
 		return true
 	}
+	return info.signo == int32(syscall.SIGCHLD)
 }
 
 // Snapshot returns the current report without a wait.
