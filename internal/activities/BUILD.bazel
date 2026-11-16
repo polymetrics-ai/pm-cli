@@ -46,3 +46,15 @@ go_test(
         "@io_temporal_go_sdk//worker",
     ],
 )
+
+go_test(
+    name = "claim_lost_test",
+    srcs = ["claim_lost_test.go"],
+    embed = [":activities"],
+    deps = [
+        "//internal/app",
+        "//internal/store",
+        "@io_temporal_go_sdk//activity",
+        "@io_temporal_go_sdk//temporal",
+    ],
+)
