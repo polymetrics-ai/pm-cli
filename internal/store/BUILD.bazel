@@ -71,6 +71,7 @@ go_test(
         "bootstrap_test.go",
         "event_test.go",
         "lease_test.go",
+        "membership_update_migration_test.go",
         "migrate_test.go",
         "permit_expiry_test.go",
         "rls_test.go",
