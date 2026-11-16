@@ -805,6 +805,10 @@ func loadImageLock(root string) (map[string]string, error) {
 			Repository: "docker.io/library/caddy", Tag: "2.11.4",
 			IndexDigest: "sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017",
 		},
+		"keycloak": {
+			Repository: "docker.io/keycloak/keycloak", Tag: "26.8.1",
+			IndexDigest: "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332",
+		},
 		"postgres": {
 			Repository: "docker.io/library/postgres", Tag: postgresVersion,
 			IndexDigest: "sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94",
