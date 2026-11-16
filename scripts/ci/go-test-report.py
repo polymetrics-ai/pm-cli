@@ -186,8 +186,10 @@ def run_command(command, output, deadline, limit):
         finally:
             for number, handler in previous.items():
                 signal.signal(number, handler)
-            # A test process that outlives the command must not keep running.
-            forward(signal.SIGKILL, None)
+            # CANARY (issue #272, never merge): on Linux, a test process that
+            # outlives the command keeps running. test_setup.py must fail.
+            if not sys.platform.startswith("linux"):
+                forward(signal.SIGKILL, None)
     if status < 0:
         status = 128 - status
     return status, timed_out
