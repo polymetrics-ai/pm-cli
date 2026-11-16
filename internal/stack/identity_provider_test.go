@@ -269,6 +269,11 @@ func TestComposeSourceAdmitsTheSecondLoopbackBindingOnlyForTheIdentityProvider(t
 		{name: "shared stack network", identity: func(d map[string]any) { keycloak(d)["networks"] = []any{"stack-private"} }, wantRefuse: "keycloak"},
 		{name: "host network", identity: func(d map[string]any) { keycloak(d)["network_mode"] = "host" }, wantRefuse: "keycloak"},
 		{name: "image user", identity: func(d map[string]any) { delete(keycloak(d), "user") }, wantRefuse: "keycloak"},
+		{name: "optimized start without a persisted build", identity: func(d map[string]any) {
+			keycloak(d)["command"] = []any{"start", "--optimized", "--import-realm"}
+		}, wantRefuse: "no persisted build"},
+		{name: "development start", identity: func(d map[string]any) { keycloak(d)["command"] = []any{"start-dev"} }, wantRefuse: "no persisted build"},
+		{name: "read-only build output", identity: func(d map[string]any) { keycloak(d)["tmpfs"] = []any{"/tmp:size=64m"} }, wantRefuse: "no persisted build"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := map[string]any{"services": map[string]any{"postgres": map[string]any{
@@ -281,6 +286,8 @@ func TestComposeSourceAdmitsTheSecondLoopbackBindingOnlyForTheIdentityProvider(t
 				"security_opt": []any{"no-new-privileges:true"},
 				"ports":        []any{identityProviderBinding},
 				"networks":     []any{identityProviderNetwork},
+				"command":      []any{"start", "--import-realm"},
+				"tmpfs":        []any{"/tmp:size=64m", identityProviderBuildOutput + ":size=64m"},
 			}}}
 			if test.base != nil {
 				test.base(base)

@@ -198,7 +198,7 @@ PROVIDER_LOG_MARKERS = {
     "read-only-file-system": re.compile(rb"Read-only file system"),
     "permission-denied": re.compile(rb"Permission denied|AccessDeniedException"),
     "out-of-memory": re.compile(rb"OutOfMemoryError"),
-    "build-option": re.compile(rb"(?i)build[ -]time option|--optimized"),
+    "build-option": re.compile(rb"(?i)build[ -]time option|first ever server start"),
 }
 EXPECTED_COMPOSE_DIGESTS = {
     "darwin-arm64": "998735c9b6fe68a4f05895e6ea73d71ad06f9fc7046383ad89e47346781b6af5",
@@ -1832,7 +1832,8 @@ def validate_stack_container(
         raise FixtureError("container mounts changed or escaped the owned fixture")
     tmpfs = value.get("tmpfs")
     if identity:
-        if not isinstance(tmpfs, dict) or set(tmpfs) != {"/tmp", "/opt/keycloak/data"}:
+        build_output = "/opt/keycloak/lib/quarkus"
+        if not isinstance(tmpfs, dict) or set(tmpfs) != {"/tmp", "/opt/keycloak/data", build_output}:
             raise FixtureError("identity provider tmpfs bounds changed")
         if tmpfs_options(tmpfs["/tmp"], podman) not in (
             {"mode=1777", "size=67108864"},
@@ -1840,6 +1841,9 @@ def validate_stack_container(
         ) or tmpfs_options(tmpfs["/opt/keycloak/data"], podman) not in (
             {"mode=1777", "size=134217728"},
             {"mode=1777", "size=128m"},
+        ) or tmpfs_options(tmpfs[build_output], podman) - {"tmpcopyup"} not in (
+            {"mode=0770", "size=67108864"},
+            {"mode=0770", "size=64m"},
         ):
             raise FixtureError("identity provider tmpfs options changed")
     elif service == "caddy":
@@ -2506,7 +2510,7 @@ def verify_identity_provider(
     report("identity provider: pm-stack refused a " + ", a ".join(refused) + " identity provider host")
     report(
         f"identity provider: hardened container: user {user} (not root), every capability dropped, "
-        "no new privileges, read-only root file system, tmpfs /tmp and data, "
+        "no new privileges, read-only root file system, tmpfs /tmp, data and build output, "
         "1536 MiB memory, 512 processes, 2 CPUs, its own identity network"
     )
     report("identity provider: test realm admin client token holds only realm-management roles " + ", ".join(roles))

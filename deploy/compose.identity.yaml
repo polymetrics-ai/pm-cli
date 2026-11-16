@@ -17,14 +17,19 @@ services:
     read_only: true
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
-    # Production mode on the image's own build. HTTPS only. The strict
-    # hostname is the exact issuer origin. The dev-file database is in the
-    # memory-backed /opt/keycloak/data and goes with the container. Health and
-    # metrics stay disabled, so no management listener starts. No bootstrap
-    # administrator is configured.
+    # Production start mode. HTTPS only. The strict hostname is the exact
+    # issuer origin. The dev-file database is in the memory-backed
+    # /opt/keycloak/data and goes with the container. Health and metrics stay
+    # disabled, so no management listener starts. No bootstrap administrator
+    # is configured.
+    #
+    # No --optimized: the stock image has no persisted Keycloak build, and
+    # Keycloak 26.8.1 refuses --optimized on the first start of such a server.
+    # start builds once into the /opt/keycloak/lib/quarkus tmpfs, which starts
+    # with a copy of the image's build output (tmpcopyup), then starts the
+    # server. The rest of the root file system stays read-only.
     command:
       - start
-      - --optimized
       - --import-realm
       - --http-enabled=false
       - --https-port=8443
@@ -41,6 +46,7 @@ services:
     tmpfs:
       - /tmp:size=64m,mode=1777
       - /opt/keycloak/data:size=128m,mode=1777
+      - /opt/keycloak/lib/quarkus:size=64m,mode=0770,tmpcopyup
     networks: [identity-private]
     cpus: 2.0
     mem_limit: 1536m

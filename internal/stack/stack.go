@@ -53,6 +53,7 @@ const (
 	identityProviderBinding          = "${PM_STACK_IDENTITY_PROVIDER_HOST:?}:${PM_STACK_IDENTITY_PROVIDER_PORT:?}:8443"
 	identityProviderUserVariable     = "${PM_STACK_IDENTITY_PROVIDER_USER:?}"
 	identityProviderImageUser        = "1000:0"
+	identityProviderBuildOutput      = "/opt/keycloak/lib/quarkus"
 	identityProviderReadinessTimeout = 4 * time.Minute
 )
 
@@ -132,6 +133,8 @@ type composeService struct {
 	CapDrop     []string `yaml:"cap_drop"`
 	SecurityOpt []string `yaml:"security_opt"`
 	Networks    []string `yaml:"networks"`
+	Command     []string `yaml:"command"`
+	Tmpfs       []string `yaml:"tmpfs"`
 }
 
 type postgresConnection struct {
@@ -1073,6 +1076,12 @@ func validateComposeSource(root string) error {
 		!slices.Equal(provider.Networks, []string{identityProviderNetwork}) ||
 		provider.NetworkMode != "" || len(provider.Ports) != 1 {
 		return fmt.Errorf("service %q must run as the selected non-root user with no capabilities, no new privileges, a read-only root file system, its own network and one published port", identityProviderService)
+	}
+	// The pinned stock image has no persisted Keycloak build, so Keycloak
+	// refuses start --optimized. start builds once into a writable tmpfs.
+	if len(provider.Command) == 0 || provider.Command[0] != "start" || slices.Contains(provider.Command, "--optimized") ||
+		!slices.ContainsFunc(provider.Tmpfs, func(mount string) bool { return strings.HasPrefix(mount, identityProviderBuildOutput+":") }) {
+		return fmt.Errorf("service %q must run start without --optimized and with a tmpfs at %s, because the pinned stock image has no persisted build", identityProviderService, identityProviderBuildOutput)
 	}
 	return nil
 }

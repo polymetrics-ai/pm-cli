@@ -437,9 +437,11 @@ class IdentityProviderTests(unittest.TestCase):
             tmpfs = {
                 "/tmp": "size=64m,mode=1777,tmpcopyup,rw,rprivate,nosuid,nodev,noexec",
                 "/opt/keycloak/data": "size=128m,mode=1777,tmpcopyup,rw,rprivate,nosuid,nodev,noexec",
+                "/opt/keycloak/lib/quarkus": "size=64m,mode=0770,tmpcopyup,rw,rprivate,nosuid,nodev,noexec",
             }
         else:
-            tmpfs = {"/tmp": "mode=1777,size=64m", "/opt/keycloak/data": "mode=1777,size=128m"}
+            tmpfs = {"/tmp": "mode=1777,size=64m", "/opt/keycloak/data": "mode=1777,size=128m",
+                     "/opt/keycloak/lib/quarkus": "mode=0770,size=64m,tmpcopyup"}
         value = {
             "id": "f" * 64, "name": f"/{self.PROJECT}-keycloak-1", "service": "keycloak",
             "project": self.PROJECT, "oneoff": "False",
@@ -497,6 +499,8 @@ class IdentityProviderTests(unittest.TestCase):
             ("readonly_rootfs", False),
             ("tmpfs", {"/tmp": tmpfs["/tmp"]}),
             ("tmpfs", dict(tmpfs, **{"/opt/keycloak/data": "size=128m,mode=1777,exec"})),
+            ("tmpfs", {name: options for name, options in tmpfs.items() if name != "/opt/keycloak/lib/quarkus"}),
+            ("tmpfs", dict(tmpfs, **{"/opt/keycloak/lib/quarkus": "size=64m,mode=0770,notmpcopyup"})),
             ("memory", 4 << 30),
             ("pids_limit", 4096),
             ("restart", "unless-stopped"),
@@ -574,6 +578,9 @@ class IdentityProviderTests(unittest.TestCase):
                 output = noise + b"pm-stack: failed step " + code.encode() + b"\n"
                 self.assertEqual(FIXTURE.stack_failed_step(output), step or code)
         self.assertEqual(FIXTURE.stack_failed_step(noise), "unknown")
+        refusal = b"The '--optimized' flag was used for first ever server start. Please don't use this flag"
+        self.assertTrue(FIXTURE.PROVIDER_LOG_MARKERS["build-option"].search(refusal))
+        self.assertIsNone(FIXTURE.PROVIDER_LOG_MARKERS["build-option"].search(b"just add --optimized to the command"))
         log = self.READY.replace(b"Profile prod", b"ERROR [org.keycloak.quarkus.runtime.cli.ExecutionExceptionHandler] "
                                  b"(main) ERROR: /opt/keycloak/lib/quarkus: Read-only file system\nProfile prod")
         state = {"status": "exited", "exit": 1, "oom": False}
