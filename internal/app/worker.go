@@ -470,15 +470,14 @@ func (service *WorkerService) ExecuteUnit(
 	stopHeartbeats := startWorkerHeartbeats(ctx, heartbeat, progress, plan.timeouts.Heartbeat)
 	defer stopHeartbeats()
 
-	var callbackCtx context.Context
-	var cancel context.CancelFunc
+	// A reconcile callback has no accepted run deadline.
+	acceptedDeadline := plan.state.deadline
 	if plan.reconcile {
-		callbackCtx, cancel = context.WithTimeout(ctx, plan.timeouts.Transport)
-	} else {
-		callbackCtx, cancel = workerCallbackContext(
-			ctx, plan.state.deadline, plan.timeouts.Transport,
-		)
+		acceptedDeadline = time.Time{}
 	}
+	callbackCtx, cancel := workerCallbackContext(
+		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+	)
 	var observation ExecutionObservation
 	var callbackErr error
 	if plan.reconcile {
@@ -490,10 +489,6 @@ func (service *WorkerService) ExecuteUnit(
 	// PM's own objects starts after the provider callback context ends.
 	cancel()
 
-	acceptedDeadline := plan.state.deadline
-	if plan.reconcile {
-		acceptedDeadline = time.Time{}
-	}
 	publicationCtx, publicationCancel := workerPublicationContext(
 		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 	)
@@ -2450,13 +2445,17 @@ func minWorkerDuration(left, right time.Duration) time.Duration {
 	return right
 }
 
+// workerCallbackContext bounds the provider callback of one unit: Execute, or
+// Reconcile when acceptedDeadline is zero. The callback ends one transport
+// limit from now, or at the accepted run deadline when that is earlier.
 func workerCallbackContext(
 	ctx context.Context,
 	acceptedDeadline time.Time,
-	transport time.Duration,
+	_ time.Duration,
+	transportTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(transport)
-	if acceptedDeadline.Before(deadline) {
+	deadline := time.Now().Add(transportTimeout)
+	if !acceptedDeadline.IsZero() && acceptedDeadline.Before(deadline) {
 		deadline = acceptedDeadline
 	}
 	return context.WithDeadline(ctx, deadline)
