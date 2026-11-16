@@ -5108,6 +5108,16 @@ func (r DenyDeviceLoginResponse) ContentType() string {
 	return ""
 }
 
+// ExchangeDeviceLoginResponse409Headers the declared response headers of an HTTP 409 response for ExchangeDeviceLogin
+type ExchangeDeviceLoginResponse409Headers struct {
+	RetryAfter *string
+}
+
+// ExchangeDeviceLoginResponse429Headers the declared response headers of an HTTP 429 response for ExchangeDeviceLogin
+type ExchangeDeviceLoginResponse429Headers struct {
+	RetryAfter *string
+}
+
 type ExchangeDeviceLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5120,13 +5130,17 @@ type ExchangeDeviceLoginResponse struct {
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Problem403
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *Problem409
+	ApplicationproblemJSON409 *DevicePoll409
 	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
 	ApplicationproblemJSON410 *Problem410
 	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
-	ApplicationproblemJSON429 *Problem429
+	ApplicationproblemJSON429 *DevicePoll429
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *Problem503
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExchangeDeviceLoginResponse409Headers
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ExchangeDeviceLoginResponse429Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5150,7 +5164,7 @@ func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON403() *Problem403 
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON409() *Problem409 {
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON409() *DevicePoll409 {
 	return r.ApplicationproblemJSON409
 }
 
@@ -5160,7 +5174,7 @@ func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON410() *Problem410 
 }
 
 // GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
-func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON429() *Problem429 {
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON429() *DevicePoll429 {
 	return r.ApplicationproblemJSON429
 }
 
@@ -9201,7 +9215,7 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 		response.ApplicationproblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Problem409
+		var dest DevicePoll409
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -9215,7 +9229,7 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 		response.ApplicationproblemJSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest Problem429
+		var dest DevicePoll429
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -9228,6 +9242,29 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 409:
+		var headers ExchangeDeviceLoginResponse409Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 429:
+		var headers ExchangeDeviceLoginResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
 	}
 
 	return response, nil

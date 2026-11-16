@@ -181,6 +181,67 @@ func TestAuthenticatedApplicationBrowserDeviceAndSession(t *testing.T) {
 	requireIntegrationStatus(t, revokedDevice, http.StatusUnauthorized, "revoked device session")
 }
 
+// D4-2: the server states its stored device poll cadence in Retry-After on
+// 429 device_poll_too_soon and 409 device_authorization_pending, and on no
+// other exchange answer. The application runtime polls every 5 seconds.
+func TestDeviceExchangeRetryAfterStatesStoredCadence(t *testing.T) {
+	fixture := newServerIntegrationFixture(t)
+	approver := fixture.loginBrowser(t, integrationAuthTimeFresh, false)
+	deviceClient := fixture.newHTTPClient(t, false)
+	start := fixture.requestJSON(t, deviceClient, http.MethodPost, "/v1/sessions/device", map[string]any{
+		"device_id": "server-integration-device-cadence",
+	}, nil)
+	requireIntegrationStatus(t, start, http.StatusCreated, "device login start")
+	var challenge integrationDeviceChallengeDocument
+	decodeIntegrationJSON(t, start.body, &challenge, "device login challenge")
+	if challenge.PollIntervalSeconds != 5 {
+		t.Fatalf("device poll interval = %d, want the runtime's 5 seconds", challenge.PollIntervalSeconds)
+	}
+	exchange := func() integrationHTTPResponse {
+		t.Helper()
+		return fixture.requestJSON(t, deviceClient, http.MethodPost, "/v1/sessions/device/exchange", map[string]any{
+			"challenge_id": challenge.ChallengeID,
+			"proof":        challenge.DeviceProof,
+		}, nil)
+	}
+	retryAfter := func(response integrationHTTPResponse) []string {
+		return response.header.Values("Retry-After")
+	}
+
+	tooSoon := exchange()
+	requireIntegrationStatus(t, tooSoon, http.StatusTooManyRequests, "device exchange before the next poll time")
+	requireIntegrationProblemCode(t, tooSoon, "device_poll_too_soon")
+	if values := retryAfter(tooSoon); len(values) != 1 || values[0] < "1" || values[0] > "5" || len(values[0]) != 1 {
+		t.Fatalf("too-soon Retry-After = %q, want one whole second count from 1 to 5", values)
+	}
+
+	fixture.makeDevicePollEligible(t, challenge.ChallengeID)
+	pending := exchange()
+	requireIntegrationStatus(t, pending, http.StatusConflict, "pending device exchange")
+	requireIntegrationProblemCode(t, pending, "device_authorization_pending")
+	if values := retryAfter(pending); len(values) != 1 || values[0] != "5" {
+		t.Fatalf("pending Retry-After = %q, want the stored 5 second cadence", values)
+	}
+
+	approved := fixture.requestJSON(t, approver.client, http.MethodPost, "/v1/sessions/device/approve", map[string]any{
+		"challenge_id": challenge.ChallengeID,
+		"user_code":    challenge.UserCode,
+	}, approver.mutationHeaders(fixture.origin))
+	requireIntegrationStatus(t, approved, http.StatusNoContent, "browser device approval")
+	fixture.makeDevicePollEligible(t, challenge.ChallengeID)
+	session := exchange()
+	requireIntegrationStatus(t, session, http.StatusOK, "approved device exchange")
+	if values := retryAfter(session); len(values) != 0 {
+		t.Fatalf("successful exchange Retry-After = %q, want none", values)
+	}
+	used := exchange()
+	requireIntegrationStatus(t, used, http.StatusConflict, "consumed device exchange")
+	requireIntegrationProblemCode(t, used, "login_challenge_used")
+	if values := retryAfter(used); len(values) != 0 {
+		t.Fatalf("consumed exchange Retry-After = %q, want none", values)
+	}
+}
+
 type integrationMutationDocument struct {
 	ResourceID        string `json:"resource_id"`
 	ResultRevision    string `json:"result_revision"`
