@@ -404,27 +404,38 @@ func readOutputFile(file *os.File, name string) (string, error) {
 	return string(contents), nil
 }
 
-// shownOutputLimit is the most bytes of one output that a message shows.
-const shownOutputLimit = 4096
+// knownBootstrapLines are the stderr lines that a failure message may show.
+// Each is a constant of this test: the six refusal lines of ADR 0006, and
+// the line of an unknown flag for each flag that the step passes. A message
+// shows such a line only when the output is exactly that line, so a message
+// shows only text that the test already holds.
+var knownBootstrapLines = []string{
+	"pm-server: bootstrap scope is already bootstrapped",
+	"pm-server: bootstrap admin login is already bound",
+	"pm-server: bootstrap workspace name is required",
+	"pm-server: bootstrap admin subject is required",
+	"pm-server: bootstrap provider account names an undeclared connector",
+	"pm-server: bootstrap requires operator authority",
+	"pm-server: unknown flag: --config",
+	"pm-server: unknown flag: --secrets-directory",
+	"pm-server: unknown flag: --input",
+}
 
-// shown returns one output of the run for a failure message. The output can
-// hold a secret when the product is wrong, so the method reads the
-// deployment secrets directory once and checks the whole output first
-// (findSecret). It quotes clean output, at most shownOutputLimit bytes. It
-// withholds output that holds a form of a secret, and output that it cannot
-// check. The text names the file member and the form, never the value.
-func (run *bootstrapRun) shown(output string) string {
-	forms, err := readDeploymentSecrets(run.deployment.secrets)
-	if err != nil {
-		return fmt.Sprintf("(%d bytes, withheld: the deployment secrets directory could not be read)", len(output))
+// describeOutput describes one bootstrap output for a failure message. The
+// output can hold a secret when the product is wrong, and no check can find
+// every form of a secret in any output. So the description never holds raw
+// output: it gives the byte count, and it names a known line only when the
+// output is exactly that line and one line feed.
+func describeOutput(output string) string {
+	for _, line := range knownBootstrapLines {
+		if output == line+"\n" {
+			return fmt.Sprintf("%d bytes, the known line %q", len(output), line)
+		}
 	}
-	if source, found := findSecret([]byte(output), forms); found {
-		return fmt.Sprintf("(%d bytes, withheld: it holds a value from the deployment secrets directory: %s)", len(output), source)
+	if output == "" {
+		return "0 bytes"
 	}
-	if len(output) > shownOutputLimit {
-		return fmt.Sprintf("%q (the first %d of %d bytes)", output[:shownOutputLimit], shownOutputLimit, len(output))
-	}
-	return fmt.Sprintf("%q", output)
+	return fmt.Sprintf("%d bytes, not shown", len(output))
 }
 
 func (s *bootstrapScenario) runWithInput(ctx context.Context) error {
@@ -486,7 +497,7 @@ func (s *bootstrapScenario) bootstrapped(ctx context.Context, connector string) 
 	}
 	if s.last.exitCode != 0 {
 		return fmt.Errorf("the bootstrap of the deployment exited with code %d, want 0\nstdout: %s\nstderr: %s",
-			s.last.exitCode, s.last.shown(s.last.stdout), s.last.shown(s.last.stderr))
+			s.last.exitCode, describeOutput(s.last.stdout), describeOutput(s.last.stderr))
 	}
 	s.first, s.firstFile = s.input, s.inputFile
 	return nil
@@ -506,7 +517,7 @@ func (s *bootstrapScenario) exitsWithCode(want int) error {
 	}
 	if run.exitCode != want {
 		return fmt.Errorf("the bootstrap exited with code %d, want %d\nstdout: %s\nstderr: %s",
-			run.exitCode, want, run.shown(run.stdout), run.shown(run.stderr))
+			run.exitCode, want, describeOutput(run.stdout), describeOutput(run.stderr))
 	}
 	return nil
 }
@@ -517,7 +528,7 @@ func (s *bootstrapScenario) stdoutIsEmpty() error {
 		return err
 	}
 	if run.stdout != "" {
-		return fmt.Errorf("the bootstrap stdout is %s, want no byte", run.shown(run.stdout))
+		return fmt.Errorf("the bootstrap stdout is %s, want no byte", describeOutput(run.stdout))
 	}
 	return nil
 }
@@ -530,7 +541,7 @@ func (s *bootstrapScenario) stderrIsExactlyLine(line string) error {
 		return err
 	}
 	if run.stderr != line+"\n" {
-		return fmt.Errorf("the bootstrap stderr is %s, want exactly the line %q", run.shown(run.stderr), line+"\n")
+		return fmt.Errorf("the bootstrap stderr is %s, want exactly the line %q", describeOutput(run.stderr), line+"\n")
 	}
 	return nil
 }
@@ -548,11 +559,11 @@ func (s *bootstrapScenario) stdoutNamesResult(ctx context.Context) error {
 	var document map[string]any
 	if err := decoder.Decode(&document); err != nil || document == nil {
 		// The decoder error can quote a part of stdout, so the message
-		// shows only the checked output.
-		return fmt.Errorf("the bootstrap stdout is not one JSON object\nstdout: %s", run.shown(run.stdout))
+		// gives only the description of the output.
+		return fmt.Errorf("the bootstrap stdout is not one JSON object\nstdout: %s", describeOutput(run.stdout))
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("the bootstrap stdout holds more than one JSON document\nstdout: %s", run.shown(run.stdout))
+		return fmt.Errorf("the bootstrap stdout holds more than one JSON document\nstdout: %s", describeOutput(run.stdout))
 	}
 	state, err := s.readState(ctx, run.input.OrgID)
 	if err != nil {
@@ -578,7 +589,7 @@ func (s *bootstrapScenario) stdoutNamesResult(ctx context.Context) error {
 	}
 	for _, want := range wanted {
 		if want.id == "" || !names[want.id] {
-			return fmt.Errorf("the bootstrap stdout does not name %s %q\nstdout: %s", want.what, want.id, run.shown(run.stdout))
+			return fmt.Errorf("the bootstrap stdout does not name %s %q\nstdout: %s", want.what, want.id, describeOutput(run.stdout))
 		}
 	}
 	return nil
