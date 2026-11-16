@@ -205,6 +205,7 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		ResolveOperation:  composition.Resolver(),
 		Policy:            configuration.RunPolicy,
 		ResolveHTTPPolicy: configuration.ResolveHTTPPolicy,
+		ResolveDiscovery:  sqlComposition.ResolveDiscovery,
 	})
 	if err != nil {
 		return nil, errors.New("durable admission composition failed")

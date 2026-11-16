@@ -12,6 +12,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/credentials"
 	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
+	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
 var (
@@ -80,6 +81,11 @@ type sqlDeclaredOperation struct {
 	operationID string
 }
 
+type sqlDeclaredRelation struct {
+	connectorID     string
+	relationBinding string
+}
+
 type sqlBoundConnection struct {
 	declaration config.ProviderSQLConnection
 	trustAnchor []byte
@@ -93,10 +99,13 @@ type sqlBoundConnection struct {
 // credential material and never executes a statement outside one admitted
 // worker callback.
 type SQLComposition struct {
-	declared     bool
-	bounds       config.ProviderSQLBounds
-	connections  map[sqlConnectionKey]sqlBoundConnection
-	operations   map[sqlDeclaredOperation]struct{}
+	declared    bool
+	bounds      config.ProviderSQLBounds
+	connections map[sqlConnectionKey]sqlBoundConnection
+	operations  map[sqlDeclaredOperation]struct{}
+	// metadata names the declared metadata operation of each connector and
+	// relation binding. A discovery runs only that operation.
+	metadata     map[sqlDeclaredRelation]string
 	lanes        []contract.Lane
 	capabilities []contract.CapabilityRequirement
 	foundations  []contract.FoundationContract
@@ -124,6 +133,7 @@ func OpenSQLComposition(configuration SQLCompositionConfig) (*SQLComposition, er
 		bounds:      configuration.Declarations.Bounds(),
 		connections: make(map[sqlConnectionKey]sqlBoundConnection),
 		operations:  make(map[sqlDeclaredOperation]struct{}),
+		metadata:    make(map[sqlDeclaredRelation]string),
 		dialer:      configuration.Dialer,
 		now:         configuration.Now,
 	}
@@ -157,6 +167,15 @@ func OpenSQLComposition(configuration SQLCompositionConfig) (*SQLComposition, er
 			composition.operations[sqlDeclaredOperation{
 				connectorID: connection.ConnectorID, operationID: operation.OperationID,
 			}] = struct{}{}
+			if operation.Transport.StatementKind == contract.PostgreSQLStatementMetadata {
+				relation := sqlDeclaredRelation{
+					connectorID: connection.ConnectorID, relationBinding: operation.Transport.RelationBinding,
+				}
+				if _, duplicate := composition.metadata[relation]; duplicate {
+					return nil, errors.New("declared customer SQL connector declares two metadata operations for one relation binding")
+				}
+				composition.metadata[relation] = operation.OperationID
+			}
 			if err := composition.declareOperation(operation); err != nil {
 				return nil, err
 			}
@@ -334,7 +353,12 @@ func (composition *SQLComposition) execute(
 		return ExecutionObservation{}, err
 	}
 	observedAt := composition.observationTime()
-	bound, err := composition.bind(request.Scope, request.ConnectionID, request.Operation)
+	var bound sqlBoundOperation
+	if request.discovery != nil {
+		bound, err = composition.bindDiscovery(request.Scope, request.ConnectionID, request.Operation, *request.discovery)
+	} else {
+		bound, err = composition.bind(request.Scope, request.ConnectionID, request.Operation)
+	}
 	if err != nil {
 		return refusedSQLObservation(request, observedAt, err)
 	}
@@ -368,6 +392,9 @@ func (composition *SQLComposition) execute(
 		Input:    input,
 		Limits:   limits,
 	})
+	if request.discovery != nil {
+		return bound.projectDiscovery(request, observation, executeErr)
+	}
 	return bound.project(request, observation, executeErr)
 }
 
@@ -434,6 +461,107 @@ func (composition *SQLComposition) bind(
 	}, nil
 }
 
+// ResolveDiscovery resolves the one declared relation binding of a connection
+// whose snapshot binding names the resource, and the connector's declared
+// metadata operation for that relation binding. It reports false when no
+// binding, or more than one binding, names the resource, or when the
+// connector declares no metadata operation for it. It reads no selection.
+func (composition *SQLComposition) ResolveDiscovery(
+	scope contract.Scope,
+	connectionID string,
+	resource string,
+) (DeclaredDiscovery, bool) {
+	if composition == nil || !composition.declared {
+		return DeclaredDiscovery{}, false
+	}
+	connection, present := composition.connections[sqlConnectionKey{
+		orgID: scope.OrgID, workspaceID: scope.WorkspaceID, connectionID: connectionID,
+	}]
+	if !present {
+		return DeclaredDiscovery{}, false
+	}
+	var found *config.ProviderSQLRelationBinding
+	for index := range connection.declaration.Bindings {
+		if connection.declaration.Bindings[index].Snapshot.Resource != resource {
+			continue
+		}
+		if found != nil {
+			return DeclaredDiscovery{}, false
+		}
+		found = &connection.declaration.Bindings[index]
+	}
+	if found == nil {
+		return DeclaredDiscovery{}, false
+	}
+	operationID, declared := composition.metadata[sqlDeclaredRelation{
+		connectorID: connection.declaration.ConnectorID, relationBinding: found.Binding,
+	}]
+	if !declared {
+		return DeclaredDiscovery{}, false
+	}
+	return DeclaredDiscovery{
+		ConnectorID:        connection.declaration.ConnectorID,
+		OperationID:        operationID,
+		RelationBinding:    found.Binding,
+		Resource:           found.Snapshot.Resource,
+		ProviderAccountID:  found.Snapshot.ProviderAccountID,
+		PermissionRevision: found.Snapshot.PermissionRevision,
+		SourceRevision:     found.Snapshot.SourceRevision,
+	}, true
+}
+
+// bindDiscovery binds the first discovery of one declared relation from the
+// operator's relation binding, not from a selected snapshot. The relation
+// names only the declared schema and table, which the metadata statement binds
+// as parameter values. A declaration that differs from the accepted discovery
+// intent is refused before any send.
+func (composition *SQLComposition) bindDiscovery(
+	scope contract.Scope,
+	connectionID string,
+	operation contract.Operation,
+	discovery store.SchemaDiscovery,
+) (sqlBoundOperation, error) {
+	if composition == nil || !composition.declared {
+		return sqlBoundOperation{}, ErrSQLConnectionUnavailable
+	}
+	connection, present := composition.connections[sqlConnectionKey{
+		orgID: scope.OrgID, workspaceID: scope.WorkspaceID, connectionID: connectionID,
+	}]
+	if !present {
+		return sqlBoundOperation{}, fmt.Errorf("%w: no customer SQL connection is declared for this scope", ErrSQLConnectionUnavailable)
+	}
+	operationID, declared := composition.metadata[sqlDeclaredRelation{
+		connectorID: connection.declaration.ConnectorID, relationBinding: operation.Transport.RelationBinding,
+	}]
+	if !declared || operationID != operation.OperationID ||
+		operation.Transport.StatementKind != contract.PostgreSQLStatementMetadata {
+		return sqlBoundOperation{}, fmt.Errorf("%w: a discovery runs only the declared metadata operation", ErrSQLConnectionUnavailable)
+	}
+	binding, present := connection.bindings[discovery.RelationBinding]
+	if !present || discovery.ConnectionID != connectionID ||
+		discovery.ConnectorID != connection.declaration.ConnectorID ||
+		discovery.RelationBinding != operation.Transport.RelationBinding ||
+		binding.Snapshot != (config.ProviderSQLSnapshotBinding{
+			ProviderAccountID:  discovery.ProviderAccountID,
+			PermissionRevision: discovery.PermissionRevision,
+			Resource:           discovery.Resource,
+			SourceRevision:     discovery.SourceRevision,
+		}) {
+		return sqlBoundOperation{}, fmt.Errorf("%w: the declared relation differs from the accepted discovery", ErrSQLBindingUnavailable)
+	}
+	snapshotBinding := discoveryBinding(connection.declaration.Scope(), discovery)
+	if err := snapshotBinding.Validate(); err != nil {
+		return sqlBoundOperation{}, fmt.Errorf("%w: the discovery binding is unusable", ErrSQLBindingUnavailable)
+	}
+	return sqlBoundOperation{
+		declaration: connection.declaration,
+		trustAnchor: connection.trustAnchor,
+		relation:    pmruntime.SQLRelation{Binding: binding.Binding, Schema: binding.Schema, Name: binding.Table},
+		writable:    map[string]struct{}{},
+		discovery:   &snapshotBinding,
+	}, nil
+}
+
 // limits projects the declared finite bounds onto one exact attempt. The
 // transport re-validates them before any physical work, so an unusable declared
 // bound refuses there instead of being silently widened here. MaxAttempts is the
@@ -467,6 +595,9 @@ type sqlBoundOperation struct {
 	trustAnchor []byte
 	relation    pmruntime.SQLRelation
 	writable    map[string]struct{}
+	// discovery is the snapshot binding of a first discovery. It is set only
+	// by bindDiscovery, whose relation names no columns.
+	discovery *schema.Binding
 }
 
 // sqlRelation builds the transport relation from the declared binding and the
@@ -762,6 +893,67 @@ func (bound sqlBoundOperation) project(
 	return ExecutionObservation{
 		Result:   result,
 		Outcomes: sqlMemberOutcomes(request, state, observedAt),
+	}, errors.Join(projectionErr, executeErr)
+}
+
+// projectDiscovery settles one discovery attempt. Only a committed, complete
+// observation succeeds and carries the observed snapshot; a truncated, empty,
+// partial or failed observation is rejected and carries no snapshot.
+func (bound sqlBoundOperation) projectDiscovery(
+	request ExecutionRequest,
+	observation pmruntime.SQLObservation,
+	executeErr error,
+) (ExecutionObservation, error) {
+	observedAt := observation.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	observedAt = observedAt.UTC()
+	state := contract.OutcomeUnsent
+	var result *contract.ActionResult
+	var observed *schema.Snapshot
+	var projectionErr error
+	switch observation.Outcome {
+	case pmruntime.SQLOutcomeKnownCommit:
+		state = contract.OutcomeRejected
+		if observation.Truncated {
+			projectionErr = ErrSQLRowBoundExceeded
+			break
+		}
+		if bound.discovery == nil {
+			projectionErr = fmt.Errorf("%w: the discovery has no snapshot binding", ErrSQLBindingUnavailable)
+			break
+		}
+		candidate, err := discoverRelation(*bound.discovery, request.Operation.OperationID, observation.Rows)
+		if err != nil {
+			projectionErr = fmt.Errorf("%w: %v", ErrSchemaDiscoveryIncomplete, err)
+			break
+		}
+		if !candidate.Completeness.Complete {
+			projectionErr = ErrSchemaDiscoveryIncomplete
+			break
+		}
+		snapshot, err := candidate.Snapshot()
+		if err != nil {
+			projectionErr = fmt.Errorf("%w: %v", ErrSchemaDiscoveryIncomplete, err)
+			break
+		}
+		result, projectionErr = bound.result(observation)
+		if projectionErr != nil {
+			result = nil
+			break
+		}
+		observed = &snapshot
+		state = contract.OutcomeSucceeded
+	case pmruntime.SQLOutcomeUnknownCommit:
+		state = contract.OutcomeUnknown
+	default:
+		state = contract.OutcomeUnsent
+	}
+	return ExecutionObservation{
+		Result:    result,
+		Outcomes:  sqlMemberOutcomes(request, state, observedAt),
+		Discovery: observed,
 	}, errors.Join(projectionErr, executeErr)
 }
 

@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
+	"github.com/polymetrics-ai/pm-cli/internal/schema"
+	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
 var (
@@ -41,6 +43,9 @@ type ExecutionRequest struct {
 
 	physicalCall *workerPhysicalCallBoundary
 	continuation *boundContinuationCodec
+	// discovery is the accepted intent of a schema discovery run. It is set
+	// only by the worker for a run that admission recorded as a discovery.
+	discovery *store.SchemaDiscovery
 }
 
 // ExecutionObservation is the immediate typed observation returned by an
@@ -52,6 +57,9 @@ type ExecutionObservation struct {
 	Result   *contract.ActionResult
 	Outcomes []contract.MemberOutcome
 	HTTP     *HTTPAttemptObservation
+	// Discovery is the complete snapshot one discovery observed. Settlement
+	// stores it as a candidate only with a succeeded member outcome.
+	Discovery *schema.Snapshot
 }
 
 // ExecutionCallback is implemented by a real shared execution engine.

@@ -274,6 +274,7 @@ type sqlExecutionTuning struct {
 	wrongWorkspace  bool
 	noSnapshot      bool
 	wrongCredential bool
+	noCredential    bool
 }
 
 // sqlExecutionRun is the durable settlement of one executed unit together with
@@ -444,6 +445,19 @@ func (harness *sqlExecutionHarness) executeOperation(
 ) sqlExecutionRun {
 	t.Helper()
 	admitted := harness.admitRun(t, operationID, lane, input, requestKey)
+	return harness.executeAdmitted(t, temporal, operationID, admitted)
+}
+
+// executeAdmitted drives the production planner and the shared SQL callback
+// for one admitted run, settles the unit, and reports the durable outcome and
+// the physical facts this case observed from outside the transport.
+func (harness *sqlExecutionHarness) executeAdmitted(
+	t *testing.T,
+	temporal *permitTemporalHarness,
+	operationID string,
+	admitted api.AdmissionResponse,
+) sqlExecutionRun {
+	t.Helper()
 	before := harness.customer.dials.Load()
 	run := preparePermitWorkerRun(
 		t, harness.fixture, harness.service, temporal, harness.fixture.Scope, harness.fixture.Actor, admitted,
@@ -713,6 +727,7 @@ func newSQLExecutionHarness(
 			Registry:          registry,
 			ResolveOperation:  resolver,
 			ResolveHTTPPolicy: nil,
+			ResolveDiscovery:  composition.ResolveDiscovery,
 			Policy:            httpDirectReadAdmissionPolicy(),
 			Random:            rand.Reader,
 		})
@@ -736,7 +751,9 @@ func newSQLExecutionHarness(
 	key := []byte("0123456789abcdef0123456789abcdef")
 	t.Cleanup(func() { clear(key) })
 	loader := &sqlExecutionKeyLoader{key: key}
-	seedSQLExecutionCredential(t, fixture, key, []byte(harness.customer.rolePassword))
+	if !tuning.noCredential {
+		seedSQLExecutionCredential(t, fixture, key, []byte(harness.customer.rolePassword))
+	}
 	service, err := app.NewWorkerService(app.WorkerServiceConfig{
 		Pool:                      fixture.Pool,
 		DeploymentID:              fixture.DeploymentID,

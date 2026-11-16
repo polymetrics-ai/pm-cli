@@ -619,6 +619,10 @@ func (service *WorkerService) prepareWorkerUnit(
 		if err != nil {
 			return err
 		}
+		discovery, err := loadWorkerDiscovery(ctx, tx, state, task, selection, handler)
+		if err != nil {
+			return err
+		}
 		connection, err := store.LoadConnection(ctx, tx, state.input.ConnectionID)
 		if err != nil {
 			return err
@@ -771,6 +775,11 @@ func (service *WorkerService) prepareWorkerUnit(
 			if err := service.requireCurrentWorkerAuthorization(ctx, tx, state, task.OperationID); err != nil {
 				return err
 			}
+			if discovery != nil {
+				if err := service.requireCurrentDiscoveryAuthorization(ctx, tx, state, task.OperationID); err != nil {
+					return err
+				}
+			}
 		}
 
 		attemptRef, err := workerAttemptRef(state.route.Scope, task, dispatch.Intent)
@@ -826,6 +835,7 @@ func (service *WorkerService) prepareWorkerUnit(
 			AttemptNumber: dispatch.AttemptNumber,
 			Operation:     selection.Operation,
 			Input:         state.input.Input, Controls: state.input.ResultControls, Deadline: state.deadline,
+			discovery: discovery,
 		}
 		if state.budget.Policy.HTTP != nil {
 			plan.request.HTTPPolicy = *state.budget.Policy.HTTP
@@ -1094,6 +1104,19 @@ func (service *WorkerService) settleWorkerUnit(
 		)
 		if err != nil {
 			return err
+		}
+		if plan.request.discovery != nil {
+			candidate, stored, err := settledDiscoveryCandidate(
+				state.route.Scope, *plan.request.discovery, observation.Discovery, outcomes, callbackErr,
+			)
+			if err != nil {
+				return workerFailure(ErrWorkerConflict, err)
+			}
+			if stored {
+				if _, err := store.StoreSchemaCandidate(ctx, tx, candidate); err != nil {
+					return err
+				}
+			}
 		}
 		commit := workerSettlementCommit(
 			plan.lease,
@@ -1578,6 +1601,61 @@ func (service *WorkerService) requireCurrentWorkerAuthorization(
 		Permission:   "operation.invoke",
 		ResourceKind: auth.ResourceRun,
 		ResourceID:   state.record.Spec.RunID,
+		ConnectionID: state.input.ConnectionID,
+		OperationID:  operationID,
+	})
+	if err != nil {
+		return workerFailure(ErrWorkerAuthorization, err)
+	}
+	if !grant.Scope.Equal(state.route.Scope) || !grant.Actor.Equal(state.route.Actor) {
+		return workerFailure(ErrWorkerAuthorization, auth.ErrGrantUnavailable)
+	}
+	return nil
+}
+
+// loadWorkerDiscovery returns the accepted discovery intent of the run, or nil
+// when the run is not a discovery. A discovery runs only the declared metadata
+// operation of its own relation binding, through the SQL handler, in the
+// direct_read lane of its own connection.
+func loadWorkerDiscovery(
+	ctx context.Context,
+	tx *store.Transaction,
+	state workerRunState,
+	task contract.Task,
+	selection OperationSelection,
+	handler ResolvedHandler,
+) (*store.SchemaDiscovery, error) {
+	discovery, err := store.LoadSchemaDiscovery(ctx, tx, state.record.Spec.RunID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	operation := selection.Operation
+	if discovery.ConnectionID != state.input.ConnectionID || handler.Kind != HandlerSQL ||
+		task.Lane != contract.LaneDirectRead ||
+		operation.Transport.StatementKind != contract.PostgreSQLStatementMetadata ||
+		operation.Transport.RelationBinding != discovery.RelationBinding {
+		return nil, workerFailure(ErrWorkerConflict, errors.New("discovery intent differs from the accepted run"))
+	}
+	return &discovery, nil
+}
+
+// requireCurrentDiscoveryAuthorization rechecks the connection.manage
+// permission that admitted the discovery, against the current grants, before
+// any provider I/O.
+func (service *WorkerService) requireCurrentDiscoveryAuthorization(
+	ctx context.Context,
+	tx *store.Transaction,
+	state workerRunState,
+	operationID string,
+) error {
+	grant, err := RecheckRunGrant(ctx, tx, service.authorization, RunGrantCheck{
+		RunID:        state.record.Spec.RunID,
+		Permission:   "connection.manage",
+		ResourceKind: auth.ResourceConnection,
+		ResourceID:   state.input.ConnectionID,
 		ConnectionID: state.input.ConnectionID,
 		OperationID:  operationID,
 	})
