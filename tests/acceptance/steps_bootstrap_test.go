@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -575,47 +574,20 @@ func collectStrings(value any, names map[string]bool) {
 }
 
 // stdoutHoldsNoSecret reads each file of the deployment secrets directory
-// once. stdout must not hold the contents of a file, a line of eight or more
-// bytes of a file, or the password of a connection string in a file.
+// once. stdout must hold no form of a secret value (secretForms), in its raw
+// bytes or in a decoded JSON string. The message names the file member and
+// the form, never the value.
 func (s *bootstrapScenario) stdoutHoldsNoSecret() error {
 	run, err := s.lastRun()
 	if err != nil {
 		return err
 	}
-	var values []string
-	err = filepath.WalkDir(run.deployment.secrets, func(path string, entry fs.DirEntry, walkErr error) error {
-		if walkErr != nil || !entry.Type().IsRegular() {
-			return walkErr
-		}
-		contents, err := readBoundedFile(path, laneFileLimit)
-		if err != nil {
-			return err
-		}
-		text := strings.TrimSpace(string(contents))
-		values = append(values, text)
-		for _, line := range strings.Split(text, "\n") {
-			if line = strings.TrimSpace(line); len(line) >= 8 {
-				values = append(values, line)
-			}
-		}
-		if parsed, err := url.Parse(text); err == nil && parsed.User != nil {
-			if password, ok := parsed.User.Password(); ok && password != "" {
-				values = append(values, password, url.QueryEscape(password))
-			}
-		}
-		return nil
-	})
+	forms, err := readDeploymentSecrets(run.deployment.secrets)
 	if err != nil {
-		return fmt.Errorf("read the deployment secrets directory: %w", err)
+		return err
 	}
-	if len(values) == 0 {
-		return errors.New("the deployment secrets directory holds no file")
-	}
-	for _, value := range values {
-		if value != "" && strings.Contains(run.stdout, value) {
-			// The message names no secret value.
-			return errors.New("the bootstrap stdout holds a value from the deployment secrets directory")
-		}
+	if source, found := findSecret([]byte(run.stdout), forms); found {
+		return fmt.Errorf("the bootstrap stdout holds a value from the deployment secrets directory: %s", source)
 	}
 	return nil
 }
