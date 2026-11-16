@@ -14,6 +14,8 @@ import (
 	"net/http/httptrace"
 	"net/url"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -443,7 +445,67 @@ func (transport *diagnostic279Transport) RoundTrip(request *http.Request) (*http
 	response.Body = &diagnostic279Body{ReadCloser: response.Body, closed: func() {
 		once.Do(func() { trace.write(sequence, method, response.StatusCode, budget, headers, time.Now(), false) })
 	}}
+	if method == http.MethodPut && response.StatusCode >= 200 && response.StatusCode < 300 {
+		diagnostic310AfterFirstWrite()
+	}
 	return response, nil
+}
+
+// DIAGNOSTIC ONLY (issue #310 canary). Never merge.
+//
+// diagnostic310AfterFirstWrite starts the volume probe of the artifact bucket
+// once, after the first object write that succeeds in the whole run. A marker
+// file in the module's .cache directory makes later test binaries of the same
+// run skip it. The probe runs in the background, so the write does not wait
+// for it. It prints counts and its UTC time only.
+var diagnostic310Once sync.Once
+
+func diagnostic310AfterFirstWrite() {
+	diagnostic310Once.Do(func() {
+		root, ok := diagnostic310ModuleRoot()
+		if !ok {
+			return
+		}
+		marker, err := os.OpenFile(filepath.Join(root, ".cache", "pm310-first-write"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err != nil {
+			return
+		}
+		_ = marker.Close()
+		fmt.Fprintf(os.Stderr, "pm310-volumes: moment=first_write_answered utc=%s\n", time.Now().UTC().Format(time.RFC3339Nano))
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			output, _ := exec.CommandContext(ctx, "python3", "-I", "-B",
+				filepath.Join(root, "scripts", "ci", "canary-seaweed-volumes.py"), "after_first_write").CombinedOutput()
+			for _, line := range strings.Split(string(output), "\n") {
+				if strings.HasPrefix(line, "pm310-volumes: ") {
+					fmt.Fprintln(os.Stderr, line)
+				}
+			}
+		}()
+	})
+}
+
+// diagnostic310ModuleRoot is the nearest directory above the working
+// directory that holds go.mod and the probe script.
+func diagnostic310ModuleRoot() (string, bool) {
+	directory, err := os.Getwd()
+	if err != nil {
+		return "", false
+	}
+	for {
+		if _, err := os.Stat(filepath.Join(directory, "go.mod")); err == nil {
+			if _, err := os.Stat(filepath.Join(directory, "scripts", "ci", "canary-seaweed-volumes.py")); err == nil {
+				return directory, true
+			}
+			return "", false
+		}
+		parent := filepath.Dir(directory)
+		if parent == directory {
+			return "", false
+		}
+		directory = parent
+	}
 }
 
 func (trace *diagnostic279Trace) write(

@@ -359,7 +359,7 @@ def main():
     return status or (1 if failures or problem or problems or skip_failure else 0)
 
 
-DIAGNOSTIC_279 = re.compile(r"(pm279-(?:unit|object|upload|bind): .*)$")
+DIAGNOSTIC_279 = re.compile(r"(pm279-(?:unit|object|upload|bind): .*|pm310-volumes: .*)$")
 
 
 def diagnostic_279(order, output):

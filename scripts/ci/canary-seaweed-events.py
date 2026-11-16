@@ -4,12 +4,17 @@
 After the stack run, and before the fixture cleanup, print the volume events
 of the SeaweedFS master, volume and filer services of the fixture project.
 
-Each printed event holds four fixed fields only: the UTC time that the
-container engine recorded for the log line, the service, an event kind from
-the fixed list below, and the volume ID (digits only). The script prints no
-log text, so no printed line holds an address, a host name, a path, a
-collection or a bucket name. It never changes the exit status of the stack
-run: it always exits 0.
+Each printed event holds fixed fields only: the UTC time that the container
+engine recorded for the log line, the service, an event kind from the fixed
+list below, the volume ID (digits only), and whether the line names the
+artifact bucket (bucket=yes or bucket=no, only for kinds whose text names a
+collection). The script prints no log text, so no printed line holds an
+address, a host name, a path, a collection or a bucket name. It never changes
+the exit status of the stack run: it always exits 0.
+
+For the artifact bucket, it also prints the growth time from the master's and
+the volume server's own log times: from the master's growth request to the
+volume server's new volume, and to the master's registration of that volume.
 
 The patterns match the messages that SeaweedFS 4.46 writes at the default
 verbosity (weed/server/master_grpc_server_volume.go,
@@ -17,6 +22,7 @@ weed/server/master_grpc_server_assign.go, weed/topology/volume_growth.go and
 weed/storage/store.go).
 """
 import datetime
+import json
 import os
 import re
 import subprocess
@@ -46,8 +52,12 @@ KINDS = (
 )
 LEVEL_KINDS = {"W": "warning", "E": "error", "F": "fatal"}
 CPU_FIELDS = ("usage_usec", "nr_periods", "nr_throttled", "throttled_usec")
-# glog: Lmmdd hh:mm:ss.uuuuuu threadid file:line] message
-GLOG = re.compile(r"^([IWEF])\d{4} \d{2}:\d{2}:\d{2}\.\d+\s+\d+\s+\S+:\d+\]\s?(.*)$")
+# The glog fork of SeaweedFS 4.46 (weed/glog/glog.go, formatHeader) writes
+# "Lmmdd hh:mm:ss.uuuuuu file:line message": no thread ID and no "]", although
+# its comment shows both. The pattern also accepts the classic glog form.
+GLOG = re.compile(r"^([IWEF])\d{4} \d{2}:\d{2}:\d{2}\.\d+ +(?:\d+ +)?[^\s:]+:\d+\]? (.*)$")
+# The kinds whose message names a collection.
+NAMES_COLLECTION = ("grow_request", "grow_request_failed", "volume_added")
 STAMP = re.compile(r"^(\d{4}-\d{2}-\d{2})T(\d{2}:\d{2}:\d{2})(?:\.(\d+))?(Z|[+-]\d{2}:\d{2})\s(.*)$")
 
 
@@ -76,8 +86,9 @@ def docker(arguments):
     return done.stdout + done.stderr
 
 
-def classify(message):
-    """Return the event kind and the volume ID of one glog message, or None."""
+def classify(message, bucket):
+    """Return the event kind, the volume ID and the bucket mark of one glog
+    message, or None."""
     match = GLOG.match(message)
     if not match:
         return None
@@ -86,10 +97,59 @@ def classify(message):
         found = pattern.search(text)
         if found:
             volume = next((group for group in found.groups() if group), "-")
-            return kind, volume
+            mark = ("yes" if bucket and bucket in text else "no") if kind in NAMES_COLLECTION else "-"
+            return kind, volume, mark
     if level in LEVEL_KINDS:
-        return LEVEL_KINDS[level], "-"
+        return LEVEL_KINDS[level], "-", "-"
     return None
+
+
+def bucket_name(project):
+    """The artifact bucket of the fixture: the configured name, or the
+    fixture's own rule (project + "-artifacts")."""
+    try:
+        with open(os.environ.get("PM_STACK_TEST_CONFIG", ""), encoding="utf-8") as handle:
+            bucket = json.load(handle)["artifacts"]["bucket"]
+        if isinstance(bucket, str) and bucket:
+            return bucket
+    except (OSError, ValueError, KeyError, TypeError):
+        pass
+    return project + "-artifacts"
+
+
+def milliseconds(start, end):
+    if start is None or end is None:
+        return "-"
+    return f"{(end - start).total_seconds() * 1000:.1f}"
+
+
+def growth(all_events):
+    """Print the growth time of the first artifact bucket volume.
+
+    The master's "volume grow" line prints its request with a pointer, so it
+    does not name the collection. The volume server's "adds volume" line
+    names it. So the bucket's first volume is the first volume that the
+    volume server adds for the bucket. Its request is the last growth request
+    of the master at or before that time, and its registration is the
+    master's "Registered Volume" line with the same volume ID."""
+    added = next((event for event in all_events
+                  if event[1] == "seaweed-volume" and event[2] == "volume_added" and event[4] == "yes"), None)
+    request = registered = None
+    if added is not None:
+        for event in all_events:
+            if (event[1] == "seaweed-master" and event[2] == "grow_request" and event[0] is not None
+                    and added[0] is not None and event[0] <= added[0]):
+                request = event
+        registered = next((event for event in all_events
+                           if event[1] == "seaweed-master" and event[2] == "volume_registered"
+                           and event[3] == added[3]), None)
+    def stamp(event):
+        return event[0].strftime("%Y-%m-%dT%H:%M:%S.%fZ") if event and event[0] else "-"
+    print(f"pm310-growth: bucket_volume={added[3] if added else '-'} "
+          f"request_utc={stamp(request)} volume_added_utc={stamp(added)} "
+          f"volume_registered_utc={stamp(registered)} "
+          f"request_to_added_ms={milliseconds(request and request[0], added and added[0])} "
+          f"request_to_registered_ms={milliseconds(request and request[0], registered and registered[0])}")
 
 
 def main():
@@ -98,6 +158,8 @@ def main():
         print("pm310-seaweed: no valid fixture project in the environment")
         return 0
     print(f"pm310-seaweed: receipt at {datetime.datetime.now(datetime.timezone.utc).isoformat()}")
+    bucket = bucket_name(project)
+    all_events = []
     for service in SERVICES:
         ids = docker([
             "ps", "--all", "--quiet",
@@ -120,17 +182,19 @@ def main():
                 stamped = STAMP.match(line)
                 if not stamped:
                     continue
-                result = classify(stamped.group(5))
+                result = classify(stamped.group(5), bucket)
                 if result is None:
                     continue
                 moment = utc(*stamped.group(1, 2, 3, 4))
-                kind, volume = result
+                kind, volume, mark = result
                 counts[kind] = counts.get(kind, 0) + 1
-                events.append((moment, kind, volume))
+                events.append((moment, kind, volume, mark))
             events.sort(key=lambda event: event[0] or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc))
-            for moment, kind, volume in events[:MAX_EVENTS]:
+            for moment, kind, volume, mark in events[:MAX_EVENTS]:
                 stamp = moment.strftime("%Y-%m-%dT%H:%M:%S.%fZ") if moment else "-"
-                print(f"pm310-seaweed: utc={stamp} service={service} container={ordinal} kind={kind} volume={volume}")
+                print(f"pm310-seaweed: utc={stamp} service={service} container={ordinal} kind={kind} "
+                      f"volume={volume} bucket={mark}")
+                all_events.append((moment, service, kind, volume, mark))
             summary = " ".join(f"{kind}={count}" for kind, count in sorted(counts.items())) or "none"
             print(f"pm310-seaweed-summary: service={service} container={ordinal} lines={lines} "
                   f"events={len(events)} printed={min(len(events), MAX_EVENTS)} {summary}")
@@ -147,6 +211,8 @@ def main():
                     fields[name] = value.strip()
             print(f"pm310-seaweed-cpu: service={service} container={ordinal} " +
                   " ".join(f"{name}={fields.get(name, '-')}" for name in CPU_FIELDS))
+    all_events.sort(key=lambda event: event[0] or datetime.datetime.min.replace(tzinfo=datetime.timezone.utc))
+    growth(all_events)
     return 0
 
 
