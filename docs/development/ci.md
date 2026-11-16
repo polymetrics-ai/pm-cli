@@ -284,20 +284,31 @@ and the Podman socket gives a job full control of that user's containers.
 
 Mitigations:
 
-- Only events from `karthik-sivadas` on this repository run: open same-repo PRs
-  against `main` and non-forced pushes to `main`. Both the workflow `if:` guards
-  and the admission hook check this before any step runs. Keep fork PR workflows
-  disabled.
+- Only push events from `karthik-sivadas` to this repository run. A push to
+  any branch starts CI (`bdd.yml`: `branches: ["**"]`). A deleted ref and a
+  force-push to `main` do not run. Pull request events do not start CI, so a
+  fork pull request never reaches the runners. Both the workflow `if:` guards
+  and the admission hook check this before any step runs. Keep fork PR
+  workflows disabled.
 - Workflows have `contents: read`, use no secrets and check out with
   `persist-credentials: false`.
 - Runners are ephemeral, so a stolen runner registration is good for one job.
 - The host should run only the pm-cli runner (OD-11).
 
-Residual risk: an admitted job can change user-owned files for later jobs (the
-hook, runner binaries, the cache and the image), and it has unrestricted
-network egress. Only reviewed owner code is admitted, but a compromised test
-dependency runs with these rights. A full fix needs a root-created second
-account or a host egress rule.
+Residual risk: every push under the owner identity runs, reviewed or not.
+This includes agent branches and deliberately broken canary branches. CI runs
+them before any review. An admitted job can change user-owned files for later
+jobs (the hook, runner binaries, the cache and the image), and it has
+unrestricted network egress. A job can do this on purpose, not only through a
+compromised test dependency.
+
+The `bazel` job adds more state of this kind. A branch job can change the Bazel
+state that later `main` jobs trust: the install base, the repository download
+cache, the `main` output bases and the `main` repository contents cache (see
+[Bazel caches](#bazel-caches)). A branch job can do this on purpose, not only
+through a compromised dependency.
+
+A full fix needs a root-created second account or a host egress rule.
 
 ## Runner admission hook
 
