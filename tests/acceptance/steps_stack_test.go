@@ -57,8 +57,10 @@ type commandResult struct {
 // starter, and the result steps of the shared result state.
 func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *lane) {
 	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}}
-	sc.After(func(ctx context.Context, _ *godog.Scenario, err error) (context.Context, error) {
-		return ctx, errors.Join(err, scenario.close())
+	// godog keeps the step error. The hook returns only its own cleanup
+	// error, so the step error is reported once.
+	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+		return ctx, scenario.close()
 	})
 	sc.Step(`^a new PM deployment configuration on the job-owned stack$`, scenario.newConfiguration)
 	sc.Step(`^the starter starts (pm-server|pm-worker) and waits for its ready signal or its exit$`, scenario.startAndWait)
@@ -229,7 +231,8 @@ func (s *stackScenario) sendSIGTERM(ctx context.Context, name string) error {
 }
 
 // stillRunning is step 11. It makes one observation of the exit, with no
-// wait.
+// wait. Running does not depend on the reaper goroutine: a process that
+// exited right after its ready line does not count as running.
 func (s *stackScenario) stillRunning(name string) error {
 	started, err := s.started(name)
 	if err != nil {
