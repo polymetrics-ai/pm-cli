@@ -19,6 +19,7 @@ go_library(
         "http_execution.go",
         "http_observation.go",
         "http_retry.go",
+        "membership_updates.go",
         "provider_http_tls.go",
         "revocation.go",
         "runs.go",

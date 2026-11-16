@@ -1200,6 +1200,59 @@ paths:
           $ref: "#/components/responses/Problem428"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/memberships/{id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ResourceID"
+    patch:
+      tags: [access]
+      summary: Add connections to a workspace membership
+      operationId: updateMembership
+      description: >-
+        Adds active connections of the workspace to the membership under its current
+        control revision. An actor that holds workspace.access.manage and connection.manage
+        can add a connection to its own membership. For another membership, the actor can
+        add only connections that its own current grants hold.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MembershipUpdateRequest"
+      responses:
+        "200":
+          description: Original updated or unchanged result, or exact safe replay
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MutationResultResponse"
+                  - $ref: "#/components/schemas/MutationReplayResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/memberships/{id}/revoke:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -3358,6 +3411,32 @@ components:
             expires_at:
               type: [string, "null"]
               format: date-time
+    MembershipUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, membership]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        membership:
+          type: object
+          additionalProperties: false
+          required: [membership_ref, add_connection_ids]
+          properties:
+            membership_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            add_connection_ids:
+              type: array
+              description: Strictly sorted, unique connection IDs to add.
+              minItems: 1
+              maxItems: 256
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
     ServiceAccountCreateRequest:
       type: object
       additionalProperties: false
@@ -3496,7 +3575,7 @@ components:
               format: date-time
     MutationResultDisposition:
       type: string
-      enum: [created, revoked, unchanged]
+      enum: [created, updated, revoked, unchanged]
     MutationResultResponse:
       type: object
       additionalProperties: false

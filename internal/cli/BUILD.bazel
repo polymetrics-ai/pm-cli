@@ -38,6 +38,7 @@ go_test(
         "config_test.go",
         "connections_test.go",
         "dynamic_test.go",
+        "membership_update_test.go",
         "result_document_test.go",
         "sessions_test.go",
         "tree_test.go",
