@@ -842,10 +842,24 @@ func scopeRows(state bootstrapState) (scope, error) {
 var bootstrapAdminPermissions = []string{"connection.manage", "workspace.access.manage"}
 
 // adminAuthorityProblem describes why the membership is not the admin
-// membership of ADR 0006, or returns "". The membership must have a role,
-// hold each admin permission both as a permission and as a "permission:"
-// resource grant, list no connection at the start, and have no expiry and
-// no revocation. ADR 0006 fixes no role text, so the check compares none.
+// membership of ADR 0006, or returns "".
+//
+// The effective authority of a user comes from its membership row:
+// internal/auth/grants.go authorizeResource loads it through
+// loadActorAuthority and loadDirectAuthority (store.LoadMembershipAuthority
+// in internal/store/auth.go). It uses the permissions, connection_ids and
+// operation_ids columns, and refuses a revoked or expired membership. It
+// requires the asked permission in permissions and the asked connection in
+// connection_ids. No authorization code reads the role value. The store
+// writes resource_grants as the "permission:" form of each permission
+// (internal/store/bootstrap.go), and a membership update compares both
+// columns (internal/store/identity_mutations.go).
+//
+// So the membership must have a role, hold each admin permission both as a
+// permission and as a "permission:" resource grant, list no connection at
+// the start, and have no expiry and no revocation. ADR 0006 fixes no role
+// text, and no authorization code reads the role, so the check compares no
+// role text.
 func adminAuthorityProblem(membership scopeMembership) string {
 	if membership.Role == "" {
 		return "it has no role"
