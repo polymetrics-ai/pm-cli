@@ -73,6 +73,7 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness) {
 	sc.Step(`^the lane command exits with code (\d+)$`, scenario.result.exitCodeIs)
 	sc.Step(`^the lane command stdout contains the lane deployment ID$`, scenario.result.stdoutHasDeploymentID)
 	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.result.stderrContains)
+	registerStartedServerSteps(sc, scenario)
 }
 
 // newConfiguration is step 1. It runs the shared build and migration step,
