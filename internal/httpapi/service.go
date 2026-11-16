@@ -274,6 +274,7 @@ func policyForRequest(method, path string) (requestPolicy, bool) {
 		"GET /v1/workspaces/:workspace_id/artifacts/:artifact_id/content",
 		"GET /v1/workspaces/:workspace_id/tasks/:task_id",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id/schema",
+		"POST /v1/workspaces/:workspace_id/connections/:connection_id/schema/discoveries",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset",
 		"POST /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/cancel",
