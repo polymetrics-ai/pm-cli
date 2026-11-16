@@ -229,7 +229,8 @@ func (s *stackScenario) sendSIGTERM(ctx context.Context, name string) error {
 }
 
 // stillRunning is step 11. It makes one observation of the exit, with no
-// wait.
+// wait. Running does not depend on the reaper goroutine: a process that
+// exited right after its ready line does not count as running.
 func (s *stackScenario) stillRunning(name string) error {
 	started, err := s.started(name)
 	if err != nil {
