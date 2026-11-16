@@ -403,6 +403,29 @@ func readOutputFile(file *os.File, name string) (string, error) {
 	return string(contents), nil
 }
 
+// shownOutputLimit is the most bytes of one output that a message shows.
+const shownOutputLimit = 4096
+
+// shown returns one output of the run for a failure message. The output can
+// hold a secret when the product is wrong, so the method reads the
+// deployment secrets directory once and checks the whole output first
+// (findSecret). It quotes clean output, at most shownOutputLimit bytes. It
+// withholds output that holds a form of a secret, and output that it cannot
+// check. The text names the file member and the form, never the value.
+func (run *bootstrapRun) shown(output string) string {
+	forms, err := readDeploymentSecrets(run.deployment.secrets)
+	if err != nil {
+		return fmt.Sprintf("(%d bytes, withheld: the deployment secrets directory could not be read)", len(output))
+	}
+	if source, found := findSecret([]byte(output), forms); found {
+		return fmt.Sprintf("(%d bytes, withheld: it holds a value from the deployment secrets directory: %s)", len(output), source)
+	}
+	if len(output) > shownOutputLimit {
+		return fmt.Sprintf("%q (the first %d of %d bytes)", output[:shownOutputLimit], shownOutputLimit, len(output))
+	}
+	return fmt.Sprintf("%q", output)
+}
+
 func (s *bootstrapScenario) runWithInput(ctx context.Context) error {
 	d, err := s.deployment()
 	if err != nil {
@@ -462,7 +485,7 @@ func (s *bootstrapScenario) bootstrapped(ctx context.Context, connector string) 
 	}
 	if s.last.exitCode != 0 {
 		return fmt.Errorf("the bootstrap of the deployment exited with code %d, want 0\nstdout: %s\nstderr: %s",
-			s.last.exitCode, s.last.stdout, s.last.stderr)
+			s.last.exitCode, s.last.shown(s.last.stdout), s.last.shown(s.last.stderr))
 	}
 	s.first, s.firstFile = s.input, s.inputFile
 	return nil
@@ -481,7 +504,8 @@ func (s *bootstrapScenario) exitsWithCode(want int) error {
 		return err
 	}
 	if run.exitCode != want {
-		return fmt.Errorf("the bootstrap exited with code %d, want %d\nstdout: %s\nstderr: %s", run.exitCode, want, run.stdout, run.stderr)
+		return fmt.Errorf("the bootstrap exited with code %d, want %d\nstdout: %s\nstderr: %s",
+			run.exitCode, want, run.shown(run.stdout), run.shown(run.stderr))
 	}
 	return nil
 }
@@ -492,7 +516,7 @@ func (s *bootstrapScenario) stdoutIsEmpty() error {
 		return err
 	}
 	if run.stdout != "" {
-		return fmt.Errorf("the bootstrap stdout is %q, want no byte", run.stdout)
+		return fmt.Errorf("the bootstrap stdout is %s, want no byte", run.shown(run.stdout))
 	}
 	return nil
 }
@@ -505,7 +529,7 @@ func (s *bootstrapScenario) stderrIsExactlyLine(line string) error {
 		return err
 	}
 	if run.stderr != line+"\n" {
-		return fmt.Errorf("the bootstrap stderr is %q, want exactly the line %q", run.stderr, line+"\n")
+		return fmt.Errorf("the bootstrap stderr is %s, want exactly the line %q", run.shown(run.stderr), line+"\n")
 	}
 	return nil
 }
@@ -522,10 +546,12 @@ func (s *bootstrapScenario) stdoutNamesResult(ctx context.Context) error {
 	decoder := json.NewDecoder(strings.NewReader(run.stdout))
 	var document map[string]any
 	if err := decoder.Decode(&document); err != nil || document == nil {
-		return fmt.Errorf("the bootstrap stdout is not one JSON object: %v\nstdout: %s", err, run.stdout)
+		// The decoder error can quote a part of stdout, so the message
+		// shows only the checked output.
+		return fmt.Errorf("the bootstrap stdout is not one JSON object\nstdout: %s", run.shown(run.stdout))
 	}
 	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("the bootstrap stdout holds more than one JSON document\nstdout: %s", run.stdout)
+		return fmt.Errorf("the bootstrap stdout holds more than one JSON document\nstdout: %s", run.shown(run.stdout))
 	}
 	state, err := s.readState(ctx, run.input.OrgID)
 	if err != nil {
@@ -551,7 +577,7 @@ func (s *bootstrapScenario) stdoutNamesResult(ctx context.Context) error {
 	}
 	for _, want := range wanted {
 		if want.id == "" || !names[want.id] {
-			return fmt.Errorf("the bootstrap stdout does not name %s %q\nstdout: %s", want.what, want.id, run.stdout)
+			return fmt.Errorf("the bootstrap stdout does not name %s %q\nstdout: %s", want.what, want.id, run.shown(run.stdout))
 		}
 	}
 	return nil
