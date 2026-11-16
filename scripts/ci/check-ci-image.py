@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Check the keyring layer of the CI job image (#323, D1-9).
 
-The `image` check of scripts/ci/check-docs.sh runs this script inside the
-pinned job image (scripts/ci/in-ci-image.sh). Outside a container it fails,
-because the host is not the image. It starts no bus and no keyring daemon.
+The `image` check of scripts/ci/check-docs.sh and scripts/ci/check-bdd.sh run
+this script inside the pinned job image (scripts/ci/in-ci-image.sh). Outside a
+container it fails, because the host is not the image. It starts no bus and no
+keyring daemon.
 
 The check fails when one of these items is false:
 - Each package of build/ci/keyring-packages.txt is installed at its version.
@@ -12,10 +13,19 @@ The check fails when one of these items is false:
   regular files of the packages dbus-daemon and gnome-keyring.
 - No D-Bus service file names org.freedesktop.secrets or starts
   gnome-keyring-daemon.
-- No regular file of a recorded package has a setuid bit, a setgid bit or a
-  file capability (the security.capability extended attribute).
+- On the root file system of the image (one device, as `find -xdev`), no file
+  has a file capability (the security.capability extended attribute), and the
+  setuid and setgid regular files are exactly the entries of
+  build/ci/privileged-files.txt, with their mode and owner. Each directory
+  that the job user cannot read or search is a recorded closed directory, and
+  each recorded closed directory denies read or search to others by its mode.
+  The mode test does not depend on the user ID of the job. Each difference is
+  printed.
 - `dbus-daemon --version` and `gnome-keyring-daemon --version` exit with code 0
   and print the upstream version of the recorded package.
+
+scripts/ci/test_ci_image.py tests the fail paths with fixtures. That test is a
+developer check, not acceptance proof.
 """
 import errno
 import os
@@ -26,6 +36,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[2]
 RECORD = ROOT / "build/ci/keyring-packages.txt"
+PRIVILEGED = ROOT / "build/ci/privileged-files.txt"
 BINARIES = {"/usr/bin/dbus-daemon": "dbus-daemon",
             "/usr/bin/gnome-keyring-daemon": "gnome-keyring"}
 ABSENT_PACKAGES = ("dbus-x11",)
@@ -35,6 +46,7 @@ BINARY_DIRECTORIES = ("/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbi
 SERVICE_DIRECTORIES = ("/usr/share/dbus-1", "/usr/local/share/dbus-1", "/etc/dbus-1")
 SECRETS_NAME = "org.freedesktop.secrets"
 KEYRING_DAEMON = "gnome-keyring-daemon"
+CAPABILITY = "security.capability"
 COMMAND_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C"}
 
 failures = []
@@ -45,8 +57,10 @@ def fail(message):
     print(f"check-ci-image: FAIL {message}", flush=True)
 
 
-def passed(message):
-    print(f"check-ci-image: PASS {message}", flush=True)
+def passed(start, message):
+    """Print a PASS line only when no failure was recorded since start."""
+    if len(failures) == start:
+        print(f"check-ci-image: PASS {message}", flush=True)
 
 
 def query(*arguments):
@@ -55,19 +69,40 @@ def query(*arguments):
     return result.returncode, result.stdout
 
 
-def read_record():
-    packages = {}
-    for number, line in enumerate(RECORD.read_text().splitlines(), 1):
+def content_lines(path):
+    for number, line in enumerate(path.read_text().splitlines(), 1):
         line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        fields = line.split()
+        if line and not line.startswith("#"):
+            yield number, line.split()
+
+
+def read_record(path=RECORD):
+    packages = {}
+    for number, fields in content_lines(path):
         if len(fields) != 2 or fields[0] in packages:
-            raise SystemExit(f"check-ci-image: {RECORD.name}:{number}: need one unique 'name version' pair")
+            raise SystemExit(f"check-ci-image: {path.name}:{number}: need one unique 'name version' pair")
         packages[fields[0]] = fields[1]
     if not set(BINARIES.values()) <= set(packages):
-        raise SystemExit(f"check-ci-image: {RECORD.name} does not record the daemon packages")
+        raise SystemExit(f"check-ci-image: {path.name} does not record the daemon packages")
     return packages
+
+
+def read_privileged(path=PRIVILEGED):
+    """Return the recorded setuid and setgid files and the closed directories.
+
+    A `setid MODE UID:GID PATH` line records a regular file with its octal mode
+    (with the setuid and setgid bits) and its numeric owner. A `closed PATH`
+    line records a directory whose mode denies read or search to others.
+    """
+    files, closed = {}, set()
+    for number, fields in content_lines(path):
+        if fields[0] == "setid" and len(fields) == 4 and fields[3] not in files:
+            files[fields[3]] = f"{fields[1]} {fields[2]}"
+        elif fields[0] == "closed" and len(fields) == 2 and fields[1] not in closed:
+            closed.add(fields[1])
+        else:
+            raise SystemExit(f"check-ci-image: {path.name}:{number}: need 'setid MODE UID:GID PATH' or 'closed PATH', each path once")
+    return files, closed
 
 
 def installed_packages():
@@ -84,7 +119,8 @@ def installed_packages():
     return packages
 
 
-def check_packages(record, installed):
+def check_packages(record, installed, binary_directories=BINARY_DIRECTORIES):
+    start = len(failures)
     for name, version in record.items():
         have = installed.get(name)
         if have is None:
@@ -94,14 +130,15 @@ def check_packages(record, installed):
     for name in ABSENT_PACKAGES:
         if name in installed:
             fail(f"package {name} is installed")
-    found = [os.path.join(directory, ABSENT_FILE) for directory in BINARY_DIRECTORIES
-             if os.path.lexists(os.path.join(directory, ABSENT_FILE))]
-    for path in found:
-        fail(f"{path} exists")
-    passed(f"{len(record)} recorded packages checked; {', '.join(ABSENT_PACKAGES)} and {ABSENT_FILE} checked absent")
+    for directory in binary_directories:
+        path = os.path.join(directory, ABSENT_FILE)
+        if os.path.lexists(path):
+            fail(f"{path} exists")
+    passed(start, f"{len(record)} recorded packages checked; {', '.join(ABSENT_PACKAGES)} and {ABSENT_FILE} checked absent")
 
 
 def check_binaries():
+    start = len(failures)
     for path, package in BINARIES.items():
         try:
             information = os.lstat(path)
@@ -115,13 +152,12 @@ def check_binaries():
         owners = output.split(":", 1)[0].split(", ") if code == 0 else []
         if owners != [package]:
             fail(f"{path} belongs to {owners or 'no package'}, not {package}")
-            continue
-        passed(f"{path} is an executable regular file of {package}")
+    passed(start, "/usr/bin/dbus-daemon and /usr/bin/gnome-keyring-daemon are executable regular files of their packages")
 
 
-def check_activation():
-    count = 0
-    for directory in SERVICE_DIRECTORIES:
+def check_activation(directories=SERVICE_DIRECTORIES):
+    start, count = len(failures), 0
+    for directory in directories:
         for current, _, names in os.walk(directory):
             for name in names:
                 if not name.endswith(".service"):
@@ -140,37 +176,101 @@ def check_activation():
                         fail(f"{path} activates {SECRETS_NAME}")
                     if key == "Exec" and KEYRING_DAEMON in value:
                         fail(f"{path} starts {KEYRING_DAEMON}")
-    passed(f"{count} D-Bus service files checked: none activates {SECRETS_NAME} or {KEYRING_DAEMON}")
+    passed(start, f"{count} D-Bus service files checked: none activates {SECRETS_NAME} or {KEYRING_DAEMON}")
 
 
-def check_privileges(record):
-    count = 0
-    for package in record:
-        code, output = query("--listfiles", package)
-        if code != 0:
-            fail(f"dpkg-query --listfiles {package} failed")
-            continue
-        for path in output.splitlines():
-            try:
-                information = os.lstat(path)
-            except FileNotFoundError:
+def read_capability(path):
+    """Return True when path has a file capability. Raise OSError when unknown."""
+    try:
+        os.getxattr(path, CAPABILITY, follow_symlinks=False)
+    except OSError as error:
+        if error.errno == errno.ENODATA:
+            return False
+        raise
+    return True
+
+
+def scan_privileges(root="/", capability=read_capability):
+    """Walk the file system of root on its own device, as `find -xdev`.
+
+    Return (setid, closed, count): the setuid and setgid regular files as
+    {path: "MODE UID:GID"}, the directories that the walk cannot read, and the
+    number of regular files. A file with a capability, or with an unknown
+    capability state, is a failure. Paths are absolute in the image, so root
+    can be a fixture directory.
+    """
+    device = os.lstat(root).st_dev
+    setid, closed, count = {}, set(), 0
+
+    def image_path(path):
+        relative = os.path.relpath(path, root)
+        return "/" if relative == "." else "/" + relative
+
+    def unreadable(error):
+        closed.add(image_path(error.filename))
+
+    for current, directories, names in os.walk(root, onerror=unreadable):
+        kept = []
+        for name in directories:
+            path = os.path.join(current, name)
+            information = os.lstat(path)
+            if information.st_dev != device:
                 continue
+            if not os.access(path, os.R_OK | os.X_OK) and not stat.S_ISLNK(information.st_mode):
+                closed.add(image_path(path))
+                continue
+            kept.append(name)
+        directories[:] = kept
+        for name in names:
+            path = os.path.join(current, name)
+            information = os.lstat(path)
+            # No device test here: on overlay file systems a regular file can
+            # report the device of its lower layer. Mount points are
+            # directories, and the directory test above stops at them.
             if not stat.S_ISREG(information.st_mode):
                 continue
             count += 1
             if information.st_mode & (stat.S_ISUID | stat.S_ISGID):
-                fail(f"{path} of {package} has mode {stat.filemode(information.st_mode)}")
+                setid[image_path(path)] = f"{stat.S_IMODE(information.st_mode):04o} {information.st_uid}:{information.st_gid}"
             try:
-                os.getxattr(path, "security.capability", follow_symlinks=False)
+                has_capability = capability(path)
             except OSError as error:
-                if error.errno != errno.ENODATA:
-                    fail(f"{path} of {package}: file capabilities cannot be read: {error.strerror}")
-            else:
-                fail(f"{path} of {package} has a file capability")
-    passed(f"{count} regular files of the recorded packages checked: no setuid, setgid or file capability")
+                fail(f"{image_path(path)}: file capabilities cannot be read: {error.strerror}")
+                continue
+            if has_capability:
+                fail(f"{image_path(path)} has a file capability")
+    return setid, closed, count
+
+
+def check_privileges(recorded, recorded_closed, root="/", capability=read_capability):
+    start = len(failures)
+    setid, closed, count = scan_privileges(root, capability)
+    for path in sorted(set(setid) | set(recorded)):
+        if path not in recorded:
+            fail(f"{path} is setuid or setgid ({setid[path]}) and not in {PRIVILEGED.name}")
+        elif path not in setid:
+            fail(f"{path} is in {PRIVILEGED.name} ({recorded[path]}) but is not a setuid or setgid file")
+        elif setid[path] != recorded[path]:
+            fail(f"{path} is {setid[path]}, {PRIVILEGED.name} records {recorded[path]}")
+    for path in sorted(closed - recorded_closed):
+        fail(f"closed directory {path}: the walk cannot read it, and {PRIVILEGED.name} does not record it")
+    for path in sorted(recorded_closed):
+        try:
+            information = os.lstat(os.path.join(root, path.lstrip("/")))
+        except FileNotFoundError:
+            fail(f"closed directory {path}: recorded in {PRIVILEGED.name}, but it does not exist")
+            continue
+        if not stat.S_ISDIR(information.st_mode) or information.st_mode & 0o005 == 0o005:
+            fail(f"closed directory {path}: recorded in {PRIVILEGED.name}, but it is not a directory "
+                 f"that denies read or search to others ({stat.filemode(information.st_mode)})")
+    passed(start, f"{count} regular files on the root file system checked: no file capability; "
+                  f"{len(setid)} setuid or setgid files match {PRIVILEGED.name}; "
+                  f"{len(closed)} directories the walk cannot read, all recorded closed")
 
 
 def check_versions(record):
+    start = len(failures)
+    found = []
     for path, package in BINARIES.items():
         upstream = record[package].split(":", 1)[-1].rsplit("-", 1)[0]
         try:
@@ -183,7 +283,8 @@ def check_versions(record):
         if result.returncode != 0 or upstream not in result.stdout + result.stderr:
             fail(f"{path} --version exited with {result.returncode} and did not print {upstream}")
             continue
-        passed(f"{path} --version prints {upstream}")
+        found.append(f"{path} --version prints {upstream}")
+    passed(start, "; ".join(found))
 
 
 def main():
@@ -191,10 +292,11 @@ def main():
         raise SystemExit("check-ci-image: run this check inside the CI image "
                          "(sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh image)")
     record = read_record()
+    recorded, recorded_closed = read_privileged()
     check_packages(record, installed_packages())
     check_binaries()
     check_activation()
-    check_privileges(record)
+    check_privileges(recorded, recorded_closed)
     check_versions(record)
     if failures:
         raise SystemExit(f"check-ci-image: {len(failures)} failures in the keyring layer")

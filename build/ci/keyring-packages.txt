@@ -1,9 +1,9 @@
 # The packages that the keyring layer of build/ci/Dockerfile installs (#323),
 # one "name version" pair per line, from snapshot.ubuntu.com 20261001T000000Z.
 # The `image` check (scripts/ci/check-ci-image.py) requires each package at
-# exactly this version, and it scans the files of each package for setuid and
-# setgid bits and file capabilities. Change this file in the same commit as the
-# Dockerfile, and review each changed line.
+# exactly this version. build/ci/privileged-files.txt holds the setuid, setgid
+# and capability rules for the whole image. Change this file in the same commit
+# as the Dockerfile, and review each changed line.
 adduser 3.137ubuntu1
 adwaita-icon-theme 46.0-1
 dbus 1.14.10-4ubuntu4.1
