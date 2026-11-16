@@ -10,11 +10,14 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
+	"unsafe"
 )
 
 const (
@@ -337,5 +340,118 @@ func TestStarterStopsAProcessThatClosesWithNoLineAndKeepsRunning(t *testing.T) {
 	}
 	if len(got.report.ReadyData) != 0 || !got.report.ReadyEOF {
 		t.Fatalf("report %s, want end of file with no data on the ready pipe", got.report)
+	}
+}
+
+// (f) The child writes the ready line and keeps the ready descriptor open. The
+// step needs only readiness, so it does not call AwaitClose. The test fires
+// the start timer after the line. The starter ends its read of the ready
+// pipe at that deadline and closes its read end. Readiness stays: the
+// process keeps running, and the starter sends no signal.
+// Defect: a ready-pipe read with no deadline after the ready line.
+func TestStarterEndsTheReadyReadAtTheStartDeadline(t *testing.T) {
+	f := newFakeTimers()
+	stdin, _ := heldStdin(t)
+	process := startShell(t, f, `printf 'helper ready\n' >&3; exec cat`, stdin, nil)
+	start := awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	if ready := awaitResult(t, results, f); !ready.ok || ready.report.Outcome != OutcomeReady {
+		t.Fatalf("report %s, want the ready line", ready.report)
+	}
+	f.fire(start)
+	awaitSignal(t, process.readerDone, "end of the ready-pipe read after the start deadline")
+
+	got := process.Snapshot()
+	if got.Outcome != OutcomeReady || got.Stop != StopNone || got.Exited || got.ReadyEOF {
+		t.Fatalf("report %s, want readiness kept, no stop sequence, no exit and no end of file", got)
+	}
+	if !process.Running() {
+		t.Fatalf("Running reports a running child as not running: %s", got)
+	}
+}
+
+// (g) The child writes the ready line, and a second process that it starts
+// keeps the ready write end open. After the ready line, the step stops the
+// child. The child exits, but no end of file comes, because the second
+// process holds the write end. The starter closes its ready read end when it
+// stops watching the process.
+// Defect: a ready read end that stays open after the starter stops watching.
+func TestStarterClosesTheReadyReadEndWhenItStopsWatching(t *testing.T) {
+	f := newFakeTimers()
+	stdin, _ := heldStdin(t)
+	// The second cat reads the held standard input through descriptor 4 and
+	// holds descriptor 3 until the test ends.
+	process := startShell(t, f, `exec 4<&0; cat <&4 >/dev/null 2>&1 & printf 'helper ready\n' >&3; exec cat`, stdin, nil)
+	awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	if ready := awaitResult(t, results, f); !ready.ok || ready.report.Outcome != OutcomeReady {
+		t.Fatalf("report %s, want the ready line", ready.report)
+	}
+	go func() { results <- result{process.Stop(), false} }()
+	stopped := awaitResult(t, results, f)
+	if stopped.report.Stop != StopAfterSIGTERM || stopped.report.ReadyEOF {
+		t.Fatalf("report %s, want %q and no end of file on the ready pipe", stopped.report, StopAfterSIGTERM)
+	}
+	awaitSignal(t, process.readerDone, "end of the ready-pipe read after the starter stopped watching")
+}
+
+// testSiginfo holds a siginfo_t for waitid. The test reads no field of it.
+type testSiginfo struct {
+	_ [64]int32
+}
+
+// waitExitWithoutReaping blocks until the process exits, and does not reap
+// it: waitid with P_PID (1 on Linux and Darwin), WEXITED and WNOWAIT.
+func waitExitWithoutReaping(pid int) error {
+	var info testSiginfo
+	_, _, errno := syscall.Syscall6(syscall.SYS_WAITID, 1, uintptr(pid),
+		uintptr(unsafe.Pointer(&info)), syscall.WEXITED|syscall.WNOWAIT, 0, 0)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}
+
+// (h) The child writes the ready line and exits at once. The test holds the
+// reaper of the starter, so the exit observation of the starter stays open.
+// The fake reaper first waits, without reaping, until the child exited, and
+// signals the test. Then Running must report the exit.
+// Defect: a liveness check that depends on the reaper goroutine, so a
+// process that exited right after its ready line counts as running.
+func TestStarterRunningSeesAnExitBeforeTheReaper(t *testing.T) {
+	f := newFakeTimers()
+	exitSeen := make(chan struct{})
+	release := make(chan struct{})
+	reapErr := make(chan error, 1)
+	process := startShell(t, f, `printf 'helper ready\n' >&3; exit 0`, nil, func(c *Config) {
+		c.reap = func(cmd *exec.Cmd) error {
+			if err := waitExitWithoutReaping(cmd.Process.Pid); err != nil {
+				reapErr <- err
+			}
+			close(exitSeen)
+			<-release
+			return cmd.Wait()
+		}
+	})
+	t.Cleanup(func() { close(release) })
+	awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	if ready := awaitResult(t, results, f); !ready.ok || ready.report.Outcome != OutcomeReady {
+		t.Fatalf("report %s, want the ready line", ready.report)
+	}
+	awaitSignal(t, exitSeen, "the fake reaper's signal that the child exited")
+	select {
+	case err := <-reapErr:
+		t.Fatalf("the fake reaper could not observe the exit: %v", err)
+	default:
+	}
+	if process.Running() {
+		t.Fatalf("Running reports a child that exited as running: %s", process.Snapshot())
 	}
 }
