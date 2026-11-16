@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. A change that only adds Go files runs no check from `check-docs.sh` in this hook, unless a Go file is under `tools/`, `scripts/` or `build/ci/`. Such a file selects `setup` | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
-| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push, without the `unit` check, because the hook ran those packages already. On macOS, it runs these six checks on the host | A failure stops the push |
+| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push, without the `unit` check, because the hook ran those packages already. On macOS, it runs six of these checks on the host. It leaves out `image`, which runs only inside the job image | A failure stops the push |
 | CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the stack run of the Go developer tests, then the Gherkin acceptance suite in `tests/acceptance` on a fresh stack. Job `checks`: the static checks and the unit run of the Go developer tests in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
 
 Install the scanner once per user. Install the hooks once per clone:
@@ -35,7 +35,7 @@ On macOS, the hooks run on the host. The `pre-push` hook, and a `pre-commit` hoo
 
 The hooks select the Python interpreter for `check-docs.sh`. They try `python3`, `python3.13`, `python3.12` and `python3.11` on `PATH`, in that order. They select the first one that is Python 3.11 or later and imports the four modules. The hook prints the version of that interpreter and gives its name to `check-docs.sh` in `PMCLI_PYTHON`. If no interpreter qualifies, the hook prints the prerequisite and stops the commit or push. The hook does not skip the `python` check. Other Python commands still use the first `python3` on `PATH`. Examples are the secret scan, `generate.sh` and `check-boundaries.sh`. CI ignores `PMCLI_PYTHON` and uses `python3`.
 
-The macOS hooks skip no check. The `pre-push` hook runs the unit packages and the other six checks of the CI `checks` job, and it prints no skip notice.
+The macOS hooks skip one check: `image`. It checks the keyring layer of the job image, and a macOS host is not that image. The `pre-push` hook runs the unit packages and the other six checks of the CI `checks` job. It writes a notice to stderr that it left out `image`. The `checks` job and the Linux hooks run `image`.
 
 ## Required developer secret scans
 
@@ -120,7 +120,7 @@ The rule selects the packages, so a new package goes to the unit run with no lis
 
 ## The `checks` check
 
-The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these seven checks:
+The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these eight checks:
 
 - `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
 - `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
@@ -128,6 +128,7 @@ The `checks` job is in the same workflow as `bdd`. It has the same admission con
 - `gofmt`: `gofmt -l` on every tracked Go file.
 - `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
 - `tools`: `go test` for the tools module.
+- `image`: `check-ci-image.py`, inside the job image. It checks the keyring layer (see [The keyring layer](#the-keyring-layer)). It fails outside a container.
 - `unit`: the unit run. `go test -json -count=1 -timeout 10m` of every root-module package outside the stack list and the exclusion list (see [Go test package selection](#go-test-package-selection)). `go-test-report.py --timeout 600` stops the run after 10 minutes and still reports. A failed or skipped test fails the check, and so does a missing or duplicated package result. The log and the job summary list each package with its result and time. These tests are developer checks, not acceptance proof. The `pre-push` hook does not select `unit`, because it runs the same packages itself (`pm_push_checks` in `scripts/dev/hook-lib.sh`).
 
 In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh setup boundaries`. `check-docs.sh --list` prints the check names. The hooks read the names from it. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins, `go vet`, Staticcheck and govulncheck are not in this job. The stack-package Go tests run in the `bdd` job.
@@ -191,6 +192,34 @@ sh scripts/ci/in-ci-image.sh run capture -- \
 
 CI never refreshes the profile. A build that differs from the committed profile
 fails at `bootstrap: native environment drift`.
+
+### The keyring layer
+
+The last package layer of the image gives a private Secret Service to the `pm`
+`os` session store (#323, LOGIN condition D1-9). It installs `dbus-daemon`,
+`dbus-bin`, `dbus-session-bus-common` and `gnome-keyring` from the same
+snapshot, with no recommended packages.
+[keyring-packages.txt](../../build/ci/keyring-packages.txt) records each
+package that the layer installs, with its version. The layer starts no
+process. A job harness starts `/usr/bin/dbus-daemon` with its own
+configuration and no service directory, and then `/usr/bin/gnome-keyring-daemon`.
+
+The layer gives these guarantees, and the `image` check of the `checks` job
+verifies each one in the image:
+
+- `dbus-x11` is not installed, and no `dbus-launch` file is on a binary path.
+- No D-Bus service file activates `org.freedesktop.secrets` or starts
+  `gnome-keyring-daemon`. The layer removes the three service files of
+  `gnome-keyring`.
+- No file of a recorded package has a setuid bit, a setgid bit or a file
+  capability. The `dbus` package makes `dbus-daemon-launch-helper` setuid root
+  through `dpkg-statoverride`. The layer replaces that statoverride with mode
+  `0754`.
+- Each recorded package has its recorded version, and both daemons print
+  their version.
+
+A change to the layer or to the snapshot changes the record and the native
+profile in the same commit.
 
 ## Operate a runner without sudo
 

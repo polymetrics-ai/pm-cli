@@ -248,7 +248,9 @@ class SetupContracts(unittest.TestCase):
 
 CHECK_DOCS = ROOT / "scripts/ci/check-docs.sh"
 HOOK_LIB = ROOT / "scripts/dev/hook-lib.sh"
-CHECK_NAMES = ["setup", "python", "generate", "gofmt", "boundaries", "tools", "unit"]
+CHECK_NAMES = ["setup", "python", "generate", "gofmt", "boundaries", "tools", "image", "unit"]
+IMAGE_NOTICE = ("pre-push: the image check runs only inside the CI job image "
+                "(the checks job and the Linux hooks), not on this macOS host\n")
 
 
 class HookCheckSelection(unittest.TestCase):
@@ -277,29 +279,33 @@ class HookCheckSelection(unittest.TestCase):
                 self.assertEqual(result.stdout, "")
                 self.assertEqual(result.stderr, usage)
 
-    def test_macos_hooks_run_every_check(self):
+    def test_macos_hooks_run_every_host_check(self):
+        host = [name for name in CHECK_NAMES if name != "image"]
         cases = {
-            ("pre-push", "Darwin", tuple(CHECK_NAMES)): CHECK_NAMES,
-            ("pre-commit", "Darwin", ("setup",)): ["setup"],
-            ("pre-push", "Linux", tuple(CHECK_NAMES)): CHECK_NAMES,
-            ("pre-commit", "Linux", ("setup",)): ["setup"],
+            ("pre-push", "Darwin", tuple(CHECK_NAMES)): (host, IMAGE_NOTICE),
+            ("pre-commit", "Darwin", ("setup",)): (["setup"], ""),
+            ("pre-push", "Linux", tuple(CHECK_NAMES)): (CHECK_NAMES, ""),
+            ("pre-commit", "Linux", ("setup",)): (["setup"], ""),
         }
-        for (hook, system, names), expected in cases.items():
+        for (hook, system, names), (expected, notice) in cases.items():
             with self.subTest(hook=hook, system=system, names=names):
                 result = self.lib('pm_host_checks "$@"', hook, system, *names)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.split(), expected)
-                self.assertEqual(result.stderr, "")
+                self.assertEqual(result.stderr, notice)
 
     def test_pre_push_runs_one_unit_run_on_each_os(self):
-        expected = [name for name in CHECK_NAMES if name != "unit"]
-        for system in ("Darwin", "Linux"):
+        linux = [name for name in CHECK_NAMES if name != "unit"]
+        cases = {"Darwin": ([name for name in linux if name != "image"], IMAGE_NOTICE),
+                 "Linux": (linux, "")}
+        for system, (expected, notice) in cases.items():
             with self.subTest(system=system):
                 result = subprocess.run(
                     ["/bin/sh", "-c", '. "$0"; pm_push_checks "$1"', str(HOOK_LIB), system],
                     capture_output=True, text=True, timeout=30, cwd=ROOT)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.split(), expected)
+                self.assertEqual(result.stderr, notice)
 
     def test_macos_python_selection(self):
         def fake(directory, name, passes, version="3.12.9"):

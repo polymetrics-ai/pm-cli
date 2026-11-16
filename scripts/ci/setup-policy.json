@@ -36,8 +36,10 @@
     "scripts/ci/go-test-report.py",
     "scripts/ci/go-packages.sh",
     "scripts/ci/stack-packages.txt",
+    "scripts/ci/check-ci-image.py",
     "build/ci/Dockerfile",
     "build/ci/requirements.txt",
+    "build/ci/keyring-packages.txt",
     "build/ci/capture-native-profile.py"
   ],
   "checked_prefixes": [
