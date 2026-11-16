@@ -110,3 +110,90 @@ func TestBootstrapFailureMessageWithholdsSecret(t *testing.T) {
 		}
 	}
 }
+
+// oracleScope returns a run and the one-scope reading of a correct
+// bootstrap of that run. membership changes the membership row.
+func oracleScope(t *testing.T, membership func(map[string]any)) (*bootstrapRun, bootstrapState) {
+	t.Helper()
+	input := bootstrapInput{
+		OrgID:            "acceptance-org-oracle",
+		WorkspaceID:      "acceptance-workspace-oracle",
+		WorkspaceName:    "Acceptance workspace oracle",
+		AdminIssuer:      "https://issuer.invalid",
+		AdminSubject:     bootstrapAdminSubject,
+		ProviderAccounts: []bootstrapProviderAccount{{ConnectorID: "postgres", DisplayName: "Acceptance postgres account"}},
+	}
+	run := &bootstrapRun{deployment: &deployment{deploymentID: "pm-acceptance-oracle"}, input: input}
+	admin := map[string]any{
+		"org_id": input.OrgID, "workspace_id": input.WorkspaceID, "membership_id": "membership-1",
+		"identity_id": "identity-1", "role": "admin",
+		"resource_grants": []string{"permission:connection.manage", "permission:workspace.access.manage"},
+		"permissions":     []string{"connection.manage", "workspace.access.manage"},
+		"connection_ids":  []string{}, "operation_ids": []string{},
+		"expires_at": nil, "revoked_at": nil,
+	}
+	if membership != nil {
+		membership(admin)
+	}
+	rows := map[string]any{
+		"workspace_namespaces": map[string]any{"org_id": input.OrgID, "workspace_id": input.WorkspaceID, "name": input.WorkspaceName},
+		"identities": map[string]any{"org_id": input.OrgID, "identity_id": "identity-1", "kind": "user",
+			"issuer": input.AdminIssuer, "subject": input.AdminSubject},
+		"auth_bootstrap_identities": map[string]any{"deployment_id": "pm-acceptance-oracle", "issuer": input.AdminIssuer,
+			"subject": input.AdminSubject, "org_id": input.OrgID, "principal_id": "identity-1",
+			"principal_kind": "user", "enabled": true},
+		"memberships":       admin,
+		"provider_accounts": map[string]any{"org_id": input.OrgID, "provider_account_id": "account-1", "provider": "postgres"},
+		"bootstrap_records": map[string]any{"deployment_id": "pm-acceptance-oracle", "org_id": input.OrgID,
+			"workspace_id": input.WorkspaceID, "admin_identity_id": "identity-1", "membership_id": "membership-1"},
+		"workspace_audit_entries": map[string]any{"org_id": input.OrgID, "requested_actor_kind": "operator",
+			"effective_actor_kind": "operator"},
+	}
+	state := bootstrapState{"audit_entries": nil}
+	for table, row := range rows {
+		encoded, err := json.Marshal(row)
+		if err != nil {
+			t.Fatalf("encode the oracle %s row: %v", table, err)
+		}
+		state[table] = []string{string(encoded)}
+	}
+	return run, state
+}
+
+func TestBootstrapScopeCheckAcceptsAdminMembership(t *testing.T) {
+	run, state := oracleScope(t, nil)
+	if err := checkScope(state, run, true); err != nil {
+		t.Fatalf("the check refuses a correct admin membership: %v", err)
+	}
+}
+
+func TestBootstrapScopeCheckRefusesNonAdminMembership(t *testing.T) {
+	cases := map[string]func(map[string]any){
+		"a linked membership with no authority": func(row map[string]any) {
+			row["role"] = "member"
+			row["resource_grants"] = []string{}
+			row["permissions"] = []string{}
+		},
+		"no right to manage connections": func(row map[string]any) {
+			row["resource_grants"] = []string{"permission:workspace.access.manage"}
+			row["permissions"] = []string{"workspace.access.manage"}
+		},
+		"no right to manage memberships": func(row map[string]any) {
+			row["resource_grants"] = []string{"permission:connection.manage"}
+			row["permissions"] = []string{"connection.manage"}
+		},
+		"a connection at the start": func(row map[string]any) {
+			row["resource_grants"] = []string{"connection:connection-1", "permission:connection.manage", "permission:workspace.access.manage"}
+			row["connection_ids"] = []string{"connection-1"}
+		},
+		"a revoked membership": func(row map[string]any) {
+			row["revoked_at"] = "2026-11-16T00:00:00Z"
+		},
+	}
+	for name, change := range cases {
+		run, state := oracleScope(t, change)
+		if err := checkScope(state, run, true); err == nil {
+			t.Errorf("%s: the check accepts a membership with no admin authority", name)
+		}
+	}
+}
