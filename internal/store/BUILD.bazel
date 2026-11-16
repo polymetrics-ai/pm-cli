@@ -73,6 +73,7 @@ go_test(
         "event_test.go",
         "lease_test.go",
         "migrate_test.go",
+        "permit_expiry_test.go",
         "rls_test.go",
         "run_budgets_test.go",
         "run_grants_test.go",

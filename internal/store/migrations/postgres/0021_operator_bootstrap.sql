@@ -33,9 +33,9 @@ BEGIN
         RAISE EXCEPTION 'bootstrap role has prohibited PostgreSQL authority';
     END IF;
     IF NOT EXISTS (
-        SELECT 1 FROM pm.control_schema WHERE singleton AND revision = 'pm.control/v19'
+        SELECT 1 FROM pm.control_schema WHERE singleton AND revision = 'pm.control/v20'
     ) THEN
-        RAISE EXCEPTION 'operator bootstrap migration requires the warehouse segment schema';
+        RAISE EXCEPTION 'operator bootstrap migration requires the account permit expiry schema';
     END IF;
 END
 $$;
@@ -156,10 +156,10 @@ GRANT INSERT (org_id, workspace_id, audit_id, requested_actor_id, requested_acto
     ON pm.workspace_audit_entries TO pm_app_bootstrap;
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
-UPDATE pm.control_schema SET revision = 'pm.control/v20', installed_at = clock_timestamp()
-WHERE singleton AND revision = 'pm.control/v19';
+UPDATE pm.control_schema SET revision = 'pm.control/v21', installed_at = clock_timestamp()
+WHERE singleton AND revision = 'pm.control/v20';
 ALTER TABLE pm.control_schema
-    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v20');
+    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v21');
 -- +goose StatementEnd
 
 -- +goose Down
@@ -202,8 +202,8 @@ ALTER TABLE pm.provider_accounts
     DROP COLUMN display_name;
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
-UPDATE pm.control_schema SET revision = 'pm.control/v19', installed_at = clock_timestamp()
-WHERE singleton AND revision = 'pm.control/v20';
+UPDATE pm.control_schema SET revision = 'pm.control/v20', installed_at = clock_timestamp()
+WHERE singleton AND revision = 'pm.control/v21';
 ALTER TABLE pm.control_schema
-    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v19');
+    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v20');
 -- +goose StatementEnd
