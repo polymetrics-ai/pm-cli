@@ -74,7 +74,7 @@ The stack run is a developer check. It is not acceptance proof of PM behavior. A
 
 ### Time budget of the `bdd` job
 
-The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops each run at an absolute time and still reports. `--timeout 1140` also stops each run 19 minutes after its start, before the 20-minute command limit of `with-stack-fixture.py`. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When a command ends, the reporter stops each process that is left in its process group. The allowances are upper bounds of the phases of `with-stack-fixture.py`:
+The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops the go test command of each run at an absolute time, and the run still reports. The fixture start before that command and the fixture cleanup after it are outside the deadlines. `--timeout 1140` also stops each go test command 19 minutes after its start, before the 20-minute command limit of `with-stack-fixture.py`. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When a command ends, the reporter stops each process that is left in its process group. The allowances are upper bounds of the phases of `with-stack-fixture.py`:
 
 | Phase | Allowance | Source of the bound |
 | --- | --- | --- |
@@ -83,7 +83,11 @@ The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the star
 | Fixture cleanup | 6 minutes | drain 120 s, container stop 75 s, cleanup helper 60 s, 30-second Docker calls |
 | Report, receipt move, toolchain check | 1 minute | none |
 
-The stack run stops 15 minutes after the start. The Gherkin run stops 39.5 minutes after the start. In the worst case, the script ends 47 minutes after the start. The Gherkin run then gets at least 5 minutes of test time, if the prelude and the stack fixture start end within 15 minutes. The log has one `starting a fresh job-owned stack` line before each fixture start. A cold image build happens in the same step before `check-bdd.sh` starts, and this budget does not include it. On that path, the worst case can pass the step limit, and the Gherkin run may not report. The frozen cleanup step then still removes the live fixture (see the next section).
+The stack go test command stops 20 minutes after the start. The Gherkin go test command stops 39.5 minutes after the start. On the longest path, the stack run ends by +20.5 minutes, its cleanup by +26.5, the receipt check by +27.5 and the Gherkin fixture start by +39.5. The Gherkin run ends by +40, its cleanup by +46 and the toolchain check by +47. So the script ends 47 minutes after the start in the worst case.
+
+The script keeps no reserve of Gherkin test time (`gherkin_minimum` is 0). On one path, the Gherkin run can get no test time: the stack run reaches its deadline, the stack cleanup uses its full 6 minutes and the Gherkin fixture start uses its full 12 minutes. The Gherkin run then reports that it stopped at its deadline, and the job fails. E4 is narrowed on that path. On a normal run, the Gherkin go test command keeps its own 19-minute limit (`--timeout 1140`).
+
+The log has one `starting a fresh job-owned stack` line before each fixture start. A cold image build happens in the same step before `check-bdd.sh` starts, and this budget does not include it. On that path, the worst case can pass the step limit, and the Gherkin run may not report. The frozen cleanup step then still removes the live fixture (see the next section).
 
 ### Cleanup after an abrupt stop
 

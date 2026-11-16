@@ -49,27 +49,41 @@ step() {
 # The time budget. The workflow step has a frozen limit of 50 minutes
 # (bdd.yml). The script keeps 3 minutes of it for the start and stop of the
 # job container, so its own work ends within 47 minutes of its start, on the
-# failure path too. go-test-report.py --deadline stops each run at an absolute
-# time and still reports. --timeout 1140 also stops each run 19 minutes after
-# its start, before the 20-minute command limit of with-stack-fixture.py
-# (CHILD_TIMEOUT), so that the reporter, not the wrapper, ends the run. The allowances are upper bounds of the phases of
-# with-stack-fixture.py: a fixture start (generator 60 s, `pm-stack up` 600 s
-# and its 30-second Docker calls) and a fixture cleanup (drain 120 s, container
-# stop 75 s, cleanup helper 60 s and its 30-second Docker calls). A run that
-# reaches its deadline gets SIGTERM, then SIGKILL after 30 seconds (the stop
-# grace). The prelude (tool builds and package selection) must take 8 minutes
-# or less. Then, in minutes after the start:
-#   stack run end      <= +15.5 (deadline +15 and the stop grace)
-#   stack cleanup end  <= +21.5 (cleanup allowance)
-#   Gherkin start end  <= +34.5 (finish and start allowances)
-#   Gherkin run end    <= +40   (deadline +39.5 and the stop grace)
-#   Gherkin cleanup    <= +46   (cleanup allowance)
-#   toolchain check    <= +47   (finish allowance)
-# When the prelude takes more than 3 minutes and the stack fixture start uses
-# its whole allowance, the stack run starts after its deadline and stops at
-# once. The end bound holds for a prelude of 8 minutes or less. The Gherkin run
-# gets 5 minutes or more of test time when the prelude and the stack fixture
-# start end by +15. See docs/development/ci.md.
+# failure path too.
+#
+# The two deadlines stop only the go test command of each run, inside
+# go-test-report.py (--deadline). The fixture start before that command and
+# the fixture cleanup after it are outside the deadlines. A stopped command
+# gets SIGTERM, then SIGKILL after 30 seconds (the stop grace), and the run
+# still reports. --timeout 1140 also stops each go test command 19 minutes
+# after its start, before the 20-minute command limit of with-stack-fixture.py
+# (CHILD_TIMEOUT), so that the reporter, not the wrapper, ends the run.
+#
+# The allowances are upper bounds of the phases of with-stack-fixture.py: a
+# fixture start (generator 60 s, `pm-stack up` 600 s and its 30-second Docker
+# calls) and a fixture cleanup (drain 120 s, container stop 75 s, cleanup
+# helper 60 s and its 30-second Docker calls). The prelude (tool builds and
+# package selection) must take 8 minutes or less. Then, in minutes after the
+# start, on the longest path:
+#   stack go test stop  <= +20   (stack deadline)
+#   stack run end       <= +20.5 (stop grace)
+#   stack cleanup end   <= +26.5 (cleanup allowance)
+#   receipt check end   <= +27.5 (finish allowance)
+#   Gherkin start end   <= +39.5 (start allowance; this is the Gherkin deadline)
+#   Gherkin run end     <= +40   (stop grace)
+#   Gherkin cleanup end <= +46   (cleanup allowance)
+#   toolchain check end <= +47   (finish allowance)
+# If the prelude and the stack fixture start end after +20, the stack go test
+# command stops at once. The end bound holds for a prelude of 8 minutes or less.
+#
+# gherkin_minimum is 0. A Gherkin reserve counts only on the path where the
+# stack run reaches its deadline and each fixture phase uses its whole
+# allowance, but it took that time from the stack run on every run. On that
+# one path (stack run at its deadline, stack cleanup at its full 6 minutes and
+# Gherkin fixture start at its full 12 minutes), the Gherkin run can get no
+# test time. It still reports that it stopped at its deadline, and the job
+# fails (E4 narrowing). On a normal run, the Gherkin go test command keeps its
+# own 19-minute limit (--timeout 1140). See docs/development/ci.md.
 # Each live fixture stays under the one manifest path that the frozen cleanup
 # step of bdd.yml reads ($manifest below). See "Cleanup after an abrupt stop"
 # in docs/development/ci.md.
@@ -78,10 +92,10 @@ start_allowance=720
 cleanup_allowance=360
 finish_allowance=60
 stop_grace=30
-gherkin_minimum=300
+gherkin_minimum=0
 gherkin_deadline=$((started + budget - finish_allowance - cleanup_allowance - stop_grace))
 stack_deadline=$((gherkin_deadline - gherkin_minimum - start_allowance - finish_allowance - cleanup_allowance - stop_grace))
-step "budget: the stack run stops at +$((stack_deadline - started))s, the Gherkin run at +$((gherkin_deadline - started))s, the script ends by +${budget}s"
+step "budget: the stack go test command stops at +$((stack_deadline - started))s, the Gherkin go test command at +$((gherkin_deadline - started))s, the script ends by +${budget}s. Fixture starts and cleanups are outside these deadlines."
 
 step 'build pm-stack, pm-stack-fixture and pm-api-generate from the candidate'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain.json"
