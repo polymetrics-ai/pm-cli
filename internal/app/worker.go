@@ -430,6 +430,7 @@ type workerUnitPlan struct {
 	task              contract.Task
 	dispatch          store.DispatchRecord
 	lease             store.Lease
+	leaseDeadline     time.Time
 	permit            store.AccountPermit
 	handler           ResolvedHandler
 	request           ExecutionRequest
@@ -469,6 +470,11 @@ func (service *WorkerService) ExecuteUnit(
 	}
 	stopHeartbeats := startWorkerHeartbeats(ctx, heartbeat, progress, plan.timeouts.Heartbeat)
 	defer stopHeartbeats()
+
+	// The provider callback, the publication step and the settlement take
+	// their limits from this context.
+	ctx, cancelLease := workerLeaseContext(ctx, plan.leaseDeadline)
+	defer cancelLease()
 
 	// A reconcile callback has no accepted run deadline.
 	acceptedDeadline := plan.state.deadline
@@ -694,6 +700,9 @@ func (service *WorkerService) prepareWorkerUnit(
 			return workerFailure(ErrWorkerConflict, errors.New("dispatch state and attempt evidence are inconsistent"))
 		}
 
+		// A local time from before the claim: the lease deadline adds the lease
+		// TTL to it (workerLeaseDeadline).
+		claimStarted := time.Now()
 		lease, err := claimWorkerTask(
 			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend,
 		)
@@ -820,6 +829,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		plan.task = task
 		plan.dispatch = dispatch
 		plan.lease = lease
+		plan.leaseDeadline = workerLeaseDeadline(claimStarted, lease)
 		plan.permit = permit
 		plan.handler = handler
 		plan.reconcile = !freshSend
@@ -2523,6 +2533,23 @@ func workerPublicationContext(
 		return context.WithCancel(ctx)
 	}
 	return context.WithDeadline(ctx, cutoff.Add(-reserve))
+}
+
+// workerLeaseDeadline is the local time at which a task lease ends at the
+// latest. claimStarted is a local time taken before the claim. The function
+// adds the lease TTL (ExpiresAt minus ClaimedAt, both in the PostgreSQL clock)
+// to it. So it compares no local time with a PostgreSQL time, and, when the
+// two clocks run at the same rate, the result is not later than the real end
+// of the lease.
+func workerLeaseDeadline(claimStarted time.Time, lease store.Lease) time.Time {
+	return claimStarted.Add(lease.ExpiresAt.Sub(lease.ClaimedAt))
+}
+
+// workerLeaseContext is the context from which the steps of one unit take
+// their limits: the provider callback, the publication step and the
+// settlement. It keeps the deadline of ctx.
+func workerLeaseContext(ctx context.Context, leaseDeadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithCancel(ctx)
 }
 
 // workerSettlementCutoff is the latest time at which a unit settlement may end:
