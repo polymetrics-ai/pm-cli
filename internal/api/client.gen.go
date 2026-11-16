@@ -272,6 +272,24 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
 	GetConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// DiscoverConnectionSchemaWithBody Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchemaWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
 	//
 	// Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
@@ -942,6 +960,44 @@ func (c *Client) UpdateConnection(ctx context.Context, workspaceId WorkspaceID, 
 // Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
 func (c *Client) GetConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConnectionSchemaRequest(c.Server, workspaceId, connectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DiscoverConnectionSchemaWithBody Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *Client) DiscoverConnectionSchemaWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDiscoverConnectionSchemaRequestWithBody(c.Server, workspaceId, connectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *Client) DiscoverConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDiscoverConnectionSchemaRequest(c.Server, workspaceId, connectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2614,6 +2670,84 @@ func NewGetConnectionSchemaRequest(server string, workspaceId WorkspaceID, conne
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDiscoverConnectionSchemaRequest calls the generic DiscoverConnectionSchema builder with application/json body
+func NewDiscoverConnectionSchemaRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDiscoverConnectionSchemaRequestWithBody(server, workspaceId, connectionId, params, "application/json", bodyReader)
+}
+
+// NewDiscoverConnectionSchemaRequestWithBody constructs an http.Request for the DiscoverConnectionSchema method, with any body, and a specified content type
+func NewDiscoverConnectionSchemaRequestWithBody(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s/schema/discoveries", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.XCSRFToken != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam1)
+		}
+
 	}
 
 	return req, nil
@@ -4399,6 +4533,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
 	GetConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*GetConnectionSchemaResponse, error)
 
+	// DiscoverConnectionSchemaWithBodyWithResponse Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchemaWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error)
+
+	// DiscoverConnectionSchemaWithResponse Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error)
+
 	// GetWarehouseDatasetWithResponse Inspect the committed read view of one warehouse dataset
 	//
 	// Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
@@ -6084,6 +6236,103 @@ func (r GetConnectionSchemaResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConnectionSchemaResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DiscoverConnectionSchemaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *AdmissionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem429
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r DiscoverConnectionSchemaResponse) GetJSON202() *AdmissionResponse {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON429() *Problem429 {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DiscoverConnectionSchemaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DiscoverConnectionSchemaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DiscoverConnectionSchemaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DiscoverConnectionSchemaResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8357,6 +8606,36 @@ func (c *ClientWithResponses) GetConnectionSchemaWithResponse(ctx context.Contex
 	return ParseGetConnectionSchemaResponse(rsp)
 }
 
+// DiscoverConnectionSchemaWithBodyWithResponse Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *ClientWithResponses) DiscoverConnectionSchemaWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error) {
+	rsp, err := c.DiscoverConnectionSchemaWithBody(ctx, workspaceId, connectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDiscoverConnectionSchemaResponse(rsp)
+}
+
+// DiscoverConnectionSchemaWithResponse Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *ClientWithResponses) DiscoverConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error) {
+	rsp, err := c.DiscoverConnectionSchema(ctx, workspaceId, connectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDiscoverConnectionSchemaResponse(rsp)
+}
+
 // GetWarehouseDatasetWithResponse Inspect the committed read view of one warehouse dataset
 //
 // Reports the dataset's committed manifest revision, its acknowledged cursor, and the registered immutable segments that currently serve it, each with the exact shared object it registered. Listing objects never establishes dataset membership.
@@ -9947,6 +10226,88 @@ func ParseGetConnectionSchemaResponse(rsp *http.Response) (*GetConnectionSchemaR
 			return nil, err
 		}
 		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseDiscoverConnectionSchemaResponse parses an HTTP response from a DiscoverConnectionSchemaWithResponse call
+func ParseDiscoverConnectionSchemaResponse(rsp *http.Response) (*DiscoverConnectionSchemaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DiscoverConnectionSchemaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest AdmissionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
 		var dest Problem503

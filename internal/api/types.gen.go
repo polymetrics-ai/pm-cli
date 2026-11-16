@@ -1430,6 +1430,12 @@ type SafeOutcomeReference struct {
 // SafeOutcomeReferenceKind defines model for SafeOutcomeReference.Kind.
 type SafeOutcomeReferenceKind string
 
+// SchemaDiscoveryRequest defines model for SchemaDiscoveryRequest.
+type SchemaDiscoveryRequest struct {
+	// Resource The resource that one declared relation binding of the connection names.
+	Resource string `json:"resource"`
+}
+
 // SchemaField defines model for SchemaField.
 type SchemaField struct {
 	Name      string          `json:"name"`
@@ -1883,6 +1889,14 @@ type GetConnectionSchemaParams struct {
 	SnapshotId *SnapshotID `form:"snapshot_id,omitempty" json:"snapshot_id,omitempty"`
 }
 
+// DiscoverConnectionSchemaParams defines parameters for DiscoverConnectionSchema.
+type DiscoverConnectionSchemaParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
 // GetWarehouseDatasetParams defines parameters for GetWarehouseDataset.
 type GetWarehouseDatasetParams struct {
 	// SnapshotId Selects one retained snapshot's exact segment set instead of the dataset's live set.
@@ -2071,6 +2085,9 @@ type DeleteConnectionJSONRequestBody = ConnectionDeleteRequest
 
 // UpdateConnectionJSONRequestBody defines body for UpdateConnection for application/json ContentType.
 type UpdateConnectionJSONRequestBody = ConnectionUpdateRequest
+
+// DiscoverConnectionSchemaJSONRequestBody defines body for DiscoverConnectionSchema for application/json ContentType.
+type DiscoverConnectionSchemaJSONRequestBody = SchemaDiscoveryRequest
 
 // RunWarehouseQueryJSONRequestBody defines body for RunWarehouseQuery for application/json ContentType.
 type RunWarehouseQueryJSONRequestBody = WarehouseQueryRequest

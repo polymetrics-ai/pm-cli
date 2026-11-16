@@ -1540,6 +1540,56 @@ paths:
           $ref: "#/components/responses/Problem404"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectionID"
+    post:
+      tags: [schema]
+      summary: Start one discovery of a declared relation of the connection
+      operationId: discoverConnectionSchema
+      description: >-
+        Admits one durable discovery run of one relation that the connection
+        declares. The run executes only the connector's declared metadata
+        operation in a worker activity and stores one complete candidate
+        snapshot. A discovery never selects a snapshot. A resource that the
+        connection does not declare is refused with schema_relation_unknown
+        before any run starts.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchemaDiscoveryRequest"
+      responses:
+        "202":
+          description: Durably accepted, nonterminal discovery run identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "429":
+          $ref: "#/components/responses/Problem429"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -3876,6 +3926,16 @@ components:
         scale:
           type: integer
           minimum: 0
+    SchemaDiscoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [resource]
+      properties:
+        resource:
+          description: The resource that one declared relation binding of the connection names.
+          type: string
+          minLength: 1
+          maxLength: 512
     ConnectionSchemaInspection:
       type: object
       additionalProperties: false

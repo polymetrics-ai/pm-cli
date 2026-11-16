@@ -3253,6 +3253,21 @@
         ],
         "type": "object"
       },
+      "SchemaDiscoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "resource": {
+            "description": "The resource that one declared relation binding of the connection names.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource"
+        ],
+        "type": "object"
+      },
       "SchemaField": {
         "additionalProperties": false,
         "properties": {
@@ -5526,6 +5541,86 @@
           "$ref": "#/components/parameters/ConnectionID"
         }
       ]
+    },
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectionID"
+        }
+      ],
+      "post": {
+        "description": "Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.",
+        "operationId": "discoverConnectionSchema",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaDiscoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmissionResponse"
+                }
+              }
+            },
+            "description": "Durably accepted, nonterminal discovery run identity"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Start one discovery of a declared relation of the connection",
+        "tags": [
+          "schema"
+        ]
+      }
     },
     "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}": {
       "get": {

@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/polymetrics-ai/pm-cli/internal/api"
+	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
@@ -86,6 +87,43 @@ func (service *Service) GetConnectionSchema(
 		return asProblemResponse(err, nil), nil
 	}
 	return GetConnectionSchema200JSONResponse(projected), nil
+}
+
+// DiscoverConnectionSchema admits one durable discovery run of one declared
+// relation. The run stores one complete candidate through a worker activity;
+// this route performs no provider I/O, reads no credential and never selects.
+func (service *Service) DiscoverConnectionSchema(
+	ctx context.Context,
+	request DiscoverConnectionSchemaRequestObject,
+) (DiscoverConnectionSchemaResponseObject, error) {
+	state, scope, err := scopedState(ctx, request.WorkspaceId)
+	if err != nil {
+		return asProblemResponse(err, nil), nil
+	}
+	requestKey := string(request.Params.IdempotencyKey)
+	if request.Body == nil || requestKey == "" {
+		return invalidRequestResponse(), nil
+	}
+	result, err := service.admission.AcceptDiscovery(ctx, state.identity.Actor, scope, app.DiscoveryInvocation{
+		ConnectionRef: request.ConnectionId,
+		Resource:      request.Body.Resource,
+		RequestKey:    requestKey,
+	})
+	if err != nil {
+		return asMutationProblemResponse(err, requestKey, api.SafeOutcomeReferenceKindRun, ""), nil
+	}
+	return DiscoverConnectionSchema202JSONResponse(api.AdmissionResponse{
+		IntentDigest:     string(result.IntentDigest),
+		OutcomeReference: api.SafeOutcomeReference{Kind: api.SafeOutcomeReferenceKindRun, Ref: result.RunID},
+		Replay:           result.Replayed,
+		RequestKey:       requestKey,
+		RunRef:           result.RunID,
+		State:            api.AdmissionResponseStateAccepted,
+	}), nil
+}
+
+func (r problemResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+	return r.write(w)
 }
 
 // concealedSchemaSelector translates the metadata store's refusals that the

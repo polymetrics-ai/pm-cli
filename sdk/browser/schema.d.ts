@@ -370,6 +370,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start one discovery of a declared relation of the connection
+         * @description Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+         */
+        post: operations["discoverConnectionSchema"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}": {
         parameters: {
             query?: never;
@@ -1411,6 +1434,10 @@ export interface components {
             /** @enum {string} */
             kind: "request" | "run" | "connection" | "membership" | "service_account" | "delegation";
             ref: string;
+        };
+        SchemaDiscoveryRequest: {
+            /** @description The resource that one declared relation binding of the connection names. */
+            resource: string;
         };
         SchemaField: {
             name: string;
@@ -2488,6 +2515,45 @@ export interface operations {
             401: components["responses"]["Problem401"];
             403: components["responses"]["Problem403"];
             404: components["responses"]["Problem404"];
+            503: components["responses"]["Problem503"];
+        };
+    };
+    discoverConnectionSchema: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization. */
+                "X-CSRF-Token"?: components["parameters"]["CSRFToken"];
+            };
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchemaDiscoveryRequest"];
+            };
+        };
+        responses: {
+            /** @description Durably accepted, nonterminal discovery run identity */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdmissionResponse"];
+                };
+            };
+            400: components["responses"]["Problem400"];
+            401: components["responses"]["Problem401"];
+            403: components["responses"]["Problem403"];
+            404: components["responses"]["Problem404"];
+            409: components["responses"]["Problem409"];
+            410: components["responses"]["Problem410"];
+            429: components["responses"]["Problem429"];
             503: components["responses"]["Problem503"];
         };
     };
