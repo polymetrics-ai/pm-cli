@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -172,13 +173,64 @@ var bundledFixtureServices = []string{
 	"caddy", "postgres", "seaweed-filer", "seaweed-master", "seaweed-s3-a", "seaweed-s3-b", "seaweed-volume", "temporal",
 }
 
+// identityProviderVariables select the job identity provider. pm-stack starts
+// its keycloak service only when the fixture sets all four.
+var identityProviderVariables = []string{
+	"PM_STACK_IDENTITY_PROVIDER_HOST",
+	"PM_STACK_IDENTITY_PROVIDER_PORT",
+	"PM_STACK_IDENTITY_PROVIDER_ISSUER",
+	"PM_STACK_IDENTITY_PROVIDER_DIR",
+}
+
+// fixtureServices returns the long-running services of the fixture: the
+// bundled services, and keycloak when the fixture selects the job identity
+// provider. A fixture that sets only some of the variables fails the test.
+func fixtureServices(t *testing.T) []string {
+	t.Helper()
+	selected := 0
+	for _, name := range identityProviderVariables {
+		if os.Getenv(name) != "" {
+			selected++
+		}
+	}
+	switch selected {
+	case 0:
+		return bundledFixtureServices
+	case len(identityProviderVariables):
+		services := append(slices.Clone(bundledFixtureServices), "keycloak")
+		sort.Strings(services)
+		return services
+	}
+	t.Fatalf("the fixture sets %d of the %d job identity provider variables", selected, len(identityProviderVariables))
+	return nil
+}
+
+// TestFixtureServicesFollowTheIdentityProvider needs no stack. The fixture
+// service set names keycloak only when all four variables select it.
+func TestFixtureServicesFollowTheIdentityProvider(t *testing.T) {
+	for _, name := range identityProviderVariables {
+		t.Setenv(name, "")
+	}
+	if got := fixtureServices(t); !slices.Equal(got, bundledFixtureServices) {
+		t.Fatalf("fixture services without the identity provider = %q, want %q", got, bundledFixtureServices)
+	}
+	for _, name := range identityProviderVariables {
+		t.Setenv(name, "set")
+	}
+	want := []string{"caddy", "keycloak", "postgres", "seaweed-filer", "seaweed-master",
+		"seaweed-s3-a", "seaweed-s3-b", "seaweed-volume", "temporal"}
+	if got := fixtureServices(t); !slices.Equal(got, want) {
+		t.Fatalf("fixture services with the identity provider = %q, want %q", got, want)
+	}
+}
+
 type serviceContainerIdentity struct {
 	id        string
 	startedAt string
 }
 
 // fixtureServiceContainers returns the container ID and the start time of the
-// one running container of each bundled service of the fixture project.
+// one running container of each service of the fixture project.
 func fixtureServiceContainers(t *testing.T, ctx context.Context) map[string]serviceContainerIdentity {
 	t.Helper()
 	project := requiredEnvironment(t, "PM_STACK_PROJECT")
@@ -209,18 +261,18 @@ func fixtureServiceContainers(t *testing.T, ctx context.Context) map[string]serv
 		services = append(services, service)
 	}
 	sort.Strings(services)
-	if strings.Join(services, ",") != strings.Join(bundledFixtureServices, ",") {
-		t.Fatalf("running fixture services = %q, want %q", services, bundledFixtureServices)
+	if want := fixtureServices(t); strings.Join(services, ",") != strings.Join(want, ",") {
+		t.Fatalf("running fixture services = %q, want %q", services, want)
 	}
 	return containers
 }
 
-// assertSameServiceContainers requires that each bundled service keeps its
+// assertSameServiceContainers requires that each fixture service keeps its
 // container and its start time.
 func assertSameServiceContainers(t *testing.T, before, after map[string]serviceContainerIdentity) {
 	t.Helper()
 	var changed []string
-	for _, service := range bundledFixtureServices {
+	for _, service := range fixtureServices(t) {
 		switch {
 		case before[service].id != after[service].id:
 			changed = append(changed, service+": container replaced")
