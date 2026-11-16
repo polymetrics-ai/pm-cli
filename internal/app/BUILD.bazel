@@ -7,6 +7,7 @@ go_library(
         "admission.go",
         "artifact_resources.go",
         "artifacts.go",
+        "bootstrap.go",
         "cancel.go",
         "capabilities.go",
         "catalog.go",

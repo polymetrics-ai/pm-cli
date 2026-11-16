@@ -375,6 +375,7 @@ func generateFixtureMaterial(
 		"superuser",
 		"pm-app-migrator",
 		"pm-app-runtime",
+		"pm-app-bootstrap",
 		"temporal-migrator",
 		"temporal-runtime",
 		"temporal-visibility-migrator",
@@ -403,6 +404,7 @@ func generateFixtureMaterial(
 		database     string
 	}{
 		{file: "pm-app-endpoint", user: "pm_app_runtime", passwordName: "pm-app-runtime", database: "pm_app"},
+		{file: "pm-app-bootstrap-endpoint", user: "pm_app_bootstrap", passwordName: "pm-app-bootstrap", database: "pm_app"},
 		{file: "temporal-endpoint", user: "temporal_runtime", passwordName: "temporal-runtime", database: "temporal"},
 		{file: "temporal-visibility-endpoint", user: "temporal_visibility_runtime", passwordName: "temporal-visibility-runtime", database: "temporal_visibility"},
 		{file: "objects-endpoint", user: "pm_objects_runtime", passwordName: "objects-runtime", database: "pm_objects_meta"},
