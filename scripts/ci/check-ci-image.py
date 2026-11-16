@@ -14,7 +14,9 @@ The check fails when one of these items is false:
 - /usr/bin/dbus-daemon and /usr/bin/gnome-keyring-daemon are executable
   regular files of the packages dbus-daemon and gnome-keyring.
 - No D-Bus service file names org.freedesktop.secrets or starts
-  gnome-keyring-daemon.
+  gnome-keyring-daemon. The walk of the service directories follows directory
+  symlinks, reads each resolved directory once, and fails on a directory that
+  it cannot read.
 - On the root file system of the image (one device, as `find -xdev`), no file
   has a file capability (the security.capability extended attribute), and the
   setuid and setgid regular files are exactly the entries of
@@ -171,8 +173,24 @@ def check_binaries():
 
 def check_activation(directories=SERVICE_DIRECTORIES):
     start, count = len(failures), 0
+    visited = set()
+
+    def unreadable(error):
+        fail(f"{error.filename} cannot be read: {error.strerror}")
+
     for directory in directories:
-        for current, _, names in os.walk(directory):
+        # A service root that does not exist holds no service file. A link
+        # that points nowhere is not skipped: the walk reports it.
+        if not os.path.lexists(directory):
+            continue
+        for current, subdirectories, names in os.walk(directory, onerror=unreadable, followlinks=True):
+            # Follow directory symlinks, so a symlinked service directory is
+            # read. Read each resolved directory once, so a symlink loop ends.
+            resolved = os.path.realpath(current)
+            if resolved in visited:
+                subdirectories[:] = []
+                continue
+            visited.add(resolved)
             for name in names:
                 if not name.endswith(".service"):
                     continue

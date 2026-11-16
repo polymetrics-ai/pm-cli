@@ -202,6 +202,31 @@ class CheckCiImage(unittest.TestCase):
         missing = [entry for entry in image_path if entry not in check.BINARY_DIRECTORIES]
         self.assertEqual(missing, [], "BINARY_DIRECTORIES must cover the image PATH")
 
+    # Review #pr-333 brahmagupta F3 at 3786ed9: a symlinked service directory
+    # and an unreadable service directory.
+    def test_a_symlinked_service_directory_is_read(self):
+        target = self.root / "elsewhere"
+        target.mkdir()
+        (target / "a.service").write_text("[D-BUS Service]\nName=org.freedesktop.secrets\n")
+        (self.root / "dbus-1").mkdir()
+        (self.root / "dbus-1/services").symlink_to(target)
+        (target / "loop").symlink_to(target)
+        failures, output = self.run_check(check.check_activation, (str(self.root / "dbus-1"),))
+        self.assert_failed_without_pass(failures, output, "a.service activates org.freedesktop.secrets")
+        self.assertEqual(len(failures), 1, failures)
+
+    def test_an_unreadable_service_directory_fails(self):
+        services = self.root / "dbus-1/services"
+        services.mkdir(parents=True)
+        self.lock(services, 0o000)
+        failures, output = self.run_check(check.check_activation, (str(self.root / "dbus-1"),))
+        self.assert_failed_without_pass(failures, output, "dbus-1/services cannot be read")
+
+    def test_a_missing_service_root_is_not_a_failure(self):
+        failures, output = self.run_check(check.check_activation, (str(self.root / "absent"),))
+        self.assertEqual(failures, [])
+        self.assertIn("PASS 0 D-Bus service files", output)
+
 
 if __name__ == "__main__":
     unittest.main()
