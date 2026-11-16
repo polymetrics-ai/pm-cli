@@ -741,9 +741,15 @@ type (
 		Enabled       bool   `json:"enabled"`
 	}
 	scopeMembership struct {
-		WorkspaceID  string `json:"workspace_id"`
-		MembershipID string `json:"membership_id"`
-		IdentityID   string `json:"identity_id"`
+		WorkspaceID    string   `json:"workspace_id"`
+		MembershipID   string   `json:"membership_id"`
+		IdentityID     string   `json:"identity_id"`
+		Role           string   `json:"role"`
+		ResourceGrants []string `json:"resource_grants"`
+		Permissions    []string `json:"permissions"`
+		ConnectionIDs  []string `json:"connection_ids"`
+		ExpiresAt      *string  `json:"expires_at"`
+		RevokedAt      *string  `json:"revoked_at"`
 	}
 	scopeProviderAccount struct {
 		ProviderAccountID string `json:"provider_account_id"`
@@ -808,6 +814,45 @@ func scopeRows(state bootstrapState) (scope, error) {
 	return result, nil
 }
 
+// bootstrapAdminPermissions are the permissions of the admin membership.
+// ADR 0006 (line 70): the admin membership holds the right to manage
+// memberships and connections. The product checks workspace.access.manage
+// before it changes a membership (bindAndAuthorizeAccessMutation in
+// internal/app/workspaces.go) and connection.manage before it changes a
+// connection (internal/app/connections.go).
+var bootstrapAdminPermissions = []string{"connection.manage", "workspace.access.manage"}
+
+// adminAuthorityProblem describes why the membership is not the admin
+// membership of ADR 0006, or returns "". The membership must have a role,
+// hold each admin permission both as a permission and as a "permission:"
+// resource grant, list no connection at the start, and have no expiry and
+// no revocation. ADR 0006 fixes no role text, so the check compares none.
+func adminAuthorityProblem(membership scopeMembership) string {
+	if membership.Role == "" {
+		return "it has no role"
+	}
+	for _, permission := range bootstrapAdminPermissions {
+		if !slices.Contains(membership.Permissions, permission) {
+			return fmt.Sprintf("its permissions do not hold %q", permission)
+		}
+		if !slices.Contains(membership.ResourceGrants, "permission:"+permission) {
+			return fmt.Sprintf("its resource grants do not hold %q", "permission:"+permission)
+		}
+	}
+	if len(membership.ConnectionIDs) != 0 {
+		return "it lists a connection at the start"
+	}
+	for _, grant := range membership.ResourceGrants {
+		if strings.HasPrefix(grant, "connection:") {
+			return "its resource grants list a connection at the start"
+		}
+	}
+	if membership.ExpiresAt != nil || membership.RevokedAt != nil {
+		return "it has an expiry or a revocation"
+	}
+	return ""
+}
+
 // checkScope checks that the scope of the run holds exactly the rows of one
 // bootstrap of its input in its deployment, and one audit record. With
 // operator true, the audit record must name the operator as its requested
@@ -835,6 +880,9 @@ func checkScope(state bootstrapState, run *bootstrapRun, operator bool) error {
 		"the login binding is %+v, want an enabled binding of deployment %q for the admin issuer, subject and identity", got.binding, deploymentID)
 	check(got.membership.WorkspaceID == input.WorkspaceID && got.membership.IdentityID == got.identity.IdentityID,
 		"the membership is %+v, want the membership of the admin identity in the workspace", got.membership)
+	if problem := adminAuthorityProblem(got.membership); problem != "" {
+		problems = append(problems, fmt.Sprintf("the membership is %+v, but %s", got.membership, problem))
+	}
 	check(got.account.Provider == input.ProviderAccounts[0].ConnectorID,
 		"the provider account is %+v, want a provider account for %q", got.account, input.ProviderAccounts[0].ConnectorID)
 	check(got.record.DeploymentID == deploymentID && got.record.WorkspaceID == input.WorkspaceID &&
