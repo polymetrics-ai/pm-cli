@@ -4,7 +4,7 @@
 The `image` check of scripts/ci/check-docs.sh and scripts/ci/check-bdd.sh run
 this script inside the pinned job image (scripts/ci/in-ci-image.sh). Outside a
 container it fails, because the host is not the image. It starts no bus and no
-keyring daemon.
+keyring service. It runs only dpkg-query and `--version` of the two daemons.
 
 The check fails when one of these items is false:
 - Each package of build/ci/keyring-packages.txt is installed at its version.
@@ -283,8 +283,11 @@ def scan_privileges(root="/", capability=read_capability):
             path = os.path.join(current, name)
             information = os.lstat(path)
             # No device test here: on overlay file systems a regular file can
-            # report the device of its lower layer. Mount points are
-            # directories, and the directory test above stops at them.
+            # report the device of its lower layer. So the walk also scans a
+            # regular file that is a mount point, for example /etc/hosts or a
+            # scanner binary that the developer entry mounts. The directory
+            # test above stops only at a directory on another device. A
+            # directory mount on the same device is scanned.
             if not stat.S_ISREG(information.st_mode):
                 continue
             count += 1

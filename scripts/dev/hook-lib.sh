@@ -26,15 +26,16 @@ pm_in_image() {
 # that the hook runs on the host OS (the output of `uname -s`), one per line.
 # A Linux hook runs inside the job image, so it runs every named check. A macOS
 # hook runs on the host, which is not the job image. So on macOS it leaves out
-# `image` (the keyring layer of the image) and writes a notice to stderr. CI
-# and the Linux hooks run `image`.
+# `image` (the keyring layer of the image) and writes a notice to stderr. The
+# checks and bdd jobs and the Linux pre-push hook run `image`. The pre-commit
+# hook selects only `setup`, so it does not run `image` on any OS.
 pm_host_checks() {
   pm_hook=$1
   pm_os=$2
   shift 2
   for pm_name in "$@"; do
     if [ "$pm_os" = Darwin ] && [ "$pm_name" = image ]; then
-      printf '%s: the image check runs only inside the CI job image (the checks job and the Linux hooks), not on this macOS host\n' "$pm_hook" >&2
+      printf '%s: the image check runs only inside the CI job image (the checks and bdd jobs and the Linux pre-push hook), not on this macOS host\n' "$pm_hook" >&2
       continue
     fi
     printf '%s\n' "$pm_name"

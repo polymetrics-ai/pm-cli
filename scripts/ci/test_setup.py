@@ -250,7 +250,7 @@ CHECK_DOCS = ROOT / "scripts/ci/check-docs.sh"
 HOOK_LIB = ROOT / "scripts/dev/hook-lib.sh"
 CHECK_NAMES = ["setup", "python", "generate", "gofmt", "boundaries", "tools", "image", "unit"]
 IMAGE_NOTICE = ("pre-push: the image check runs only inside the CI job image "
-                "(the checks job and the Linux hooks), not on this macOS host\n")
+                "(the checks and bdd jobs and the Linux pre-push hook), not on this macOS host\n")
 
 
 class HookCheckSelection(unittest.TestCase):

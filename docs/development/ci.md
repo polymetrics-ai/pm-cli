@@ -35,7 +35,7 @@ On macOS, the hooks run on the host. The `pre-push` hook, and a `pre-commit` hoo
 
 The hooks select the Python interpreter for `check-docs.sh`. They try `python3`, `python3.13`, `python3.12` and `python3.11` on `PATH`, in that order. They select the first one that is Python 3.11 or later and imports the four modules. The hook prints the version of that interpreter and gives its name to `check-docs.sh` in `PMCLI_PYTHON`. If no interpreter qualifies, the hook prints the prerequisite and stops the commit or push. The hook does not skip the `python` check. Other Python commands still use the first `python3` on `PATH`. Examples are the secret scan, `generate.sh` and `check-boundaries.sh`. CI ignores `PMCLI_PYTHON` and uses `python3`.
 
-The macOS hooks skip one check: `image`. It checks the keyring layer of the job image, and a macOS host is not that image. The `pre-push` hook runs the unit packages and the other six checks of the CI `checks` job. It writes a notice to stderr that it left out `image`. The `checks` job and the Linux hooks run `image`.
+The macOS hooks skip one check: `image`. It checks the keyring layer of the job image, and a macOS host is not that image. The `pre-push` hook runs the unit packages and the other six checks of the CI `checks` job. It writes a notice to stderr that it left out `image`. The `checks` job, the `bdd` job and the Linux `pre-push` hook run `image`. The `pre-commit` hook selects only `setup`, so it does not run `image` on any OS.
 
 ## Required developer secret scans
 
@@ -202,27 +202,39 @@ snapshot, with no recommended packages: 72 packages, 113,958 KiB (about
 111 MiB) by their `Installed-Size` fields.
 [keyring-packages.txt](../../build/ci/keyring-packages.txt) records each
 package that the layer installs, with its version. The layer starts no
-process. A job harness starts `/usr/bin/dbus-daemon` with its own
+service for a job. During the image build, package scripts run install
+commands, for example `systemd-tmpfiles --create` in the postinst of
+`systemd`. A job harness starts `/usr/bin/dbus-daemon` with its own
 configuration and no service directory, and then `/usr/bin/gnome-keyring-daemon`.
 
 The layer gives these guarantees. The `image` check verifies each one in the
 image, in the `checks` job and at the start of the required `bdd` job:
 
-- `dbus-x11` is not installed, and no `dbus-launch` file is on a binary path.
+- `dbus-x11` is not installed. No file or link named `dbus-launch` is in a
+  directory of the image `PATH` or of the runtime `PATH`, or anywhere that the
+  privilege walk reads.
 - No D-Bus service file activates `org.freedesktop.secrets` or starts
   `gnome-keyring-daemon`. The layer removes the three service files of
-  `gnome-keyring`.
-- On the whole root file system of the image (one device, as `find -xdev`),
-  no file has a file capability. The setuid and setgid files are exactly the
+  `gnome-keyring`. The check follows symlinked service directories, and it
+  fails on a service directory that it cannot read.
+- The privilege walk reads the root file system of the image. It stops at a
+  directory on another device, as `find -xdev` does. It still scans regular
+  files that are mount points, and directory mounts on the same device. No
+  file that it reads has a file capability. The setuid and setgid files are exactly the
   12 files of the Ubuntu base in
   [privileged-files.txt](../../build/ci/privileged-files.txt), with their mode
   and owner. The `dbus` package makes `dbus-daemon-launch-helper` setuid root
   through `dpkg-statoverride`. The layer replaces that statoverride with mode
   `0754`. The check runs as the job user, so it cannot read some directories.
-  Each of them must be a recorded `closed` directory whose mode denies read or
-  search to others.
-- Each recorded package has its recorded version, and both daemons print
-  their version.
+  A directory that the job user can search but cannot list fails, because the
+  job user can run a file in it. Each directory that the job user cannot
+  search must be a recorded `closed` directory whose mode denies search to
+  others.
+- Each recorded package has its recorded version. An installed package that
+  is not in the record does not fail the check. The privilege walk covers such
+  a package only for its privileged files.
+- The first line of `dbus-daemon --version` and `gnome-keyring-daemon
+  --version` is exactly the version line of the recorded version.
 
 A change to the layer or to the snapshot changes the record and the native
 profile in the same commit.
