@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"net/url"
 	"path/filepath"
@@ -90,51 +91,45 @@ func secretForms(member string, contents []byte) []secretForm {
 }
 
 // findSecret reports the source of the first secret form that output holds.
-// It compares the raw output and each string of the JSON values in output,
-// after JSON decoding. So a secret written with JSON escapes, for example
-// p, also counts.
-func findSecret(output []byte, forms []secretForm) (string, bool) {
+// It compares the raw output and each JSON string token of output, after
+// JSON decoding, so a secret that output writes with JSON escapes also
+// counts. complete is true only when output is a sequence of complete JSON
+// values, so that the check inspected every string. A caller must not treat
+// output as clean when complete is false.
+func findSecret(output []byte, forms []secretForm) (source string, found, complete bool) {
+	tokens, complete := jsonStringTokens(output)
 	texts := [][]byte{output}
-	for _, value := range decodedJSONStrings(output) {
+	for _, value := range tokens {
 		texts = append(texts, []byte(value))
 	}
 	for _, text := range texts {
 		for _, form := range forms {
 			if bytes.Contains(text, form.value) {
-				return form.source, true
+				return form.source, true, complete
 			}
 		}
 	}
-	return "", false
+	return "", false, complete
 }
 
-// decodedJSONStrings decodes the JSON values at the start of output, one
-// after the other, and returns every string key and string value. It stops
-// at the first text that is not JSON.
-func decodedJSONStrings(output []byte) []string {
+// jsonStringTokens reads output once as a sequence of JSON values, token by
+// token, and returns every string token: each object key and each string
+// value. A token scan keeps each member of an object, also a duplicate member
+// that a decoded map would lose. complete is false when output holds text
+// that is not JSON, or a JSON value that does not end.
+func jsonStringTokens(output []byte) ([]string, bool) {
 	var values []string
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	for {
-		var value any
-		if decoder.Decode(&value) != nil {
-			return values
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return values, true
 		}
-		values = appendJSONStrings(values, value)
-	}
-}
-
-func appendJSONStrings(values []string, value any) []string {
-	switch typed := value.(type) {
-	case string:
-		values = append(values, typed)
-	case []any:
-		for _, item := range typed {
-			values = appendJSONStrings(values, item)
+		if err != nil {
+			return values, false
 		}
-	case map[string]any:
-		for key, item := range typed {
-			values = appendJSONStrings(append(values, key), item)
+		if value, ok := token.(string); ok {
+			values = append(values, value)
 		}
 	}
-	return values
 }

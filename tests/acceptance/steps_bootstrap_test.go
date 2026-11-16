@@ -613,8 +613,10 @@ func collectStrings(value any, names map[string]bool) {
 
 // stdoutHoldsNoSecret reads each file of the deployment secrets directory
 // once. stdout must hold no form of a secret value (secretForms), in its raw
-// bytes or in a decoded JSON string. The message names the file member and
-// the form, never the value.
+// bytes or in a decoded JSON string token. stdout must also be a sequence of
+// complete JSON values, so that the check sees every string: the step fails
+// closed for other output. The message names the file member and the form,
+// never the value.
 func (s *bootstrapScenario) stdoutHoldsNoSecret() error {
 	run, err := s.lastRun()
 	if err != nil {
@@ -624,8 +626,13 @@ func (s *bootstrapScenario) stdoutHoldsNoSecret() error {
 	if err != nil {
 		return err
 	}
-	if source, found := findSecret([]byte(run.stdout), forms); found {
+	source, found, complete := findSecret([]byte(run.stdout), forms)
+	if found {
 		return fmt.Errorf("the bootstrap stdout holds a value from the deployment secrets directory: %s", source)
+	}
+	if !complete {
+		// The step fails closed: it cannot inspect every string of stdout.
+		return fmt.Errorf("the bootstrap stdout (%d bytes) is not a sequence of complete JSON values, so the step cannot check every string in it", len(run.stdout))
 	}
 	return nil
 }

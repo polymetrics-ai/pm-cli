@@ -47,19 +47,54 @@ func TestBootstrapSecretCheckFindsEscapedText(t *testing.T) {
 		bootstrapCredentialMember: []byte("postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"),
 	})
 	clean := []byte(`{"workspace_id":"acceptance-workspace-1"}` + "\n")
-	if source, found := findSecret(clean, forms); found {
-		t.Fatalf("the check finds %s in output with no secret", source)
+	if source, found, complete := findSecret(clean, forms); found || !complete {
+		t.Fatalf("the check does not pass clean output: found %t (%s), complete %t", found, source, complete)
 	}
 	leak := []byte(`{"workspace_id":"acceptance-workspace-1","note":"` + unicodeEscaped(password) + `"}` + "\n")
 	if bytes.Contains(leak, []byte(password)) {
 		t.Fatal("the escaped case holds the raw password, so it tests nothing")
 	}
-	source, found := findSecret(leak, forms)
+	source, found, _ := findSecret(leak, forms)
 	if !found {
 		t.Fatal("the check does not find a password written with JSON unicode escapes")
 	}
 	if strings.Contains(source, password) {
 		t.Fatal("the source of the finding holds the secret value")
+	}
+}
+
+func TestBootstrapSecretCheckFindsEscapedTextInDuplicateMember(t *testing.T) {
+	const password = "Zq9-oracle-Pass"
+	forms := writeOracleSecrets(t, map[string][]byte{
+		bootstrapCredentialMember: []byte("postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"),
+	})
+	// Valid JSON: a decoded map keeps only the last "note", which is clean.
+	leak := []byte(`{"workspace_id":"acceptance-workspace-1","note":"` + unicodeEscaped(password) + `","note":"clean"}` + "\n")
+	var decoded map[string]any
+	if err := json.Unmarshal(leak, &decoded); err != nil || decoded["note"] != "clean" {
+		t.Fatalf("the duplicate-member case is not valid JSON with a clean last member: %v", err)
+	}
+	if bytes.Contains(leak, []byte(password)) {
+		t.Fatal("the duplicate-member case holds the raw password, so it tests nothing")
+	}
+	if _, found, complete := findSecret(leak, forms); !found || !complete {
+		t.Fatalf("the check does not find the password in the overwritten member: found %t, complete %t", found, complete)
+	}
+}
+
+func TestBootstrapSecretCheckRefusesOutputThatItCannotInspect(t *testing.T) {
+	const password = "Zq9-oracle-Pass"
+	forms := writeOracleSecrets(t, map[string][]byte{
+		bootstrapCredentialMember: []byte("postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"),
+	})
+	escaped := unicodeEscaped(password)
+	for name, output := range map[string]string{
+		"truncated escaped JSON":      `{"note":"` + escaped + `"`,
+		"escaped JSON after a prefix": `error: {"note":"` + escaped + `"}`,
+	} {
+		if _, found, complete := findSecret([]byte(output), forms); !found && complete {
+			t.Errorf("%s case: the check reports the output as clean and complete", name)
+		}
 	}
 }
 
@@ -72,8 +107,8 @@ func TestBootstrapSecretCheckFindsBase64WrappingKey(t *testing.T) {
 	}
 	forms := writeOracleSecrets(t, map[string][]byte{"wrapping-key": key})
 	clean := []byte(`{"workspace_id":"acceptance-workspace-1"}` + "\n")
-	if source, found := findSecret(clean, forms); found {
-		t.Fatalf("the check finds %s in output with no secret", source)
+	if source, found, complete := findSecret(clean, forms); found || !complete {
+		t.Fatalf("the check does not pass clean output: found %t (%s), complete %t", found, source, complete)
 	}
 	// encoding/json writes a byte slice as standard base64.
 	leak, err := json.Marshal(map[string]any{"workspace_id": "acceptance-workspace-1", "key": key})
@@ -83,7 +118,7 @@ func TestBootstrapSecretCheckFindsBase64WrappingKey(t *testing.T) {
 	if bytes.Contains(leak, key) {
 		t.Fatal("the base64 case holds the raw key, so it tests nothing")
 	}
-	if _, found := findSecret(leak, forms); !found {
+	if _, found, _ := findSecret(leak, forms); !found {
 		t.Fatal("the check does not find the wrapping key in its base64 form")
 	}
 }
