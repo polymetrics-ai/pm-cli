@@ -1,7 +1,6 @@
 -- Schema discovery (ADR 0007): the accepted intent of each discovery run and
 -- the immutable complete candidate snapshots that discoveries store. A
 -- discovery never selects: the selection is a separate later record.
--- Migration numbers 0020 and 0021 are reserved for other slices.
 
 -- +goose Up
 -- +goose StatementBegin
@@ -20,9 +19,9 @@ BEGIN
         RAISE EXCEPTION 'runtime role has prohibited PostgreSQL authority';
     END IF;
     IF NOT EXISTS (
-        SELECT 1 FROM pm.control_schema WHERE singleton AND revision = 'pm.control/v19'
+        SELECT 1 FROM pm.control_schema WHERE singleton AND revision = 'pm.control/v20'
     ) THEN
-        RAISE EXCEPTION 'schema discovery migration requires the warehouse segment schema';
+        RAISE EXCEPTION 'schema discovery migration requires the operator bootstrap schema';
     END IF;
 END
 $$;
@@ -132,10 +131,10 @@ GRANT INSERT (org_id, workspace_id, connection_id, schema_ref, connector_id, pro
     ON pm.schema_snapshots TO pm_app_runtime;
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
-UPDATE pm.control_schema SET revision = 'pm.control/v22', installed_at = clock_timestamp()
-WHERE singleton AND revision = 'pm.control/v19';
+UPDATE pm.control_schema SET revision = 'pm.control/v21', installed_at = clock_timestamp()
+WHERE singleton AND revision = 'pm.control/v20';
 ALTER TABLE pm.control_schema
-    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v22');
+    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v21');
 -- +goose StatementEnd
 
 -- +goose Down
@@ -161,8 +160,8 @@ DROP TABLE pm.schema_snapshots;
 DROP TABLE pm.schema_discoveries;
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
-UPDATE pm.control_schema SET revision = 'pm.control/v19', installed_at = clock_timestamp()
-WHERE singleton AND revision = 'pm.control/v22';
+UPDATE pm.control_schema SET revision = 'pm.control/v20', installed_at = clock_timestamp()
+WHERE singleton AND revision = 'pm.control/v21';
 ALTER TABLE pm.control_schema
-    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v19');
+    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v20');
 -- +goose StatementEnd
