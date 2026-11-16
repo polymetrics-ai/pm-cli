@@ -68,6 +68,7 @@ go_test(
         "physical_boundary_test.go",
         "provider_http_tls_test.go",
         "sql_composition_test.go",
+        "worker_callback_deadline_test.go",
         "worker_plan_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
@@ -112,10 +113,19 @@ go_test(
         "//internal/workflows",
         "@com_github_jackc_pgx_v5//:pgx",
         "@com_github_jackc_pgx_v5//pgconn",
+        "@io_temporal_go_api//common/v1:common",
         "@io_temporal_go_api//enums/v1:enums",
         "@io_temporal_go_api//history/v1:history",
+        "@io_temporal_go_api//namespace/v1:namespace",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//activity",
         "@io_temporal_go_sdk//client",
         "@io_temporal_go_sdk//worker",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//test/bufconn",
+        "@org_golang_google_protobuf//types/known/durationpb",
+        "@org_golang_google_protobuf//types/known/timestamppb",
     ],
 )
 
@@ -146,5 +156,25 @@ go_test(
     deps = [
         "//internal/config",
         "//internal/credentials",
+    ],
+)
+
+go_test(
+    name = "worker_callback_deadline_test",
+    srcs = ["worker_callback_deadline_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/contract",
+        "@io_temporal_go_api//common/v1:common",
+        "@io_temporal_go_api//namespace/v1:namespace",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//activity",
+        "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//worker",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//test/bufconn",
+        "@org_golang_google_protobuf//types/known/durationpb",
+        "@org_golang_google_protobuf//types/known/timestamppb",
     ],
 )

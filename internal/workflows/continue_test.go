@@ -666,32 +666,64 @@ func (controller *blockingExecutionController) Reconcile(
 	return successfulExecutionObservation(request), nil
 }
 
-type callbackTiming struct {
-	remaining time.Duration
-	elapsed   time.Duration
+// callbackDeadlines is what the provider callback context holds when the
+// callback starts. The controller reads it at once and does not wait for the
+// context to end, so no value here depends on an answer to a heartbeat.
+type callbackDeadlines struct {
+	deadline        time.Time
+	remaining       time.Duration
+	attemptDeadline time.Time
+	err             error
+	cause           error
+	problem         error
 }
 
+// errCallbackDeadlinesRecorded ends the controlled callback. Settlement reads
+// only that the callback returned an error, as it did for the context error
+// that this callback returned before issue #292.
+var errCallbackDeadlinesRecorded = errors.New("controlled provider callback returns after it records its deadlines")
+
 type timeoutExecutionController struct {
-	finished chan callbackTiming
+	mu    sync.Mutex
+	calls int
+	first callbackDeadlines
 }
 
 func newTimeoutExecutionController() *timeoutExecutionController {
-	return &timeoutExecutionController{finished: make(chan callbackTiming, 1)}
+	return &timeoutExecutionController{}
 }
 
 func (controller *timeoutExecutionController) Execute(
 	ctx context.Context,
 	_ app.ExecutionRequest,
 ) (app.ExecutionObservation, error) {
-	started := time.Now()
+	observed := callbackDeadlines{err: ctx.Err(), cause: context.Cause(ctx)}
 	deadline, ok := ctx.Deadline()
-	if !ok {
-		return app.ExecutionObservation{}, errors.New("provider transport context has no deadline")
+	switch {
+	case !ok:
+		observed.problem = errors.New("provider transport context has no deadline")
+	case !activity.IsActivity(ctx):
+		observed.problem = errors.New("provider transport context is outside the activity attempt")
+	default:
+		observed.deadline = deadline
+		observed.remaining = time.Until(deadline)
+		observed.attemptDeadline = activity.GetInfo(ctx).Deadline
 	}
-	remaining := time.Until(deadline)
-	<-ctx.Done()
-	controller.finished <- callbackTiming{remaining: remaining, elapsed: time.Since(started)}
-	return app.ExecutionObservation{}, ctx.Err()
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	controller.calls++
+	if controller.calls == 1 {
+		controller.first = observed
+	}
+	return app.ExecutionObservation{}, errCallbackDeadlinesRecorded
+}
+
+// firstCall returns the deadlines of the first callback and the number of
+// callbacks. A later callback belongs to a retried attempt.
+func (controller *timeoutExecutionController) firstCall() (callbackDeadlines, int) {
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	return controller.first, controller.calls
 }
 
 func (controller *timeoutExecutionController) Reconcile(
