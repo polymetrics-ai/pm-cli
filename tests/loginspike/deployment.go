@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"net"
 	"net/http"
@@ -199,33 +200,57 @@ func (d *deployment) start(binary, configuration, secrets string) error {
 	return nil
 }
 
-// waitReady asks the health route through the edge until it answers 200 or
-// the limit passes. pm-server at c59aa20 has no ready signal yet (#72 adds it),
-// so this spike polls. A Gherkin step must wait for the ready signal instead.
-func (d *deployment) waitReady(limit time.Duration) error {
+// waitReady asks /health/live through the edge until it answers 200 or the
+// limit passes, then reads /health/ready once. pm-server at c59aa20 has no
+// ready signal yet (#72 adds it), so this spike polls. A Gherkin step must wait
+// for the ready signal instead. Run 1 showed that /health/ready stays 503 at
+// c59aa20: the server composes no dispatch probe (internal/server/server.go:185),
+// so "dispatch" is always false. The spike therefore needs only admission.
+func (d *deployment) waitReady(limit time.Duration) (string, error) {
 	client := d.ca.client(nil, false)
 	deadline := time.Now().Add(limit)
-	for time.Now().Before(deadline) {
+	live := false
+	for !live && time.Now().Before(deadline) {
 		select {
 		case err := <-d.exited:
 			d.exited <- err
-			return errors.New("pm-server exited before it was ready")
+			return "", errors.New("pm-server exited before it was live")
 		default:
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, d.origin+"/health/ready", nil)
-		response, err := client.Do(request)
-		if err == nil {
-			_ = response.Body.Close()
-			if response.StatusCode == http.StatusOK {
-				cancel()
-				return nil
-			}
+		status, _ := d.get(client, "/health/live")
+		if status == http.StatusOK {
+			live = true
+			break
 		}
-		cancel()
 		time.Sleep(250 * time.Millisecond)
 	}
-	return fmt.Errorf("pm-server was not ready within %s", limit)
+	if !live {
+		return "", fmt.Errorf("pm-server was not live within %s", limit)
+	}
+	status, body := d.get(client, "/health/ready")
+	var readiness struct {
+		Admission bool `json:"admission"`
+		Dispatch  bool `json:"dispatch"`
+	}
+	_ = json.Unmarshal(body, &readiness)
+	facts := fmt.Sprintf("/health/ready status %d admission=%t dispatch=%t", status, readiness.Admission, readiness.Dispatch)
+	if !readiness.Admission {
+		return facts, errors.New("pm-server is live but admission is not ready")
+	}
+	return facts, nil
+}
+
+func (d *deployment) get(client *http.Client, path string) (int, []byte) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	request, _ := http.NewRequestWithContext(ctx, http.MethodGet, d.origin+path, nil)
+	response, err := client.Do(request)
+	if err != nil {
+		return 0, nil
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
+	return response.StatusCode, body
 }
 
 func (d *deployment) stop() error {

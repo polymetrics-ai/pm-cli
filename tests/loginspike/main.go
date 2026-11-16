@@ -60,11 +60,13 @@ func run(pm, pmServer string) int {
 		_ = os.RemoveAll(work)
 		_, statErr := os.Stat(work)
 		report.check("cleanup.work", errors.Is(statErr, os.ErrNotExist), "the job work directory (configs, logs, CA, secret roots) is removed")
+		runnerCleanup()
 		report.INFO("summary", "pass=%d fail=%d duration=%s", report.pass, report.fail, elapsed(begin))
 		report.INFO("done", "login spike finished")
 	}()
 
 	tokens := intakeTokens()
+	show("cleanup.runner.start", "ps", "--all", "--filter", "label="+spikeLabel, "--format", "{{.ID}} {{.Names}} {{.Image}} {{.Status}}")
 
 	var k *keyring
 	if keyringInstallFacts() {
@@ -209,8 +211,8 @@ func runCandidate(c candidate, stack stackInputs, work string, k *keyring, pm, p
 		report.FAIL(id+".pmserver", "%v", err)
 		return
 	}
-	err = d.waitReady(90 * time.Second)
-	if !report.check(id+".pmserver.ready", err == nil, "pm-server discovered the issuer and became ready in %s (%v)", elapsed(startedAt), errText(err)) {
+	readiness, err := d.waitReady(90 * time.Second)
+	if !report.check(id+".pmserver.ready", err == nil, "pm-server discovered the issuer and admits requests after %s (%s, %v)", elapsed(startedAt), readiness, errText(err)) {
 		report.tail(id+".pmserver.log", d.logPath, 30)
 		return
 	}

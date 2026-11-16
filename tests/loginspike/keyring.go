@@ -41,8 +41,12 @@ type keyring struct {
 
 func keyringInstallFacts() bool {
 	status, err := os.ReadFile("/opt/pmcli/login-spike-apt.status")
-	installed := err == nil && strings.TrimSpace(string(status)) == "installed"
+	installed := err == nil && strings.HasPrefix(strings.TrimSpace(string(status)), "installed")
 	report.check("1a.install.image", installed, "dbus and gnome-keyring are in the spike CI image from the pinned snapshot (status %q)", strings.TrimSpace(string(status)))
+	for _, path := range []string{"/usr/bin/dbus-launch", "/usr/share/dbus-1/services/org.freedesktop.secrets.service", "/usr/bin/systemctl"} {
+		_, statErr := os.Stat(path)
+		report.INFO("1a.install.files", "%s present: %t", path, statErr == nil)
+	}
 	if log, err := os.ReadFile("/opt/pmcli/login-spike-apt.log"); err == nil {
 		packages := 0
 		for _, line := range strings.Split(string(log), "\n") {
@@ -232,10 +236,18 @@ func (k *keyring) roundTrip(self string) {
 	output, err = loadCmd.CombinedOutput()
 	got := strings.TrimSpace(string(output))
 	report.check("1a.osstore.load", err == nil && got == hex.EncodeToString(want[:]), "process 2 loaded the same session from the os store (digest match: %t)", got == hex.EncodeToString(want[:]))
-	noBus := exec.Command(self, "keyring-load")
+	// Run 1 (dbus-x11 image) took 240 s here. The likely cause: with no bus
+	// address, godbus runs dbus-launch, which starts a second session bus, and
+	// D-Bus activation starts a second keyring daemon that cannot unlock. The
+	// check is timed and bounded, and a stray-process check follows at stop.
+	noBusCtx, noBusCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	defer noBusCancel()
+	noBus := exec.CommandContext(noBusCtx, self, "keyring-load")
 	noBus.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "HOME=" + k.homeDir, "XDG_RUNTIME_DIR=" + k.runtime}
+	noBus.WaitDelay = 5 * time.Second
+	noBusStart := time.Now()
 	output, err = noBus.CombinedOutput()
-	report.check("1a.osstore.nobus", err != nil, "a process without the private bus address cannot load it (%s)", report.scrub(strings.TrimSpace(string(output))))
+	report.check("1a.osstore.nobus", err != nil && noBusCtx.Err() == nil, "a process without the private bus address fails at once and cannot load it (%s after %s)", report.scrub(strings.TrimSpace(string(output))), elapsed(noBusStart))
 	hits := scanTree(k.dataDir, []byte(credential))
 	report.check("1a.keyring.atrest", hits == 0, "no keyring file holds the session in plain or base64 form (files with hits: %d)", hits)
 	files := []string{}
@@ -270,6 +282,8 @@ func (k *keyring) stop() {
 		}
 	}
 	k.password = ""
+	stray := strayBusProcesses()
+	report.check("1a.cleanup.stray", stray == 0, "no other dbus-daemon, dbus-launch or gnome-keyring-daemon process is left in the job container (found %d)", stray)
 	if err := os.RemoveAll(k.dir); err != nil {
 		report.FAIL("1a.cleanup.data", "keyring directory removal failed")
 		return
@@ -353,4 +367,25 @@ func scanProcesses(value []byte) (int, int) {
 		}
 	}
 	return inArgs, inEnv
+}
+
+// strayBusProcesses counts the visible bus and keyring processes. It runs after
+// the spike stopped its own, so every one found is a stray.
+func strayBusProcesses() int {
+	count := 0
+	entries, _ := os.ReadDir("/proc")
+	for _, entry := range entries {
+		if _, err := fmt.Sscanf(entry.Name(), "%d", new(int)); err != nil {
+			continue
+		}
+		name, err := os.ReadFile(filepath.Join("/proc", entry.Name(), "comm"))
+		if err != nil {
+			continue
+		}
+		switch strings.TrimSpace(string(name)) {
+		case "dbus-daemon", "dbus-launch", "gnome-keyring-d":
+			count++
+		}
+	}
+	return count
 }

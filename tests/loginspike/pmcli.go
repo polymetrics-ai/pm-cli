@@ -24,6 +24,7 @@ func runPM(binary string, environment []string, stdin []byte, args ...string) (p
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Env = environment
+	command.WaitDelay = 5 * time.Second
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr

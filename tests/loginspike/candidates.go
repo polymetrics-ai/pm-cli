@@ -15,7 +15,10 @@ import (
 )
 
 // candidate is one open-source OIDC provider that runs as a container in the
-// job's engine, like the stack services.
+// job's engine, like the stack services. Run 1 used the host network, and
+// Keycloak failed because its HTTP listener found port 8080 in use on the
+// runner. Each provider now has its own network namespace and publishes one
+// port on the runner loopback only.
 type candidate struct {
 	id         string
 	references []string
@@ -63,7 +66,7 @@ func prepareDex(dir string, port int, issuer, redirectURI, clientSecret, passwor
 		"issuer":  issuer,
 		"storage": map[string]any{"type": "memory"},
 		"web": map[string]any{
-			"https":   "127.0.0.1:" + strconv.Itoa(port),
+			"https":   "0.0.0.0:5556",
 			"tlsCert": "/cfg/tls.pem",
 			"tlsKey":  "/cfg/tls-key.pem",
 		},
@@ -95,7 +98,7 @@ func prepareDex(dir string, port int, issuer, redirectURI, clientSecret, passwor
 	}
 	return func(image string) []string {
 		return []string{
-			"--user", "0:0", "--network", "host", "--read-only",
+			"--user", "0:0", "--publish", "127.0.0.1:" + strconv.Itoa(port) + ":5556", "--read-only",
 			"--tmpfs", "/tmp:size=16m", "--memory", "256m", "--cpus", "0.5", "--pids-limit", "128",
 			"--security-opt", "no-new-privileges",
 			"--volume", dir + ":/cfg:ro",
@@ -149,16 +152,9 @@ func prepareKeycloak(dir string, port int, issuer, redirectURI, clientSecret, pa
 		}
 	}
 	clear(encoded)
-	// The management interface stays off while health and metrics are off. An
-	// explicit free port keeps a default port 9000 from colliding on the host
-	// network if it starts.
-	managementPort, err := freePort()
-	if err != nil {
-		return nil, errors.New("no free management port")
-	}
 	return func(image string) []string {
 		return []string{
-			"--user", "0:0", "--network", "host",
+			"--user", "0:0", "--publish", "127.0.0.1:" + strconv.Itoa(port) + ":8443",
 			"--memory", "1536m", "--cpus", "2", "--pids-limit", "512",
 			"--security-opt", "no-new-privileges",
 			"--volume", filepath.Join(dir, "pm-realm.json") + ":/opt/keycloak/data/import/pm-realm.json:ro",
@@ -166,12 +162,11 @@ func prepareKeycloak(dir string, port int, issuer, redirectURI, clientSecret, pa
 			"--volume", filepath.Join(dir, "tls-key.pem") + ":/cfg/tls-key.pem:ro",
 			image, "start-dev", "--import-realm",
 			"--http-enabled=false",
-			"--http-host=127.0.0.1",
-			"--https-port=" + strconv.Itoa(port),
+			"--http-host=0.0.0.0",
+			"--https-port=8443",
 			"--https-certificate-file=/cfg/tls.pem",
 			"--https-certificate-key-file=/cfg/tls-key.pem",
 			"--hostname=https://127.0.0.1:" + strconv.Itoa(port),
-			"--http-management-port=" + strconv.Itoa(managementPort),
 		}
 	}, nil
 }
