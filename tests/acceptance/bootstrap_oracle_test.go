@@ -88,8 +88,10 @@ func TestBootstrapSecretCheckRefusesOutputThatItCannotInspect(t *testing.T) {
 		bootstrapCredentialMember: []byte("postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"),
 	})
 	escaped := unicodeEscaped(password)
-	// The escaped string of these cases is closed, so the scan decodes it and
-	// finds the secret. The output is still not complete.
+	// Truncated escaped JSON: the string is closed, so the scan decodes it and
+	// finds the secret, but the output is not complete.
+	// Escaped JSON after a prefix: the decoder stops at the prefix, so the
+	// scan does not decode the string, and the output is not complete.
 	for name, output := range map[string]string{
 		"truncated escaped JSON":      `{"note":"` + escaped + `"`,
 		"escaped JSON after a prefix": `error: {"note":"` + escaped + `"}`,
