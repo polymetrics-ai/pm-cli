@@ -21,6 +21,28 @@
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
+
+# THROWAWAY (#323, branch agent/323-capture-profile; never merge). In CI, capture
+# the native profile of the new image before any bootstrap call, print it to
+# the log as gzip+base64 with the SHA-256 of the raw JSON, run the keyring
+# layer check, and fail, so this run is never green.
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  capture=$(mktemp "${RUNNER_TEMP:?}/pmcli-capture-XXXXXX")
+  python3 -I -B build/ci/capture-native-profile.py > "$capture"
+  printf 'capture candidate: %s\n' "${GITHUB_SHA:?}"
+  printf 'capture raw sha256: %s\n' "$(sha256sum < "$capture" | cut -c1-64)"
+  printf '%s\n' '----- BEGIN PMCLI NATIVE PROFILE (gzip+base64) -----'
+  gzip -9 -n -c "$capture" | base64
+  printf '%s\n' '----- END PMCLI NATIVE PROFILE -----'
+  rm -f "$capture"
+  if python3 -I -B scripts/ci/check-ci-image.py; then
+    printf '%s\n' 'capture: image check PASS'
+  else
+    printf '%s\n' 'capture: image check FAIL'
+  fi
+  printf '%s\n' 'capture: this throwaway run fails by design' >&2
+  exit 1
+fi
 all='setup python generate gofmt boundaries tools image unit'
 if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
   # shellcheck disable=SC2086
