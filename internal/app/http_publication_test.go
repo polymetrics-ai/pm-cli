@@ -123,6 +123,58 @@ func TestContinuationUploadFailureIsAPublicationFailure(t *testing.T) {
 		"/v1/workspaces/"+fixture.Scope.WorkspaceID+"/runs/"+admitted.RunRef+"/result", http.StatusServiceUnavailable)
 }
 
+// TestHeldPublicationEndsBeforeTheTaskLease runs one worker unit whose object
+// store never answers a write: the gate stays closed until the test ends. The
+// caller gives the unit 15s (executePermitWorkerUnit), more than its task
+// lease, the sealed start_to_close of 10s. The publication step must end
+// before the lease ends, so the settlement commits under a current lease: the
+// unit settles succeeded, the provider member outcome stays succeeded, the
+// settlement records that the result publication was unavailable, and no
+// result is published. The test waits once, for the unit, under the caller's
+// limit. Defect it catches: a publication step that ends after the lease, so
+// the settlement fails with a stale task fence (issue #279).
+func TestHeldPublicationEndsBeforeTheTaskLease(t *testing.T) {
+	temporal := newPermitTemporalHarness(t)
+	objectStore := newGatedObjectStore(t)
+	var providerCalls atomic.Int32
+	origin, tlsConfig, dialer := newHTTPDirectReadTLSPeer(t, publicationCheckProvider(&providerCalls))
+	authority := &durableContinuationAuthority{
+		selection: durableHTTPContinuationSelection("fixture.http.publication-held", origin),
+		policy:    httpDirectReadPolicy(origin),
+	}
+	fixture, publisher := newDurableContinuationFixture(t, authority, app.HTTPDirectReadDependencies{
+		ClientIdentity: testClientIdentity, Resolver: httpDirectReadResolver{}, Dialer: dialer, TLSConfig: tlsConfig,
+	}, objectStore.resources, objectStore.resources, objectStore.limits)
+	service := workerResultService(t, fixture, temporal, publisher, durableContinuationObjectBytes)
+
+	recordCap := uint64(2)
+	admitted := admitDurableContinuationRun(
+		t, fixture, authority.selection, fixture.Client, fixture.Scope, fixture.Connection.ConnectionID,
+		"publication-held", durableContinuationInput(t, "chain", 1),
+		contract.ResultControls{TotalRecordCap: &recordCap},
+	)
+	run := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, admitted)
+	unit, err := executePermitWorkerUnit(t, service, run)
+	if err != nil || unit.State != contract.RunStateSucceeded || unit.UnknownEffectCount != 0 || providerCalls.Load() != 1 {
+		t.Fatalf("unit whose object store never answers = %#v error=%v provider_calls=%d; "+
+			"want a succeeded settlement before the task lease ends", unit, err, providerCalls.Load())
+	}
+	if puts := objectStore.completedPuts(); len(puts) != 0 {
+		t.Fatalf("completed object writes = %q; want none, because the object store never answers", puts)
+	}
+	for _, outcome := range publicationCheckOutcomes(t, fixture, admitted.RunRef, run) {
+		if outcome.State != contract.OutcomeSucceeded {
+			t.Fatalf("provider member outcome after a held publication = %#v; want succeeded", outcome)
+		}
+	}
+	reasons := publicationCheckSettlementReasons(t, fixture, admitted.RunRef)
+	if !slices.Contains(reasons, "result_publication_unavailable") {
+		t.Fatalf("settlement reason codes = %q; want result_publication_unavailable", reasons)
+	}
+	workerResultGET(t, fixture,
+		"/v1/workspaces/"+fixture.Scope.WorkspaceID+"/runs/"+admitted.RunRef+"/result", http.StatusServiceUnavailable)
+}
+
 // TestRefusedLocalTailContinuationIsAPublicationFailure runs a second unit that
 // serves its records from the unread tail of a continuation, with no provider
 // call. The object store refuses the new continuation that this unit seals.
