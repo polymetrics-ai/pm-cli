@@ -3,6 +3,7 @@ package acceptance
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -421,16 +422,55 @@ func (r *commandResult) exitCodeIs(want int) error {
 	return nil
 }
 
-// stdoutHasDeploymentID checks the deployment ID of the server that the lane
-// command ran against.
+// stdoutHasDeploymentID reads the one instance ID that the lane command
+// printed and compares it exactly with the deployment ID of the server that
+// the command ran against. pm-server uses its deployment ID as its instance
+// ID. The deployment ID in another field, or as a part of a longer value,
+// does not count. An empty deployment ID fails.
 func (r *commandResult) stdoutHasDeploymentID() error {
 	if !r.ran {
 		return errors.New("no lane command ran")
 	}
-	if r.deploymentID == "" || !strings.Contains(r.stdout, r.deploymentID) {
-		return fmt.Errorf("stdout does not contain the lane deployment ID %q\nstdout: %s", r.deploymentID, r.stdout)
+	if r.deploymentID == "" {
+		return errors.New("the lane command ran against a server with no deployment ID")
+	}
+	printed, err := r.printedInstanceID()
+	if err != nil {
+		return err
+	}
+	if printed != r.deploymentID {
+		return fmt.Errorf("the lane command printed instance ID %q, want the lane deployment ID %q\nstdout: %s", printed, r.deploymentID, r.stdout)
 	}
 	return nil
+}
+
+// printedInstanceID reads the instance ID from the server information
+// document that pm server info prints: one JSON object (JSON output), or one
+// "key<TAB>JSON value" line for each field (text output). It fails unless the
+// output has exactly one nonempty instance ID.
+func (r *commandResult) printedInstanceID() (string, error) {
+	var document struct {
+		InstanceID string `json:"instance_id"`
+	}
+	if json.Unmarshal([]byte(r.stdout), &document) == nil && document.InstanceID != "" {
+		return document.InstanceID, nil
+	}
+	var found []string
+	for _, line := range strings.Split(r.stdout, "\n") {
+		key, value, ok := strings.Cut(line, "\t")
+		if !ok || key != "instance_id" {
+			continue
+		}
+		var instanceID string
+		if json.Unmarshal([]byte(value), &instanceID) != nil || instanceID == "" {
+			return "", fmt.Errorf("the instance ID line in the lane command stdout is not a nonempty JSON string: %q", line)
+		}
+		found = append(found, instanceID)
+	}
+	if len(found) != 1 {
+		return "", fmt.Errorf("the lane command stdout has %d instance ID lines, want 1\nstdout: %s", len(found), r.stdout)
+	}
+	return found[0], nil
 }
 
 func (r *commandResult) stderrContains(want string) error {
