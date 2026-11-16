@@ -85,11 +85,11 @@ paths:
         "403":
           $ref: "#/components/responses/Problem403"
         "409":
-          $ref: "#/components/responses/Problem409"
+          $ref: "#/components/responses/DevicePoll409"
         "410":
           $ref: "#/components/responses/Problem410"
         "429":
-          $ref: "#/components/responses/Problem429"
+          $ref: "#/components/responses/DevicePoll429"
         "503":
           $ref: "#/components/responses/Problem503"
   /v1/sessions/device/approve:
@@ -1879,6 +1879,16 @@ components:
         pattern: '^bytes ([0-9]+-[0-9]+|\*)/[0-9]+$'
         minLength: 9
         maxLength: 128
+    DevicePollRetryAfter:
+      description: >-
+        Whole seconds until the stored next poll time of the device challenge,
+        rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it
+        with device_authorization_pending and device_poll_too_soon only.
+      schema:
+        type: string
+        pattern: '^([1-9]|[1-5][0-9]|60)$'
+        minLength: 1
+        maxLength: 2
   responses:
     Problem400:
       description: Malformed or unsupported typed request
@@ -1906,6 +1916,17 @@ components:
             $ref: "#/components/schemas/Problem"
     Problem409:
       description: Intent, capability, specification, resume, or foundation conflict
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    DevicePoll409:
+      description: >-
+        Device login conflict. A device_authorization_pending answer carries
+        Retry-After. A login_challenge_used answer does not.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/DevicePollRetryAfter"
       content:
         application/problem+json:
           schema:
@@ -1943,6 +1964,17 @@ components:
             $ref: "#/components/schemas/Problem"
     Problem429:
       description: A workspace pending-count or oldest-pending-age limit is reached
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    DevicePoll429:
+      description: >-
+        Device login limit. A device_poll_too_soon answer carries Retry-After.
+        An authentication_rate_limited answer does not.
+      headers:
+        Retry-After:
+          $ref: "#/components/headers/DevicePollRetryAfter"
       content:
         application/problem+json:
           schema:

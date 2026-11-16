@@ -8,6 +8,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -191,11 +192,14 @@ func (service *Service) ExchangeDeviceLogin(ctx context.Context, request Exchang
 	if request.Body == nil {
 		return invalidRequestResponse(), nil
 	}
-	session, err := service.auth.ExchangeDeviceProof(ctx, auth.DeviceProof{
+	session, wait, err := service.auth.ExchangeDeviceProofWithCadence(ctx, auth.DeviceProof{
 		ChallengeID: request.Body.ChallengeId,
 		Proof:       request.Body.Proof,
 	})
 	if err != nil {
+		if errors.Is(err, auth.ErrChallengePending) || errors.Is(err, auth.ErrPollTooSoon) {
+			setRetryAfter(ctx, wait)
+		}
 		outcome := api.SafeOutcomeReference{Kind: api.SafeOutcomeReferenceKindRequest, Ref: request.Body.ChallengeId}
 		return asProblemResponse(err, &outcome), nil
 	}
@@ -260,6 +264,34 @@ func (service *Service) GetCurrentSession(ctx context.Context, request GetCurren
 		Principal:       principalResponse(state.identity.Principal),
 		Transport:       transport,
 	}), nil
+}
+
+// maximumDevicePollRetryAfterSeconds is the largest Retry-After value that the
+// public contract allows (DevicePollRetryAfter in api/pm.openapi.yaml) and that
+// the client accepts. auth.NewService already refuses a poll interval above
+// one minute.
+const maximumDevicePollRetryAfterSeconds = 60
+
+// setRetryAfter states the stored device poll cadence. The value is the time
+// until the next permitted poll in whole seconds, rounded up, so a client that
+// follows it never polls before that time. A wait above the contract bound,
+// for example after the database clock steps back, is sent as the bound. The
+// server still refuses an early poll with a new Retry-After value.
+func setRetryAfter(ctx context.Context, wait time.Duration) {
+	seconds := retryAfterSeconds(wait)
+	if seconds <= 0 {
+		return
+	}
+	if state, ok := stateFromContext(ctx); ok && state.writer != nil {
+		state.writer.Header().Set("Retry-After", strconv.FormatInt(seconds, 10))
+	}
+}
+
+func retryAfterSeconds(wait time.Duration) int64 {
+	if wait <= 0 {
+		return 0
+	}
+	return min(int64((wait+time.Second-1)/time.Second), maximumDevicePollRetryAfterSeconds)
 }
 
 func encodeOIDCCookie(value oidcCookieState) (string, error) {
