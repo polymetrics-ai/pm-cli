@@ -5,11 +5,14 @@
 //
 // The starter owns the start limit (ADR 0005, amendment v4, change A6). It
 // reads the ready pipe with one blocking reader and one deadline: the start
-// limit, counted from the start of the process. The deadline covers the ready
-// line and the end of file after it. At the deadline the starter runs the stop
-// sequence: SIGTERM, one exit observation up to the stop limit, then SIGKILL
-// and the same exit observation up to the kill limit. Each signal goes at most
-// once, and each wait has one timer. Nothing repeats.
+// limit, counted from the start of the process. The deadline covers the whole
+// read, the ready line and the end of file after it. Readiness is the ready
+// line. When the deadline passes before the read ended, the starter closes
+// its ready read end, so the read ends. A wait for the ready line or for the
+// end of file that the deadline ends runs the stop sequence: SIGTERM, one exit
+// observation up to the stop limit, then SIGKILL and the same exit
+// observation up to the kill limit. Each signal goes at most once, and each
+// wait has one timer. Nothing repeats.
 //
 // A Process is not safe for concurrent use. One step at a time calls it.
 package starter
@@ -161,6 +164,10 @@ type Report struct {
 	ReadyData []byte
 	// ReadyEOF is true when the starter read end of file on the ready pipe.
 	ReadyEOF bool
+	// ReadyReadStopped is true when the starter ended its read of the ready
+	// pipe before end of file: the start deadline passed, or the starter
+	// stopped watching the process.
+	ReadyReadStopped bool
 	// Stdout and Stderr are bounded snapshots: the last bytes read so far.
 	Stdout []byte
 	Stderr []byte
@@ -180,8 +187,8 @@ func (r Report) String() string {
 	if r.Stop == StopNoExitAtLimit {
 		possibleSurvivor = fmt.Sprintf(" possible survivor: process %d", r.PID)
 	}
-	return fmt.Sprintf("outcome=%q stop=%q%s pid=%d exited=%t exit=%d elapsed=%s ready=%q stdout=%q stderr=%q",
-		r.Outcome, r.Stop, possibleSurvivor, r.PID, r.Exited, r.ExitCode, r.Elapsed, r.ReadyData, r.Stdout, r.Stderr)
+	return fmt.Sprintf("outcome=%q stop=%q%s pid=%d exited=%t exit=%d elapsed=%s ready=%q ready_eof=%t ready_read_stopped=%t stdout=%q stderr=%q",
+		r.Outcome, r.Stop, possibleSurvivor, r.PID, r.Exited, r.ExitCode, r.Elapsed, r.ReadyData, r.ReadyEOF, r.ReadyReadStopped, r.Stdout, r.Stderr)
 }
 
 type readyEventKind uint8
@@ -190,6 +197,8 @@ const (
 	eventLine readyEventKind = iota
 	eventEOF
 	eventBadData
+	// eventStopped: the starter closed the ready read end before end of file.
+	eventStopped
 )
 
 type readyEvent struct {
@@ -215,9 +224,22 @@ type Process struct {
 	stdout     *snapshot
 	stderr     *snapshot
 
-	readyMu   sync.Mutex
-	readyData []byte
-	readyEOF  bool
+	// readyRead is the read end of the ready pipe.
+	readyRead *os.File
+	// readerDone closes when the ready reader returns.
+	readerDone chan struct{}
+	// deadline closes when the start limit passed before the ready reader
+	// returned. The watcher closes it, and it is the only receiver of the
+	// start timer.
+	deadline chan struct{}
+	// unwatch closes when the starter stops watching the process.
+	unwatch     chan struct{}
+	unwatchOnce sync.Once
+
+	readyMu      sync.Mutex
+	readyData    []byte
+	readyEOF     bool
+	readyStopped bool
 
 	outcome   Outcome
 	outcomeAt time.Time
@@ -276,6 +298,10 @@ func Start(config Config) (*Process, error) {
 		ready:      make(chan readyEvent, 2),
 		exited:     make(chan struct{}),
 		readersEnd: make(chan struct{}),
+		readerDone: make(chan struct{}),
+		deadline:   make(chan struct{}),
+		unwatch:    make(chan struct{}),
+		readyRead:  readyRead,
 		stdoutRead: stdoutRead,
 		stderrRead: stderrRead,
 		stdout:     newSnapshot(config.SnapshotBytes),
@@ -296,7 +322,33 @@ func Start(config Config) (*Process, error) {
 		close(process.readersEnd)
 	}()
 	go process.readReady(readyRead)
+	go process.watchReady()
 	return process, nil
+}
+
+// watchReady owns the start timer. One start deadline bounds the whole read of
+// the ready pipe: the ready line and the end of file after it. When the
+// deadline passes before the reader returned, or when the starter stops
+// watching, the watcher closes the ready read end, so the blocking read ends.
+// Readiness stays at the ready line: a step that needs only readiness has
+// already returned, and it does not fail when the read ends later.
+func (p *Process) watchReady() {
+	select {
+	case <-p.readerDone:
+		p.startTimer.Stop()
+	case <-p.startTimer.C():
+		close(p.deadline)
+		_ = p.readyRead.Close()
+	case <-p.unwatch:
+		p.startTimer.Stop()
+		_ = p.readyRead.Close()
+	}
+}
+
+// stopWatching ends the watch of the ready pipe. The watcher then closes the
+// ready read end if the read has not ended.
+func (p *Process) stopWatching() {
+	p.unwatchOnce.Do(func() { close(p.unwatch) })
 }
 
 // PID returns the process ID.
@@ -343,13 +395,15 @@ func (p *Process) AwaitReady() (Report, bool) {
 			return p.report(OutcomeReady, StopNone, event.at), true
 		case eventEOF:
 			p.outcome, p.outcomeAt = OutcomeEOFBeforeReady, event.at
-			p.startTimer.Stop()
 			return p.awaitExit(), false
+		case eventStopped:
+			p.outcome = OutcomeStartLimitPassed
+			return p.stopSequence(), false
 		default:
 			p.outcome, p.outcomeAt = OutcomeProtocolError, event.at
 			return p.stopSequence(), false
 		}
-	case <-p.startTimer.C():
+	case <-p.deadline:
 		p.outcome = OutcomeStartLimitPassed
 		return p.stopSequence(), false
 	}
@@ -371,14 +425,18 @@ func (p *Process) AwaitClose() (Report, bool) {
 	}
 	select {
 	case event := <-p.ready:
-		if event.kind == eventEOF {
+		switch event.kind {
+		case eventEOF:
 			p.outcome, p.outcomeAt = OutcomeReadyClosed, event.at
-			p.startTimer.Stop()
 			return p.report(OutcomeReadyClosed, StopNone, event.at), true
+		case eventStopped:
+			p.outcome = OutcomeCloseLimitPassed
+			return p.stopSequence(), false
+		default:
+			p.outcome, p.outcomeAt = OutcomeProtocolError, event.at
+			return p.stopSequence(), false
 		}
-		p.outcome, p.outcomeAt = OutcomeProtocolError, event.at
-		return p.stopSequence(), false
-	case <-p.startTimer.C():
+	case <-p.deadline:
 		p.outcome = OutcomeCloseLimitPassed
 		return p.stopSequence(), false
 	}
@@ -390,7 +448,6 @@ func (p *Process) AwaitExit() Report {
 	if p.done {
 		return p.last
 	}
-	p.startTimer.Stop()
 	return p.awaitExit()
 }
 
@@ -400,7 +457,6 @@ func (p *Process) Stop() Report {
 	if p.done {
 		return p.last
 	}
-	p.startTimer.Stop()
 	return p.stopSequence()
 }
 
@@ -420,9 +476,10 @@ func (p *Process) awaitExit() Report {
 // stopSequence sends SIGTERM, waits on the exit observation up to the stop
 // limit, then sends SIGKILL and waits on the same observation up to the kill
 // limit. After the kill limit it does not wait for end of file on the output
-// pipes: it closes its read ends and reports a possible survivor.
+// pipes: it closes its read ends and reports a possible survivor. The ready
+// read can still end with the exit during the sequence; finish closes the
+// ready read end after it.
 func (p *Process) stopSequence() Report {
-	p.startTimer.Stop()
 	select {
 	case <-p.exited:
 		return p.afterExit(StopNone)
@@ -461,7 +518,10 @@ func (p *Process) afterExit(stop StopResult) Report {
 	return p.finish(stop)
 }
 
+// finish ends the watch of the process. The ready read end closes if the read
+// has not ended, also after the kill limit.
 func (p *Process) finish(stop StopResult) Report {
+	p.stopWatching()
 	p.done = true
 	p.last = p.report(p.outcome, stop, p.outcomeAt)
 	return p.last
@@ -474,7 +534,7 @@ func (p *Process) report(outcome Outcome, stop StopResult, at time.Time) Report 
 		PID:      p.cmd.Process.Pid,
 		ExitCode: -1,
 	}
-	report.ReadyData, report.ReadyEOF = p.readyState()
+	report.ReadyData, report.ReadyEOF, report.ReadyReadStopped = p.readyState()
 	var stdoutEnded, stderrEnded bool
 	report.Stdout, report.StdoutTotal, stdoutEnded = p.stdout.state()
 	report.Stderr, report.StderrTotal, stderrEnded = p.stderr.state()
@@ -510,9 +570,11 @@ func (p *Process) copyOutput(source *os.File, destination *snapshot, tee io.Writ
 
 // readReady is the one blocking reader of the ready pipe. It reads at most
 // the ready line and one more byte. It sends one event at the ready line, at
-// end of file before the line, or at other data. After the line it sends one
-// more event: end of file, or other data.
+// end of file before the line, at other data, or when the watcher closed the
+// read end. After the line it sends one more event: end of file, other data,
+// or the closed read end.
 func (p *Process) readReady(source *os.File) {
+	defer close(p.readerDone)
 	defer source.Close()
 	line := p.config.ReadyLine
 	var one [1]byte
@@ -521,15 +583,19 @@ func (p *Process) readReady(source *os.File) {
 	for index := 0; index <= len(line); index++ {
 		if _, err := io.ReadFull(source, one[:]); err != nil {
 			eof := errors.Is(err, io.EOF)
-			p.noteReady(nil, eof)
-			if eof && (index == 0 || index == len(line)) {
+			stopped := errors.Is(err, os.ErrClosed)
+			p.noteReady(nil, eof, stopped)
+			switch {
+			case stopped:
+				p.ready <- readyEvent{kind: eventStopped, at: time.Now()}
+			case eof && (index == 0 || index == len(line)):
 				p.ready <- readyEvent{kind: eventEOF, at: time.Now()}
-			} else {
+			default:
 				p.ready <- readyEvent{kind: eventBadData, at: time.Now()}
 			}
 			return
 		}
-		p.noteReady(one[:], false)
+		p.noteReady(one[:], false, false)
 		if index == len(line) || one[0] != line[index] {
 			p.ready <- readyEvent{kind: eventBadData, at: time.Now()}
 			return
@@ -540,17 +606,18 @@ func (p *Process) readReady(source *os.File) {
 	}
 }
 
-func (p *Process) noteReady(data []byte, eof bool) {
+func (p *Process) noteReady(data []byte, eof, stopped bool) {
 	p.readyMu.Lock()
 	defer p.readyMu.Unlock()
 	p.readyData = append(p.readyData, data...)
 	p.readyEOF = p.readyEOF || eof
+	p.readyStopped = p.readyStopped || stopped
 }
 
-func (p *Process) readyState() ([]byte, bool) {
+func (p *Process) readyState() ([]byte, bool, bool) {
 	p.readyMu.Lock()
 	defer p.readyMu.Unlock()
-	return append([]byte(nil), p.readyData...), p.readyEOF
+	return append([]byte(nil), p.readyData...), p.readyEOF, p.readyStopped
 }
 
 // snapshot keeps the last size bytes written to it and counts every byte.

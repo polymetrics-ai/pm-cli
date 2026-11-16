@@ -339,3 +339,56 @@ func TestStarterStopsAProcessThatClosesWithNoLineAndKeepsRunning(t *testing.T) {
 		t.Fatalf("report %s, want end of file with no data on the ready pipe", got.report)
 	}
 }
+
+// (f) The child writes the ready line and keeps the ready descriptor open. The
+// step needs only readiness, so it does not call AwaitClose. The test fires
+// the start timer after the line. The starter ends its read of the ready
+// pipe at that deadline and closes its read end. Readiness stays: the
+// process keeps running, and the starter sends no signal.
+// Defect: a ready-pipe read with no deadline after the ready line.
+func TestStarterEndsTheReadyReadAtTheStartDeadline(t *testing.T) {
+	f := newFakeTimers()
+	stdin, _ := heldStdin(t)
+	process := startShell(t, f, `printf 'helper ready\n' >&3; exec cat`, stdin, nil)
+	start := awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	if ready := awaitResult(t, results, f); !ready.ok || ready.report.Outcome != OutcomeReady {
+		t.Fatalf("report %s, want the ready line", ready.report)
+	}
+	f.fire(start)
+	awaitSignal(t, process.readerDone, "end of the ready-pipe read after the start deadline")
+
+	got := process.Snapshot()
+	if got.Outcome != OutcomeReady || got.Stop != StopNone || got.Exited || got.ReadyEOF {
+		t.Fatalf("report %s, want readiness kept, no stop sequence, no exit and no end of file", got)
+	}
+}
+
+// (g) The child writes the ready line, and a second process that it starts
+// keeps the ready write end open. After the ready line, the step stops the
+// child. The child exits, but no end of file comes, because the second
+// process holds the write end. The starter closes its ready read end when it
+// stops watching the process.
+// Defect: a ready read end that stays open after the starter stops watching.
+func TestStarterClosesTheReadyReadEndWhenItStopsWatching(t *testing.T) {
+	f := newFakeTimers()
+	stdin, _ := heldStdin(t)
+	// The second cat reads the held standard input through descriptor 4 and
+	// holds descriptor 3 until the test ends.
+	process := startShell(t, f, `exec 4<&0; cat <&4 >/dev/null 2>&1 & printf 'helper ready\n' >&3; exec cat`, stdin, nil)
+	awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	if ready := awaitResult(t, results, f); !ready.ok || ready.report.Outcome != OutcomeReady {
+		t.Fatalf("report %s, want the ready line", ready.report)
+	}
+	go func() { results <- result{process.Stop(), false} }()
+	stopped := awaitResult(t, results, f)
+	if stopped.report.Stop != StopAfterSIGTERM || stopped.report.ReadyEOF {
+		t.Fatalf("report %s, want %q and no end of file on the ready pipe", stopped.report, StopAfterSIGTERM)
+	}
+	awaitSignal(t, process.readerDone, "end of the ready-pipe read after the starter stopped watching")
+}
