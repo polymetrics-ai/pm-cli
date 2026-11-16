@@ -11,26 +11,30 @@ import (
 )
 
 // The schema commands are thin clients of the connection schema routes. show
-// reports the immutable metadata snapshot the connection currently selects and
-// the exact typed fields it declares. discover asks the server to admit one
-// durable discovery run; pm-worker performs the metadata I/O. No schema
-// command selects a snapshot or resolves a provider credential, and a failed
-// or partial discovery never replaces the last complete valid snapshot.
+// reports the immutable metadata snapshot that one resource of the connection
+// selects, the exact typed fields it declares and the selection revision.
+// discover asks the server to admit one durable discovery run; pm-worker
+// performs the metadata I/O. select asks the server to select one stored
+// complete candidate at the selection revision that the user read. No schema
+// command resolves a provider credential, and a failed or partial discovery
+// never replaces the last complete valid snapshot.
 func newSchemaCommand(runtime *commandRuntime) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "schema",
-		Short: "Discover or inspect the metadata snapshots of one connection",
-		Long: `Discover or inspect the immutable metadata snapshots of one explicitly selected connection.
+		Short: "Discover, select or inspect the metadata snapshots of one connection",
+		Long: `Discover, select or inspect the immutable metadata snapshots of one explicitly selected connection.
 
-show reports the connection's current selection, that snapshot's declared binding and
-completeness, and the effective typed fields built from it. It is read-only. discover starts one
-durable discovery run of one declared relation, which stores one complete candidate snapshot and
-never selects it. No schema command requires a provider credential in the client.
+show reports the current selection of one resource, that snapshot's declared binding and
+completeness, the effective typed fields built from it, and the selection revision. It is
+read-only. discover starts one durable discovery run of one declared relation, which stores one
+complete candidate snapshot and never selects it. select selects one stored complete candidate
+at the selection revision that show reported. No schema command requires a provider credential
+in the client.
 
 Help and completion for this namespace work offline, without a reachable server or any credential.`,
 		Args: noArgs,
 	}
-	command.AddCommand(newSchemaShowCommand(runtime), newSchemaDiscoverCommand(runtime))
+	command.AddCommand(newSchemaShowCommand(runtime), newSchemaDiscoverCommand(runtime), newSchemaSelectCommand(runtime))
 	return command
 }
 
@@ -113,6 +117,66 @@ declare is refused with schema_relation_unknown before any run starts.`,
 	return command
 }
 
+func newSchemaSelectCommand(runtime *commandRuntime) *cobra.Command {
+	resource := singleString{name: "resource"}
+	schemaRef := singleString{name: "schema-ref"}
+	control := newMutationControl()
+	command := &cobra.Command{
+		Use:   "select",
+		Short: "Select one stored complete candidate of a declared relation of one connection",
+		Long: `Select one stored complete candidate snapshot of one relation that the connection declares.
+
+--revision is the selection revision that pm schema show reported for the resource. It is 1
+before the first selection, and each selection adds 1. You must hold connection.manage on the
+connection. A stale revision stops the command with control_revision_mismatch and exit code 4.
+A resource that the connection does not declare, or a candidate that the resource does not
+hold, stops the command with schema_relation_unknown and exit code 3. A refusal changes no
+selection. The command never discovers metadata and requires no provider credential.`,
+		Args: noArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			connection := runtime.flags.connection
+			if !connection.set {
+				return usageFailure(errors.New("--connection is required"))
+			}
+			if !resource.set {
+				return usageFailure(errors.New("--resource is required"))
+			}
+			if !schemaRef.set {
+				return usageFailure(errors.New("--schema-ref is required"))
+			}
+			if !control.revision.set {
+				return usageFailure(errors.New("--revision is required"))
+			}
+			ctx, cancel, bundle, err := runtime.requestBundle(command, true, true)
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			var request pmapi.SchemaSelectionRequest
+			request.Selection.Resource = resource.value
+			request.Selection.SchemaRef = schemaRef.value
+			protocol, parameters, err := control.protocol("schema.select", bundle.config.workspace, connection.value, request.Selection)
+			if err != nil {
+				return err
+			}
+			request.Protocol = protocol
+			mutationParameters := &pmapi.SelectConnectionSchemaParams{IdempotencyKey: parameters.key, IfMatch: parameters.revision}
+			response, err := sendRecoveredMutation(ctx, runtime, bundle, "schema.select", connection.value, protocol, request, func(attemptContext context.Context) (pmapi.RecoveryAttemptResult, error) {
+				value, sendErr := bundle.client.API().SelectConnectionSchemaWithResponse(attemptContext, pmapi.WorkspaceID(bundle.config.workspace), pmapi.ConnectionID(connection.value), mutationParameters, request)
+				return recoveredResponse(value, sendErr)
+			})
+			if err != nil {
+				return err
+			}
+			return renderWireResponse(command.OutOrStdout(), bundle.config.output, response)
+		},
+	}
+	addMutationFlags(command, control)
+	command.Flags().Var(&resource, resource.name, "Declared resource of the relation to select")
+	command.Flags().Var(&schemaRef, schemaRef.name, "Content digest of the stored complete candidate to select")
+	return command
+}
+
 func newSchemaShowCommand(runtime *commandRuntime) *cobra.Command {
 	resource := singleString{name: "resource"}
 	permissionRevision := singleString{name: "permission-revision"}
@@ -121,14 +185,15 @@ func newSchemaShowCommand(runtime *commandRuntime) *cobra.Command {
 	snapshotID := singleString{name: "snapshot-id"}
 	command := &cobra.Command{
 		Use:   "show",
-		Short: "Show one connection's selected snapshot and its effective typed fields",
-		Long: `Show the exact binding, completeness and effective fields of one connection's selected
-metadata snapshot.
+		Short: "Show one resource's selected snapshot, its effective typed fields and its selection revision",
+		Long: `Show the exact binding, completeness and effective fields of the selected metadata snapshot
+of one resource of a connection, and the selection revision of that resource.
 
 The binding members are the caller's declared scope, not a widening selector: the server serves
 only a snapshot whose stored binding matches the connection, provider account, permission
 revision, resource and source revision named here. An absent selection is reported explicitly
-instead of being rendered as an empty discovery.`,
+instead of being rendered as an empty discovery. The selection revision is 1 while the resource
+has no selection. Give that revision to pm schema select with --revision.`,
 		Args: noArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			connection, err := requiredSchemaConnection(runtime, resource, permissionRevision, sourceRevision)

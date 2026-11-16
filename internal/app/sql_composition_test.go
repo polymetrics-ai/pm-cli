@@ -736,6 +736,10 @@ func newSQLExecutionHarness(
 		}
 		configuration.Admission = admission
 		configuration.Artifacts = consumer.Backend
+		configuration.SchemaSelection, err = app.NewSchemaSelectionService(configuration.Identity, composition.ResolveDiscovery)
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 	if composition == nil {

@@ -75,8 +75,11 @@ type Services struct {
 	Catalog        *CatalogService
 	Admission      *AdmissionService
 	Runs           *RunService
-	pool           *store.Pool
-	publicOrigin   string
+	// SchemaSelection selects a stored candidate of a relation that the
+	// customer SQL declaration of this process names.
+	SchemaSelection *SchemaSelectionService
+	pool            *store.Pool
+	publicOrigin    string
 }
 
 // OpenServices observes an existing compatible store; it never provisions or
@@ -219,16 +222,21 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 	if err != nil {
 		return nil, errors.New("run control composition failed")
 	}
+	schemaSelection, err := NewSchemaSelectionService(identity, sqlComposition.ResolveDiscovery)
+	if err != nil {
+		return nil, errors.New("schema selection composition failed")
+	}
 	constructed = true
 	return &Services{
-		Authentication: authentication,
-		Identity:       identity,
-		Credentials:    ingress,
-		Catalog:        catalog,
-		Admission:      admission,
-		Runs:           runs,
-		pool:           pool,
-		publicOrigin:   publicOrigin,
+		Authentication:  authentication,
+		Identity:        identity,
+		Credentials:     ingress,
+		Catalog:         catalog,
+		Admission:       admission,
+		Runs:            runs,
+		SchemaSelection: schemaSelection,
+		pool:            pool,
+		publicOrigin:    publicOrigin,
 	}, nil
 }
 

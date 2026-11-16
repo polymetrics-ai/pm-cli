@@ -140,6 +140,7 @@ var operationControls = map[string]OperationControl{
 	"watchRunEvents":           {OperationID: "watchRunEvents", Method: "GET", Path: "/v1/workspaces/{workspace_id}/runs/{run_id}/events", RequiredBodyFields: []string{}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: false, HasProtocol: false, QueryFields: []string{}},
 	"getConnectionSchema":      {OperationID: "getConnectionSchema", Method: "GET", Path: "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema", RequiredBodyFields: []string{}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: false, HasProtocol: false, QueryFields: []string{"permission_revision", "provider_account_id", "resource", "snapshot_id", "source_revision"}},
 	"discoverConnectionSchema": {OperationID: "discoverConnectionSchema", Method: "POST", Path: "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries", RequiredBodyFields: []string{"resource"}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: true, RequiresIfMatch: false, HasBody: true, HasProtocol: false, QueryFields: []string{}},
+	"selectConnectionSchema":   {OperationID: "selectConnectionSchema", Method: "POST", Path: "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections", RequiredBodyFields: []string{"protocol", "selection"}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: true, RequiresIfMatch: true, HasBody: true, HasProtocol: true, QueryFields: []string{}},
 	"getWarehouseDataset":      {OperationID: "getWarehouseDataset", Method: "GET", Path: "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}", RequiredBodyFields: []string{}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: false, HasProtocol: false, QueryFields: []string{"snapshot_id"}},
 	"runWarehouseQuery":        {OperationID: "runWarehouseQuery", Method: "POST", Path: "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query", RequiredBodyFields: []string{"limit", "order", "parameters", "predicates", "project", "relation", "snapshot_id"}, OptionalBodyFields: []string{}, RequiresIdempotencyKey: false, RequiresIfMatch: false, HasBody: true, HasProtocol: false, QueryFields: []string{}},
 }
@@ -207,6 +208,8 @@ var operationIDsByRoute = map[string]string{
 	"POST /v1/workspaces/:workspace_id/connections":                                                     "createConnection",
 	"POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries":                 "discoverConnectionSchema",
 	"POST /v1/workspaces/:workspace_id/connections/:connection_id/schema/discoveries":                   "discoverConnectionSchema",
+	"POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections":                  "selectConnectionSchema",
+	"POST /v1/workspaces/:workspace_id/connections/:connection_id/schema/selections":                    "selectConnectionSchema",
 	"POST /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}/query": "runWarehouseQuery",
 	"POST /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query":    "runWarehouseQuery",
 	"POST /v1/workspaces/{workspace_id}/delegations":                                                    "createDelegation",
@@ -344,6 +347,11 @@ var operationObjectControls = map[string]map[string]JSONFieldControl{
 	"getConnectionSchema": {},
 	"discoverConnectionSchema": {
 		"": {AllowedFields: []string{"resource"}, RequiredFields: []string{"resource"}, Nullable: false},
+	},
+	"selectConnectionSchema": {
+		"":           {AllowedFields: []string{"protocol", "selection"}, RequiredFields: []string{"protocol", "selection"}, Nullable: false},
+		"/protocol":  {AllowedFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, RequiredFields: []string{"expected_revision", "intent_digest", "request_key", "required_features", "wire_version"}, Nullable: false},
+		"/selection": {AllowedFields: []string{"resource", "schema_ref"}, RequiredFields: []string{"resource", "schema_ref"}, Nullable: false},
 	},
 	"getWarehouseDataset": {},
 	"runWarehouseQuery": {

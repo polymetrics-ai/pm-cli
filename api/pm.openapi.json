@@ -1173,6 +1173,12 @@
               "null"
             ]
           },
+          "selection_revision": {
+            "description": "The selection revision of the resource. It is 1 while the resource has no selection.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
           "snapshot": {
             "$ref": "#/components/schemas/ConnectionSchemaSnapshot"
           },
@@ -1186,6 +1192,7 @@
           "connector_id",
           "connection_id",
           "selected",
+          "selection_revision",
           "snapshot",
           "fields"
         ],
@@ -3401,6 +3408,40 @@
         ],
         "type": "object"
       },
+      "SchemaSelectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          },
+          "selection": {
+            "additionalProperties": false,
+            "properties": {
+              "resource": {
+                "description": "The resource that one declared relation binding of the connection names.",
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "schema_ref": {
+                "description": "The content digest of one stored complete candidate of that resource.",
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "resource",
+              "schema_ref"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "protocol",
+          "selection"
+        ],
+        "type": "object"
+      },
       "ServerInfo": {
         "additionalProperties": {
           "x-go-type": "json.RawMessage",
@@ -5554,7 +5595,7 @@
     },
     "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema": {
       "get": {
-        "description": "Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.",
+        "description": "Reports the selected snapshot reference of one resource of the connection, that snapshot's declared binding and completeness, the effective typed fields built from it, and the selection revision of the resource. The selection revision is 1 while the resource has no selection, and each selection adds 1. The ETag header carries the same revision. An absent selection is explicit. This read never discovers or selects, and it never requires provider credentials. A failed or partial discovery never replaces the last complete valid snapshot.",
         "operationId": "getConnectionSchema",
         "parameters": [
           {
@@ -5582,7 +5623,12 @@
                 }
               }
             },
-            "description": "Selected snapshot identity, completeness and effective typed fields"
+            "description": "Selected snapshot identity, completeness, effective typed fields and selection revision",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/Problem400"
@@ -5697,6 +5743,99 @@
           }
         ],
         "summary": "Start one discovery of a declared relation of the connection",
+        "tags": [
+          "schema"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectionID"
+        }
+      ],
+      "post": {
+        "description": "Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.",
+        "operationId": "selectConnectionSchema",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaSelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MutationResultResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MutationReplayResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Original selection result, or exact safe replay"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Select one complete candidate of a declared relation of the connection",
         "tags": [
           "schema"
         ]

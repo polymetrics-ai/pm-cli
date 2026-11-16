@@ -665,6 +665,15 @@
       "requires_if_match": false
     },
     {
+      "operation_id": "selectConnectionSchema",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections",
+      "required_body_fields": ["protocol", "selection"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
       "operation_id": "getWarehouseDataset",
       "method": "GET",
       "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}",

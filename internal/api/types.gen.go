@@ -895,8 +895,11 @@ type ConnectionSchemaInspection struct {
 	Fields       []SchemaField             `json:"fields"`
 	OrgId        string                    `json:"org_id"`
 	Selected     nullable.Nullable[string] `json:"selected"`
-	Snapshot     ConnectionSchemaSnapshot  `json:"snapshot"`
-	WorkspaceId  string                    `json:"workspace_id"`
+
+	// SelectionRevision The selection revision of the resource. It is 1 while the resource has no selection.
+	SelectionRevision int64                    `json:"selection_revision"`
+	Snapshot          ConnectionSchemaSnapshot `json:"snapshot"`
+	WorkspaceId       string                   `json:"workspace_id"`
 }
 
 // ConnectionSchemaSnapshot defines model for ConnectionSchemaSnapshot.
@@ -1463,6 +1466,18 @@ type SchemaField struct {
 // SchemaFieldType defines model for SchemaField.Type.
 type SchemaFieldType string
 
+// SchemaSelectionRequest defines model for SchemaSelectionRequest.
+type SchemaSelectionRequest struct {
+	Protocol  ProtocolMetadata `json:"protocol"`
+	Selection struct {
+		// Resource The resource that one declared relation binding of the connection names.
+		Resource string `json:"resource"`
+
+		// SchemaRef The content digest of one stored complete candidate of that resource.
+		SchemaRef string `json:"schema_ref"`
+	} `json:"selection"`
+}
+
 // ServerInfo defines model for ServerInfo.
 type ServerInfo struct {
 	Features             []string                   `json:"features"`
@@ -1916,6 +1931,22 @@ type DiscoverConnectionSchemaParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
+// SelectConnectionSchemaParams defines parameters for SelectConnectionSchema.
+type SelectConnectionSchemaParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// SelectConnectionSchema200JSONResponseBody defines parameters for SelectConnectionSchema.
+type SelectConnectionSchema200JSONResponseBody struct {
+	union json.RawMessage
+}
+
 // GetWarehouseDatasetParams defines parameters for GetWarehouseDataset.
 type GetWarehouseDatasetParams struct {
 	// SnapshotId Selects one retained snapshot's exact segment set instead of the dataset's live set.
@@ -2123,6 +2154,9 @@ type UpdateConnectionJSONRequestBody = ConnectionUpdateRequest
 
 // DiscoverConnectionSchemaJSONRequestBody defines body for DiscoverConnectionSchema for application/json ContentType.
 type DiscoverConnectionSchemaJSONRequestBody = SchemaDiscoveryRequest
+
+// SelectConnectionSchemaJSONRequestBody defines body for SelectConnectionSchema for application/json ContentType.
+type SelectConnectionSchemaJSONRequestBody = SchemaSelectionRequest
 
 // RunWarehouseQueryJSONRequestBody defines body for RunWarehouseQuery for application/json ContentType.
 type RunWarehouseQueryJSONRequestBody = WarehouseQueryRequest
@@ -2436,6 +2470,68 @@ func (a ServerInfo) MarshalJSON() ([]byte, error) {
 		}
 	}
 	return json.Marshal(object)
+}
+
+// AsMutationResultResponse returns the union data inside the SelectConnectionSchema200JSONResponseBody as a MutationResultResponse
+func (t SelectConnectionSchema200JSONResponseBody) AsMutationResultResponse() (MutationResultResponse, error) {
+	var body MutationResultResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMutationResultResponse overwrites any union data inside the SelectConnectionSchema200JSONResponseBody as the provided MutationResultResponse
+func (t *SelectConnectionSchema200JSONResponseBody) FromMutationResultResponse(v MutationResultResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMutationResultResponse performs a merge with any union data inside the SelectConnectionSchema200JSONResponseBody, using the provided MutationResultResponse
+func (t *SelectConnectionSchema200JSONResponseBody) MergeMutationResultResponse(v MutationResultResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsMutationReplayResponse returns the union data inside the SelectConnectionSchema200JSONResponseBody as a MutationReplayResponse
+func (t SelectConnectionSchema200JSONResponseBody) AsMutationReplayResponse() (MutationReplayResponse, error) {
+	var body MutationReplayResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMutationReplayResponse overwrites any union data inside the SelectConnectionSchema200JSONResponseBody as the provided MutationReplayResponse
+func (t *SelectConnectionSchema200JSONResponseBody) FromMutationReplayResponse(v MutationReplayResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMutationReplayResponse performs a merge with any union data inside the SelectConnectionSchema200JSONResponseBody, using the provided MutationReplayResponse
+func (t *SelectConnectionSchema200JSONResponseBody) MergeMutationReplayResponse(v MutationReplayResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t SelectConnectionSchema200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *SelectConnectionSchema200JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
 }
 
 // AsMutationResultResponse returns the union data inside the RevokeDelegation200JSONResponseBody as a MutationResultResponse

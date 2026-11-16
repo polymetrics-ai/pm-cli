@@ -359,7 +359,7 @@ export interface paths {
         };
         /**
          * Inspect the connection's selected metadata snapshot and its effective schema
-         * @description Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+         * @description Reports the selected snapshot reference of one resource of the connection, that snapshot's declared binding and completeness, the effective typed fields built from it, and the selection revision of the resource. The selection revision is 1 while the resource has no selection, and each selection adds 1. The ETag header carries the same revision. An absent selection is explicit. This read never discovers or selects, and it never requires provider credentials. A failed or partial discovery never replaces the last complete valid snapshot.
          */
         get: operations["getConnectionSchema"];
         put?: never;
@@ -387,6 +387,29 @@ export interface paths {
          * @description Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
          */
         post: operations["discoverConnectionSchema"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Select one complete candidate of a declared relation of the connection
+         * @description Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+         */
+        post: operations["selectConnectionSchema"];
         delete?: never;
         options?: never;
         head?: never;
@@ -971,6 +994,11 @@ export interface components {
             fields: components["schemas"]["SchemaField"][];
             org_id: string;
             selected: string | null;
+            /**
+             * Format: int64
+             * @description The selection revision of the resource. It is 1 while the resource has no selection.
+             */
+            selection_revision: number;
             snapshot: components["schemas"]["ConnectionSchemaSnapshot"];
             workspace_id: string;
         };
@@ -1479,6 +1507,15 @@ export interface components {
             /** @enum {string} */
             type: "string" | "integer" | "number" | "bool" | "object" | "array" | "date" | "timestamp_instant" | "timestamp_local";
             writable: boolean;
+        };
+        SchemaSelectionRequest: {
+            protocol: components["schemas"]["ProtocolMetadata"];
+            selection: {
+                /** @description The resource that one declared relation binding of the connection names. */
+                resource: string;
+                /** @description The content digest of one stored complete candidate of that resource. */
+                schema_ref: string;
+            };
         };
         ServerInfo: {
             features: string[];
@@ -2555,9 +2592,10 @@ export interface operations {
         };
         requestBody?: never;
         responses: {
-            /** @description Selected snapshot identity, completeness and effective typed fields */
+            /** @description Selected snapshot identity, completeness, effective typed fields and selection revision */
             200: {
                 headers: {
+                    ETag: components["headers"]["ETag"];
                     [name: string]: unknown;
                 };
                 content: {
@@ -2607,6 +2645,48 @@ export interface operations {
             409: components["responses"]["Problem409"];
             410: components["responses"]["Problem410"];
             429: components["responses"]["Problem429"];
+            503: components["responses"]["Problem503"];
+        };
+    };
+    selectConnectionSchema: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope. */
+                "If-Match"?: components["parameters"]["IfMatch"];
+                /** @description Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization. */
+                "X-CSRF-Token"?: components["parameters"]["CSRFToken"];
+            };
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                connection_id: components["parameters"]["ConnectionID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SchemaSelectionRequest"];
+            };
+        };
+        responses: {
+            /** @description Original selection result, or exact safe replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MutationResultResponse"] | components["schemas"]["MutationReplayResponse"];
+                };
+            };
+            400: components["responses"]["Problem400"];
+            401: components["responses"]["Problem401"];
+            403: components["responses"]["Problem403"];
+            404: components["responses"]["Problem404"];
+            409: components["responses"]["Problem409"];
+            410: components["responses"]["Problem410"];
+            412: components["responses"]["Problem412"];
+            428: components["responses"]["Problem428"];
             503: components["responses"]["Problem503"];
         };
     };

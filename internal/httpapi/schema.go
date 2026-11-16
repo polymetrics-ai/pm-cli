@@ -13,14 +13,15 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
 )
 
-// GetConnectionSchema reports the immutable metadata snapshot one authorized
-// connection currently selects, together with the effective typed fields built
-// from it. Nothing on this route discovers metadata, promotes a snapshot, or
-// selects one, and a failed or partial discovery never replaces the last
-// complete valid snapshot. Without a configured file metadata root the route
-// reads PM PostgreSQL (storedConnectionSchema); with one, the connection's own
-// config.json owns the schema_ref selection. The route reads no provider
-// credential and performs no provider I/O.
+// GetConnectionSchema reports the selection of one resource of an authorized
+// connection: the selected immutable snapshot, the effective typed fields built
+// from it, and the selection revision of the resource. The route reads the
+// selection and the stored candidates from PM PostgreSQL. The selection
+// revision is 1 while the resource has no selection, and the ETag header
+// carries the same revision. Nothing on this route discovers metadata or
+// selects a snapshot, and a failed or partial discovery never replaces the
+// last complete valid snapshot. The route reads no provider credential and
+// performs no provider I/O.
 func (service *Service) GetConnectionSchema(
 	ctx context.Context,
 	request GetConnectionSchemaRequestObject,
@@ -29,7 +30,8 @@ func (service *Service) GetConnectionSchema(
 	if err != nil {
 		return asProblemResponse(err, nil), nil
 	}
-	connection, err := service.identity.InspectConnection(ctx, state.identity.Actor, scope, request.ConnectionId)
+	actor := state.identity.Actor
+	connection, err := service.identity.InspectConnection(ctx, actor, scope, request.ConnectionId)
 	if err != nil {
 		return asProblemResponse(err, nil), nil
 	}
@@ -46,68 +48,32 @@ func (service *Service) GetConnectionSchema(
 	if request.Params.ProviderAccountId != nil {
 		binding.ProviderAccountID = *request.Params.ProviderAccountId
 	}
-	if service.connectionMetadataRoot == "" {
-		return service.storedConnectionSchema(ctx, state.identity.Actor, scope, binding, request.Params.SnapshotId), nil
-	}
-	// The connection identity is workspace-scoped, so the store is the one
-	// namespaced by the authorized organization, workspace and connection, and
-	// the binding names that same owner: another workspace's snapshot under the
-	// same connection identity is neither reachable nor readable here.
-	store, err := service.connectionSchemaStore(scope, connection.ConnectionID)
+	view, err := service.identity.InspectSchemaSelection(ctx, actor, scope, connection.ConnectionID, binding.Resource)
 	if err != nil {
 		return asProblemResponse(err, nil), nil
 	}
-	selected, present, err := store.Selection()
-	if err != nil {
-		return asProblemResponse(err, nil), nil
-	}
-	if request.Params.SnapshotId != nil {
+	var projected api.ConnectionSchemaInspection
+	switch {
+	case request.Params.SnapshotId != nil:
+		// A named snapshot is read from the stored candidates of the
+		// connection, and it must carry the exact binding that the caller names.
 		reference := contract.SemanticDigest(*request.Params.SnapshotId)
 		if err := reference.Validate(); err != nil {
 			return asProblemResponse(errInvalidHTTPInput, nil), nil
 		}
-		selected = reference
-		present = true
-	}
-	if !present {
-		// An absent selection is explicit: the connection has no complete
-		// discovery yet, and this route does not invent one.
-		return GetConnectionSchema200JSONResponse(api.ConnectionSchemaInspection{
-			OrgId:        scope.OrgID,
-			WorkspaceId:  scope.WorkspaceID,
-			ConnectorId:  binding.ConnectorID,
-			ConnectionId: binding.ConnectionID,
-			Selected:     nullableText(""),
-			Snapshot:     absentSchemaSnapshot(binding, "no_complete_discovery"),
-			Fields:       []api.SchemaField{},
-		}), nil
-	}
-	snapshot, err := store.LoadFor(binding, selected)
-	if err != nil {
-		return asProblemResponse(concealedSchemaSelector(err), nil), nil
-	}
-	projected, err := connectionSchemaResponse(scope, binding, selected, &snapshot)
-	if err != nil {
-		return asProblemResponse(err, nil), nil
-	}
-	return GetConnectionSchema200JSONResponse(projected), nil
-}
-
-// storedConnectionSchema answers the schema route from PM PostgreSQL when no
-// file metadata root is configured, which is the case in every product
-// deployment. PM PostgreSQL holds no selection before the selection slice of
-// ADR 0007, and a discovery never selects, so the selection is absent. A named
-// snapshot is read from the stored candidates of the connection, and it must
-// carry the exact binding the caller names.
-func (service *Service) storedConnectionSchema(
-	ctx context.Context,
-	actor contract.Actor,
-	scope contract.Scope,
-	binding schema.Binding,
-	snapshotID *string,
-) GetConnectionSchemaResponseObject {
-	if snapshotID == nil {
-		return GetConnectionSchema200JSONResponse(api.ConnectionSchemaInspection{
+		snapshot, err := service.identity.InspectSchemaCandidate(ctx, actor, scope, binding.ConnectionID, reference)
+		if err != nil {
+			return asProblemResponse(err, nil), nil
+		}
+		if snapshot.Binding != binding {
+			return asProblemResponse(concealedSchemaSelector(schema.ErrSnapshotScope), nil), nil
+		}
+		if projected, err = connectionSchemaResponse(scope, binding, reference, &snapshot); err != nil {
+			return asProblemResponse(err, nil), nil
+		}
+	case view.Snapshot == nil:
+		// An absent selection is explicit: this route does not invent one.
+		projected = api.ConnectionSchemaInspection{
 			OrgId:        scope.OrgID,
 			WorkspaceId:  scope.WorkspaceID,
 			ConnectorId:  binding.ConnectorID,
@@ -115,24 +81,77 @@ func (service *Service) storedConnectionSchema(
 			Selected:     nullableText(""),
 			Snapshot:     absentSchemaSnapshot(binding, "no_selection"),
 			Fields:       []api.SchemaField{},
-		})
+		}
+	default:
+		if view.Snapshot.Binding != binding {
+			return asProblemResponse(concealedSchemaSelector(schema.ErrSnapshotScope), nil), nil
+		}
+		if projected, err = connectionSchemaResponse(scope, binding, view.SchemaRef, view.Snapshot); err != nil {
+			return asProblemResponse(err, nil), nil
+		}
 	}
-	reference := contract.SemanticDigest(*snapshotID)
-	if err := reference.Validate(); err != nil {
-		return asProblemResponse(errInvalidHTTPInput, nil)
-	}
-	snapshot, err := service.identity.InspectSchemaCandidate(ctx, actor, scope, binding.ConnectionID, reference)
+	projected.SelectionRevision = int64(view.Revision)
+	setETag(ctx, view.Revision)
+	return GetConnectionSchema200JSONResponse{Body: projected}, nil
+}
+
+// SelectConnectionSchema selects one stored complete candidate of a declared
+// relation at the selection revision that the caller read. It uses the shared
+// mutation control: the Idempotency-Key, the protocol expected_revision and
+// If-Match. This route performs no provider I/O and reads no credential.
+func (service *Service) SelectConnectionSchema(
+	ctx context.Context,
+	request SelectConnectionSchemaRequestObject,
+) (SelectConnectionSchemaResponseObject, error) {
+	state, scope, err := scopedState(ctx, request.WorkspaceId)
 	if err != nil {
-		return asProblemResponse(err, nil)
+		return asProblemResponse(err, nil), nil
 	}
-	if snapshot.Binding != binding {
-		return asProblemResponse(concealedSchemaSelector(schema.ErrSnapshotScope), nil)
+	if request.Body == nil {
+		return invalidRequestResponse(), nil
 	}
-	projected, err := connectionSchemaResponse(scope, binding, reference, &snapshot)
+	control, err := parseMutationControl(string(request.Params.IdempotencyKey), request.Body.Protocol, request.Params.IfMatch)
 	if err != nil {
-		return asProblemResponse(err, nil)
+		return invalidRequestResponse(), nil
 	}
-	return GetConnectionSchema200JSONResponse(projected)
+	if service.schemaSelection == nil {
+		return asMutationProblemResponse(capabilityUnavailable(), request.Body.Protocol.RequestKey,
+			api.SafeOutcomeReferenceKindConnection, request.ConnectionId), nil
+	}
+	result, err := service.schemaSelection.Select(ctx, state.identity.Actor, scope, app.SelectSchema{
+		ConnectionID: request.ConnectionId,
+		Resource:     request.Body.Selection.Resource,
+		SchemaRef:    contract.SemanticDigest(request.Body.Selection.SchemaRef),
+		Control:      control,
+	})
+	if err != nil {
+		return asMutationProblemResponse(err, request.Body.Protocol.RequestKey,
+			api.SafeOutcomeReferenceKindConnection, request.ConnectionId), nil
+	}
+	disposition := api.MutationResultDispositionUpdated
+	if result.FirstSelection {
+		disposition = api.MutationResultDispositionCreated
+	}
+	fresh, replay, err := mutationResponses(result.Mutation, request.ConnectionId,
+		api.SafeOutcomeReferenceKindConnection, state.identity.Actor, disposition)
+	if err != nil {
+		return nil, err
+	}
+	body := api.SelectConnectionSchema200JSONResponseBody{}
+	if result.Mutation.Replayed {
+		err = body.FromMutationReplayResponse(replay)
+	} else {
+		err = body.FromMutationResultResponse(fresh)
+	}
+	if err != nil {
+		return nil, err
+	}
+	setETag(ctx, result.SelectionRevision)
+	return SelectConnectionSchema200JSONResponse(body), nil
+}
+
+func (r problemResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+	return r.write(w)
 }
 
 // DiscoverConnectionSchema admits one durable discovery run of one declared
@@ -191,22 +210,6 @@ func concealedSchemaSelector(err error) error {
 	default:
 		return err
 	}
-}
-
-// connectionSchemaStore resolves the authorized connection's owned metadata
-// state directory beneath the configured root. The directory is namespaced by
-// organization, workspace and connection, because connection identities are
-// only unique within one workspace, and the store refuses every binding of
-// another owner. A directory traversal or an unconfigured root is a refusal,
-// never a default location.
-func (service *Service) connectionSchemaStore(scope contract.Scope, connectionID string) (*schema.Store, error) {
-	if service.connectionMetadataRoot == "" {
-		return nil, fmt.Errorf("connection metadata state is unavailable: %w", capabilityUnavailable())
-	}
-	if _, err := schema.ConnectionStateDirectory(service.connectionMetadataRoot, scope, connectionID); err != nil {
-		return nil, fmt.Errorf("%w: the authorized connection cannot name a state directory", errInvalidHTTPInput)
-	}
-	return schema.NewConnectionStore(service.connectionMetadataRoot, scope, connectionID)
 }
 
 // absentSchemaSnapshot reports the withheld snapshot identity of a connection

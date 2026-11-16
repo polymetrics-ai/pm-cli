@@ -49,9 +49,9 @@ const (
 	etlMaximumSegment = warehouse.MaxQueryDocumentBytes / 4
 )
 
-// The ETL-QUERY-PUBLIC case installs the two read dependencies no composition
-// in this tree binds yet: the service's warehouse resources, and the
-// server-owned root of the connection's promoted metadata snapshot.
+// The ETL-QUERY-PUBLIC case installs the warehouse resources that no
+// composition in this tree binds yet, and it seeds the connection's selected
+// metadata snapshot in PM PostgreSQL, where the schema route reads it.
 const (
 	// etlSchemaCapability names the declared metadata capability the promoted
 	// discovery was observed through.
@@ -269,17 +269,15 @@ type etlHarness struct {
 	bounds     warehouse.QueryBounds
 	columns    []warehouse.QueryColumn
 	// starts counts the restricted child's own startup announcements, and
-	// metadataRoot is the server-owned root the case installs on the HTTP
-	// service together with the snapshot it promoted for the fixture's own
-	// connection.
-	starts       *childStarts
-	metadataRoot string
-	metadata     *connectionMetadata
+	// metadata is the snapshot that the case selected in PM PostgreSQL for the
+	// fixture's own connection.
+	starts   *childStarts
+	metadata *connectionMetadata
 }
 
-// connectionMetadata is the connection state the case installed beneath the
-// server-owned root: the exact binding the schema route must ask about and the
-// snapshot the case promoted into it.
+// connectionMetadata is the connection state the case seeded in PM
+// PostgreSQL: the exact binding the schema route must ask about and the
+// snapshot the case selected for it.
 type connectionMetadata struct {
 	binding  schema.Binding
 	snapshot schema.Snapshot
@@ -320,10 +318,6 @@ func newETLHarness(t *testing.T) *etlHarness {
 		consumer: testfixture.OpenArtifacts(t, testfixture.SecondaryArtifactGateway),
 		bounds:   etlQueryBounds(),
 		starts:   &childStarts{},
-		// The server-owned metadata root exists before the service is
-		// constructed; the connection's own state directory and the promoted
-		// snapshot are written into it once the fixture owns an identity.
-		metadataRoot: t.TempDir(),
 		columns: []warehouse.QueryColumn{
 			{Name: "id", Kind: warehouse.QueryKindInt64, Nullable: false},
 			{Name: "note", Kind: warehouse.QueryKindText, Nullable: false},
@@ -377,13 +371,12 @@ func newETLHarness(t *testing.T) *etlHarness {
 }
 
 // installReadSurface declares the composition this case reads through: the
-// warehouse resources and the connection metadata root that no composition in
-// this tree binds yet. The registered bytes are read through the fixture's own
-// second shared gateway by the same restricted child the checkpoint protocol
-// publishes through, and the metadata root is the case-owned directory the
-// promoted snapshot was written into. The fixture re-runs this configurator on
-// every restart, so a replacement host installs the surface against its own
-// pool.
+// warehouse resources that no composition in this tree binds yet. The
+// registered bytes are read through the fixture's own second shared gateway by
+// the same restricted child the checkpoint protocol publishes through. The
+// schema route needs no installed dependency: it reads the selection from PM
+// PostgreSQL. The fixture re-runs this configurator on every restart, so a
+// replacement host installs the surface against its own pool.
 func (harness *etlHarness) installReadSurface(
 	dependencies testfixture.ServiceDependencies,
 	config *httpapi.ServiceConfig,
@@ -396,15 +389,14 @@ func (harness *etlHarness) installReadSurface(
 		MaximumSegmentBytes: etlMaximumSegment,
 		Bounds:              harness.bounds,
 	}
-	config.ConnectionMetadataRoot = harness.metadataRoot
 	return nil
 }
 
-// promoteConnectionSchema installs the connection's own metadata state beneath
-// the server-owned root. The case composes one complete declared discovery for
-// the fixture's connection and promotes it exactly as a discovery boundary
-// would, so the schema route reads a genuinely promoted snapshot rather than an
-// arrangement the route was taught to expect.
+// promoteConnectionSchema seeds the connection's own selected metadata in PM
+// PostgreSQL. The case composes one complete declared discovery for the
+// fixture's connection through schema.Discover, stores it as a candidate and
+// selects it, so the schema route reads a genuinely selected snapshot rather
+// than an arrangement the route was taught to expect.
 func (harness *etlHarness) promoteConnectionSchema(t *testing.T) *connectionMetadata {
 	t.Helper()
 	return harness.promoteWorkspaceSchema(t, harness.fixture.Scope, []schema.Field{
@@ -423,10 +415,13 @@ func (harness *etlHarness) promoteConnectionSchema(t *testing.T) *connectionMeta
 	})
 }
 
-// promoteWorkspaceSchema promotes one complete declared discovery of the
-// fixture's connection identity for one workspace. The state directory is the
-// one the store namespaces by organization, workspace and connection, because a
-// connection identity is unique only within its workspace.
+// promoteWorkspaceSchema seeds one complete declared discovery of the
+// fixture's connection identity for one workspace, and its selection, in PM
+// PostgreSQL. The rows are scoped by organization, workspace and connection,
+// because a connection identity is unique only within its workspace. The rows
+// are the ones a discovery run and a selection write: the accepted run, its
+// discovery intent, the candidate and the selection at revision 2. Fixture
+// cleanup removes them with the connection and the run.
 func (harness *etlHarness) promoteWorkspaceSchema(
 	t *testing.T,
 	scope contract.Scope,
@@ -444,7 +439,6 @@ func (harness *etlHarness) promoteWorkspaceSchema(
 		Resource:           etlDatasetName,
 		SourceRevision:     etlSchemaSourceRevision,
 	}
-	store := harness.connectionSchemaStore(t, scope)
 	candidate, err := schema.Discover(binding, []schema.Observation{{
 		Capability: etlSchemaCapability,
 		Resource:   binding.Resource,
@@ -457,30 +451,64 @@ func (harness *etlHarness) promoteWorkspaceSchema(
 	if !candidate.Completeness.Complete {
 		t.Fatal("the declared connection discovery is not complete")
 	}
-	snapshot, err := store.Promote(binding, candidate, "")
+	snapshot, err := candidate.Snapshot()
 	if err != nil {
-		t.Fatalf("promote the connection schema snapshot: %v", err)
+		t.Fatalf("project the connection schema snapshot: %v", err)
 	}
+	document, err := schema.EncodeSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("encode the connection schema snapshot: %v", err)
+	}
+	seedSelectedSchema(t, harness.fixture, scope, snapshot, document)
 	return &connectionMetadata{binding: binding, snapshot: snapshot}
 }
 
-// connectionSchemaStore creates and opens the private state directory of the
-// fixture's connection identity in one workspace beneath the server-owned root.
-func (harness *etlHarness) connectionSchemaStore(t *testing.T, scope contract.Scope) *schema.Store {
+// seedSelectedSchema writes the rows of one stored candidate and its first
+// selection through the fixture's scoped setup transaction.
+func seedSelectedSchema(
+	t *testing.T,
+	fixture *testfixture.Fixture,
+	scope contract.Scope,
+	snapshot schema.Snapshot,
+	document []byte,
+) {
 	t.Helper()
-	connectionID := harness.fixture.Connection.ConnectionID
-	directory, err := schema.ConnectionStateDirectory(harness.metadataRoot, scope, connectionID)
-	if err != nil {
-		t.Fatalf("name the connection metadata state directory: %v", err)
-	}
-	if err := os.MkdirAll(directory, 0o700); err != nil {
-		t.Fatalf("create the connection metadata state directory: %v", err)
-	}
-	store, err := schema.NewConnectionStore(harness.metadataRoot, scope, connectionID)
-	if err != nil {
-		t.Fatalf("open the connection metadata store: %v", err)
-	}
-	return store
+	binding := snapshot.Binding
+	runID := "schema-seed-" + string(snapshot.Fingerprint)[len("sha256:"):len("sha256:")+16]
+	fixture.SetupSQL(t, scope, func(ctx context.Context, tx pgx.Tx) error {
+		for _, statement := range []struct {
+			query     string
+			arguments []any
+		}{
+			{`INSERT INTO pm.run_specs (
+					org_id, workspace_id, run_id, intent_digest, idempotency_fingerprint, spec, accepted_at
+				) VALUES ($1, $2, $3, $4, $4, '{"fixture":"schema selection seed"}'::jsonb, clock_timestamp())`,
+				[]any{scope.OrgID, scope.WorkspaceID, runID, string(snapshot.Fingerprint)}},
+			{`INSERT INTO pm.schema_discoveries (
+					org_id, workspace_id, run_id, connection_id, connector_id, resource, relation_binding,
+					provider_account_id, permission_revision, source_revision
+				) VALUES ($1, $2, $3, $4, $5, $6, 'fixture.etl-relation', $7, $8, $9)`,
+				[]any{scope.OrgID, scope.WorkspaceID, runID, binding.ConnectionID, binding.ConnectorID, binding.Resource,
+					binding.ProviderAccountID, binding.PermissionRevision, binding.SourceRevision}},
+			{`INSERT INTO pm.schema_snapshots (
+					org_id, workspace_id, connection_id, schema_ref, connector_id, provider_account_id,
+					permission_revision, resource, source_revision, complete, field_count, document,
+					discovered_by_run_id
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, $11::jsonb, $12)`,
+				[]any{scope.OrgID, scope.WorkspaceID, binding.ConnectionID, string(snapshot.Fingerprint), binding.ConnectorID,
+					binding.ProviderAccountID, binding.PermissionRevision, binding.Resource, binding.SourceRevision,
+					len(snapshot.Fields), string(document), runID}},
+			{`INSERT INTO pm.schema_selections (
+					org_id, workspace_id, connection_id, resource, schema_ref, selection_revision
+				) VALUES ($1, $2, $3, $4, $5, 2)`,
+				[]any{scope.OrgID, scope.WorkspaceID, binding.ConnectionID, binding.Resource, string(snapshot.Fingerprint)}},
+		} {
+			if _, err := tx.Exec(ctx, statement.query, statement.arguments...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (harness *etlHarness) newPublisher(t *testing.T, resources *app.ArtifactResources) *objects.Publisher {

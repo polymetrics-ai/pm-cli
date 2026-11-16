@@ -322,6 +322,11 @@ func recoveredResponse[T generatedRecoveryResponse](response T, err error) (pmap
 			return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
 		}
 		retryAfter = value.HTTPResponse.Header.Get("Retry-After")
+	case *pmapi.SelectConnectionSchemaResponse:
+		if value == nil || value.HTTPResponse == nil {
+			return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
+		}
+		retryAfter = value.HTTPResponse.Header.Get("Retry-After")
 	default:
 		return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
 	}

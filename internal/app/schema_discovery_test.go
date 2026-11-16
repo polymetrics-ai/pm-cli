@@ -57,16 +57,17 @@ func TestSchemaDiscoveryStoresOnlyACompleteCandidate(t *testing.T) {
 				t.Fatalf("stored field %q = %#v; want type %s (%d,%d)", column.name, field, column.schema, column.precision, column.scale)
 			}
 		}
-		if _, selected, err := harness.customer.snapshots.Selection(); err != nil || selected {
-			t.Fatalf("connection selection after discovery = %v, %v; want no selection", selected, err)
+		if selections := harness.schemaSelectionRows(t); len(selections) != 0 {
+			t.Fatalf("selection rows after discovery = %#v; want no selection", selections)
 		}
 
-		// The schema route reads PM PostgreSQL: no selection exists, and the
-		// stored candidate is readable by its content digest.
+		// The schema route reads PM PostgreSQL: no selection exists, the
+		// selection revision is 1, and the stored candidate is readable by its
+		// content digest.
 		inspection := harness.schemaInspection(t, "")
-		if !inspection.Selected.IsNull() || len(inspection.Fields) != 0 ||
+		if !inspection.Selected.IsNull() || len(inspection.Fields) != 0 || inspection.SelectionRevision != 1 ||
 			len(inspection.Snapshot.Blockers) != 1 || inspection.Snapshot.Blockers[0] != "no_selection" {
-			t.Fatalf("schema inspection after discovery = %#v; want no selection", inspection)
+			t.Fatalf("schema inspection after discovery = %#v; want no selection at revision 1", inspection)
 		}
 		named := harness.schemaInspection(t, string(candidate.Fingerprint))
 		if !named.Snapshot.Complete || named.Snapshot.ContentFingerprint != string(candidate.Fingerprint) ||

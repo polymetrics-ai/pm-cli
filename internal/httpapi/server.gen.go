@@ -80,6 +80,9 @@ type ServerInterface interface {
 	// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
 	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries)
 	DiscoverConnectionSchema(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params DiscoverConnectionSchemaParams)
+	// SelectConnectionSchema Select one complete candidate of a declared relation of the connection
+	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections)
+	SelectConnectionSchema(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params SelectConnectionSchemaParams)
 	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
 	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset})
 	GetWarehouseDataset(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params GetWarehouseDatasetParams)
@@ -1143,6 +1146,105 @@ func (siw *ServerInterfaceWrapper) DiscoverConnectionSchema(c *gin.Context) {
 	}
 
 	siw.Handler.DiscoverConnectionSchema(c, workspaceId, connectionId, params)
+}
+
+// SelectConnectionSchema operation middleware
+func (siw *ServerInterfaceWrapper) SelectConnectionSchema(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "connection_id" -------------
+	var connectionId ConnectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connection_id", c.Param("connection_id"), &connectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connection_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params SelectConnectionSchemaParams
+
+	headers := c.Request.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		siw.ErrorHandler(c, fmt.Errorf("Header parameter Idempotency-Key is required, but not found"), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for If-Match, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter If-Match: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for X-CSRF-Token, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter X-CSRF-Token: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.SelectConnectionSchema(c, workspaceId, connectionId, params)
 }
 
 // GetWarehouseDataset operation middleware
@@ -2666,6 +2768,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.PATCH(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.UpdateConnection)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/schema", wrapper.GetConnectionSchema)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/schema/discoveries", wrapper.DiscoverConnectionSchema)
+	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/schema/selections", wrapper.SelectConnectionSchema)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset", wrapper.GetWarehouseDataset)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query", wrapper.RunWarehouseQuery)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connectors", wrapper.ListCatalogConnectors)
@@ -4782,15 +4885,25 @@ type GetConnectionSchemaResponseObject interface {
 	VisitGetConnectionSchemaResponse(w http.ResponseWriter) error
 }
 
-type GetConnectionSchema200JSONResponse ConnectionSchemaInspection
+type GetConnectionSchema200ResponseHeaders struct {
+	ETag *string
+}
+
+type GetConnectionSchema200JSONResponse struct {
+	Body    ConnectionSchemaInspection
+	Headers GetConnectionSchema200ResponseHeaders
+}
 
 func (response GetConnectionSchema200JSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.ETag != nil {
+		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
 	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err
@@ -5018,6 +5131,175 @@ type DiscoverConnectionSchema503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response DiscoverConnectionSchema503ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchemaRequestObject struct {
+	WorkspaceId  WorkspaceID  `json:"workspace_id"`
+	ConnectionId ConnectionID `json:"connection_id"`
+	Params       SelectConnectionSchemaParams
+	Body         *SelectConnectionSchemaJSONRequestBody
+}
+
+type SelectConnectionSchemaResponseObject interface {
+	VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error
+}
+
+type SelectConnectionSchema200JSONResponse SelectConnectionSchema200JSONResponseBody
+
+func (response SelectConnectionSchema200JSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(SelectConnectionSchema200JSONResponseBody(response)); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema400ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema401ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema403ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema404ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema409ApplicationProblemPlusJSONResponse struct {
+	Problem409ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema409ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema410ApplicationProblemPlusJSONResponse struct {
+	Problem410ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema410ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema412ApplicationProblemPlusJSONResponse struct {
+	Problem412ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema412ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(412)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema428ApplicationProblemPlusJSONResponse struct {
+	Problem428ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema428ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(428)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type SelectConnectionSchema503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response SelectConnectionSchema503ApplicationProblemPlusJSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -8110,6 +8392,9 @@ type StrictServerInterface interface {
 	// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
 	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries)
 	DiscoverConnectionSchema(ctx context.Context, request DiscoverConnectionSchemaRequestObject) (DiscoverConnectionSchemaResponseObject, error)
+	// SelectConnectionSchema Select one complete candidate of a declared relation of the connection
+	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections)
+	SelectConnectionSchema(ctx context.Context, request SelectConnectionSchemaRequestObject) (SelectConnectionSchemaResponseObject, error)
 	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
 	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset})
 	GetWarehouseDataset(ctx context.Context, request GetWarehouseDatasetRequestObject) (GetWarehouseDatasetResponseObject, error)
@@ -8857,6 +9142,41 @@ func (sh *strictHandler) DiscoverConnectionSchema(ctx *gin.Context, workspaceId 
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(DiscoverConnectionSchemaResponseObject); ok {
 		if err := validResponse.VisitDiscoverConnectionSchemaResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// SelectConnectionSchema operation middleware
+func (sh *strictHandler) SelectConnectionSchema(ctx *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params SelectConnectionSchemaParams) {
+	var request SelectConnectionSchemaRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.ConnectionId = connectionId
+	request.Params = params
+
+	var body SelectConnectionSchemaJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.SelectConnectionSchema(ctx.Request.Context(), request.(SelectConnectionSchemaRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "SelectConnectionSchema")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(SelectConnectionSchemaResponseObject); ok {
+		if err := validResponse.VisitSelectConnectionSchemaResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {
@@ -9726,7 +10046,11 @@ type SchemaFieldType = api.SchemaFieldType
 type SchemaPermissionRevision = api.SchemaPermissionRevision
 type SchemaProviderAccount = api.SchemaProviderAccount
 type SchemaResource = api.SchemaResource
+type SchemaSelectionRequest = api.SchemaSelectionRequest
 type SchemaSourceRevision = api.SchemaSourceRevision
+type SelectConnectionSchema200JSONResponseBody = api.SelectConnectionSchema200JSONResponseBody
+type SelectConnectionSchemaJSONRequestBody = api.SelectConnectionSchemaJSONRequestBody
+type SelectConnectionSchemaParams = api.SelectConnectionSchemaParams
 type ServerInfo = api.ServerInfo
 type ServerInfoProtocolVersion = api.ServerInfoProtocolVersion
 type ServiceAccount = api.ServiceAccount

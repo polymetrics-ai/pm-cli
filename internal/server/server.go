@@ -187,16 +187,17 @@ func openWithOIDCFactory(
 		return fail(errors.New("server lifecycle composition failed"), services, oidcTransport)
 	}
 	service, err := httpapi.NewService(httpapi.ServiceConfig{
-		PublicOrigin:   services.PublicOrigin(),
-		Auth:           services.Authentication,
-		Identity:       services.Identity,
-		Credentials:    services.Credentials,
-		Catalog:        services.Catalog,
-		Admission:      services.Admission,
-		Runs:           services.Runs,
-		Artifacts:      artifactBackend,
-		InstanceID:     configuration.DeploymentID(),
-		OIDCHTTPClient: oidcClient,
+		PublicOrigin:    services.PublicOrigin(),
+		Auth:            services.Authentication,
+		Identity:        services.Identity,
+		Credentials:     services.Credentials,
+		Catalog:         services.Catalog,
+		Admission:       services.Admission,
+		Runs:            services.Runs,
+		Artifacts:       artifactBackend,
+		SchemaSelection: services.SchemaSelection,
+		InstanceID:      configuration.DeploymentID(),
+		OIDCHTTPClient:  oidcClient,
 		ResolveEventCursorKey: func(ctx context.Context) ([]byte, error) {
 			key, err := loadWrappingKey(ctx, wrappingKeyRef)
 			if err != nil {

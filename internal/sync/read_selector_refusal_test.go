@@ -8,8 +8,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -140,22 +138,15 @@ func TestConnectionReadSelectorRefusalsAreConcealed(t *testing.T) {
 
 	t.Run("a_snapshot_that_cannot_be_read_is_not_reported_as_a_missing_one", func(t *testing.T) {
 		before := harness.starts.count()
-		// The promoted payload is present and the positive paths above read it.
-		// Closing its read permission leaves exactly the state the store answers
-		// for itself: its private-file check admits a mode 0o000 payload and its
-		// own read then fails. No selector the caller can name reaches that
-		// payload, so the refusal is not the caller's to correct and must not be
-		// concealed as a missing one — neither for the connection's own selection
-		// nor for the same promoted identity declared explicitly, which names the
-		// same stored payload.
-		payload := promotedSchemaPayload(t, harness)
-		if err := os.Chmod(payload, 0o000); err != nil {
-			t.Fatalf("close the read permission of the promoted payload: %v", err)
-		}
-		t.Cleanup(func() { _ = os.Chmod(payload, 0o600) })
-		if _, err := os.ReadFile(payload); err == nil {
-			t.Fatal("this case needs a process that cannot read a mode 0o000 payload, but this one still reads it")
-		}
+		// The selected candidate is present in PM PostgreSQL and the positive
+		// paths above read it. Changing one declared field of its stored
+		// document, but not its declared digest, leaves exactly the state the
+		// strict snapshot decoder answers for itself: the recomputed content
+		// digest no longer matches. No selector the caller can name reaches that
+		// document, so the refusal is not the caller's to correct and must not
+		// be concealed as a missing one, neither for the connection's own
+		// selection nor for the same identity declared explicitly.
+		corruptSelectedSchemaDocument(t, harness)
 		for _, selector := range []struct {
 			what   string
 			values url.Values
@@ -167,7 +158,7 @@ func TestConnectionReadSelectorRefusalsAreConcealed(t *testing.T) {
 			response := harness.send(t, client, http.MethodGet, schemaSelectorPath(harness, workspace, selector.values), nil)
 			problem := decodeWarehouseRoute[api.Problem](t, response, http.StatusInternalServerError)
 			if problem.Code != "internal_error" {
-				t.Fatalf("the read of %s was answered %#v; want the store's own refusal for a payload it cannot read",
+				t.Fatalf("the read of %s was answered %#v; want the store's own refusal for a document it cannot read",
 					selector.what, problem)
 			}
 		}
@@ -215,9 +206,7 @@ func TestConnectionSchemaIsolatesWorkspacesThatShareAConnectionID(t *testing.T) 
 	primary := fixture.Client
 	foreign := fixture.ClientFor(t, fixture.ForeignActor)
 	primarySnapshot := harness.metadata.snapshot.Fingerprint
-	// The foreign workspace's own state directory exists but has promoted
-	// nothing yet.
-	harness.connectionSchemaStore(t, foreignScope)
+	// The foreign workspace has selected nothing yet.
 
 	t.Run("a_workspace_without_its_own_discovery_reads_no_other_workspace_snapshot", func(t *testing.T) {
 		inspection := decodeWarehouseRoute[api.ConnectionSchemaInspection](t,
@@ -313,36 +302,26 @@ func unknownSchemaSnapshot(t *testing.T) contract.SemanticDigest {
 	return reference
 }
 
-// promotedSchemaPayload resolves the one stored payload the fixture promoted
-// without restating the store's own layout: every regular file beneath the
-// installed metadata root is decoded as a snapshot, and the single file that
-// decodes with the promoted content fingerprint is the payload the store reads.
-func promotedSchemaPayload(t *testing.T, harness *etlHarness) string {
+// corruptSelectedSchemaDocument changes the pointer of the first declared
+// field in the stored document of the selected candidate. The row keeps its
+// declared digest, its binding and its field count, so every table check still
+// holds, and only the strict decoder's recomputed digest differs.
+func corruptSelectedSchemaDocument(t *testing.T, harness *etlHarness) {
 	t.Helper()
-	var found []string
-	err := filepath.WalkDir(harness.metadataRoot, func(path string, entry os.DirEntry, err error) error {
-		if err != nil || entry.IsDir() {
+	harness.fixture.SetupSQL(t, harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE pm.schema_snapshots
+			SET document = jsonb_set(document, '{fields,0,pointer}', '"/properties/corrupted"'::jsonb)
+			WHERE connection_id = $1 AND schema_ref = $2
+		`, harness.fixture.Connection.ConnectionID, string(harness.metadata.snapshot.Fingerprint))
+		if err != nil {
 			return err
 		}
-		document, readErr := os.ReadFile(path)
-		if readErr != nil {
-			t.Fatalf("read the stored connection metadata %s: %v", path, readErr)
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("corrupt the selected candidate document: %d rows", tag.RowsAffected())
 		}
-		snapshot, decodeErr := schema.DecodeSnapshot(document)
-		if decodeErr != nil || snapshot.Fingerprint != harness.metadata.snapshot.Fingerprint {
-			return nil
-		}
-		found = append(found, path)
 		return nil
 	})
-	if err != nil {
-		t.Fatalf("walk the installed connection metadata state: %v", err)
-	}
-	if len(found) != 1 {
-		t.Fatalf("the promoted snapshot payload = %v; want exactly one stored payload for %s",
-			found, harness.metadata.snapshot.Fingerprint)
-	}
-	return found[0]
 }
 
 // retainReadSnapshot pins the registered read view of the acknowledged dataset
