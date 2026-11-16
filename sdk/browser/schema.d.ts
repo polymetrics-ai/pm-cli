@@ -579,7 +579,7 @@ export interface paths {
         head?: never;
         /**
          * Add connections to a workspace membership
-         * @description Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+         * @description Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
          */
         patch: operations["updateMembership"];
         trace?: never;
@@ -1165,7 +1165,7 @@ export interface components {
         };
         MembershipUpdateRequest: {
             membership: {
-                /** @description Strictly sorted, unique connection IDs to add. */
+                /** @description Connection IDs to add, in strictly ascending byte order. */
                 add_connection_ids: string[];
                 membership_ref: string;
             };

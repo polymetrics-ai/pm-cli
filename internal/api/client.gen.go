@@ -393,7 +393,7 @@ type ClientInterface interface {
 
 	// UpdateMembershipWithBody Add connections to a workspace membership
 	//
-	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -402,7 +402,7 @@ type ClientInterface interface {
 
 	// UpdateMembership Add connections to a workspace membership
 	//
-	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -1279,7 +1279,7 @@ func (c *Client) GrantMembership(ctx context.Context, workspaceId WorkspaceID, p
 
 // UpdateMembershipWithBody Add connections to a workspace membership
 //
-// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 //
 // Takes any type of body and a specified content type.
 //
@@ -1298,7 +1298,7 @@ func (c *Client) UpdateMembershipWithBody(ctx context.Context, workspaceId Works
 
 // UpdateMembership Add connections to a workspace membership
 //
-// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -4809,7 +4809,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateMembershipWithBodyWithResponse Add connections to a workspace membership
 	//
-	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -4818,7 +4818,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateMembershipWithResponse Add connections to a workspace membership
 	//
-	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -9120,7 +9120,7 @@ func (c *ClientWithResponses) GrantMembershipWithResponse(ctx context.Context, w
 
 // UpdateMembershipWithBodyWithResponse Add connections to a workspace membership
 //
-// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -9135,7 +9135,7 @@ func (c *ClientWithResponses) UpdateMembershipWithBodyWithResponse(ctx context.C
 
 // UpdateMembershipWithResponse Add connections to a workspace membership
 //
-// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //

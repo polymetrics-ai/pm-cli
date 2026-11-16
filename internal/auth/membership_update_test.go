@@ -407,3 +407,101 @@ func equalSafePayload(left, right contract.SafePayload) bool {
 		slices.Equal(left.Counts, right.Counts) &&
 		slices.Equal(left.ReasonCodes, right.ReasonCodes)
 }
+
+// Check: a request through a delegation is refused with 404 by the access
+// check, before any connection rule, and writes nothing. The request is one
+// that the connection rule for another membership would accept for the
+// delegated authority: the delegation holds the connection and outlasts the
+// target. The delegating user's own request succeeds. Defect it catches: a
+// path that lets a delegated actor add connections.
+func TestMembershipUpdateRefusesADelegatedActorBeforeTheConnectionRule(t *testing.T) {
+	fixture := newAuthFixture(t)
+	audit := newWorkspaceAuditReader(t, fixture)
+	authService := fixture.newAuthService(t)
+	identityService, err := app.NewIdentityService(app.IdentityServiceConfig{
+		Pool: fixture.pool, DeploymentID: fixture.deployment,
+		Authorize: authService.AuthorizeResource, ReceiptRetention: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewIdentityService(): %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	ada := directTestActor(fixture.ada)
+	expires := time.Now().UTC().Add(30 * time.Minute).Truncate(time.Microsecond)
+	scopes := app.CreateServiceAccount{
+		WorkspaceScopes: []string{fixture.alpha.WorkspaceID}, ConnectionIDs: []string{fixture.connection},
+		OperationIDs: []string{"operation-read"}, ExpiresAt: expires,
+		Control: mutationControl("delegated-update-service", 1, true),
+	}
+	service, err := identityService.CreateServiceAccount(ctx, ada, fixture.alpha, scopes)
+	if err != nil {
+		t.Fatalf("CreateServiceAccount(): %v", err)
+	}
+	serviceIdentity, err := authService.AuthenticateServiceCredential(ctx, service.OneTimeCredential)
+	if err != nil {
+		t.Fatalf("AuthenticateServiceCredential(): %v", err)
+	}
+	delegationExpires := expires.Add(-time.Minute)
+	delegation, err := identityService.CreateDelegation(ctx, serviceIdentity.Actor, fixture.alpha, app.CreateDelegation{
+		RequestedActor: serviceIdentity.Principal, EffectiveActor: fixture.ada,
+		WorkspaceScopes: scopes.WorkspaceScopes, ConnectionIDs: scopes.ConnectionIDs, OperationIDs: scopes.OperationIDs,
+		ExpiresAt: delegationExpires, Control: mutationControl("delegated-update-delegation", 1, true),
+	})
+	if err != nil {
+		t.Fatalf("CreateDelegation(): %v", err)
+	}
+	delegated, err := app.DelegatedActor(delegation.Delegation)
+	if err != nil {
+		t.Fatalf("DelegatedActor(): %v", err)
+	}
+	page, err := identityService.ListMemberships(ctx, ada, fixture.alpha, "", 100)
+	if err != nil {
+		t.Fatalf("ListMemberships(): %v", err)
+	}
+	targetExpires := delegationExpires.Add(-time.Minute)
+	target, err := identityService.GrantMembership(ctx, ada, fixture.alpha, app.GrantMembership{
+		Principal: fixture.charlie, Role: "member", ResourceGrants: []string{"permission:workspace.read"},
+		ExpiresAt: &targetExpires, Control: mutationControl("delegated-update-target", page.CollectionRevision, true),
+	})
+	if err != nil {
+		t.Fatalf("GrantMembership(): %v", err)
+	}
+	request := app.UpdateMembership{
+		MembershipID: target.Membership.MembershipID, ConnectionIDs: []string{fixture.connection},
+		Control: mutationControl("delegated-update", target.Membership.ControlRevision, true),
+	}
+
+	// The access check itself refuses the delegated actor.
+	err = store.WithinScope(ctx, fixture.pool, fixture.alpha, delegated, func(ctx context.Context, tx *store.Transaction) error {
+		_, err := authService.AuthorizeResource(ctx, tx, auth.AuthorizationRequest{
+			Scope: fixture.alpha, Actor: delegated, Permission: "workspace.access.manage",
+			ResourceKind: auth.ResourceWorkspace, ResourceID: fixture.alpha.WorkspaceID,
+		})
+		return err
+	})
+	requireErrorIs(t, err, auth.ErrResourceNotFound)
+	_, err = identityService.UpdateMembership(ctx, delegated, fixture.alpha, request)
+	requireAppStatus(t, err, http.StatusNotFound)
+	after, err := identityService.ListMemberships(ctx, ada, fixture.alpha, "", 100)
+	if err != nil {
+		t.Fatalf("ListMemberships(): %v", err)
+	}
+	for _, item := range after.Items {
+		if item.MembershipID == request.MembershipID &&
+			(item.ControlRevision != target.Membership.ControlRevision || slices.Contains(item.ConnectionIDs, fixture.connection)) {
+			t.Fatalf("delegated request changed the membership: %#v", item)
+		}
+	}
+	if after.CollectionRevision != page.CollectionRevision+1 || len(audit.records(t)) != 0 {
+		t.Fatalf("delegated request wrote: collection revision %d (want %d), %d audit records (want 0)",
+			after.CollectionRevision, page.CollectionRevision+1, len(audit.records(t)))
+	}
+
+	// The same add by the delegating user passes the connection rule.
+	request.Control = mutationControl("direct-update", target.Membership.ControlRevision, true)
+	direct, err := identityService.UpdateMembership(ctx, ada, fixture.alpha, request)
+	if err != nil || direct.Mutation.Unchanged || !slices.Contains(direct.Membership.ConnectionIDs, fixture.connection) {
+		t.Fatalf("direct add of the same connection = %#v, %v; want an update", direct.Mutation, err)
+	}
+}

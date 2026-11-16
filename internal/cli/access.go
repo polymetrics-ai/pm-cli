@@ -112,7 +112,24 @@ func newMembershipUpdateCommand(runtime *commandRuntime) *cobra.Command {
 	control := newMutationControl()
 	var connections singleList
 	connections.name = "add-connections"
-	command := &cobra.Command{Use: "update MEMBERSHIP_REF", Short: "Add connections to a workspace membership", Args: exactArgs(1)}
+	command := &cobra.Command{
+		Use:   "update MEMBERSHIP_REF",
+		Short: "Add connections to a workspace membership",
+		Long: "Add connections to a workspace membership. The command only adds connections. " +
+			"It removes no connection and changes no other grant.\n\n" +
+			"Set --revision to the current control_revision of the membership. " +
+			"Run \"pm access memberships list\" to read it.\n\n" +
+			"Each connection must be an active connection of the workspace. " +
+			"You must hold workspace.access.manage.\n\n" +
+			"You must act as a user, without a delegation. " +
+			"You can add connections to your own membership. " +
+			"Then you must also hold connection.manage.\n\n" +
+			"For another membership, you can add only connections that your own current grants hold.\n\n" +
+			"If the membership holds each connection already, the result is unchanged. " +
+			"The revision stays the same.\n\n" +
+			"A stale revision stops the command with control_revision_mismatch and exit code 4.",
+		Args: exactArgs(1),
+	}
 	command.RunE = func(command *cobra.Command, arguments []string) error {
 		if !connections.set {
 			return usageFailure(errors.New("--add-connections is required"))
