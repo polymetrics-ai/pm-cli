@@ -386,3 +386,47 @@ func settledDiscoveryCandidate(
 		DiscoveredByRunID:  discovery.RunID,
 	}, true, nil
 }
+
+// InspectSchemaCandidate reads one stored candidate snapshot of an authorized
+// connection by its content digest. The stored document is decoded through the
+// strict snapshot decoder, which recomputes its digest.
+func (service *IdentityService) InspectSchemaCandidate(
+	ctx context.Context,
+	actor contract.Actor,
+	scope contract.Scope,
+	connectionID string,
+	schemaRef contract.SemanticDigest,
+) (schema.Snapshot, error) {
+	if service == nil || ctx == nil || !validApplicationID(connectionID) || schemaRef.Validate() != nil {
+		return schema.Snapshot{}, invalidRequestFailure()
+	}
+	var snapshot schema.Snapshot
+	err := store.WithinScope(ctx, service.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
+		if _, err := service.authorize(ctx, tx, auth.AuthorizationRequest{
+			Scope:        scope,
+			Actor:        actor,
+			Permission:   "connection.read",
+			ResourceKind: auth.ResourceConnection,
+			ResourceID:   connectionID,
+		}); err != nil {
+			return mapAuthorizationFailure(err)
+		}
+		candidate, err := store.LoadSchemaCandidate(ctx, tx, connectionID, string(schemaRef))
+		if errors.Is(err, store.ErrNotFound) {
+			return resourceNotFoundFailure(err)
+		}
+		if err != nil {
+			return err
+		}
+		decoded, err := schema.DecodeSnapshot(candidate.Document)
+		if err != nil || decoded.Fingerprint != schemaRef {
+			return fmt.Errorf("%w: the stored candidate does not match its reference", schema.ErrSnapshotCorrupt)
+		}
+		snapshot = decoded
+		return nil
+	})
+	if err != nil {
+		return schema.Snapshot{}, err
+	}
+	return snapshot, nil
+}

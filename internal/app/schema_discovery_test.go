@@ -60,6 +60,19 @@ func TestSchemaDiscoveryStoresOnlyACompleteCandidate(t *testing.T) {
 		if _, selected, err := harness.customer.snapshots.Selection(); err != nil || selected {
 			t.Fatalf("connection selection after discovery = %v, %v; want no selection", selected, err)
 		}
+
+		// The schema route reads PM PostgreSQL: no selection exists, and the
+		// stored candidate is readable by its content digest.
+		inspection := harness.schemaInspection(t, "")
+		if !inspection.Selected.IsNull() || len(inspection.Fields) != 0 ||
+			len(inspection.Snapshot.Blockers) != 1 || inspection.Snapshot.Blockers[0] != "no_selection" {
+			t.Fatalf("schema inspection after discovery = %#v; want no selection", inspection)
+		}
+		named := harness.schemaInspection(t, string(candidate.Fingerprint))
+		if !named.Snapshot.Complete || named.Snapshot.ContentFingerprint != string(candidate.Fingerprint) ||
+			len(named.Fields) != len(columns) {
+			t.Fatalf("named candidate inspection = %#v; want the stored complete candidate", named)
+		}
 	})
 
 	t.Run("a discovery with no stored credential stores no candidate", func(t *testing.T) {
@@ -180,6 +193,28 @@ func (harness *sqlExecutionHarness) schemaCandidates(t *testing.T) []schema.Snap
 		snapshots = append(snapshots, snapshot)
 	}
 	return snapshots
+}
+
+// schemaInspection reads the schema route for the declared resource, and
+// names one snapshot when snapshotID is not empty.
+func (harness *sqlExecutionHarness) schemaInspection(t *testing.T, snapshotID string) api.ConnectionSchemaInspection {
+	t.Helper()
+	query := url.Values{}
+	query.Set("resource", sqlExecutionResource)
+	query.Set("permission_revision", sqlExecutionPermissionRev)
+	query.Set("source_revision", sqlExecutionSourceRevision)
+	if snapshotID != "" {
+		query.Set("snapshot_id", snapshotID)
+	}
+	payload := workerResultGET(t, harness.fixture,
+		"/v1/workspaces/"+url.PathEscape(harness.fixture.Scope.WorkspaceID)+
+			"/connections/"+url.PathEscape(harness.fixture.Connection.ConnectionID)+"/schema?"+query.Encode(),
+		http.StatusOK)
+	var inspection api.ConnectionSchemaInspection
+	if err := json.Unmarshal(payload, &inspection); err != nil {
+		t.Fatalf("decode schema inspection: %v", err)
+	}
+	return inspection
 }
 
 func (harness *sqlExecutionHarness) discoveryIntents(t *testing.T) int {
