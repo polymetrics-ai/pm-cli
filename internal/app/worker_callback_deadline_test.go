@@ -117,7 +117,7 @@ func runProviderCallbackAttempt(t *testing.T, frontend *heartbeatFrontend) provi
 		heartbeat := func(next contract.WorkflowProgress) { activity.RecordHeartbeat(ctx, next) }
 		stopHeartbeats := startWorkerHeartbeats(ctx, heartbeat, progress, timeouts.Heartbeat)
 		defer stopHeartbeats()
-		callbackCtx, cancel := workerCallbackContext(ctx, acceptedRunDeadline, timeouts.Transport)
+		callbackCtx, cancel := workerCallbackContext(ctx, acceptedRunDeadline, timeouts.Heartbeat, timeouts.Transport)
 		defer cancel()
 
 		// The provider callback, with the body that R12 C09 used before #292.
