@@ -353,9 +353,37 @@ def main():
         if args.summary_file:
             with args.summary_file.open("a", encoding="utf-8") as summary:
                 summary.write(markdown(rows, totals, problem))
+    diagnostic_279(order, output)
     print(f"go test: {len(packages)} packages, {len(failures)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
     return status or (1 if failures or problem or problems or skip_failure else 0)
+
+
+DIAGNOSTIC_279 = re.compile(r"(pm279-(?:unit|object|upload|bind): .*)$")
+
+
+def diagnostic_279(order, output):
+    """DIAGNOSTIC ONLY (issue #279 canary). Never merge.
+
+    Print each worker unit, object request, upload and bind line that the
+    stack run wrote, in the order of the go test stream, with its test.
+    """
+    rows = []
+    for key in order:
+        for text in output.get(key, []):
+            match = DIAGNOSTIC_279.search(text.strip())
+            if match:
+                rows.append((key, match.group(1)))
+    print(f"pm279: {len(rows)} diagnostic lines")
+    if not rows:
+        return
+    print("::group::pm279 worker unit and object timing (diagnostic only)")
+    for key, line in rows:
+        print(f"{key[0]} {key[1] or '-'}: {line}")
+    print("::endgroup::")
+    for key, line in rows:
+        if "error=stale_fence" in line or "lease_left_at_settle_us=-" in line:
+            print(f"pm279: lease passed before the settlement: {key[1] or '-'}: {line}")
 
 
 if __name__ == "__main__":

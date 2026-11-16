@@ -3,6 +3,9 @@ package objects
 import (
 	"context"
 	"errors"
+	"fmt"
+	"os"
+	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
@@ -145,11 +148,15 @@ func (publisher *Publisher) Upload(ctx context.Context, actor contract.Actor, sc
 		ByteLength: descriptor.ByteLength, MediaType: descriptor.MediaType,
 	}
 	var reservation store.ObjectReservation
+	// DIAGNOSTIC ONLY (issue #279 canary). Never merge.
+	diagnosticBindStart := time.Now()
 	err = store.WithinScope(ctx, publisher.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {
 		var bindErr error
 		reservation, bindErr = store.BindObjectAttempt(ctx, tx, reservationID, binding)
 		return bindErr
 	})
+	fmt.Fprintf(os.Stderr, "pm279-bind: start_utc=%s bind_us=%d failed=%t\n",
+		diagnosticBindStart.UTC().Format(time.RFC3339Nano), time.Since(diagnosticBindStart).Microseconds(), err != nil)
 	if errors.Is(err, store.ErrCommitOutcomeUnknown) {
 		var retained store.ObjectReservation
 		reconcileErr := store.WithinScope(ctx, publisher.pool, scope, actor, func(ctx context.Context, tx *store.Transaction) error {

@@ -163,9 +163,14 @@ done
 # each test binary, and --deadline bounds the whole run.
 if [ "$stack_status" -eq 0 ]; then
   step 'starting a fresh job-owned stack for the stack run (Go developer tests of the stack packages)'
+  # DIAGNOSTIC ONLY (issue #310 canary). Never merge. After the stack run, and
+  # before the fixture cleanup, print the SeaweedFS volume events. The stack
+  # run keeps its exit status. The inner sh -c script expands "$@" and $?
+  # itself, so it is in single quotes.
   # Word splitting of the package list is intended; package paths have no spaces.
-  # shellcheck disable=SC2046
+  # shellcheck disable=SC2046,SC2016
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
+    sh -c '"$@"; status=$?; python3 -I -B scripts/ci/canary-seaweed-events.py; exit "$status"' canary-stack-run \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-stack.json" \
     --fail-on-skip --expect "$RUNNER_TEMP/bdd-stack-expected.txt" \
     --deadline "$stack_deadline" --timeout 1140 \

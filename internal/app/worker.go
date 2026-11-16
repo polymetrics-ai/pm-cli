@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -456,13 +457,19 @@ func (service *WorkerService) ExecuteUnit(
 		return contract.WorkflowUnitResult{}, workerFailure(ErrWorkerInvalidRequest, err)
 	}
 
+	// DIAGNOSTIC ONLY (issue #279 canary). Never merge.
+	diagnostic := diagnostic279Unit{start: time.Now(), load1Start: diagnostic279Load1(),
+		throttledStart: diagnostic279ThrottledMicroseconds()}
 	plan, err := service.prepareWorkerUnit(ctx, execution, request)
+	diagnostic.prepare = time.Since(diagnostic.start)
 	if err != nil {
+		diagnostic.prepareFailure(ctx, err)
 		return contract.WorkflowUnitResult{}, service.mapWorkerError(err)
 	}
 	if plan.existing != nil {
 		return *plan.existing, nil
 	}
+	defer diagnostic.report(ctx, plan)
 	progress := contract.WorkflowProgress{
 		RunID: request.Run.RunID, TaskID: request.Unit.TaskID, ProgressRef: plan.request.Attempt.ReceiptRef,
 	}
@@ -491,9 +498,13 @@ func (service *WorkerService) ExecuteUnit(
 	// permit already proves that no send happened, and the settlement records
 	// that fact from the permit alone.
 	if !plan.unadmitted {
+		diagnosticCallbackStart := time.Now()
 		callbackCtx, cancel := workerCallbackContext(
 			ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 		)
+		if bound, ok := callbackCtx.Deadline(); ok {
+			diagnostic.callbackBound = bound.Sub(diagnosticCallbackStart)
+		}
 		if plan.reconcile {
 			observation, callbackErr = plan.handler.Reconcile(callbackCtx, plan.request)
 		} else {
@@ -502,21 +513,33 @@ func (service *WorkerService) ExecuteUnit(
 		// The transport limit bounds the provider callback only. The publication of
 		// PM's own objects starts after the provider callback context ends.
 		cancel()
+		diagnostic.callback = time.Since(diagnosticCallbackStart)
+		diagnostic.callbackFailed = callbackErr != nil
+		diagnostic.callbackDeadline = errors.Is(callbackErr, context.DeadlineExceeded)
 
 		publicationCtx, publicationCancel := workerPublicationContext(
 			ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 		)
+		if bound, ok := publicationCtx.Deadline(); ok {
+			diagnostic.publicationBound = bound.Sub(diagnostic.start)
+		}
+		diagnosticContinuationStart := time.Now()
 		var continuationPublicationErr error
 		continuationPublication, continuationPublicationErr = plan.request.continuation.publishForResult(
 			publicationCtx, observation.Result,
 		)
+		diagnostic.continuation = time.Since(diagnosticContinuationStart)
 		resultForPublication := observation.Result
 		if continuationPublicationErr != nil {
 			resultForPublication = nil
 		}
+		diagnosticResultStart := time.Now()
 		var resultPublicationErr error
 		publication, resultPublicationErr = service.prepareWorkerResult(publicationCtx, plan, resultForPublication)
+		diagnostic.result = time.Since(diagnosticResultStart)
 		publicationErr = errors.Join(continuationPublicationErr, resultPublicationErr)
+		diagnostic.publicationFailed = publicationErr != nil
+		diagnostic.publicationDeadline = errors.Is(publicationErr, context.DeadlineExceeded)
 		publicationCancel()
 	}
 
@@ -524,7 +547,10 @@ func (service *WorkerService) ExecuteUnit(
 		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 	)
 	defer settleCancel()
+	diagnostic.settleStart = time.Since(diagnostic.start)
 	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, publication, continuationPublication, publicationErr, callbackErr)
+	diagnostic.settle = time.Since(diagnostic.start) - diagnostic.settleStart
+	diagnostic.settleErr = err
 	stopHeartbeats()
 	if err != nil {
 		return contract.WorkflowUnitResult{}, service.mapWorkerError(err)
@@ -2710,4 +2736,157 @@ func workerSettlementReserve(heartbeatTimeout, transportTimeout time.Duration) t
 		reserve = time.Nanosecond
 	}
 	return reserve
+}
+
+// DIAGNOSTIC ONLY (issue #279 canary). Never merge.
+//
+// diagnostic279Unit times one worker unit against its task lease and writes
+// one line to stderr. Offsets ending in _start_us or _end_us count from the
+// start of ExecuteUnit. lease_end_us is the lease end minus the PostgreSQL
+// time that the prepare transaction read (clock_timestamp), so it counts from
+// about the start of the prepare step, in the same clock as the lease.
+type diagnostic279Unit struct {
+	start               time.Time
+	load1Start          string
+	throttledStart      int64
+	prepare             time.Duration
+	callback            time.Duration
+	callbackBound       time.Duration
+	callbackFailed      bool
+	callbackDeadline    bool
+	publicationBound    time.Duration
+	continuation        time.Duration
+	result              time.Duration
+	publicationFailed   bool
+	publicationDeadline bool
+	settleStart         time.Duration
+	settle              time.Duration
+	settleErr           error
+}
+
+func diagnostic279Class(err error) string {
+	switch {
+	case err == nil:
+		return "none"
+	case errors.Is(err, store.ErrStaleFence):
+		return "stale_fence"
+	case errors.Is(err, store.ErrClaimLost):
+		return "claim_lost"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "deadline"
+	case errors.Is(err, context.Canceled):
+		return "canceled"
+	default:
+		return "other"
+	}
+}
+
+// diagnostic279Pressure is the "some avg10" pressure of I/O and CPU on the
+// host kernel (Linux PSI), as io/cpu, or "-" for a value it cannot read.
+func diagnostic279Pressure() string {
+	read := func(path string) string {
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return "-"
+		}
+		for _, field := range strings.Fields(string(content)) {
+			if value, ok := strings.CutPrefix(field, "avg10="); ok {
+				return value
+			}
+		}
+		return "-"
+	}
+	return read("/proc/pressure/io") + "/" + read("/proc/pressure/cpu")
+}
+
+// diagnostic279Offset is the time from start to at in microseconds, or -1
+// when at is zero.
+func diagnostic279Offset(start, at time.Time) int64 {
+	if at.IsZero() {
+		return -1
+	}
+	return at.Sub(start).Microseconds()
+}
+
+func diagnostic279Budget(ctx context.Context, start time.Time) int64 {
+	if deadline, ok := ctx.Deadline(); ok {
+		return deadline.Sub(start).Microseconds()
+	}
+	return -1
+}
+
+// diagnostic279Load1 is the one-minute load average of the host kernel, or
+// "-" when it cannot be read.
+func diagnostic279Load1() string {
+	content, err := os.ReadFile("/proc/loadavg")
+	if err != nil {
+		return "-"
+	}
+	fields := strings.Fields(string(content))
+	if len(fields) == 0 {
+		return "-"
+	}
+	return fields[0]
+}
+
+// diagnostic279ThrottledMicroseconds is the CPU throttled time of this
+// process's cgroup (cgroup v2), or -1 when it cannot be read.
+func diagnostic279ThrottledMicroseconds() int64 {
+	content, err := os.ReadFile("/sys/fs/cgroup/cpu.stat")
+	if err != nil {
+		return -1
+	}
+	for _, line := range strings.Split(string(content), "\n") {
+		name, value, ok := strings.Cut(line, " ")
+		if ok && name == "throttled_usec" {
+			var parsed int64
+			if _, err := fmt.Sscan(value, &parsed); err == nil {
+				return parsed
+			}
+		}
+	}
+	return -1
+}
+
+func (unit *diagnostic279Unit) throttled() int64 {
+	end := diagnostic279ThrottledMicroseconds()
+	if end < 0 || unit.throttledStart < 0 {
+		return -1
+	}
+	return end - unit.throttledStart
+}
+
+func (unit *diagnostic279Unit) prepareFailure(ctx context.Context, err error) {
+	fmt.Fprintf(os.Stderr,
+		"pm279-unit: phase=prepare start_utc=%s attempt_budget_us=%d prepare_us=%d error=%s load1=%s/%s throttled_us=%d\n",
+		unit.start.UTC().Format(time.RFC3339Nano), diagnostic279Budget(ctx, unit.start), unit.prepare.Microseconds(), diagnostic279Class(err),
+		unit.load1Start, diagnostic279Load1(), unit.throttled(),
+	)
+}
+
+func (unit *diagnostic279Unit) report(ctx context.Context, plan workerUnitPlan) {
+	leaseTTL, claim, leaseEnd := int64(-1), int64(-1), int64(-1)
+	if !plan.lease.ExpiresAt.IsZero() && !plan.state.now.IsZero() {
+		leaseTTL = plan.lease.ExpiresAt.Sub(plan.lease.ClaimedAt).Microseconds()
+		claim = plan.lease.ClaimedAt.Sub(plan.state.now).Microseconds()
+		leaseEnd = plan.lease.ExpiresAt.Sub(plan.state.now).Microseconds()
+	}
+	leaseLeft := int64(-1)
+	if leaseEnd >= 0 {
+		leaseLeft = leaseEnd - unit.settleStart.Microseconds()
+	}
+	fmt.Fprintf(os.Stderr,
+		"pm279-unit: phase=settle start_utc=%s reconcile=%t unadmitted=%t attempt_budget_us=%d lease_ttl_us=%d "+
+			"claim_us=%d lease_end_us=%d lease_deadline_us=%d prepare_us=%d callback_us=%d callback_bound_us=%d "+
+			"callback_failed=%t callback_deadline=%t publication_end_us=%d continuation_us=%d result_us=%d "+
+			"publication_failed=%t publication_deadline=%t settle_start_us=%d settle_us=%d "+
+			"lease_left_at_settle_us=%d error=%s load1=%s/%s throttled_us=%d pressure_avg10=%s\n",
+		unit.start.UTC().Format(time.RFC3339Nano), plan.reconcile, plan.unadmitted, diagnostic279Budget(ctx, unit.start), leaseTTL,
+		claim, leaseEnd, diagnostic279Offset(unit.start, plan.leaseDeadline), unit.prepare.Microseconds(), unit.callback.Microseconds(), unit.callbackBound.Microseconds(),
+		unit.callbackFailed, unit.callbackDeadline, unit.publicationBound.Microseconds(),
+		unit.continuation.Microseconds(), unit.result.Microseconds(),
+		unit.publicationFailed, unit.publicationDeadline, unit.settleStart.Microseconds(), unit.settle.Microseconds(),
+		leaseLeft, diagnostic279Class(unit.settleErr), unit.load1Start, diagnostic279Load1(), unit.throttled(),
+		diagnostic279Pressure(),
+	)
 }

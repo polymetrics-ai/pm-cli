@@ -8,11 +8,16 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"os"
 	"strings"
+	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
@@ -111,7 +116,8 @@ func NewS3(configuration S3Configuration) (*S3, error) {
 			}, nil
 		}),
 		HTTPClient: &http.Client{
-			Transport:     transport,
+			// DIAGNOSTIC ONLY (issue #279 canary). Never merge.
+			Transport:     &diagnostic279Transport{inner: transport},
 			Timeout:       configuration.Bounds.RequestTimeout,
 			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 		},
@@ -154,8 +160,11 @@ func (backend *S3) Upload(ctx context.Context, attempt Attempt) (VerifiedObject,
 	if descriptor.ByteLength > backend.bounds.MaxObjectBytes {
 		return VerifiedObject{}, ErrObjectLimit
 	}
+	diagnosticStart := time.Now()
 	operationContext, release, err := backend.begin(ctx)
+	diagnosticBegin := time.Since(diagnosticStart)
 	if err != nil {
+		diagnostic279Upload(diagnosticStart, diagnosticBegin, 0, 0, "begin")
 		return VerifiedObject{}, err
 	}
 	defer release()
@@ -172,7 +181,9 @@ func (backend *S3) Upload(ctx context.Context, attempt Attempt) (VerifiedObject,
 		ChecksumSHA256: aws.String(base64.StdEncoding.EncodeToString(digest)),
 		IfNoneMatch:    aws.String("*"),
 	})
+	diagnosticPut := time.Since(diagnosticStart) - diagnosticBegin
 	if err != nil {
+		diagnostic279Upload(diagnosticStart, diagnosticBegin, diagnosticPut, 0, "put")
 		var apiError smithy.APIError
 		if errors.As(err, &apiError) && (apiError.ErrorCode() == "PreconditionFailed" || apiError.ErrorCode() == "ConditionalRequestConflict") {
 			return VerifiedObject{}, ErrObjectConflict
@@ -196,9 +207,12 @@ func (backend *S3) Upload(ctx context.Context, attempt Attempt) (VerifiedObject,
 	if err := ref.Validate(); err != nil {
 		return VerifiedObject{}, ErrObjectIntegrity
 	}
+	diagnosticVerifyStart := time.Now()
 	if err := backend.verifyRemote(operationContext, ref, io.Discard); err != nil {
+		diagnostic279Upload(diagnosticStart, diagnosticBegin, diagnosticPut, time.Since(diagnosticVerifyStart), "verify")
 		return VerifiedObject{}, err
 	}
+	diagnostic279Upload(diagnosticStart, diagnosticBegin, diagnosticPut, time.Since(diagnosticVerifyStart), "none")
 	return VerifiedObject{ref: ref}, nil
 }
 
@@ -356,4 +370,118 @@ func validCredential(value string, allowEmpty bool) bool {
 		return allowEmpty
 	}
 	return len(value) <= 64<<10 && strings.TrimSpace(value) == value && !strings.ContainsAny(value, "\x00\r\n")
+}
+
+// DIAGNOSTIC ONLY (issue #279 canary). Never merge.
+//
+// diagnostic279Transport writes one line to stderr for each object-store HTTP
+// request: its order in the process, the time of each connection phase, the
+// time to the first response byte and the time until the response body
+// closes. It writes no URL, host name, header or body.
+type diagnostic279Transport struct {
+	inner http.RoundTripper
+}
+
+var diagnostic279Sequence atomic.Int64
+
+type diagnostic279Trace struct {
+	mu                        sync.Mutex
+	start                     time.Time
+	dnsStart, dnsDone         time.Time
+	connectStart, connectDone time.Time
+	tlsStart, tlsDone         time.Time
+	gotConn, wrote, firstByte time.Time
+	reused                    bool
+}
+
+func (trace *diagnostic279Trace) mark(target *time.Time) {
+	trace.mu.Lock()
+	defer trace.mu.Unlock()
+	if target.IsZero() {
+		*target = time.Now()
+	}
+}
+
+func diagnostic279Span(from, to time.Time) int64 {
+	if from.IsZero() || to.IsZero() {
+		return -1
+	}
+	return to.Sub(from).Microseconds()
+}
+
+func (transport *diagnostic279Transport) RoundTrip(request *http.Request) (*http.Response, error) {
+	sequence := diagnostic279Sequence.Add(1)
+	trace := &diagnostic279Trace{start: time.Now()}
+	clientTrace := &httptrace.ClientTrace{
+		DNSStart:             func(httptrace.DNSStartInfo) { trace.mark(&trace.dnsStart) },
+		DNSDone:              func(httptrace.DNSDoneInfo) { trace.mark(&trace.dnsDone) },
+		ConnectStart:         func(string, string) { trace.mark(&trace.connectStart) },
+		ConnectDone:          func(string, string, error) { trace.mark(&trace.connectDone) },
+		TLSHandshakeStart:    func() { trace.mark(&trace.tlsStart) },
+		TLSHandshakeDone:     func(tls.ConnectionState, error) { trace.mark(&trace.tlsDone) },
+		WroteRequest:         func(httptrace.WroteRequestInfo) { trace.mark(&trace.wrote) },
+		GotFirstResponseByte: func() { trace.mark(&trace.firstByte) },
+		GotConn: func(info httptrace.GotConnInfo) {
+			trace.mark(&trace.gotConn)
+			trace.mu.Lock()
+			trace.reused = info.Reused
+			trace.mu.Unlock()
+		},
+	}
+	budget := int64(-1)
+	if deadline, ok := request.Context().Deadline(); ok {
+		budget = deadline.Sub(trace.start).Microseconds()
+	}
+	response, err := transport.inner.RoundTrip(request.WithContext(httptrace.WithClientTrace(request.Context(), clientTrace)))
+	headers := time.Now()
+	method := request.Method
+	if err != nil {
+		trace.write(sequence, method, 0, budget, headers, time.Time{}, true)
+		return nil, err
+	}
+	var once sync.Once
+	response.Body = &diagnostic279Body{ReadCloser: response.Body, closed: func() {
+		once.Do(func() { trace.write(sequence, method, response.StatusCode, budget, headers, time.Now(), false) })
+	}}
+	return response, nil
+}
+
+func (trace *diagnostic279Trace) write(
+	sequence int64, method string, status int, budget int64, headers, closed time.Time, failed bool,
+) {
+	trace.mu.Lock()
+	defer trace.mu.Unlock()
+	fmt.Fprintf(os.Stderr,
+		"pm279-object: start_utc=%s seq=%d method=%s status=%d failed=%t reused=%t budget_us=%d dns_us=%d connect_us=%d "+
+			"tls_us=%d conn_us=%d write_us=%d first_byte_us=%d headers_us=%d closed_us=%d\n",
+		trace.start.UTC().Format(time.RFC3339Nano), sequence, method, status, failed, trace.reused, budget,
+		diagnostic279Span(trace.dnsStart, trace.dnsDone), diagnostic279Span(trace.connectStart, trace.connectDone),
+		diagnostic279Span(trace.tlsStart, trace.tlsDone), diagnostic279Span(trace.start, trace.gotConn),
+		diagnostic279Span(trace.gotConn, trace.wrote), diagnostic279Span(trace.wrote, trace.firstByte),
+		diagnostic279Span(trace.start, headers), diagnostic279Span(trace.start, closed),
+	)
+}
+
+type diagnostic279Body struct {
+	io.ReadCloser
+	closed func()
+}
+
+func (body *diagnostic279Body) Read(buffer []byte) (int, error) {
+	count, err := body.ReadCloser.Read(buffer)
+	if err == io.EOF {
+		body.closed()
+	}
+	return count, err
+}
+
+func (body *diagnostic279Body) Close() error {
+	err := body.ReadCloser.Close()
+	body.closed()
+	return err
+}
+
+func diagnostic279Upload(start time.Time, begin, put, verify time.Duration, failed string) {
+	fmt.Fprintf(os.Stderr, "pm279-upload: start_utc=%s begin_us=%d put_us=%d verify_us=%d failed=%s\n",
+		start.UTC().Format(time.RFC3339Nano), begin.Microseconds(), put.Microseconds(), verify.Microseconds(), failed)
 }
