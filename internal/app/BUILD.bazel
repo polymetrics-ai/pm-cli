@@ -67,6 +67,7 @@ go_test(
         "physical_boundary_test.go",
         "provider_http_tls_test.go",
         "sql_composition_test.go",
+        "unadmitted_recovery_test.go",
         "worker_plan_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
