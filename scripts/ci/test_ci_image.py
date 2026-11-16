@@ -227,6 +227,49 @@ class CheckCiImage(unittest.TestCase):
         self.assertEqual(failures, [])
         self.assertIn("PASS 0 D-Bus service files", output)
 
+    # Review #pr-333 brahmagupta F4 at 3786ed9: the reported version must be
+    # exact, and a failed or stopped command fails.
+    def fake_daemon(self, text, code=0, wait=False):
+        path = self.root / "bin/dbus-daemon"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = f"printf '%s\\n' '{text}'\n"
+        if wait:
+            fifo = self.root / "never-written"
+            os.mkfifo(fifo)
+            body += f"exec cat '{fifo}'\n"
+        path.write_text(f"#!/bin/sh\n{body}exit {code}\n")
+        path.chmod(0o755)
+        self.setattr_check("BINARIES", {str(path): "dbus-daemon"})
+        return {"dbus-daemon": "1.14.10-4ubuntu4.1"}
+
+    def test_the_exact_version_passes(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.10")
+        failures, output = self.run_check(check.check_versions, record)
+        self.assertEqual(failures, [])
+        self.assertIn("PASS", output)
+
+    def test_a_longer_version_with_the_same_prefix_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.100")
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "--version")
+
+    def test_a_wrong_version_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.9")
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "--version")
+
+    def test_a_nonzero_exit_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.10", code=3)
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "exited with 3")
+
+    def test_a_version_command_that_does_not_end_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.10", wait=True)
+        if hasattr(check, "VERSION_TIMEOUT"):
+            self.setattr_check("VERSION_TIMEOUT", 1)
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "did not finish")
+
 
 if __name__ == "__main__":
     unittest.main()

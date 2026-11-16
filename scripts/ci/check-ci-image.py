@@ -28,7 +28,8 @@ The check fails when one of these items is false:
   access of the job user (owner, group, other and ACLs), and the mode test does
   not depend on the user ID of the job. Each difference is printed.
 - `dbus-daemon --version` and `gnome-keyring-daemon --version` exit with code 0
-  and print the upstream version of the recorded package.
+  within VERSION_TIMEOUT seconds, and the first line of their output is
+  exactly the version line with the upstream version of the recorded package.
 
 scripts/ci/test_ci_image.py tests the fail paths with fixtures. That test is a
 developer check, not acceptance proof.
@@ -56,6 +57,13 @@ SECRETS_NAME = "org.freedesktop.secrets"
 KEYRING_DAEMON = "gnome-keyring-daemon"
 CAPABILITY = "security.capability"
 COMMAND_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C"}
+# The first line that `--version` prints, from the format strings in the
+# binaries of the snapshot packages: "D-Bus Message Bus Daemon %s" in
+# dbus-daemon 1.14.10-4ubuntu4.1 and "gnome-keyring-daemon: %s" in
+# gnome-keyring 46.1-2ubuntu0.2.
+VERSION_LINES = {"dbus-daemon": "D-Bus Message Bus Daemon {}",
+                 "gnome-keyring": "gnome-keyring-daemon: {}"}
+VERSION_TIMEOUT = 10
 
 failures = []
 
@@ -328,15 +336,19 @@ def check_versions(record):
     found = []
     for path, package in BINARIES.items():
         upstream = record[package].split(":", 1)[-1].rsplit("-", 1)[0]
+        expected = VERSION_LINES[package].format(upstream)
         try:
             result = subprocess.run([path, "--version"], capture_output=True, text=True,
                                     stdin=subprocess.DEVNULL, env=COMMAND_ENVIRONMENT,
-                                    timeout=10, check=False)
+                                    timeout=VERSION_TIMEOUT, check=False)
         except (OSError, subprocess.TimeoutExpired) as error:
             fail(f"{path} --version did not finish: {error}")
             continue
-        if result.returncode != 0 or upstream not in result.stdout + result.stderr:
-            fail(f"{path} --version exited with {result.returncode} and did not print {upstream}")
+        lines = result.stdout.splitlines()
+        first = lines[0].strip() if lines else ""
+        if result.returncode != 0 or first != expected:
+            fail(f"{path} --version exited with {result.returncode} and printed {first!r}, "
+                 f"not exactly {expected!r}")
             continue
         found.append(f"{path} --version prints {upstream}")
     passed(start, "; ".join(found))
