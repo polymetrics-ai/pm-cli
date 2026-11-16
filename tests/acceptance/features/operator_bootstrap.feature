@@ -10,6 +10,7 @@ Feature: An operator bootstraps the first workspace and its admin
   Scenario: The operator bootstraps a deployment
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory holds the bootstrap database credential
+    And the deployment configuration declares the "postgres" connector bundle
     And a bootstrap input with a new organization, a workspace, the admin bound to the login user of the stack identity provider and a "postgres" provider account
     When the operator runs pm-server bootstrap with that input
     Then the bootstrap exits with code 0
@@ -22,6 +23,7 @@ Feature: An operator bootstraps the first workspace and its admin
   Scenario: A second bootstrap of the same scope is refused and changes nothing
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory holds the bootstrap database credential
+    And the deployment configuration declares the "postgres" connector bundle
     And the operator bootstrapped the deployment with a "postgres" provider account
     And the observer records the bootstrap state of the stack
     When the operator runs pm-server bootstrap again with the same input
@@ -35,6 +37,7 @@ Feature: An operator bootstraps the first workspace and its admin
   Scenario Outline: The bootstrap refuses <case>
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory holds the bootstrap database credential
+    And the deployment configuration declares the "postgres" connector bundle
     And a bootstrap input with <change>
     And the observer records the bootstrap state of the stack
     When the operator runs pm-server bootstrap with that input
@@ -54,6 +57,7 @@ Feature: An operator bootstraps the first workspace and its admin
   Scenario: The bootstrap refuses a caller without operator authority
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory does not hold the bootstrap database credential
+    And the deployment configuration declares the "postgres" connector bundle
     And a bootstrap input with a new organization, a workspace, the admin bound to the login user of the stack identity provider and a "postgres" provider account
     And the observer records the bootstrap state of the stack
     When the operator runs pm-server bootstrap with that input
@@ -67,9 +71,11 @@ Feature: An operator bootstraps the first workspace and its admin
   Scenario: Another deployment on the same stack bootstraps its own scope
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory holds the bootstrap database credential
+    And the deployment configuration declares the "postgres" connector bundle
     And the operator bootstrapped the deployment with a "postgres" provider account
     And the observer records the bootstrap state of the first scope
     And a second new PM deployment configuration on the job-owned stack, with the bootstrap database credential
+    And the second deployment configuration declares the "postgres" connector bundle
     When the operator runs pm-server bootstrap for the second deployment
     Then the bootstrap exits with code 0
     And the observer sees one new workspace, identity, login binding, admin membership, provider account and bootstrap record for the second scope, and one new audit record
@@ -80,6 +86,7 @@ Feature: An operator bootstraps the first workspace and its admin
   Scenario: A second organization in the same deployment bootstraps its own scope
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory holds the bootstrap database credential
+    And the deployment configuration declares the "postgres" connector bundle
     And the operator bootstrapped the deployment with a "postgres" provider account
     And the observer records the bootstrap state of the first scope
     And a bootstrap input for a second organization in the same deployment, with another admin subject and a "postgres" provider account
@@ -93,6 +100,7 @@ Feature: An operator bootstraps the first workspace and its admin
   Scenario: A second organization with the admin issuer and subject of the first scope is refused
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory holds the bootstrap database credential
+    And the deployment configuration declares the "postgres" connector bundle
     And the operator bootstrapped the deployment with a "postgres" provider account
     And a bootstrap input for a second organization in the same deployment, with the admin issuer and subject of the first scope
     And the observer records the bootstrap state of the stack

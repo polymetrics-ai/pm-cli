@@ -197,3 +197,61 @@ func TestBootstrapScopeCheckRefusesNonAdminMembership(t *testing.T) {
 		}
 	}
 }
+
+// oracleBundleScenario returns a bootstrap scenario with one deployment that
+// has not written its configuration. It starts no process and needs no
+// stack.
+func oracleBundleScenario(t *testing.T) (*bootstrapScenario, *deployment) {
+	t.Helper()
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolve the repository root: %v", err)
+	}
+	d := &deployment{
+		dir:          t.TempDir(),
+		deploymentID: "pm-acceptance-oracle",
+		listen:       "127.0.0.1:1",
+		origin:       "https://127.0.0.1:2",
+		namespace:    "oracle",
+		identity:     &laneIdentityProvider{issuer: "https://127.0.0.1:3"},
+		stack: stackInputs{document: map[string]json.RawMessage{
+			"postgres": json.RawMessage(`{"endpoint_ref":"secret://operator/postgres"}`),
+			"temporal": json.RawMessage(`{"namespace":"stack"}`),
+		}},
+	}
+	s := &bootstrapScenario{shared: &stackScenario{harness: &stackHarness{bins: binaries{root: root}}, deployment: d}}
+	return s, d
+}
+
+func TestBootstrapBundleStepDeclaresOneBundle(t *testing.T) {
+	s, d := oracleBundleScenario(t)
+	if err := s.declaresBundle("deployment", "postgres"); err != nil {
+		t.Fatalf("the step refuses the checked-in postgres bundle: %v", err)
+	}
+	if d.configuration == "" {
+		t.Fatal("the step did not write the configuration")
+	}
+	if err := s.declaresBundle("deployment", "postgres"); err == nil || !strings.Contains(err.Error(), "item 3") {
+		t.Fatalf("a second declaration is not refused at item 3: %v", err)
+	}
+}
+
+func TestBootstrapBundleStepRefusesWrongInput(t *testing.T) {
+	s, _ := oracleBundleScenario(t)
+	if err := s.declaresBundle("deployment", "acceptance-undeclared"); err == nil || !strings.Contains(err.Error(), "item 2") {
+		t.Errorf("a missing bundle is not refused at item 2: %v", err)
+	}
+	if err := s.declaresBundle("deployment", "../postgres"); err == nil || !strings.Contains(err.Error(), "item 1") {
+		t.Errorf("a path name is not refused at item 1: %v", err)
+	}
+	s, d := oracleBundleScenario(t)
+	if _, err := d.configurationPath(); err != nil {
+		t.Fatalf("write the oracle configuration: %v", err)
+	}
+	if err := s.declaresBundle("deployment", "postgres"); err == nil || !strings.Contains(err.Error(), "item 4") {
+		t.Errorf("a written configuration is not refused at item 4: %v", err)
+	}
+	if err := s.declaresBundle("second deployment", "postgres"); err == nil {
+		t.Error("the step accepts a missing second deployment")
+	}
+}

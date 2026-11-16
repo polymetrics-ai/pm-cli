@@ -123,6 +123,7 @@ func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario) {
 	})
 	sc.Step(`^its secrets directory (holds|does not hold) the bootstrap database credential$`, s.secretsDirectoryCredential)
 	sc.Step(`^a second new PM deployment configuration on the job-owned stack, with the bootstrap database credential$`, s.secondDeployment)
+	sc.Step(`^the (deployment|second deployment) configuration declares the "([^"]*)" connector bundle$`, s.declaresBundle)
 	sc.Step(`^a bootstrap input with a new organization, a workspace, the admin bound to the login user of the stack identity provider and a "([^"]*)" provider account$`, s.newInput)
 	sc.Step(`^a bootstrap input with (an empty workspace name|an admin subject that is empty|a provider account for a connector that the deployment does not declare)$`, s.invalidInput)
 	sc.Step(`^a bootstrap input for a second organization in the same deployment, with another admin subject and a "([^"]*)" provider account$`, s.secondOrganizationInput)
