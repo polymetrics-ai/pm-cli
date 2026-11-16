@@ -177,13 +177,17 @@ class FixtureOwnershipTests(unittest.TestCase):
             runner_temp = Path(temporary).resolve()
             env = {"GITHUB_RUN_ID": "90001", "GITHUB_RUN_ATTEMPT": "2"}
             with mock.patch.dict(os.environ, env):
-                for name in ("pmcli-foundation-90001-2.json", "pmcli-bdd-90001-2.json"):
+                for name in ("pmcli-foundation-90001-2.json", "pmcli-bdd-90001-2.json",
+                             "pmcli-bazel-90001-2.json"):
                     with self.subTest(name=name):
                         path, run_id, attempt = FIXTURE.validate_manifest_path(
                             str(runner_temp / name), runner_temp)
                         self.assertEqual((path.name, run_id, attempt), (name, "90001", "2"))
                 for name in ("pmcli-other-90001-2.json", "pmcli-bdd-90001.json",
-                             "pmcli-bdd-90001-3.json", "pmcli-bdd-x-2.json"):
+                             "pmcli-bdd-90001-3.json", "pmcli-bdd-x-2.json",
+                             "pmcli-bazel-90001.json", "pmcli-bazel-90001-3.json",
+                             "pmcli-bazel-x-2.json", "pmcli-bazel-cleanup-90001-2.json",
+                             "pmcli-bazel-90002-2.json"):
                     with self.subTest(name=name), self.assertRaises(FIXTURE.FixtureError):
                         FIXTURE.validate_manifest_path(str(runner_temp / name), runner_temp)
 
