@@ -15,9 +15,12 @@ import (
 	"unicode/utf8"
 )
 
-// secretMinimumLength is the shortest secret form that the check compares.
-// A shorter value could match ordinary output by chance.
-const secretMinimumLength = 8
+// lineFragmentMinimumLength is the shortest line of a multi-line secret file
+// that the check compares on its own. A shorter line, for example a PEM
+// border, could match ordinary output by chance. The minimum applies only to
+// such line fragments: the check keeps every complete secret value and every
+// connection password, whatever its length.
+const lineFragmentMinimumLength = 8
 
 // secretForm is one form of one secret value. source names the file member
 // and the form. It holds no secret value, so a message can name it.
@@ -53,12 +56,16 @@ func readDeploymentSecrets(root string) ([]secretForm, error) {
 // secretForms returns the forms of one secret file that output could hold:
 //   - the raw bytes, not trimmed, and their base64 and hexadecimal forms, as
 //     a binary secret such as the wrapping key appears on the wire;
-//   - for text, the trimmed text, each line of the text, and the password of
-//     a connection string with its escaped forms.
+//   - for text, the trimmed text and its encoded forms, each line of the text
+//     of at least lineFragmentMinimumLength bytes, and the password of a
+//     connection string with its escaped forms.
+//
+// Every non-empty complete value and every connection password is kept,
+// whatever its length.
 func secretForms(member string, contents []byte) []secretForm {
 	var forms []secretForm
 	add := func(form string, value []byte) {
-		if len(value) >= secretMinimumLength {
+		if len(value) > 0 {
 			forms = append(forms, secretForm{source: member + " (" + form + ")", value: value})
 		}
 	}
@@ -78,7 +85,9 @@ func secretForms(member string, contents []byte) []secretForm {
 	text := strings.TrimSpace(string(contents))
 	addEncoded("trimmed text", []byte(text))
 	for _, line := range strings.Split(text, "\n") {
-		add("line", []byte(strings.TrimSpace(line)))
+		if line = strings.TrimSpace(line); len(line) >= lineFragmentMinimumLength {
+			add("line", []byte(line))
+		}
 	}
 	if parsed, err := url.Parse(text); err == nil && parsed.User != nil {
 		if password, ok := parsed.User.Password(); ok {

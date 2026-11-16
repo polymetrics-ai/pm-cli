@@ -98,6 +98,34 @@ func TestBootstrapSecretCheckRefusesOutputThatItCannotInspect(t *testing.T) {
 	}
 }
 
+func TestBootstrapSecretCheckFindsShortSecrets(t *testing.T) {
+	const filePassword, dsnPassword = "shortpw", "pw7"
+	forms := writeOracleSecrets(t, map[string][]byte{
+		"short-secret":            []byte(filePassword + "\n"),
+		bootstrapCredentialMember: []byte("postgresql://pm_app_bootstrap:" + dsnPassword + "@db.invalid:5432/pm_app\n"),
+	})
+	clean := []byte(`{"workspace_id":"acceptance-workspace-1"}` + "\n")
+	if source, found, complete := findSecret(clean, forms); found || !complete {
+		t.Fatalf("the check does not pass clean output: found %t (%s), complete %t", found, source, complete)
+	}
+	for name, output := range map[string]string{
+		"short file secret":           `{"note":"` + filePassword + `"}`,
+		"short file secret, escaped":  `{"note":"` + unicodeEscaped(filePassword) + `"}`,
+		"short DSN password":          `{"note":"` + dsnPassword + `"}`,
+		"short DSN password, escaped": `{"note":"` + unicodeEscaped(dsnPassword) + `"}`,
+	} {
+		if _, found, _ := findSecret([]byte(output), forms); !found {
+			t.Errorf("%s case: the check does not find the secret", name)
+		}
+		// The failure-message rule: no description holds either secret.
+		description := describeOutput(output)
+		if strings.Contains(description, filePassword) || strings.Contains(description, dsnPassword) {
+			t.Errorf("%s case: the description %q holds the secret", name, description)
+		}
+		assertDescriptionHoldsNoSecret(t, name, output, forms)
+	}
+}
+
 func TestBootstrapSecretCheckFindsBase64WrappingKey(t *testing.T) {
 	// A 32-byte wrapping key, as deployment_test.go writes. Its first and
 	// last bytes are white space, so a trimmed comparison would miss them.
