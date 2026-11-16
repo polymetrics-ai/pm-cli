@@ -31,9 +31,24 @@ class CheckCiImage(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.output = io.StringIO()
+        self.restore = []
+        self.saved = {}
 
     def tearDown(self):
+        for path in self.restore:
+            path.chmod(0o700)
+        for name, value in self.saved.items():
+            setattr(check, name, value)
         self.directory.cleanup()
+
+    def setattr_check(self, name, value):
+        self.saved.setdefault(name, getattr(check, name))
+        setattr(check, name, value)
+
+    def lock(self, path, mode):
+        """Set a restrictive directory mode, and restore it before cleanup."""
+        self.restore.append(path)
+        path.chmod(mode)
 
     def run_check(self, function, *args, **kwargs):
         with contextlib.redirect_stdout(self.output):
@@ -159,6 +174,18 @@ class CheckCiImage(unittest.TestCase):
         self.assertTrue(any("package gnome-keyring is 46.1-2ubuntu0.1" in failure for failure in failures))
         self.assertTrue(any("package dbus-x11 is installed" in failure for failure in failures))
         self.assertTrue(any(failure.endswith("/usr/bin/dbus-launch exists") for failure in failures))
+
+
+    # Review #pr-333 brahmagupta F1 at 3786ed9: a directory that the job user
+    # can search but the walk cannot list hides files that the job user can run.
+    def test_a_search_only_directory_fails_also_when_recorded(self):
+        self.assertNotEqual(os.geteuid(), 0, "run the developer tests as a normal user")
+        extra = self.file("root/hidden/extra", 0o755)
+        extra.chmod(0o4755)
+        self.lock(self.root / "root", 0o311)
+        failures, output = self.run_check(check.check_privileges, {}, {"/root"},
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "/root: the job user can search it")
 
 
 if __name__ == "__main__":

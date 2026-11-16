@@ -16,11 +16,13 @@ The check fails when one of these items is false:
 - On the root file system of the image (one device, as `find -xdev`), no file
   has a file capability (the security.capability extended attribute), and the
   setuid and setgid regular files are exactly the entries of
-  build/ci/privileged-files.txt, with their mode and owner. Each directory
-  that the job user cannot read or search is a recorded closed directory, and
-  each recorded closed directory denies read or search to others by its mode.
-  The mode test does not depend on the user ID of the job. Each difference is
-  printed.
+  build/ci/privileged-files.txt, with their mode and owner. A directory that
+  the job user can search but the walk cannot list fails, because the job user
+  can run a file in it by its name. Each directory that the job user cannot
+  search is a recorded closed directory, and each recorded closed directory
+  denies search to others by its mode. The access tests use the effective
+  access of the job user (owner, group, other and ACLs), and the mode test does
+  not depend on the user ID of the job. Each difference is printed.
 - `dbus-daemon --version` and `gnome-keyring-daemon --version` exit with code 0
   and print the upstream version of the recorded package.
 
@@ -92,7 +94,7 @@ def read_privileged(path=PRIVILEGED):
 
     A `setid MODE UID:GID PATH` line records a regular file with its octal mode
     (with the setuid and setgid bits) and its numeric owner. A `closed PATH`
-    line records a directory whose mode denies read or search to others.
+    line records a directory whose mode denies search to others.
     """
     files, closed = {}, set()
     for number, fields in content_lines(path):
@@ -190,24 +192,33 @@ def read_capability(path):
     return True
 
 
+def can_access(path, mode):
+    """Test the effective access of the job user: owner, group, other and ACLs."""
+    return os.access(path, mode, effective_ids=os.access in os.supports_effective_ids)
+
+
 def scan_privileges(root="/", capability=read_capability):
     """Walk the file system of root on its own device, as `find -xdev`.
 
-    Return (setid, closed, count): the setuid and setgid regular files as
-    {path: "MODE UID:GID"}, the directories that the walk cannot read, and the
-    number of regular files. A file with a capability, or with an unknown
-    capability state, is a failure. Paths are absolute in the image, so root
-    can be a fixture directory.
+    Return (setid, closed, searchable, count): the setuid and setgid regular
+    files as {path: "MODE UID:GID"}, the directories that the job user cannot
+    search, the directories that the job user can search but the walk cannot
+    list, and the number of regular files. A file with a capability, or with an
+    unknown capability state, is a failure. Paths are absolute in the image, so
+    root can be a fixture directory.
     """
     device = os.lstat(root).st_dev
-    setid, closed, count = {}, set(), 0
+    setid, closed, searchable, count = {}, set(), set(), 0
 
     def image_path(path):
         relative = os.path.relpath(path, root)
         return "/" if relative == "." else "/" + relative
 
     def unreadable(error):
-        closed.add(image_path(error.filename))
+        if can_access(error.filename, os.X_OK):
+            searchable.add(image_path(error.filename))
+        else:
+            closed.add(image_path(error.filename))
 
     for current, directories, names in os.walk(root, onerror=unreadable):
         kept = []
@@ -216,8 +227,13 @@ def scan_privileges(root="/", capability=read_capability):
             information = os.lstat(path)
             if information.st_dev != device:
                 continue
-            if not os.access(path, os.R_OK | os.X_OK) and not stat.S_ISLNK(information.st_mode):
-                closed.add(image_path(path))
+            if not stat.S_ISLNK(information.st_mode) and not can_access(path, os.R_OK | os.X_OK):
+                # The job user can run a file in a directory that it can search,
+                # also when it cannot list the directory.
+                if can_access(path, os.X_OK):
+                    searchable.add(image_path(path))
+                else:
+                    closed.add(image_path(path))
                 continue
             kept.append(name)
         directories[:] = kept
@@ -239,12 +255,15 @@ def scan_privileges(root="/", capability=read_capability):
                 continue
             if has_capability:
                 fail(f"{image_path(path)} has a file capability")
-    return setid, closed, count
+    return setid, closed, searchable, count
 
 
 def check_privileges(recorded, recorded_closed, root="/", capability=read_capability):
     start = len(failures)
-    setid, closed, count = scan_privileges(root, capability)
+    setid, closed, searchable, count = scan_privileges(root, capability)
+    for path in sorted(searchable):
+        fail(f"{path}: the job user can search it, but the walk cannot list it, "
+             "so a privileged file in it is not checked")
     for path in sorted(set(setid) | set(recorded)):
         if path not in recorded:
             fail(f"{path} is setuid or setgid ({setid[path]}) and not in {PRIVILEGED.name}")
@@ -260,12 +279,12 @@ def check_privileges(recorded, recorded_closed, root="/", capability=read_capabi
         except FileNotFoundError:
             fail(f"closed directory {path}: recorded in {PRIVILEGED.name}, but it does not exist")
             continue
-        if not stat.S_ISDIR(information.st_mode) or information.st_mode & 0o005 == 0o005:
+        if not stat.S_ISDIR(information.st_mode) or information.st_mode & 0o001:
             fail(f"closed directory {path}: recorded in {PRIVILEGED.name}, but it is not a directory "
-                 f"that denies read or search to others ({stat.filemode(information.st_mode)})")
+                 f"that denies search to others ({stat.filemode(information.st_mode)})")
     passed(start, f"{count} regular files on the root file system checked: no file capability; "
                   f"{len(setid)} setuid or setgid files match {PRIVILEGED.name}; "
-                  f"{len(closed)} directories the walk cannot read, all recorded closed")
+                  f"{len(closed)} directories the job user cannot search, all recorded closed")
 
 
 def check_versions(record):

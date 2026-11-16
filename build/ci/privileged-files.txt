@@ -18,8 +18,10 @@ setid 4755 0:0 /usr/bin/umount
 setid 2755 0:42 /usr/sbin/pam_extrausers_chkpwd
 setid 2755 0:42 /usr/sbin/unix_chkpwd
 #
-# closed PATH: directories whose mode denies read or search to others. The job
-# user cannot scan them, and cannot run a file in them.
+# closed PATH: directories whose mode denies search to others. A job user that
+# cannot search a directory cannot open or run a file in it. The check fails
+# when the job user can search a directory that it cannot list, because the
+# walk cannot scan that directory, but the job user can run a file in it.
 # The Ubuntu base:
 closed /home/ubuntu
 closed /root
