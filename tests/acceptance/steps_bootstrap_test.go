@@ -58,18 +58,15 @@ var bootstrapAuditTables = []string{"workspace_audit_entries", "audit_entries"}
 // bootstrapInput is the input file of pm-server bootstrap. It holds the
 // organization, the workspace ID and name, the admin issuer and subject, and
 // the provider accounts (ADR 0006, "The planned interface"). It holds no
-// secret.
+// secret. The field names are those of the product input: one flat object,
+// with every field present (edf079a, internal/app/bootstrap.go:83-93).
 type bootstrapInput struct {
 	OrgID            string                     `json:"org_id"`
 	WorkspaceID      string                     `json:"workspace_id"`
 	WorkspaceName    string                     `json:"workspace_name"`
-	Admin            bootstrapAdmin             `json:"admin"`
+	AdminIssuer      string                     `json:"admin_issuer"`
+	AdminSubject     string                     `json:"admin_subject"`
 	ProviderAccounts []bootstrapProviderAccount `json:"provider_accounts"`
-}
-
-type bootstrapAdmin struct {
-	Issuer  string `json:"issuer"`
-	Subject string `json:"subject"`
 }
 
 type bootstrapProviderAccount struct {
@@ -231,7 +228,8 @@ func makeInput(d *deployment, subject, connector string) bootstrapInput {
 		OrgID:         "acceptance-org-" + suffix,
 		WorkspaceID:   "acceptance-workspace-" + suffix,
 		WorkspaceName: "Acceptance workspace " + suffix,
-		Admin:         bootstrapAdmin{Issuer: d.identity.issuer, Subject: subject},
+		AdminIssuer:   d.identity.issuer,
+		AdminSubject:  subject,
 		ProviderAccounts: []bootstrapProviderAccount{
 			{ConnectorID: connector, DisplayName: "Acceptance " + connector + " account " + suffix},
 		},
@@ -280,7 +278,7 @@ func (s *bootstrapScenario) invalidInput(change string) error {
 	case "an empty workspace name":
 		input.WorkspaceName = ""
 	case "an admin subject that is empty":
-		input.Admin.Subject = ""
+		input.AdminSubject = ""
 	case "a provider account for a connector that the deployment does not declare":
 		input.ProviderAccounts[0].ConnectorID = bootstrapUndeclaredConnector
 	default:
@@ -313,7 +311,7 @@ func (s *bootstrapScenario) secondOrganizationFirstAdmin() error {
 		return errors.New("the operator did not bootstrap the deployment in this scenario")
 	}
 	input := makeInput(d, bootstrapAdminSubject, s.first.ProviderAccounts[0].ConnectorID)
-	input.Admin = s.first.Admin
+	input.AdminIssuer, input.AdminSubject = s.first.AdminIssuer, s.first.AdminSubject
 	return s.writeInput(input)
 }
 
@@ -781,10 +779,10 @@ func checkScope(state bootstrapState, run *bootstrapRun, operator bool) error {
 	}
 	check(got.workspace.WorkspaceID == input.WorkspaceID && got.workspace.Name == input.WorkspaceName,
 		"the workspace is %+v, want ID %q and name %q", got.workspace, input.WorkspaceID, input.WorkspaceName)
-	check(got.identity.Kind == "user" && got.identity.Issuer == input.Admin.Issuer && got.identity.Subject == input.Admin.Subject,
+	check(got.identity.Kind == "user" && got.identity.Issuer == input.AdminIssuer && got.identity.Subject == input.AdminSubject,
 		"the identity is %+v, want a user with the admin issuer and subject of the input", got.identity)
-	check(got.binding.DeploymentID == deploymentID && got.binding.Issuer == input.Admin.Issuer &&
-		got.binding.Subject == input.Admin.Subject && got.binding.PrincipalID == got.identity.IdentityID &&
+	check(got.binding.DeploymentID == deploymentID && got.binding.Issuer == input.AdminIssuer &&
+		got.binding.Subject == input.AdminSubject && got.binding.PrincipalID == got.identity.IdentityID &&
 		got.binding.PrincipalKind == "user" && got.binding.Enabled,
 		"the login binding is %+v, want an enabled binding of deployment %q for the admin issuer, subject and identity", got.binding, deploymentID)
 	check(got.membership.WorkspaceID == input.WorkspaceID && got.membership.IdentityID == got.identity.IdentityID,
