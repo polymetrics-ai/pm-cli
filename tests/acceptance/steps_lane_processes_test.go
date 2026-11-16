@@ -17,9 +17,10 @@ type laneWorkerProcess interface {
 	workerProcess() *starter.Process
 }
 
-// registerLaneProcessSteps registers the L2 steps (criteria-worker v4). They
-// read what the lane starter recorded for each process. They make no new
-// observation of a process and do not wait.
+// registerLaneProcessSteps registers the L2 steps (criteria-worker v4). The
+// ready-signal step reads what the lane starter recorded. The still-running
+// step makes one observation of the process exit after the ready signal.
+// Neither step waits.
 func registerLaneProcessSteps(sc *godog.ScenarioContext, scenario *laneScenario) {
 	sc.Step(`^the lane received the (pm-server|pm-worker) ready signal$`, scenario.laneReceivedReadySignal)
 	sc.Step(`^the lane (pm-server|pm-worker) is still running$`, scenario.laneProcessStillRunning)
@@ -63,19 +64,21 @@ func (s *laneScenario) laneReceivedReadySignal(name string) error {
 	return nil
 }
 
-// laneProcessStillRunning reads the exit observation that the starter
-// recorded. It makes no new observation of the process. A process that the
-// starter finished with, or whose exit the starter recorded, fails the step.
+// laneProcessStillRunning makes one observation of the process exit, with
+// no wait, after the ready signal of the process. Running does not depend on
+// the reaper goroutine, so a process that exited after its ready line fails
+// the step. The step reads the starter report only for its message.
 func (s *laneScenario) laneProcessStillRunning(name string) error {
 	process, err := s.laneProcess(name)
 	if err != nil {
 		return err
 	}
-	if process.Done() {
-		return fmt.Errorf("the starter finished with the lane %s: %s", name, process.Snapshot())
+	// R4: no observation of the process before its ready signal.
+	if report := process.Snapshot(); report.Outcome != starter.OutcomeReady && report.Outcome != starter.OutcomeReadyClosed {
+		return fmt.Errorf("the lane received no %s ready signal, so the step makes no observation of it: %s", name, report)
 	}
-	if report := process.Snapshot(); report.Exited {
-		return fmt.Errorf("the lane %s is no longer running: %s", name, report)
+	if process.Done() || !process.Running() {
+		return fmt.Errorf("the lane %s is no longer running: %s", name, process.Snapshot())
 	}
 	return nil
 }
