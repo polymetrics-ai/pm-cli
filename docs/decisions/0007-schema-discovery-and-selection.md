@@ -27,7 +27,22 @@ PM stores each discovered metadata snapshot and each schema selection in PM Post
 - pm-server reads the selection for the schema route, and pm-worker reads it for a read, from the same rows, under the same tenant scope.
 - The binding, the completeness rule, the 4 MiB and 4,096-field bounds, and the drift rules of `internal/schema` stay as they are. Only the storage moves.
 - The server metadata root and the selection role of `provider_sql.state_directory` end. No file under them holds a snapshot or a selection. A remaining use of a state directory is scratch only.
-- Planned contract examples: two tables, one for snapshots and one for selections, with row-level security like the other scoped tables; one route that starts a discovery and one route that selects, both under `/v1/workspaces/{workspace_id}/connections/{connection_id}/schema`; and `pm schema discover` and `pm schema select` next to the existing `pm schema show`. Names are final in the implementing slices.
+- Planned contract examples: two tables, one for snapshots and one for selections, with row-level security like the other scoped tables, and one route that starts a discovery and one route that selects, both under `/v1/workspaces/{workspace_id}/connections/{connection_id}/schema`. Table and route names are final in the implementing slices.
+
+The commands and their refusals. `pm` maps each server problem to an exit code (`internal/api/output.go:109-125`) and writes one stderr line, `error: <problem code>: <detail> (incident <id>)` (`internal/api/output.go:99`). A scenario checks the exit code and the problem code.
+
+| Command (planned, except `pm schema show`) | What it does |
+| --- | --- |
+| `pm schema discover --connection <id> --resource <relation>`, with `--wait` to wait for the result | Starts a discovery run of one relation. With `--wait`, exit code 0 when the run stored one complete candidate. It never selects. |
+| `pm schema select --connection <id> --resource <relation> --schema-ref <digest> --revision <expected control revision>` | Selects one complete candidate of the relation, against the selection that the caller read. `--revision 0` means that the caller read no selection. It uses the existing mutation control (`--revision`, as `pm connections` does). |
+| `pm schema show` | Exists at `c59aa20` (`internal/cli/root.go:136`, `internal/cli/schema.go`). It reads the selection from PostgreSQL after this change. It never discovers or selects. |
+
+| Refusal | HTTP status | Problem code | `pm` exit code |
+| --- | --- | --- | --- |
+| The relation is not a relation of the connection, or it has no complete candidate to select | 404 | `schema_relation_unknown` (new) | 3 |
+| The expected selection is not the current selection (a stale `--revision`) | 412 | `control_revision_mismatch` (exists, `internal/app/workspaces.go:630-636`) | 4 |
+| No expected selection was given | 428 | `control_revision_required` (exists, `internal/app/workspaces.go:575-584`) | 4 |
+| A read of a relation that has no selection | 409 | `schema_selection_absent` (new). Admission refuses it before any run, and the worker checks it again (`internal/app/sql_composition.go:419-424` at `c59aa20` refuses it today with no problem code). | 4 |
 
 | Option | Assessment for PM |
 | --- | --- |
