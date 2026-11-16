@@ -3,6 +3,8 @@
 import json
 import os
 from pathlib import Path
+import select
+import signal
 import subprocess
 import sys
 import tempfile
@@ -339,6 +341,42 @@ REPORT = ROOT / "scripts/ci/go-test-report.py"
 GO_PACKAGES = ROOT / "scripts/ci/go-packages.sh"
 
 
+def process_exits_within(pid, seconds):
+    """Wait one time for the exit event of process PID, for at most SECONDS.
+
+    Return True when the process has exited, also as a zombie that no parent
+    has reaped yet, or when no process has the ID. Return False when the time
+    limit ends first. Linux uses a pidfd, macOS a kqueue process filter. A
+    system with neither has no exit event, and the caller fails.
+    """
+    if hasattr(os, "pidfd_open"):
+        try:
+            descriptor = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return True
+        try:
+            poller = select.poll()
+            poller.register(descriptor, select.POLLIN)
+            return bool(poller.poll(int(seconds * 1000)))
+        finally:
+            os.close(descriptor)
+    if hasattr(select, "kqueue"):
+        queue = select.kqueue()
+        try:
+            change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                   flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                   fflags=select.KQ_NOTE_EXIT)
+            try:
+                queue.control([change], 0, 0)
+            except ProcessLookupError:
+                return True
+            events = queue.control(None, 1, seconds)
+            return any(event.fflags & select.KQ_NOTE_EXIT for event in events)
+        finally:
+            queue.close()
+    raise AssertionError("this system has neither pidfd_open nor kqueue: no process exit event")
+
+
 def go_event(action, package, test=None, **extra):
     event = {"Action": action, "Package": package}
     if test:
@@ -505,19 +543,22 @@ class GoTestReport(unittest.TestCase):
     def test_no_test_process_outlives_the_command(self):
         with tempfile.TemporaryDirectory() as directory:
             pidfile = Path(directory) / "pid"
-            script = (f'sleep 60 & echo $! > "{pidfile}"; '
+            # The background process has its own standard streams, so the
+            # captured pipes of the reporter end when the reporter exits, not
+            # when this process exits.
+            script = (f'sleep 60 </dev/null >/dev/null 2>&1 & echo $! > "{pidfile}"; '
                       "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
             command = ["/bin/sh", "-c", script, "sh", "-count=1"]
             result, _ = self.report([], expect=["m/a"], command=command)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             pid = int(pidfile.read_text())
-            for _ in range(50):
+            # One wait for the exit event, with one time limit. The reporter
+            # sends SIGKILL to the process group before it exits.
+            if not process_exits_within(pid, 5):
                 try:
-                    os.kill(pid, 0)
+                    os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
-                    break
-                time.sleep(0.1)
-            else:
+                    pass
                 self.fail("the background process of the command is still alive")
 
     def test_command_stopped_by_a_signal_fails(self):
