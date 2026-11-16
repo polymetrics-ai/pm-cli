@@ -14,6 +14,7 @@ go_library(
     visibility = [
         "//internal:__subpackages__",
         "//tests/client-parity:__pkg__",
+        "//tests/stack:__pkg__",
     ],
     deps = [
         "//internal/api",
