@@ -39,6 +39,6 @@ Do not edit files in the folder. To upgrade, replace the whole folder at a new p
 
 ## Qualification limits
 
-File, hash, and link checks establish structure. Actual discovery requires a fresh authorized worker in the candidate checkout. Independent Standards and Spec review requires complete accepted issue inputs and a nonempty diff against a pinned base, merge base, and head. Operational route metadata remains outside repository documentation.
+File, hash, and link checks establish structure. Actual discovery requires a fresh authorized worker in the candidate checkout. Independent review requires complete accepted issue inputs and a nonempty diff against a pinned base, merge base, and head. Operational route metadata remains outside repository documentation.
 
 The exact AI Hero source is `mattpocock/skills`, commit `3cca18b368ae95cdbdebbff572ccafa662551015`, path `skills/engineering/code-review/SKILL.md`. Keep Standards and Spec axes independent and distinguish documented standards from heuristic smells. A missing Spec is not a pass. Source presence cannot claim review, CI, merge, application behavior, provider proof, or release readiness.

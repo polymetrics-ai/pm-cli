@@ -342,8 +342,10 @@ func checkPostgreSQLOperation(operation NormalizedOperation, locked SourceOperat
 		operation.Raw.Method != "" || operation.Raw.Path != "" {
 		return sourceError(ErrUnsupportedShape, "", pointer+"/transport", "a native PostgreSQL operation cannot carry HTTP-shaped request, binding or method facts")
 	}
-	if operation.Semantics != nil && (operation.Semantics.HTTP != nil || operation.Semantics.Pagination != nil || operation.Semantics.Retry != nil) {
-		return sourceError(ErrUnsafeAmendment, "", pointer+"/semantics", "a native PostgreSQL operation carries no HTTP, pagination or retry semantics")
+	// A retry classification is transport-independent. Its HTTP statuses are not.
+	if operation.Semantics != nil && (operation.Semantics.HTTP != nil || operation.Semantics.Pagination != nil ||
+		(operation.Semantics.Retry != nil && len(operation.Semantics.Retry.HTTPStatuses) != 0)) {
+		return sourceError(ErrUnsafeAmendment, "", pointer+"/semantics", "a native PostgreSQL operation carries no HTTP, pagination or retry HTTP status semantics")
 	}
 	if len(operation.ResponseVariants) != 1 {
 		return sourceError(ErrUnsupportedShape, "", pointer+"/response_variants", "a native PostgreSQL operation declares exactly one typed response")

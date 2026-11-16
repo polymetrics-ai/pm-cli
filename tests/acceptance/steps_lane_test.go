@@ -9,31 +9,24 @@ import (
 	"os/exec"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/cucumber/godog"
 )
 
-const (
-	laneProfileName    = "lane"
-	laneCommandTimeout = 60 * time.Second
-)
+const laneProfileName = "lane"
 
-// laneScenario is the state of one lane scenario. The lane steps keep their
-// own state, apart from the offline CLI steps in steps_cli_test.go.
+// laneScenario is the state of one lane scenario. The lane command writes the
+// shared result state of the shared steps, which the shared result steps read.
 type laneScenario struct {
 	lane      *lane
+	shared    *stackScenario
 	home      string
 	workspace string
-	ran       bool
-	exitCode  int
-	stdout    string
-	stderr    string
 	baseline  map[string]int64
 }
 
-func registerLaneSteps(sc *godog.ScenarioContext, l *lane) {
-	scenario := &laneScenario{lane: l}
+func registerLaneSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) {
+	scenario := &laneScenario{lane: l, shared: shared}
 	sc.After(func(ctx context.Context, _ *godog.Scenario, err error) (context.Context, error) {
 		if scenario.home != "" {
 			if removeErr := os.RemoveAll(scenario.home); removeErr != nil && err == nil {
@@ -45,9 +38,6 @@ func registerLaneSteps(sc *godog.ScenarioContext, l *lane) {
 	sc.Step(`^the lane runs pm-server and pm-worker on the job-owned stack$`, scenario.laneRuns)
 	sc.Step(`^a pm server profile for the lane server$`, scenario.addProfile)
 	sc.Step(`^I run "([^"]*)" against the lane server$`, scenario.runAgainstLane)
-	sc.Step(`^the lane command exits with code (\d+)$`, scenario.exitCodeIs)
-	sc.Step(`^the lane command stdout contains the lane deployment ID$`, scenario.stdoutHasDeploymentID)
-	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.stderrContains)
 	sc.Step(`^the observer sees a pm-worker poller on the worker task queue$`, scenario.observerSeesPoller)
 	sc.Step(`^the observer sees no new row in the PM run and audit tables$`, scenario.observerSeesNoNewRow)
 }
@@ -107,7 +97,7 @@ func (s *laneScenario) runAgainstLane(ctx context.Context, line string) error {
 		return err
 	}
 	s.baseline = baseline
-	s.ran, s.exitCode, s.stdout, s.stderr = true, code, stdout, stderr
+	s.shared.result = commandResult{ran: true, exitCode: code, stdout: stdout, stderr: stderr, deploymentID: s.lane.deploymentID}
 	return nil
 }
 
@@ -134,36 +124,6 @@ func (s *laneScenario) runPM(parent context.Context, args []string) (int, string
 	default:
 		return 0, "", "", fmt.Errorf("start pm: %w", err)
 	}
-}
-
-func (s *laneScenario) exitCodeIs(want int) error {
-	if !s.ran {
-		return errors.New("no lane command ran")
-	}
-	if s.exitCode != want {
-		return fmt.Errorf("exit code %d, want %d\nstdout: %s\nstderr: %s", s.exitCode, want, s.stdout, s.stderr)
-	}
-	return nil
-}
-
-func (s *laneScenario) stdoutHasDeploymentID() error {
-	if !s.ran {
-		return errors.New("no lane command ran")
-	}
-	if !strings.Contains(s.stdout, s.lane.deploymentID) {
-		return fmt.Errorf("stdout does not contain the lane deployment ID %q\nstdout: %s", s.lane.deploymentID, s.stdout)
-	}
-	return nil
-}
-
-func (s *laneScenario) stderrContains(want string) error {
-	if !s.ran {
-		return errors.New("no lane command ran")
-	}
-	if !strings.Contains(s.stderr, want) {
-		return fmt.Errorf("stderr does not contain %q\nstderr: %s", want, s.stderr)
-	}
-	return nil
 }
 
 // observerSeesPoller makes one observation through the observer's own

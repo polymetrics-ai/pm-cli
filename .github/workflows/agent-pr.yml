@@ -38,6 +38,7 @@ jobs:
             const {data: workflow} = await github.rest.actions.getWorkflow({
               ...repo, workflow_id: 'bdd.yml'
             });
+            const requiredJobs = ['bdd', 'checks'];
 
             function admitted(run) {
               return run.event === 'push' && run.path === '.github/workflows/bdd.yml' &&
@@ -71,9 +72,12 @@ jobs:
                 const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
                   ...repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100
                 });
-                const bdd = jobs.filter(job => job.name === 'bdd');
-                ready = bdd.length === 1 && bdd[0].status === 'completed' &&
-                  bdd[0].conclusion === 'success' && bdd[0].head_sha === head.commit.sha;
+                // Both required checks must pass for this exact head.
+                ready = requiredJobs.every(name => {
+                  const matches = jobs.filter(job => job.name === name);
+                  return matches.length === 1 && matches[0].status === 'completed' &&
+                    matches[0].conclusion === 'success' && matches[0].head_sha === head.commit.sha;
+                });
               }
               return {sha: head.commit.sha, ready, run};
             }
@@ -102,7 +106,7 @@ jobs:
                 ({data: pull} = await github.rest.pulls.create({
                   ...repo, base: 'main', head: branch, draft: true, title,
                   body: 'PM BDD controls the draft state for this agent branch.\n\n' +
-                    'A successful run for the current branch revision makes this pull request ready for owner review.\n\n' +
+                    'Successful bdd and checks jobs for the current branch revision make this pull request ready for owner review.\n\n' +
                     'Only the owner merges, manually and by squash. Readiness does not authorize a merge.'
                 }));
               } catch (error) {
@@ -138,4 +142,4 @@ jobs:
                 return;
               }
             }
-            core.info(ready ? 'The pull request is ready for owner review.' : 'The pull request remains draft until PM BDD passes.');
+            core.info(ready ? 'The pull request is ready for owner review.' : 'The pull request remains draft until bdd and checks pass.');

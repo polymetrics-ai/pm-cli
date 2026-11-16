@@ -1,6 +1,6 @@
 # PM Server architecture and implementation context
 
-This bounded tree projects the accepted PM Server product contracts and still-unexecuted implementation plan. [IMPORT-MANIFEST](IMPORT-MANIFEST.json) is the compact target/source digest inventory. Each `files[]` record distinguishes its source digest, any explicitly recorded sanitized-predecessor digest, and current transformed-target digest; `files[]` does **not** store per-file byte counts. Byte lengths cited in source or decision evidence are separate facts, not an implied manifest field.
+This tree is frozen history since issue #64. No PR needs to update it. Its statements about file ownership, a sole coordinator, grouped delivery and paired reviewers are not in force. AGENTS.md holds the rules in force. This bounded tree projects the accepted PM Server product contracts and still-unexecuted implementation plan. [IMPORT-MANIFEST](IMPORT-MANIFEST.json) is the compact target/source digest inventory. Each `files[]` record distinguishes its source digest, any explicitly recorded sanitized-predecessor digest, and current transformed-target digest; `files[]` does **not** store per-file byte counts. Byte lengths cited in source or decision evidence are separate facts, not an implied manifest field.
 
 ## Publication and BOOT state
 

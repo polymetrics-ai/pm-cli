@@ -2,8 +2,8 @@
   "schema_version": "pm.lane-inventory/v1",
   "connector_id": "postgres",
   "lane": "binary_upload",
-  "source_digest": "sha256:25952582914c648a0d0f193f07679f41cd15c8e7ced92d34ee0bd2a55ac176f2",
-  "bundle_hash": "sha256:eb89d12c5b69ddc2440b369ab47a78d530ef7c14220dd99c3781e39f904baa42",
+  "source_digest": "sha256:ce4ea2658d12319ae6a0833844e49291ac7d2942cd5ffa5e9aea7ddaf92d1371",
+  "bundle_hash": "sha256:fe0557dde6bf457cd5a90482d1573be864682f0dc4be558a5b7972a9e35ad96e",
   "operations": [
     {
       "operation_id": "relation/mapped-upsert",

@@ -1,6 +1,6 @@
 # Foundation Atlas
 
-The Foundation Atlas is a deterministic authoring projection of the accepted planning, ownership, validation, packet, and Go declaration sources. It is not a runtime registry, an admission gate, or evidence that a connector, operation, lane, handler, or provider is ready.
+The JSON files in this directory are frozen history since issue #64. No PR needs to update them. The Foundation Atlas is a deterministic authoring projection of the accepted planning, ownership, validation, packet, and Go declaration sources. It is not a runtime registry, an admission gate, or evidence that a connector, operation, lane, handler, or provider is ready.
 
 ## Generated projections
 

@@ -100,6 +100,20 @@ func (column Column) declaredType() (string, error) {
 	}
 }
 
+// parquetProjectionExpression preserves the declared physical type for a file.
+// Wire-decoding expressions can instead produce text or epoch microseconds.
+func parquetProjectionExpression(column Column) (string, error) {
+	identifier, err := column.Identifier()
+	if err != nil {
+		return "", err
+	}
+	declaredType, err := column.declaredType()
+	if err != nil {
+		return "", err
+	}
+	return "CAST(" + identifier + " AS " + declaredType + ")", nil
+}
+
 // acceptsLogicalType reports whether one engine-reported column type is the
 // exact declared class. Widening integer classes are accepted because they are
 // lossless; everything else must match exactly.
@@ -313,17 +327,25 @@ func validateContainedPath(path, description string, admittedDirectories []strin
 // validateRegularFile refuses a symlink, a FIFO, a device, a directory, or a
 // missing file before the engine can open it.
 func validateRegularFile(path, description string) error {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return fmt.Errorf("%w: %s is not readable: %v", ErrUnadmittedPath, description, err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%w: %s is a symlink", ErrUnadmittedPath, description)
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%w: %s is not a regular file (%s)", ErrUnadmittedPath, description, info.Mode().Type())
+	if problem := regularFileProblem(path, description); problem != "" {
+		return fmt.Errorf("%w: %s", ErrUnadmittedPath, problem)
 	}
 	return nil
+}
+
+// regularFileProblem tells why path is not a regular file, or returns "" when
+// it is one. It never follows a symlink. The text starts with description.
+func regularFileProblem(path, description string) string {
+	info, err := os.Lstat(path)
+	switch {
+	case err != nil:
+		return fmt.Sprintf("%s is not readable: %v", description, err)
+	case info.Mode()&os.ModeSymlink != 0:
+		return description + " is a symlink"
+	case !info.Mode().IsRegular():
+		return fmt.Sprintf("%s is not a regular file (%s)", description, info.Mode().Type())
+	}
+	return ""
 }
 
 // validateRegularDirectory refuses a symlink or a non-directory at one
@@ -448,25 +470,73 @@ func MaterializeParquet(ctx context.Context, database *sql.DB, columns []Column,
 	if _, err := database.ExecContext(ctx, statement); err != nil {
 		return descriptor, fmt.Errorf("write the admitted Parquet segment: %w", err)
 	}
-	return DescribeParquetOutput(output.Path)
+	return describeParquetOutput(ctx, database, output.Path, columns)
 }
 
-// DescribeParquetOutput reads back the materialized segment and reports its
-// exact identity.
-func DescribeParquetOutput(path string) (OutputDescriptor, error) {
-	var descriptor OutputDescriptor
-	if err := validateRegularFile(path, "the materialized segment"); err != nil {
-		return descriptor, err
+// keptSegmentReason is the refusal reason when an invalid segment could not be
+// removed. The short removal error comes before the cause, so a cut at the
+// reason bound falls on the end of the cause. The output path is refused while
+// the file exists, so the user must remove it first.
+func keptSegmentReason(removeErr error, reason string) string {
+	return fmt.Sprintf("the invalid materialized segment stays on disk. Remove it before you use this output path again. "+
+		"Removal error: %v. Cause of the refusal: %s", removeErr, reason)
+}
+
+// describeParquetOutput verifies the output names, order and physical types
+// before it reports the segment identity. It removes an invalid segment. Only
+// this package writes a segment, so only this package calls it.
+func describeParquetOutput(ctx context.Context, database *sql.DB, path string, columns []Column) (descriptor OutputDescriptor, err error) {
+	// The removal below is not registered yet: a path that is not a regular
+	// file is refused and left as it is.
+	if problem := regularFileProblem(path, "the materialized segment"); problem != "" {
+		return descriptor, failure(CodeOutputFailed, "%s", problem)
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if removeErr := os.Remove(path); removeErr != nil && !errors.Is(removeErr, os.ErrNotExist) {
+			// The refusal code appears once: join the inner reason, not its Error().
+			reason := err.Error()
+			var inner *Failure
+			if errors.As(err, &inner) {
+				reason = inner.Reason
+			}
+			err = failure(CodeOutputFailed, "%s", keptSegmentReason(removeErr, reason))
+		}
+	}()
+	rows, err := database.QueryContext(ctx, "SELECT * FROM read_parquet(?) LIMIT 0", path)
+	if err != nil {
+		return descriptor, failure(CodeOutputFailed, "inspect the materialized schema: %v", err)
+	}
+	types, typeErr := rows.ColumnTypes()
+	closeErr := rows.Close()
+	if typeErr != nil || closeErr != nil {
+		return descriptor, failure(CodeOutputFailed, "inspect the materialized column types: %v", errors.Join(typeErr, closeErr))
+	}
+	if len(types) != len(columns) {
+		return descriptor, failure(CodeOutputFailed, "the materialized segment has %d columns, expected %d", len(types), len(columns))
+	}
+	for index, column := range columns {
+		declaredType, err := column.declaredType()
+		if err != nil {
+			return descriptor, failure(CodeOutputFailed, "the materialized schema declaration is invalid: %v", err)
+		}
+		if types[index].Name() != column.Name || types[index].DatabaseTypeName() != declaredType {
+			return descriptor, failure(CodeOutputFailed,
+				"the materialized segment has column %d as %q %s instead of %q %s",
+				index+1, types[index].Name(), types[index].DatabaseTypeName(), column.Name, declaredType)
+		}
 	}
 	file, err := os.Open(path)
 	if err != nil {
-		return descriptor, fmt.Errorf("open the materialized segment: %w", err)
+		return descriptor, failure(CodeOutputFailed, "open the materialized segment: %v", err)
 	}
 	defer func() { _ = file.Close() }()
 	digest := sha256.New()
 	written, err := io.Copy(digest, file)
 	if err != nil {
-		return descriptor, fmt.Errorf("read the materialized segment: %w", err)
+		return descriptor, failure(CodeOutputFailed, "read the materialized segment: %v", err)
 	}
 	descriptor = OutputDescriptor{
 		Path:   path,

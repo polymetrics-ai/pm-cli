@@ -389,6 +389,7 @@ func (selectRequest Select) validate(bounds BoundAnalytics, relations map[string
 	if selectRequest.Limit <= 0 || selectRequest.Limit > MaximumRows {
 		return failure(CodeBoundExceeded, "the declared row limit must be 1..%d", MaximumRows)
 	}
+	outputNames := make(map[string]string, len(selectRequest.Project))
 	for _, projection := range selectRequest.Project {
 		if _, present := relationColumn(relation, projection.Column.Name); !present {
 			return failure(CodeUnknownColumn, "relation %q does not declare column %q", selectRequest.From, projection.Column.Name)
@@ -397,6 +398,23 @@ func (selectRequest Select) validate(bounds BoundAnalytics, relations map[string
 			if _, err := quotedIdentifier(projection.Alias); err != nil {
 				return classify(err)
 			}
+		}
+		// A Parquet file needs a different name for each column. DuckDB compares
+		// identifiers without case, including quoted names. A selection without
+		// an output returns its rows and keeps duplicate names.
+		if selectRequest.Output != nil {
+			name := projection.OutputName()
+			key := strings.ToLower(name)
+			if earlier, duplicate := outputNames[key]; duplicate {
+				if earlier == name {
+					return failure(CodeProtocol,
+						"output column %q is declared more than once. Give each output column a different name", name)
+				}
+				return failure(CodeProtocol,
+					"output columns %q and %q have the same name when case is ignored. Give each output column a different name",
+					earlier, name)
+			}
+			outputNames[key] = name
 		}
 	}
 	for _, predicate := range selectRequest.Predicates {
@@ -649,16 +667,22 @@ func (engine *engine) selectRows(ctx context.Context, request Request) (Result, 
 			return result, failure(CodeSchemaMismatch, "column %q is declared DECIMAL(%d,%d), not DECIMAL(%d,%d)",
 				column.Name, column.Precision, column.Scale, requested.Column.Precision, requested.Column.Scale)
 		}
-		expression, err := projectionExpression(column)
+		var expression string
+		if selectRequest.Output != nil {
+			expression, err = parquetProjectionExpression(column)
+		} else {
+			expression, err = projectionExpression(column)
+		}
 		if err != nil {
 			return result, classify(err)
 		}
-		projection = append(projection, expression)
 		output := column
-		if requested.Alias != "" {
-			output.Name = requested.Alias
+		output.Name = requested.OutputName()
+		identifier, err := output.Identifier()
+		if err != nil {
+			return result, classify(err)
 		}
-		output.Nullable = column.Nullable
+		projection = append(projection, expression+" AS "+identifier)
 		declared = append(declared, output)
 	}
 	statement := "SELECT " + strings.Join(projection, ", ") + " FROM " + from
@@ -670,7 +694,7 @@ func (engine *engine) selectRows(ctx context.Context, request Request) (Result, 
 			if !declaredBefore {
 				return result, failure(CodeUnknownColumn, "relation %q does not declare column %q", selectRequest.From, predicate.Column)
 			}
-			clause, clauseArguments, err := predicateClause(column, predicate)
+			clause, clauseArguments, err := predicateClause(from, column, predicate)
 			if err != nil {
 				return result, classify(err)
 			}
@@ -694,7 +718,7 @@ func (engine *engine) selectRows(ctx context.Context, request Request) (Result, 
 			if ordering.Descending {
 				direction = "DESC"
 			}
-			orderings = append(orderings, identifier+" "+direction)
+			orderings = append(orderings, from+"."+identifier+" "+direction)
 		}
 		statement += " ORDER BY " + strings.Join(orderings, ", ")
 	}
@@ -718,7 +742,7 @@ func (engine *engine) writeSegment(ctx context.Context, request Request, stateme
 	if _, err := engine.database.ExecContext(ctx, statement, arguments...); err != nil {
 		return result, failure(CodeOutputFailed, "write the admitted Parquet segment: %v", err)
 	}
-	descriptor, err := DescribeParquetOutput(output.Path)
+	descriptor, err := describeParquetOutput(ctx, engine.database, output.Path, declared)
 	if err != nil {
 		return result, classify(err)
 	}
@@ -900,12 +924,15 @@ func bindingExpression(column Column, value Value) (string, any, error) {
 	}
 }
 
-// predicateClause renders one closed comparison with bound arguments.
-func predicateClause(column Column, predicate Predicate) (string, []any, error) {
+// predicateClause renders one closed comparison with bound arguments. It
+// qualifies the column with the relation, so that an output alias with the
+// same name never replaces the source column.
+func predicateClause(from string, column Column, predicate Predicate) (string, []any, error) {
 	identifier, err := column.Identifier()
 	if err != nil {
 		return "", nil, err
 	}
+	identifier = from + "." + identifier
 	switch predicate.Operator {
 	case OperatorIsNull:
 		return identifier + " IS NULL", nil, nil

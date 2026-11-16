@@ -20,9 +20,10 @@ This is a portable index, not a second decision log. The complete accepted ratio
 | Client parity | CLI and browser derive from one public OpenAPI 3.1 contract and share server-side authorization and behavior | [ADR475-13](pm-server/architecture/ADRS.md#adr475-13--public-client-parity) |
 | Durable events | PostgreSQL transactionally owns safe sequence/history; live notification loss cannot erase replayable committed events | [ADR475-14](pm-server/architecture/ADRS.md#adr475-14--durable-events) |
 | Lifecycle and recovery | Operators explicitly own stack lifecycle, coordinated backup, compatibility, and quarantined restore; storage restore does not undo provider effects | [ADR475-15](pm-server/architecture/ADRS.md#adr475-15--operator-lifecycle-and-recovery) |
+| Process ready signal | `pm-server` and `pm-worker` send one fixed ready line on a descriptor that the starter names with `--ready-fd`, or end their start with exit code 1 within their own start budget. The worker line means that its own Temporal checks passed and its pollers started | [0005](../decisions/0005-process-ready-signal.md) |
 
 ## Applying a decision
 
-Start with the accepted issue and its owned files, then read the linked canonical record and [file ownership map](pm-server/implementation/FILE-OWNERSHIP.json). Preserve first-owner and later-update boundaries. If an implementation requires changing a selected decision, do not silently fork it in code or another guide: identify the conflicting contract and return the decision to its named owner.
+Start with the accepted issue, then read the linked canonical record. If an implementation requires changing a selected decision, do not silently fork it in code or another guide: identify the conflicting contract and return the decision to its named owner.
 
 Use [testing guidance](../development/testing.md) for evidence boundaries and [release guidance](../development/release.md) for packaging and recovery qualification. Neither document adds another architecture or review policy.

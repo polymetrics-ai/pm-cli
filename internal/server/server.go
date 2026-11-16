@@ -265,12 +265,16 @@ func (application *Application) Handler() http.Handler {
 	return application.handler
 }
 
-// Serve transfers listener ownership to the bounded lifecycle server.
-func (application *Application) Serve(ctx context.Context, listener net.Listener) error {
+// Serve transfers listener ownership, and ownership of a non-nil ready handle,
+// to the bounded lifecycle server (see Server.Serve).
+func (application *Application) Serve(ctx context.Context, listener net.Listener, ready io.WriteCloser) error {
 	if application == nil || application.lifecycle == nil || application.handler == nil {
+		if ready != nil {
+			_ = ready.Close()
+		}
 		return errors.New("open server application is required")
 	}
-	return application.lifecycle.Serve(ctx, listener, application.handler)
+	return application.lifecycle.Serve(ctx, listener, application.handler, ready)
 }
 
 // Close drains requests, stops the bounded relay, closes its Temporal client,

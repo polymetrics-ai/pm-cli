@@ -27,7 +27,7 @@ The accepted PM Server documentation baseline is already published; later README
 
 Produce a release/compatibility matrix, exact artifact manifest, ownership-aware migration sequence, complete backup/restore inventory, quarantine and effect-reconciliation evidence, measured recovery outcomes, and known rollback limits. Separate structure, build, and unit checks from actual persistence, browser, cross-host, provider, and recovery evidence. Tool availability or a passing health endpoint cannot certify release readiness.
 
-For an authorized delivery workflow, preserve the reviewed target-base SHA, merge base, candidate/final head, independent Standards and Spec reports, fixes, and final CI identities. OMP owns integration; a separate approval owns merge. Do not execute delivery merely because this procedure mentions it.
+For an authorized delivery workflow, preserve the reviewed target-base SHA, merge base, candidate/final head, independent review reports, fixes, and final CI identities. Only the owner merges. Do not execute delivery merely because this procedure mentions it.
 
 ## Boundaries
 

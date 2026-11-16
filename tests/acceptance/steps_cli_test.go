@@ -23,7 +23,9 @@ type cliRun struct {
 	ran      bool
 }
 
-func registerCLISteps(sc *godog.ScenarioContext, bins binaries) {
+func registerCLISteps(sc *godog.ScenarioContext, bins binaries, stack *stackHarness, lane *lane) {
+	registerPmgenSteps(sc)
+	registerStackSteps(sc, stack, lane)
 	run := &cliRun{bins: bins}
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		home, err := os.MkdirTemp("", "pm-acceptance-home-")
@@ -46,6 +48,7 @@ func registerCLISteps(sc *godog.ScenarioContext, bins binaries) {
 	sc.Step(`^stdout is not empty$`, run.stdoutNotEmpty)
 	sc.Step(`^stdout contains "([^"]*)"$`, run.streamContains("stdout"))
 	sc.Step(`^stderr contains "([^"]*)"$`, run.streamContains("stderr"))
+	registerQueryChildSteps(sc)
 }
 
 // runCommand executes the built pm binary with an isolated HOME and no

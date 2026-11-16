@@ -183,8 +183,29 @@ type OperationSemantics struct {
 	RecordExtraction *RecordExtraction    `json:"record_extraction,omitempty"`
 	Pagination       *Pagination          `json:"pagination,omitempty"`
 	Retry            *RetrySemantics      `json:"retry,omitempty"`
+	WriteIdentity    *WriteIdentity       `json:"write_identity,omitempty"`
 	Lanes            []LaneSemantics      `json:"lanes"`
 }
+
+// WriteIdentity declares the provider dedup field of a write, or
+// contract.WriteDedupNone, and its read-back operation. Both are required.
+type WriteIdentity struct {
+	Dedup    *WriteDedup    `json:"dedup"`
+	ReadBack *WriteReadBack `json:"read_back"`
+}
+
+type WriteDedup struct {
+	FieldID string  `json:"field_id"`
+	Witness Witness `json:"witness"`
+}
+
+type WriteReadBack struct {
+	OperationID string  `json:"operation_id"`
+	Witness     Witness `json:"witness"`
+}
+
+// writeLanes are the lanes that send a provider write.
+var writeLanes = [...]contract.Lane{contract.LaneDirectWrite, contract.LaneReverseETL, contract.LaneBinaryUpload}
 
 type HTTPSemantics struct {
 	Origins       []string                         `json:"origins"`
@@ -367,6 +388,20 @@ func (semantics OperationSemantics) clone() OperationSemantics {
 		retry.Witness = semantics.Retry.Witness.clone()
 		cloned.Retry = &retry
 	}
+	if semantics.WriteIdentity != nil {
+		identity := *semantics.WriteIdentity
+		if identity.Dedup != nil {
+			dedup := *identity.Dedup
+			dedup.Witness = dedup.Witness.clone()
+			identity.Dedup = &dedup
+		}
+		if identity.ReadBack != nil {
+			readBack := *identity.ReadBack
+			readBack.Witness = readBack.Witness.clone()
+			identity.ReadBack = &readBack
+		}
+		cloned.WriteIdentity = &identity
+	}
 	cloned.Lanes = slices.Clone(semantics.Lanes)
 	for index := range cloned.Lanes {
 		cloned.Lanes[index].SourceRefs = slices.Clone(semantics.Lanes[index].SourceRefs)
@@ -470,6 +505,11 @@ func (document SemanticsDocument) Validate() error {
 				return err
 			}
 		}
+		if operation.WriteIdentity != nil {
+			if err := operation.WriteIdentity.validate(pointer + "/write_identity"); err != nil {
+				return err
+			}
+		}
 		seenLanes := make(map[contract.Lane]struct{}, len(operation.Lanes))
 		for laneIndex, lane := range operation.Lanes {
 			lanePointer := fmt.Sprintf("%s/lanes/%d", pointer, laneIndex)
@@ -489,6 +529,9 @@ func (document SemanticsDocument) Validate() error {
 			if len(lane.SourceRefs) == 0 {
 				return sourceError(ErrUnsafeAmendment, "", lanePointer+"/source_refs", "lane classification must be source-linked")
 			}
+		}
+		if err := operation.validateWriteLanes(pointer); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -624,6 +667,40 @@ func (retry RetrySemantics) validate(pointer string) error {
 		previous = status
 	}
 	return nil
+}
+
+// validateWriteLanes refuses an eligible write lane unless the operation
+// declares a write identity or an explicit unsafe retry classification. A safe
+// or conditional classification does not replace the write identity.
+func (semantics OperationSemantics) validateWriteLanes(pointer string) error {
+	if semantics.WriteIdentity != nil ||
+		(semantics.Retry != nil && semantics.Retry.Classification == string(contract.OperationRetryUnsafe)) {
+		return nil
+	}
+	for _, lane := range semantics.Lanes {
+		if lane.Classification == LaneEligible && slices.Contains(writeLanes[:], lane.Lane) {
+			return sourceError(ErrUnsafeAmendment, "", pointer, fmt.Sprintf(
+				"write operation %q is eligible for %s without a write identity or an explicit unsafe retry classification",
+				semantics.OperationID, lane.Lane))
+		}
+	}
+	return nil
+}
+
+func (identity WriteIdentity) validate(pointer string) error {
+	if identity.Dedup == nil || identity.ReadBack == nil {
+		return sourceError(ErrUnsafeAmendment, "", pointer, "write identity requires both a dedup field and a read-back operation")
+	}
+	if !validIdentity(identity.Dedup.FieldID) {
+		return sourceError(ErrUnsafeAmendment, "", pointer+"/dedup/field_id", "dedup field must be none or an input field identity")
+	}
+	if err := identity.Dedup.Witness.validate(pointer + "/dedup/witness"); err != nil {
+		return err
+	}
+	if !validIdentity(identity.ReadBack.OperationID) {
+		return sourceError(ErrUnsafeAmendment, "", pointer+"/read_back/operation_id", "read-back operation identity is invalid")
+	}
+	return identity.ReadBack.Witness.validate(pointer + "/read_back/witness")
 }
 
 func (witness Witness) validate(pointer string) error {

@@ -155,12 +155,30 @@ class WorkflowPolicy(unittest.TestCase):
 
     def test_agent_pr_never_runs_pushed_code(self):
         workflow = self.load("agent-pr.yml")
-        self.assertEqual(workflow["on"], {"push": {"branches": ["agent/**"]}})
-        job = workflow["jobs"]["draft-pr"]
+        self.assertEqual(workflow["on"], {"workflow_run": {
+            "workflows": ["PM BDD"], "branches": ["agent/**"],
+            "types": ["requested", "in_progress", "completed"]}})
+        job = workflow["jobs"]["review-state"]
         self.assertEqual(job["runs-on"], "ubuntu-24.04")
-        self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
-        self.assertTrue(all("uses" not in step for step in job["steps"]))
-        self.assertEqual(workflow["permissions"], {"contents": "read", "pull-requests": "write"})
+        self.assertIn("github.event.workflow_run.actor.login == 'karthik-sivadas'", job["if"])
+        self.assertIn("github.event.workflow_run.triggering_actor.login == 'karthik-sivadas'", job["if"])
+        self.assertIn("github.event.workflow_run.head_repository.full_name == github.repository", job["if"])
+        # One pinned script step from the default branch: no checkout, no
+        # artifact download and no shell step, so no pushed code runs.
+        self.assertEqual(len(job["steps"]), 1)
+        step = job["steps"][0]
+        self.assertEqual(step["uses"], "actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd")
+        self.assertNotIn("run", step)
+        for forbidden in ("checkout", "downloadArtifact", "child_process", "exec("):
+            self.assertNotIn(forbidden, step["with"]["script"])
+        self.assertEqual(workflow["permissions"],
+                         {"actions": "read", "contents": "read", "pull-requests": "write"})
+
+    def test_agent_pr_ready_needs_both_required_checks(self):
+        script = self.load("agent-pr.yml")["jobs"]["review-state"]["steps"][0]["with"]["script"]
+        self.assertIn("const requiredJobs = ['bdd', 'checks'];", script)
+        self.assertIn("matches[0].head_sha === head.commit.sha", script)
+        self.assertIn("run.head_sha === head.commit.sha", script)
 
 
 if __name__ == "__main__":
