@@ -54,7 +54,7 @@ PM stores each discovered metadata snapshot and each schema selection in PM Post
   6. the compare and set of the revision. The new revision, the selection and one audit record are written together, or nothing is written.
 - A missing precondition:
   - `pm schema select` without `--revision` is a local usage refusal. `pm` sends no request, writes `error: --revision is required` on stderr and exits with code 2. Every `pm` mutation does this today (`internal/cli/connections.go:343-345`, `internal/cli/root.go:29-33`).
-  - A request to the select route without `If-Match` gets HTTP 428 `control_revision_required` (`internal/app/workspaces.go:575-584`). `pm` cannot send such a request. Only another client of the public API, or a developer check of the route, can observe it.
+  - A fresh request to the select route, with a valid protocol `expected_revision` and no `If-Match`, gets HTTP 428 `control_revision_required` (`internal/app/workspaces.go:575-584`). The route accepts a request without `If-Match` (`internal/httpapi/service.go:448-464`), so the replay check of step 3 comes first: a request whose key and intent match a stored receipt gets the stored result, also without `If-Match`. The connection update service uses the same order today (`internal/app/connections.go:273-282`). `pm` cannot send a request without `If-Match`. Only another client of the public API, or a developer check of the route, can observe it.
 
 ### First discovery
 
@@ -83,7 +83,7 @@ The first discovery binds the relation from the operator's declaration, not from
 | The resource is not a declared relation of the connection, or it has no complete candidate with that `schema_ref` | 404 | `schema_relation_unknown` (new) | 3 |
 | The expected revision is not the current selection revision (a stale `--revision`) | 412 | `control_revision_mismatch` (exists, `internal/app/workspaces.go:630-636`) | 4 |
 | `pm schema select` without `--revision` | none: `pm` sends no request | `error: --revision is required` (exists, `internal/cli/connections.go:343-345`) | 2 |
-| A request to the select route without `If-Match` (`pm` cannot send it) | 428 | `control_revision_required` (exists, `internal/app/workspaces.go:575-584`) | not applicable |
+| A fresh request to the select route with a valid protocol revision and no `If-Match` (`pm` cannot send it; a replay of a stored receipt gets the stored result first) | 428 | `control_revision_required` (exists, `internal/app/workspaces.go:575-584`) | not applicable |
 | A read of a relation that has no selection | 409 | `schema_selection_absent` (new). Admission refuses it before any run, and the worker checks it again. At `c59aa20` `internal/app/sql_composition.go:419-424` refuses it with no problem code. | 4 |
 
 A refusal writes no selection, no revision and no audit record, and it does not change an existing selection.
@@ -154,5 +154,5 @@ None of these exists yet.
   - A stale `--revision` is refused with `control_revision_mismatch`. The selection, the revision and the audit records do not change.
   - `pm schema select` without `--revision` exits with code 2 and sends no request.
   - A resource that the connection does not declare is refused with `schema_relation_unknown`, for a discovery and for a selection, and nothing is written.
-- A developer check of the select route: a request without `If-Match` gets 428 `control_revision_required`.
+- Developer checks of the select route: a fresh request with a valid protocol revision and no `If-Match` gets 428 `control_revision_required`; a replay of a stored receipt without `If-Match` gets the stored result.
 - The #72 worker read (W1b): pm-worker reads a PostgreSQL table through the selection that pm-server reports.
