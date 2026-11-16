@@ -25,6 +25,7 @@ go_test(
         "continue_test.go",
         "payload_test.go",
         "retry_test.go",
+        "unit_failure_test.go",
     ],
     env_inherit = [
         "GOMAXPROCS",
