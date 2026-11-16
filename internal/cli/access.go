@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -53,6 +54,7 @@ func newMembershipCommands(runtime *commandRuntime) *cobra.Command {
 		return ctx.bundle.client.API().ListMembershipsWithResponse(ctx.context, pmapi.WorkspaceID(ctx.bundle.config.workspace), nil)
 	}))
 	command.AddCommand(newMembershipGrantCommand(runtime))
+	command.AddCommand(newMembershipUpdateCommand(runtime))
 	command.AddCommand(newMembershipRevokeCommand(runtime))
 	return command
 }
@@ -101,6 +103,49 @@ func newMembershipGrantCommand(runtime *commandRuntime) *cobra.Command {
 	command.Flags().Var(&role, role.name, "Membership role")
 	command.Flags().Var(&grants, grants.name, "Comma-separated resource grants")
 	command.Flags().Var(&expires, expires.name, "Optional canonical RFC3339 expiry")
+	return command
+}
+
+// newMembershipUpdateCommand adds connections to one membership. It refuses a
+// missing input before it builds a client, so a usage refusal sends no request.
+func newMembershipUpdateCommand(runtime *commandRuntime) *cobra.Command {
+	control := newMutationControl()
+	var connections singleList
+	connections.name = "add-connections"
+	command := &cobra.Command{Use: "update MEMBERSHIP_REF", Short: "Add connections to a workspace membership", Args: exactArgs(1)}
+	command.RunE = func(command *cobra.Command, arguments []string) error {
+		if !connections.set {
+			return usageFailure(errors.New("--add-connections is required"))
+		}
+		if !control.revision.set {
+			return usageFailure(errors.New("--revision is required"))
+		}
+		ctx, cancel, bundle, err := runtime.requestBundle(command, true, true)
+		if err != nil {
+			return err
+		}
+		defer cancel()
+		var request pmapi.MembershipUpdateRequest
+		request.Membership.MembershipRef = arguments[0]
+		request.Membership.AddConnectionIds = append([]string(nil), connections.values...)
+		slices.Sort(request.Membership.AddConnectionIds)
+		protocol, parameters, err := control.protocol("membership.update", bundle.config.workspace, arguments[0], request.Membership)
+		if err != nil {
+			return err
+		}
+		request.Protocol = protocol
+		mutationParameters := &pmapi.UpdateMembershipParams{IdempotencyKey: parameters.key, IfMatch: parameters.revision}
+		response, err := sendRecoveredMutation(ctx, runtime, bundle, "membership.update", arguments[0], protocol, request, func(attemptContext context.Context) (pmapi.RecoveryAttemptResult, error) {
+			value, sendErr := bundle.client.API().UpdateMembershipWithResponse(attemptContext, pmapi.WorkspaceID(bundle.config.workspace), pmapi.ResourceID(arguments[0]), mutationParameters, request)
+			return recoveredResponse(value, sendErr)
+		})
+		if err != nil {
+			return err
+		}
+		return renderWireResponse(command.OutOrStdout(), bundle.config.output, response)
+	}
+	addMutationFlags(command, control)
+	command.Flags().Var(&connections, connections.name, "Comma-separated IDs of the connections to add")
 	return command
 }
 
