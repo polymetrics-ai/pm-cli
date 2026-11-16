@@ -5,6 +5,7 @@ go_test(
     size = "large",
     srcs = [
         "config_test.go",
+        "ready_worker_linux_test.go",
         "storage_qualification_test.go",
     ],
     data = [
@@ -43,11 +44,18 @@ go_test(
     ],
     deps = [
         "//internal/config",
+        "//internal/contract",
         "//internal/stack",
+        "//internal/temporal",
+        "//internal/testfixture",
         "@com_github_aws_aws_sdk_go_v2//aws",
         "@com_github_aws_aws_sdk_go_v2_service_s3//:s3",
         "@com_github_jackc_pgx_v5//:pgx",
         "@com_github_santhosh_tekuri_jsonschema_v6//:jsonschema",
+        "@io_temporal_go_api//common/v1:common",
+        "@io_temporal_go_api//enums/v1:enums",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
         "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//temporal",
     ],
 )
