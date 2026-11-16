@@ -142,7 +142,22 @@ func ReserveAccountPermit(ctx context.Context, tx *Transaction, request AccountP
 		return AccountPermit{}, err
 	}
 	if request.Units > capacity-reserved {
-		return AccountPermit{}, ErrAccountCapacity
+		// A reservation that finds the account short of capacity first expires
+		// the account's unused permits whose expiry has passed, in every
+		// workspace that shares the account. It still holds the account row.
+		expired, err := expireUnusedAccountPermits(ctx, tx, scope.OrgID, connection.ProviderAccountID)
+		if err != nil {
+			return AccountPermit{}, err
+		}
+		if expired > 0 {
+			capacity, reserved, err = lockProviderAccount(ctx, tx, scope, connection.ProviderAccountID)
+			if err != nil {
+				return AccountPermit{}, err
+			}
+		}
+		if request.Units > capacity-reserved {
+			return AccountPermit{}, ErrAccountCapacity
+		}
 	}
 
 	tag, err := tx.exec(ctx, `
@@ -403,6 +418,30 @@ func ExpireAccountPermit(ctx context.Context, tx *Transaction, permit AccountPer
 		return AccountPermit{}, err
 	}
 	return current, nil
+}
+
+// expireUnusedAccountPermits moves every reserved permit of one provider
+// account whose expiry has passed to expired, in every workspace of the
+// installed organization, and returns their units to the account. It returns
+// the number of units released.
+//
+// The migrator-owned definer applies the conditions of ExpireAccountPermit to
+// each locked current row: the permit is still reserved and unresolved, and
+// the database clock has passed its expiry. AuthorizeAccountPermit requires
+// the opposite expiry condition on the same clock, and both change only a
+// reserved row. So an expiry never takes a permit that an attempt can still
+// admit, and an admitted permit is never expired.
+func expireUnusedAccountPermits(ctx context.Context, tx *Transaction, orgID, providerAccountID string) (int64, error) {
+	var units int64
+	if err := tx.queryRow(ctx, `
+		SELECT pm.expire_unused_account_permits($1, $2)
+	`, orgID, providerAccountID).Scan(&units); err != nil {
+		return 0, fmt.Errorf("expire unused account permits: %w", err)
+	}
+	if units < 0 {
+		return 0, errors.New("account permit expiry released a negative number of units")
+	}
+	return units, nil
 }
 
 // ReleaseUnusedAccountPermit proves by exact reserved-state CAS that no physical

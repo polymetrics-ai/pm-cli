@@ -1152,6 +1152,13 @@ func (service *WorkerService) settleWorkerUnit(
 		unsentWithoutSend := noSend && uniformWorkerOutcomeState(outcomes, contract.OutcomeUnsent)
 		switch {
 		case localCompletion:
+			if permit.State == store.AccountPermitExpired {
+				// The permit expired before this unit settled, so the unit no
+				// longer holds its capacity. Write nothing. The expired permit
+				// still proves that no send was admitted, so the retry settles
+				// every member unsent.
+				return store.ErrAccountPermitStale
+			}
 			if permit.State != store.AccountPermitReserved {
 				return workerFailure(ErrWorkerConflict, errors.New("verified local result has a dispatched account permit"))
 			}
