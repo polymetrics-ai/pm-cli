@@ -146,8 +146,8 @@ services:
     environment:
       GODEBUG: fips140=on
       WEED_CONFIG_DIR: /etc/seaweedfs
-      # Grow one volume at a time so the default collection cannot consume
-      # the artifact bucket's bounded slot during a fresh deployment.
+      # Grow one volume at a time. pm-stack up grows one volume for the
+      # artifact bucket and one for the default collection before ready.
       WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
     command:
       - master
@@ -183,8 +183,9 @@ services:
       - -port=8080
       - -port.grpc=18080
       - -dir=/data
-      # One default metadata collection and one configured artifact bucket.
-      - -max=2
+      # One volume and one spare slot for each of the default metadata
+      # collection and the configured artifact bucket.
+      - -max=4
     volumes:
       - ${PM_STACK_DATA_DIR:?}/seaweed-volume:/data
       - ${PM_STACK_STATE_DIR:?}/security.toml:/etc/seaweedfs/security.toml:ro

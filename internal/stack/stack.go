@@ -187,7 +187,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 // CheckStack verifies the selected PostgreSQL schemas and roles, the
-// authenticated Temporal namespace, and authenticated S3 bucket access.
+// authenticated Temporal namespace, authenticated S3 bucket access, and, for
+// bundled artifacts, a writable volume for the bucket and the default
+// collection.
 func CheckStack(ctx context.Context, configuration config.Configuration, stdout, stderr io.Writer) error {
 	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
@@ -371,10 +373,18 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 				return fmt.Errorf("start artifact services: %w", err)
 			}
 		}
+		// The start-up wait repeats only the bucket step and the read-only
+		// capacity fact. The volume grow runs after the wait, once.
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
-			return ensureArtifactBucket(checkCtx, configuration, rt, true)
+			if err := ensureArtifactBucket(checkCtx, configuration, rt, true); err != nil {
+				return err
+			}
+			return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
 		}); err != nil {
 			return fmt.Errorf("initialize artifact bucket: %w", err)
+		}
+		if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
+			return fmt.Errorf("initialize artifact volumes: %w", err)
 		}
 	}
 
@@ -1394,6 +1404,11 @@ func checkLive(ctx context.Context, configuration config.Configuration, rt *runt
 	if err := ensureArtifactBucket(ctx, configuration, rt, false); err != nil {
 		return fmt.Errorf("artifact readiness: %w", err)
 	}
+	if configuration.Artifacts().Ownership == config.OwnershipBundled {
+		if err := ensureArtifactVolumes(ctx, configuration, rt, false); err != nil {
+			return fmt.Errorf("artifact readiness: %w", err)
+		}
+	}
 	return nil
 }
 
@@ -1659,6 +1674,129 @@ func ensureArtifactBucket(ctx context.Context, configuration config.Configuratio
 	})
 	if err != nil {
 		return fmt.Errorf("list artifact bucket")
+	}
+	return nil
+}
+
+// seaweedMasterOrigin is the HTTP origin of the SeaweedFS master on the
+// private stack network. pm-stack calls it inside the master container, so
+// the admin API is not published outside that network.
+const seaweedMasterOrigin = "http://seaweed-master:9333"
+
+// seaweedTopology is the part of the master's /dir/status document that
+// pm-stack reads: the volume slots and the writable volumes of each layout.
+type seaweedTopology struct {
+	Max     *int64 `json:"Max"`
+	Free    *int64 `json:"Free"`
+	Layouts []struct {
+		Collection string   `json:"collection"`
+		Writables  []uint32 `json:"writables"`
+	} `json:"Layouts"`
+}
+
+// writable returns the number of writable volumes of the layouts whose
+// collection is exactly the given collection. The default collection is "".
+func (topology seaweedTopology) writable(collection string) int {
+	count := 0
+	for _, layout := range topology.Layouts {
+		if layout.Collection == collection {
+			count += len(layout.Writables)
+		}
+	}
+	return count
+}
+
+// seaweedMaster calls one master endpoint with curl inside the master
+// container and returns the response body. A non-2xx response fails. The
+// Compose and curl diagnostics can name the private service address and the
+// bucket, so pm-stack does not show them.
+func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Configuration, path string, query url.Values) ([]byte, error) {
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return nil, err
+	}
+	target := seaweedMasterOrigin + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	command := exec.CommandContext(ctx, "python3", rt.composeArguments(configuration,
+		"exec", "-T", "seaweed-master", "curl", "-fsS", "-m", "10", target)...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	return command.Output()
+}
+
+func (rt *runtime) artifactVolumeStatus(ctx context.Context, configuration config.Configuration) (seaweedTopology, error) {
+	output, err := rt.seaweedMaster(ctx, configuration, "/dir/status", nil)
+	if err != nil {
+		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+	}
+	var status struct {
+		Topology *seaweedTopology `json:"Topology"`
+	}
+	if err := json.Unmarshal(output, &status); err != nil || status.Topology == nil ||
+		status.Topology.Max == nil || status.Topology.Free == nil {
+		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+	}
+	return *status.Topology, nil
+}
+
+// checkArtifactVolumeCapacity is a read-only readiness fact: the master
+// reports volume slots, so the volume server has joined the master.
+func checkArtifactVolumeCapacity(ctx context.Context, configuration config.Configuration, rt *runtime) error {
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if *topology.Max < 1 {
+		return fmt.Errorf("artifact volume server has not joined the master")
+	}
+	return nil
+}
+
+// ensureArtifactVolumes requires a writable volume for the artifact bucket
+// and for the default collection. Without one, the first object write of a
+// run waits for SeaweedFS to grow the volume. With grow, it reads the status,
+// asks the master once to grow one volume for each layout that has no
+// writable volume, and reads the status again. It never repeats a grow. Each
+// pm-stack up holds the deployment lock, and a second up finds the volumes
+// and grows nothing. Without grow, it only reads.
+func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
+	layouts := []struct {
+		collection string
+		missing    string
+	}{
+		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume"},
+		{"", "default collection has no writable volume"},
+	}
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if grow {
+		grown := false
+		for _, layout := range layouts {
+			if topology.writable(layout.collection) > 0 {
+				continue
+			}
+			query := url.Values{"count": {"1"}}
+			if layout.collection != "" {
+				query.Set("collection", layout.collection)
+			}
+			if _, err := rt.seaweedMaster(ctx, configuration, "/vol/grow", query); err != nil {
+				return fmt.Errorf("%s: the master did not grow a volume", layout.missing)
+			}
+			grown = true
+		}
+		if grown {
+			if topology, err = rt.artifactVolumeStatus(ctx, configuration); err != nil {
+				return err
+			}
+		}
+	}
+	for _, layout := range layouts {
+		if topology.writable(layout.collection) < 1 {
+			return errors.New(layout.missing)
+		}
 	}
 	return nil
 }
