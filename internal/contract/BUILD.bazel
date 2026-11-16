@@ -55,7 +55,6 @@ go_test(
     ],
     data = [
         "//schemas:authoring_schemas",
-        "//schemas:contract_schemas",
     ],
     embed = [":contract"],
     deps = ["@com_github_santhosh_tekuri_jsonschema_v6//:jsonschema"],
