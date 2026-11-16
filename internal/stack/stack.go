@@ -10,11 +10,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,9 +44,29 @@ const (
 	maximumSecretBytes       = 64 << 10
 	readinessTimeout         = 2 * time.Minute
 	deploymentLockRetryDelay = 100 * time.Millisecond
+
+	// The job identity provider is a test-only Keycloak in its own Compose
+	// overlay. Only this service may publish on the second loopback address.
+	identityProviderService          = "keycloak"
+	identityProviderNetwork          = "identity-private"
+	identityProviderComposeFile      = "deploy/compose.identity.yaml"
+	identityProviderBinding          = "${PM_STACK_IDENTITY_PROVIDER_HOST:?}:${PM_STACK_IDENTITY_PROVIDER_PORT:?}:8443"
+	identityProviderUserVariable     = "${PM_STACK_IDENTITY_PROVIDER_USER:?}"
+	identityProviderImageUser        = "1000:0"
+	identityProviderBuildOutput      = "/opt/keycloak/lib/quarkus"
+	identityProviderReadinessTimeout = 4 * time.Minute
 )
 
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
+
+var identityProviderRealmPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+var identityProviderVariables = []string{
+	"PM_STACK_IDENTITY_PROVIDER_HOST",
+	"PM_STACK_IDENTITY_PROVIDER_PORT",
+	"PM_STACK_IDENTITY_PROVIDER_ISSUER",
+	"PM_STACK_IDENTITY_PROVIDER_DIR",
+}
 
 var processDeploymentFence = make(chan struct{}, 1)
 
@@ -70,8 +92,19 @@ type runtime struct {
 	images            map[string]string
 	uid               string
 	gid               string
+	identityProvider  *identityProvider
+	identityUser      string
 	stdout            io.Writer
 	stderr            io.Writer
+}
+
+// identityProvider is the job-owned test identity provider that the job
+// environment selects. It is nil for every other stack.
+type identityProvider struct {
+	host   string
+	port   string
+	issuer string
+	dir    string
 }
 
 type imageLock struct {
@@ -95,6 +128,13 @@ type composeService struct {
 	Ports       []string `yaml:"ports"`
 	Privileged  bool     `yaml:"privileged"`
 	Volumes     []string `yaml:"volumes"`
+	User        string   `yaml:"user"`
+	ReadOnly    bool     `yaml:"read_only"`
+	CapDrop     []string `yaml:"cap_drop"`
+	SecurityOpt []string `yaml:"security_opt"`
+	Networks    []string `yaml:"networks"`
+	Command     []string `yaml:"command"`
+	Tmpfs       []string `yaml:"tmpfs"`
 }
 
 type postgresConnection struct {
@@ -186,7 +226,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 // CheckStack verifies the selected PostgreSQL schemas and roles, the
-// authenticated Temporal namespace, and authenticated S3 bucket access.
+// authenticated Temporal namespace, authenticated S3 bucket access, and, for
+// bundled artifacts, a writable volume for the bucket and the default
+// collection.
 func CheckStack(ctx context.Context, configuration config.Configuration, stdout, stderr io.Writer) error {
 	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
@@ -319,39 +361,79 @@ func requestedLifecycle(action string, selected dependencySet) (config.Prelaunch
 	return config.Prelaunch{Lifecycle: requests}, nil
 }
 
-func upStack(ctx context.Context, configuration config.Configuration, selected dependencySet, stdout, stderr io.Writer) error {
+// stepError names the failed step of pm-stack up, and causeError the cause of
+// a failed provider check, with fixed codes. The job launcher prints only the
+// codes, never the error text, which can name a path or an address.
+type stepError struct {
+	step string
+	err  error
+}
+
+func (e *stepError) Error() string { return e.err.Error() }
+func (e *stepError) Unwrap() error { return e.err }
+
+type causeError struct{ code, text string }
+
+func (e causeError) Error() string { return e.text }
+
+// FailedStep returns "<step>" or "<step>/<cause>" for err, or "".
+func FailedStep(err error) string {
+	var step *stepError
+	var cause causeError
+	if !errors.As(err, &step) {
+		return ""
+	} else if errors.As(step.err, &cause) {
+		return step.step + "/" + cause.code
+	}
+	return step.step
+}
+
+func upStack(ctx context.Context, configuration config.Configuration, selected dependencySet, stdout, stderr io.Writer) (err error) {
 	if len(selected) == 0 {
 		return CheckStack(ctx, configuration, stdout, stderr)
 	}
+	step := "configuration"
+	defer func() {
+		if err != nil {
+			err = &stepError{step: step, err: err}
+		}
+	}()
 	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
 		return err
 	}
+	step = "deployment-lock"
 	lock, err := acquireDeploymentLock(ctx, rt.stateDir)
 	if err != nil {
 		return err
 	}
 	defer releaseDeploymentLock(lock)
+	step = "render"
 	if err := rt.render(configuration); err != nil {
 		return err
 	}
+	step = "compose-validate"
 	if err := rt.validateCompose(ctx, configuration); err != nil {
 		return err
 	}
 
+	step = "postgres-start"
 	if selected[config.DependencyPostgres] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "--wait", "postgres"); err != nil {
+		if err := rt.startServices(ctx, configuration, true, "postgres"); err != nil {
 			return fmt.Errorf("start PostgreSQL: %w", err)
 		}
 	}
+	step = "migrate"
 	if err := migrateUnderLock(ctx, configuration, selected, rt); err != nil {
 		return err
 	}
 
 	if selected[config.DependencyTemporal] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "temporal"); err != nil {
+		step = "temporal-start"
+		if err := rt.startServices(ctx, configuration, false, "temporal"); err != nil {
 			return fmt.Errorf("start Temporal: %w", err)
 		}
+		step = "temporal-namespace"
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 			return ensureTemporalNamespace(checkCtx, configuration, rt, true)
 		}); err != nil {
@@ -360,23 +442,49 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyArtifacts] {
+		step = "artifacts-start"
 		for _, services := range [][]string{
-			{"up", "-d", "seaweed-master"},
-			{"up", "-d", "seaweed-volume"},
-			{"up", "-d", "seaweed-filer"},
-			{"up", "-d", "seaweed-s3-a", "seaweed-s3-b", "caddy"},
+			{"seaweed-master"},
+			{"seaweed-volume"},
+			{"seaweed-filer"},
+			{"seaweed-s3-a", "seaweed-s3-b", "caddy"},
 		} {
-			if err := rt.compose(ctx, configuration, services...); err != nil {
+			if err := rt.startServices(ctx, configuration, false, services...); err != nil {
 				return fmt.Errorf("start artifact services: %w", err)
 			}
 		}
+		step = "artifact-bucket"
+		// The start-up wait repeats only the bucket step and the read-only
+		// capacity fact. The volume grow runs after the wait, once.
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
-			return ensureArtifactBucket(checkCtx, configuration, rt, true)
+			if err := ensureArtifactBucket(checkCtx, configuration, rt, true); err != nil {
+				return err
+			}
+			return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
 		}); err != nil {
 			return fmt.Errorf("initialize artifact bucket: %w", err)
 		}
+		if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
+			return fmt.Errorf("initialize artifact volumes: %w", err)
+		}
 	}
 
+	if rt.identityProvider != nil {
+		// --no-recreate keeps a running provider: the job removes its realm
+		// import file after the first ready answer.
+		step = "identity-provider-start"
+		if err := rt.compose(ctx, configuration, "up", "-d", "--no-recreate", identityProviderService); err != nil {
+			return fmt.Errorf("start the job identity provider: %w", err)
+		}
+		step = "identity-provider-ready"
+		if err := waitFor(ctx, identityProviderReadinessTimeout, func(checkCtx context.Context) error {
+			return checkIdentityProvider(checkCtx, rt.identityProvider)
+		}); err != nil {
+			return fmt.Errorf("job identity provider readiness: %w", err)
+		}
+	}
+
+	step = "stack-ready"
 	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 		return checkLive(checkCtx, configuration, rt)
 	}); err != nil {
@@ -446,7 +554,10 @@ func drainStack(ctx context.Context, configuration config.Configuration, selecte
 	}
 	defer releaseDeploymentLock(lock)
 
-	services := make([]string, 0, 8)
+	services := make([]string, 0, 9)
+	if rt.identityProvider != nil {
+		services = append(services, identityProviderService)
+	}
 	if selected[config.DependencyArtifacts] {
 		services = append(services, "caddy", "seaweed-s3-a", "seaweed-s3-b", "seaweed-filer", "seaweed-volume", "seaweed-master")
 	}
@@ -496,6 +607,8 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	if len(bundledDependencies(configuration)) == 0 {
 		return rt, nil
 	}
+	// PM's own services publish only on 127.0.0.1. The job identity provider
+	// has its own variables and is checked after the port selection below.
 	if host := os.Getenv("PM_STACK_PUBLISH_HOST"); host != "" && host != "127.0.0.1" {
 		return nil, fmt.Errorf("published infrastructure ports must bind only to 127.0.0.1")
 	}
@@ -516,6 +629,10 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	if err != nil {
 		return nil, err
 	}
+	rt.identityProvider, err = identityProviderFromEnvironment(os.Getenv, rt.ports)
+	if err != nil {
+		return nil, err
+	}
 	if err := rt.validateBundledEndpoints(configuration); err != nil {
 		return nil, err
 	}
@@ -528,8 +645,94 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	}
 	rt.uid = strconv.Itoa(os.Getuid())
 	rt.gid = strconv.Itoa(os.Getgid())
+	// Compose validation interpolates the overlay before the engine is known.
+	// rt.compose replaces this value with the engine-specific user.
+	rt.identityUser = rt.uid + ":" + rt.gid
 
 	return rt, nil
+}
+
+// identityProviderFromEnvironment returns the job identity provider that the
+// environment selects, or nil when it selects none. Its address must be a
+// second IPv4 loopback address, so that PM cookies for 127.0.0.1 never reach it.
+func identityProviderFromEnvironment(lookup func(string) string, ports map[string]string) (*identityProvider, error) {
+	values := make(map[string]string, len(identityProviderVariables))
+	for _, name := range identityProviderVariables {
+		if value := lookup(name); value != "" {
+			values[name] = value
+		}
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	if len(values) != len(identityProviderVariables) {
+		return nil, fmt.Errorf("the job identity provider requires %s together", strings.Join(identityProviderVariables, ", "))
+	}
+	host := values["PM_STACK_IDENTITY_PROVIDER_HOST"]
+	if err := validateIdentityProviderHost(host); err != nil {
+		return nil, err
+	}
+	port := values["PM_STACK_IDENTITY_PROVIDER_PORT"]
+	if number, err := strconv.Atoi(port); err != nil || number < 1024 || number > 65535 || strconv.Itoa(number) != port {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_PORT must be an explicit non-privileged TCP port")
+	}
+	for name, value := range ports {
+		if value == port {
+			return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_PORT and %s must not publish the same port", name)
+		}
+	}
+	issuer := values["PM_STACK_IDENTITY_PROVIDER_ISSUER"]
+	realm, found := strings.CutPrefix(issuer, "https://"+net.JoinHostPort(host, port)+"/realms/")
+	if !found || !identityProviderRealmPattern.MatchString(realm) {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_ISSUER must be the exact HTTPS realm issuer at the identity provider address")
+	}
+	directory := values["PM_STACK_IDENTITY_PROVIDER_DIR"]
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_DIR must be an absolute clean path")
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return nil, fmt.Errorf("identity provider directory is unavailable")
+	}
+	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("identity provider directory is not a directory")
+	}
+	if _, err := readBundleFile(resolved, "ca.pem"); err != nil {
+		return nil, fmt.Errorf("identity provider CA: %w", err)
+	}
+	return &identityProvider{host: host, port: port, issuer: issuer, dir: resolved}, nil
+}
+
+// validateIdentityProviderHost admits only a canonical IPv4 loopback address
+// other than 127.0.0.1. It refuses wildcard and non-loopback addresses.
+func validateIdentityProviderHost(host string) error {
+	address, err := netip.ParseAddr(host)
+	if err == nil && address.IsUnspecified() {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must not be a wildcard address")
+	}
+	if err != nil || !address.Is4() || address.String() != host {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must be a canonical IPv4 address")
+	}
+	if !address.IsLoopback() {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must not be a non-loopback address")
+	}
+	if address == netip.AddrFrom4([4]byte{127, 0, 0, 1}) {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must differ from the first loopback address that PM uses")
+	}
+	return nil
+}
+
+// identityProviderUser selects a non-root container user that can read the
+// provider's group-readable mounts. A rootless engine maps container group 0
+// to the job account's group, so the image's own user 1000:0 reads them.
+func identityProviderUser(rootless bool, uid, gid int) (string, error) {
+	if rootless {
+		return identityProviderImageUser, nil
+	}
+	if uid == 0 || gid == 0 {
+		return "", fmt.Errorf("the job identity provider must not run as the root account or group")
+	}
+	return strconv.Itoa(uid) + ":" + strconv.Itoa(gid), nil
 }
 
 func repositoryRoot() (string, error) {
@@ -794,6 +997,10 @@ func loadImageLock(root string) (map[string]string, error) {
 			Repository: "docker.io/library/caddy", Tag: "2.11.4",
 			IndexDigest: "sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017",
 		},
+		"keycloak": {
+			Repository: "docker.io/keycloak/keycloak", Tag: "26.8.1",
+			IndexDigest: "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332",
+		},
 		"postgres": {
 			Repository: "docker.io/library/postgres", Tag: postgresVersion,
 			IndexDigest: "sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94",
@@ -825,34 +1032,80 @@ func loadImageLock(root string) (map[string]string, error) {
 	return images, nil
 }
 
+// validateComposeSource checks the bundled projection and the identity
+// provider overlay. Every service publishes only on 127.0.0.1, except the
+// identity provider, which publishes exactly its second loopback binding.
 func validateComposeSource(root string) error {
-	contents, err := os.ReadFile(filepath.Join(root, "deploy/compose.yaml"))
+	bundled, err := readComposeDocument(root, "deploy/compose.yaml", "bundled Compose projection")
 	if err != nil {
-		return fmt.Errorf("read bundled Compose projection: %w", err)
+		return err
+	}
+	if len(bundled.Services) == 0 {
+		return fmt.Errorf("bundled Compose projection contains no services")
+	}
+	if _, exists := bundled.Services[identityProviderService]; exists {
+		return fmt.Errorf("service %q must stay outside the bundled Compose projection", identityProviderService)
+	}
+	identity, err := readComposeDocument(root, identityProviderComposeFile, "identity provider Compose overlay")
+	if err != nil {
+		return err
+	}
+	for name := range identity.Services {
+		if name != identityProviderService {
+			return fmt.Errorf("service %q must not join the identity provider overlay", name)
+		}
+	}
+	provider, exists := identity.Services[identityProviderService]
+	if !exists {
+		return fmt.Errorf("identity provider overlay does not define service %q", identityProviderService)
+	}
+	for _, document := range []composeDocument{bundled, identity} {
+		for name, service := range document.Services {
+			if service.Privileged || service.NetworkMode == "host" {
+				return fmt.Errorf("service %q requests prohibited host privileges", name)
+			}
+			for _, binding := range service.Ports {
+				if name == identityProviderService {
+					if binding != identityProviderBinding {
+						return fmt.Errorf("service %q publishes a port outside its second loopback binding", name)
+					}
+				} else if !strings.HasPrefix(binding, "127.0.0.1:") {
+					return fmt.Errorf("service %q publishes a non-loopback port", name)
+				}
+			}
+			for _, mount := range service.Volumes {
+				if strings.Contains(mount, "/var/run/docker.sock") {
+					return fmt.Errorf("service %q mounts the Docker socket", name)
+				}
+			}
+		}
+	}
+	if provider.User != identityProviderUserVariable || !provider.ReadOnly ||
+		!slices.Equal(provider.CapDrop, []string{"ALL"}) ||
+		!slices.Equal(provider.SecurityOpt, []string{"no-new-privileges:true"}) ||
+		!slices.Equal(provider.Networks, []string{identityProviderNetwork}) ||
+		provider.NetworkMode != "" || len(provider.Ports) != 1 {
+		return fmt.Errorf("service %q must run as the selected non-root user with no capabilities, no new privileges, a read-only root file system, its own network and one published port", identityProviderService)
+	}
+	// The pinned stock image has no persisted Keycloak build, so Keycloak
+	// refuses start --optimized. start builds once into a writable tmpfs.
+	if len(provider.Command) == 0 || provider.Command[0] != "start" || slices.Contains(provider.Command, "--optimized") ||
+		!slices.ContainsFunc(provider.Tmpfs, func(mount string) bool { return strings.HasPrefix(mount, identityProviderBuildOutput+":") }) {
+		return fmt.Errorf("service %q must run start without --optimized and with a tmpfs at %s, because the pinned stock image has no persisted build", identityProviderService, identityProviderBuildOutput)
+	}
+	return nil
+}
+
+func readComposeDocument(root, relative, description string) (composeDocument, error) {
+	contents, err := os.ReadFile(filepath.Join(root, relative))
+	if err != nil {
+		return composeDocument{}, fmt.Errorf("read %s: %w", description, err)
 	}
 	var document composeDocument
 	if err := yaml.Unmarshal(contents, &document); err != nil {
-		return fmt.Errorf("parse bundled Compose projection: %w", err)
+		return composeDocument{}, fmt.Errorf("parse %s: %w", description, err)
 	}
-	if len(document.Services) == 0 {
-		return fmt.Errorf("bundled Compose projection contains no services")
-	}
-	for name, service := range document.Services {
-		if service.Privileged || service.NetworkMode == "host" {
-			return fmt.Errorf("service %q requests prohibited host privileges", name)
-		}
-		for _, binding := range service.Ports {
-			if !strings.HasPrefix(binding, "127.0.0.1:") {
-				return fmt.Errorf("service %q publishes a non-loopback port", name)
-			}
-		}
-		for _, mount := range service.Volumes {
-			if strings.Contains(mount, "/var/run/docker.sock") {
-				return fmt.Errorf("service %q mounts the Docker socket", name)
-			}
-		}
-	}
-	return nil
+	return document, nil
 }
 
 func (rt *runtime) render(configuration config.Configuration) error {
@@ -1092,11 +1345,18 @@ func (rt *runtime) composeEnvironment() []string {
 		"PM_STACK_IMAGE_TEMPORAL_SERVER": rt.images["temporal-server"],
 		"PM_STACK_IMAGE_SEAWEEDFS":       rt.images["seaweedfs"],
 		"PM_STACK_IMAGE_CADDY":           rt.images["caddy"],
+		"PM_STACK_IMAGE_KEYCLOAK":        rt.images["keycloak"],
 		"COMPOSE_DISABLE_ENV_FILE":       "true",
 		"COMPOSE_ENV_FILES":              "",
 	}
 	for name, value := range rt.ports {
 		values[name] = value
+	}
+	if provider := rt.identityProvider; provider != nil {
+		values["PM_STACK_IDENTITY_PROVIDER_HOST"] = provider.host
+		values["PM_STACK_IDENTITY_PROVIDER_PORT"] = provider.port
+		values["PM_STACK_IDENTITY_PROVIDER_DIR"] = provider.dir
+		values["PM_STACK_IDENTITY_PROVIDER_USER"] = rt.identityUser
 	}
 	environment := make([]string, 0, len(os.Environ())+len(values))
 	for _, entry := range os.Environ() {
@@ -1124,6 +1384,9 @@ func (rt *runtime) composeArguments(configuration config.Configuration, argument
 		"--project-name", rt.project,
 		"-f", filepath.Join(rt.root, "deploy/compose.yaml"),
 		"-f", filepath.Join(rt.root, "deploy/compose.managed.yaml"),
+	}
+	if rt.identityProvider != nil {
+		command = append(command, "-f", filepath.Join(rt.root, identityProviderComposeFile))
 	}
 	if configuration.Postgres().Ownership == config.OwnershipBundled {
 		command = append(command, "--profile", "bundled-postgres")
@@ -1155,6 +1418,132 @@ func (rt *runtime) compose(ctx context.Context, configuration config.Configurati
 	return nil
 }
 
+// serviceContainer is the state of one Compose service container that
+// decides whether pm-stack up keeps it.
+type serviceContainer struct {
+	running    bool
+	configHash string
+}
+
+// settledService reports whether a service keeps its container: the service
+// has exactly one container, the container runs, and its Compose config hash
+// label equals the hash that Compose expects for the current configuration.
+// A changed configuration, a missing container, a stopped container or an
+// unknown hash goes through the normal up.
+func settledService(expectedHash string, containers []serviceContainer) bool {
+	return expectedHash != "" &&
+		len(containers) == 1 &&
+		containers[0].running &&
+		containers[0].configHash == expectedHash
+}
+
+// startServices runs compose up for the named services. A settled service
+// (settledService) goes through up --no-recreate, so its running container
+// stays. Compose otherwise recreates a running container when the engine
+// reports a network ID that Compose cannot match, also when the configuration
+// is unchanged (rootless Podman). Every other service goes through the normal
+// up, which creates, starts or recreates it.
+func (rt *runtime) startServices(ctx context.Context, configuration config.Configuration, wait bool, services ...string) error {
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return err
+	}
+	expected, err := rt.expectedServiceHashes(ctx, configuration, services)
+	if err != nil {
+		return err
+	}
+	var recreate, keep []string
+	for _, service := range services {
+		containers, err := rt.serviceContainers(ctx, service)
+		if err != nil {
+			return err
+		}
+		if settledService(expected[service], containers) {
+			keep = append(keep, service)
+		} else {
+			recreate = append(recreate, service)
+		}
+	}
+	arguments := []string{"up", "-d"}
+	if wait {
+		arguments = append(arguments, "--wait")
+	}
+	if len(recreate) > 0 {
+		if err := rt.compose(ctx, configuration, append(slices.Clone(arguments), recreate...)...); err != nil {
+			return err
+		}
+	}
+	if len(keep) > 0 {
+		keepArguments := append(slices.Clone(arguments), "--no-recreate")
+		if err := rt.compose(ctx, configuration, append(keepArguments, keep...)...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expectedServiceHashes returns the config hash that Compose computes for
+// each named service from the current configuration.
+func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration config.Configuration, services []string) (map[string]string, error) {
+	command := exec.CommandContext(ctx, "python3",
+		rt.composeArguments(configuration, "config", "--hash", strings.Join(services, ","))...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	command.Stderr = rt.stderr
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("read Compose service configuration hashes: %w", err)
+	}
+	hashes := make(map[string]string, len(services))
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("Compose service configuration hash output is malformed")
+		}
+		hashes[fields[0]] = fields[1]
+	}
+	return hashes, nil
+}
+
+// serviceContainers returns the state of the containers of one service of
+// this Compose project. One-off containers (compose run) are not included.
+func (rt *runtime) serviceContainers(ctx context.Context, service string) ([]serviceContainer, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	list := exec.CommandContext(ctx, "docker", "ps", "--all", "--quiet", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+rt.project,
+		"--filter", "label=com.docker.compose.service="+service,
+		"--filter", "label=com.docker.compose.oneoff=False")
+	list.Dir = rt.root
+	output, err := list.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list the %s service containers: %w", service, err)
+	}
+	ids := strings.Fields(string(output))
+	containers := make([]serviceContainer, 0, len(ids))
+	for _, id := range ids {
+		inspect := exec.CommandContext(ctx, "docker", "inspect", "--format",
+			`{{.State.Running}} {{index .Config.Labels "com.docker.compose.config-hash"}}`, id)
+		inspect.Dir = rt.root
+		state, err := inspect.Output()
+		if err != nil {
+			return nil, fmt.Errorf("inspect a %s service container: %w", service, err)
+		}
+		fields := strings.Fields(string(state))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("inspect a %s service container: empty state", service)
+		}
+		container := serviceContainer{running: fields[0] == "true"}
+		if len(fields) == 2 {
+			container.configHash = fields[1]
+		}
+		containers = append(containers, container)
+	}
+	return containers, nil
+}
+
 func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1169,13 +1558,34 @@ func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
 		return err
 	}
 	rt.uid, rt.gid = uid, gid
+	if rt.identityProvider != nil {
+		rootless, err := rootlessDaemon(output)
+		if err != nil {
+			return err
+		}
+		rt.identityUser, err = identityProviderUser(rootless, os.Getuid(), os.Getgid())
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func containerIdentity(output []byte, uid, gid int) (string, string, error) {
+	rootless, err := rootlessDaemon(output)
+	if err != nil {
+		return "", "", err
+	}
+	if rootless {
+		return "0", "0", nil
+	}
+	return strconv.Itoa(uid), strconv.Itoa(gid), nil
+}
+
+func rootlessDaemon(output []byte) (bool, error) {
 	var options []string
 	if err := json.Unmarshal(output, &options); err != nil || options == nil {
-		return "", "", fmt.Errorf("Docker security options are invalid")
+		return false, fmt.Errorf("Docker security options are invalid")
 	}
 	rootless, remapped := false, false
 	for _, option := range options {
@@ -1183,13 +1593,10 @@ func containerIdentity(output []byte, uid, gid int) (string, string, error) {
 		rootless = rootless || name == "name=rootless"
 		remapped = remapped || name == "name=userns"
 	}
-	if rootless {
-		return "0", "0", nil
+	if !rootless && remapped {
+		return false, fmt.Errorf("rootful Docker userns-remap requires an explicit bind-mount ownership mapping")
 	}
-	if remapped {
-		return "", "", fmt.Errorf("rootful Docker userns-remap requires an explicit bind-mount ownership mapping")
-	}
-	return strconv.Itoa(uid), strconv.Itoa(gid), nil
+	return rootless, nil
 }
 
 func (rt *runtime) validateCompose(ctx context.Context, configuration config.Configuration) error {
@@ -1265,6 +1672,82 @@ func checkLive(ctx context.Context, configuration config.Configuration, rt *runt
 	}
 	if err := ensureArtifactBucket(ctx, configuration, rt, false); err != nil {
 		return fmt.Errorf("artifact readiness: %w", err)
+	}
+	if configuration.Artifacts().Ownership == config.OwnershipBundled {
+		if err := ensureArtifactVolumes(ctx, configuration, rt, false); err != nil {
+			return fmt.Errorf("artifact readiness: %w", err)
+		}
+	}
+	if rt.identityProvider != nil {
+		if err := checkIdentityProvider(ctx, rt.identityProvider); err != nil {
+			return fmt.Errorf("job identity provider readiness: %w", err)
+		}
+	}
+	return nil
+}
+
+// transportFailure returns the fixed class of a failed discovery request.
+func transportFailure(err error) string {
+	var certificate *tls.CertificateVerificationError
+	var network net.Error
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection-refused"
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection-closed"
+	case errors.As(err, &certificate):
+		return "tls-certificate"
+	case errors.As(err, &network) && network.Timeout():
+		return "timeout"
+	}
+	return "unavailable"
+}
+
+// checkIdentityProvider reads the realm discovery document over TLS that the
+// identity provider CA and the exact IP address verify. The provider is ready
+// only when it names the exact configured issuer, whatever the request host.
+// Errors omit the address and the response.
+func checkIdentityProvider(ctx context.Context, provider *identityProvider) error {
+	ca, err := readBundleFile(provider.dir, "ca.pem")
+	if err != nil {
+		return fmt.Errorf("identity provider CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		return fmt.Errorf("identity provider CA bundle is invalid")
+	}
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: provider.host},
+		DisableKeepAlives: true,
+	}
+	defer transport.CloseIdleConnections()
+	httpClient := &http.Client{
+		Transport:     transport,
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, provider.issuer+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return fmt.Errorf("build identity provider discovery request")
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		code := transportFailure(err)
+		return causeError{code, "identity provider discovery is unavailable: " + code}
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		code, text := fmt.Sprintf("status-%d", response.StatusCode), "identity provider discovery returned status"
+		return causeError{code, fmt.Sprintf("%s %d", text, response.StatusCode)}
+	}
+	var discovery struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&discovery); err != nil {
+		return causeError{"not-json", "identity provider discovery is not JSON"}
+	}
+	if discovery.Issuer != provider.issuer {
+		return causeError{"issuer-mismatch", "identity provider discovery does not name the exact configured issuer"}
 	}
 	return nil
 }
@@ -1401,9 +1884,9 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 	if err != nil {
 		return err
 	}
-	temporalClient, err := client.Dial(options)
+	temporalClient, err := client.DialContext(ctx, options)
 	if err != nil {
-		return fmt.Errorf("connect authenticated Temporal client")
+		return temporalConnectError{cause: err}
 	}
 	defer temporalClient.Close()
 	service := temporalClient.WorkflowService()
@@ -1444,6 +1927,33 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 		return fmt.Errorf("Temporal server version mismatch")
 	}
 	return nil
+}
+
+// temporalConnectError keeps the cause of a failed Temporal connection for
+// errors.As. Its text names only the class of the cause. The SDK text can
+// name the endpoint or its address, so the text does not include it.
+type temporalConnectError struct {
+	cause error
+}
+
+func (e temporalConnectError) Error() string {
+	var deadline *serviceerror.DeadlineExceeded
+	var canceled *serviceerror.Canceled
+	var unavailable *serviceerror.Unavailable
+	switch {
+	case errors.As(e.cause, &deadline):
+		return "connect authenticated Temporal client: the server did not answer within the connection limit"
+	case errors.As(e.cause, &canceled):
+		return "connect authenticated Temporal client: the check was cancelled"
+	case errors.As(e.cause, &unavailable):
+		return "connect authenticated Temporal client: the server refused or closed the connection"
+	default:
+		return "connect authenticated Temporal client: the connection failed"
+	}
+}
+
+func (e temporalConnectError) Unwrap() error {
+	return e.cause
 }
 
 func artifactClient(configuration config.Configuration, rt *runtime) (*s3.Client, error) {
@@ -1504,6 +2014,129 @@ func ensureArtifactBucket(ctx context.Context, configuration config.Configuratio
 	})
 	if err != nil {
 		return fmt.Errorf("list artifact bucket")
+	}
+	return nil
+}
+
+// seaweedMasterOrigin is the HTTP origin of the SeaweedFS master on the
+// private stack network. pm-stack calls it inside the master container, so
+// the admin API is not published outside that network.
+const seaweedMasterOrigin = "http://seaweed-master:9333"
+
+// seaweedTopology is the part of the master's /dir/status document that
+// pm-stack reads: the volume slots and the writable volumes of each layout.
+type seaweedTopology struct {
+	Max     *int64 `json:"Max"`
+	Free    *int64 `json:"Free"`
+	Layouts []struct {
+		Collection string   `json:"collection"`
+		Writables  []uint32 `json:"writables"`
+	} `json:"Layouts"`
+}
+
+// writable returns the number of writable volumes of the layouts whose
+// collection is exactly the given collection. The default collection is "".
+func (topology seaweedTopology) writable(collection string) int {
+	count := 0
+	for _, layout := range topology.Layouts {
+		if layout.Collection == collection {
+			count += len(layout.Writables)
+		}
+	}
+	return count
+}
+
+// seaweedMaster calls one master endpoint with curl inside the master
+// container and returns the response body. A non-2xx response fails. The
+// Compose and curl diagnostics can name the private service address and the
+// bucket, so pm-stack does not show them.
+func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Configuration, path string, query url.Values) ([]byte, error) {
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return nil, err
+	}
+	target := seaweedMasterOrigin + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	command := exec.CommandContext(ctx, "python3", rt.composeArguments(configuration,
+		"exec", "-T", "seaweed-master", "curl", "-fsS", "-m", "10", target)...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	return command.Output()
+}
+
+func (rt *runtime) artifactVolumeStatus(ctx context.Context, configuration config.Configuration) (seaweedTopology, error) {
+	output, err := rt.seaweedMaster(ctx, configuration, "/dir/status", nil)
+	if err != nil {
+		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+	}
+	var status struct {
+		Topology *seaweedTopology `json:"Topology"`
+	}
+	if err := json.Unmarshal(output, &status); err != nil || status.Topology == nil ||
+		status.Topology.Max == nil || status.Topology.Free == nil {
+		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+	}
+	return *status.Topology, nil
+}
+
+// checkArtifactVolumeCapacity is a read-only readiness fact: the master
+// reports volume slots, so the volume server has joined the master.
+func checkArtifactVolumeCapacity(ctx context.Context, configuration config.Configuration, rt *runtime) error {
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if *topology.Max < 1 {
+		return fmt.Errorf("artifact volume server has not joined the master")
+	}
+	return nil
+}
+
+// ensureArtifactVolumes requires a writable volume for the artifact bucket
+// and for the default collection. Without one, the first object write of a
+// run waits for SeaweedFS to grow the volume. With grow, it reads the status,
+// asks the master once to grow one volume for each layout that has no
+// writable volume, and reads the status again. It never repeats a grow. Each
+// pm-stack up holds the deployment lock, and a second up finds the volumes
+// and grows nothing. Without grow, it only reads.
+func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
+	layouts := []struct {
+		collection string
+		missing    string
+	}{
+		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume"},
+		{"", "default collection has no writable volume"},
+	}
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if grow {
+		grown := false
+		for _, layout := range layouts {
+			if topology.writable(layout.collection) > 0 {
+				continue
+			}
+			query := url.Values{"count": {"1"}}
+			if layout.collection != "" {
+				query.Set("collection", layout.collection)
+			}
+			if _, err := rt.seaweedMaster(ctx, configuration, "/vol/grow", query); err != nil {
+				return fmt.Errorf("%s: the master did not grow a volume", layout.missing)
+			}
+			grown = true
+		}
+		if grown {
+			if topology, err = rt.artifactVolumeStatus(ctx, configuration); err != nil {
+				return err
+			}
+		}
+	}
+	for _, layout := range layouts {
+		if topology.writable(layout.collection) < 1 {
+			return errors.New(layout.missing)
+		}
 	}
 	return nil
 }
