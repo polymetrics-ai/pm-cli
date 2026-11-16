@@ -87,3 +87,26 @@ func TestBootstrapSecretCheckFindsBase64WrappingKey(t *testing.T) {
 		t.Fatal("the check does not find the wrapping key in its base64 form")
 	}
 }
+
+func TestBootstrapFailureMessageWithholdsSecret(t *testing.T) {
+	const password = "Zq9-oracle-Pass"
+	root := t.TempDir()
+	endpoint := "postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"
+	if err := os.WriteFile(filepath.Join(root, bootstrapCredentialMember), []byte(endpoint), 0o600); err != nil {
+		t.Fatalf("write the oracle secret: %v", err)
+	}
+	run := &bootstrapRun{deployment: &deployment{secrets: root}}
+	if shown := run.shown("pm-server: unknown flag: --input\n"); shown != `"pm-server: unknown flag: --input\n"` {
+		t.Fatalf("the message shows clean output as %s", shown)
+	}
+	for name, output := range map[string]string{
+		"raw":     "connect " + endpoint,
+		"escaped": `{"note":"` + unicodeEscaped(password) + `"}`,
+	} {
+		shown := run.shown(output)
+		if strings.Contains(shown, password) || strings.Contains(shown, unicodeEscaped(password)) ||
+			!strings.Contains(shown, "withheld") {
+			t.Errorf("%s case: the message does not withhold the output: %s", name, shown)
+		}
+	}
+}
