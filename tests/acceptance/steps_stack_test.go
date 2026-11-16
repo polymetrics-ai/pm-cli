@@ -57,8 +57,10 @@ type commandResult struct {
 // starter, and the result steps of the shared result state.
 func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness) {
 	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}}
-	sc.After(func(ctx context.Context, _ *godog.Scenario, err error) (context.Context, error) {
-		return ctx, errors.Join(err, scenario.close())
+	// godog keeps the step error. The hook returns only its own cleanup
+	// error, so the step error is reported once.
+	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+		return ctx, scenario.close()
 	})
 	sc.Step(`^a new PM deployment configuration on the job-owned stack$`, scenario.newConfiguration)
 	sc.Step(`^the starter starts (pm-server|pm-worker) and waits for its ready signal or its exit$`, scenario.startAndWait)
