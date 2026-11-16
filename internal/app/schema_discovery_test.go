@@ -26,7 +26,7 @@ func TestSchemaDiscoveryStoresOnlyACompleteCandidate(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
 
 	t.Run("a first discovery with no selection stores one complete candidate and selects nothing", func(t *testing.T) {
-		harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, sqlExecutionTuning{declared: true, noSnapshot: true})
+		harness := newDiscoveryHarness(t, temporal, sqlExecutionTuning{declared: true, noSnapshot: true})
 		run := harness.discover(t, temporal, "schema-discovery-complete")
 		if run.state != contract.RunStateSucceeded || run.unknownEffects != 0 ||
 			run.outcome != contract.OutcomeSucceeded || run.attempts != 1 || run.dials != 1 {
@@ -76,7 +76,7 @@ func TestSchemaDiscoveryStoresOnlyACompleteCandidate(t *testing.T) {
 	})
 
 	t.Run("a discovery with no stored credential stores no candidate", func(t *testing.T) {
-		harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, sqlExecutionTuning{declared: true, noSnapshot: true, noCredential: true})
+		harness := newDiscoveryHarness(t, temporal, sqlExecutionTuning{declared: true, noSnapshot: true, noCredential: true})
 		run := harness.discover(t, temporal, "schema-discovery-no-credential")
 		if run.outcome != contract.OutcomeUnsent || run.unknownEffects != 0 || run.dials != 0 {
 			t.Fatalf("discovery without a credential = %#v; want a known-unsent refusal before any send", run)
@@ -87,7 +87,7 @@ func TestSchemaDiscoveryStoresOnlyACompleteCandidate(t *testing.T) {
 	})
 
 	t.Run("a discovery whose source relation is gone stores no candidate", func(t *testing.T) {
-		harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, sqlExecutionTuning{declared: true, noSnapshot: true})
+		harness := newDiscoveryHarness(t, temporal, sqlExecutionTuning{declared: true, noSnapshot: true})
 		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 		defer cancel()
 		harness.customer.ownerExec(t, ctx, `DROP TABLE "`+sqlExecutionSchema+`"."`+sqlExecutionRelation+`"`)
@@ -101,7 +101,7 @@ func TestSchemaDiscoveryStoresOnlyACompleteCandidate(t *testing.T) {
 	})
 
 	t.Run("an undeclared resource is refused before any run", func(t *testing.T) {
-		harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, sqlExecutionTuning{declared: true, noSnapshot: true})
+		harness := newDiscoveryHarness(t, temporal, sqlExecutionTuning{declared: true, noSnapshot: true})
 		response := harness.postDiscovery(t, "customer.missing", "schema-discovery-undeclared")
 		if response.status != http.StatusNotFound || response.problemCode != "schema_relation_unknown" {
 			t.Fatalf("undeclared discovery = HTTP %d %q; want 404 schema_relation_unknown", response.status, response.problemCode)
@@ -110,6 +110,28 @@ func TestSchemaDiscoveryStoresOnlyACompleteCandidate(t *testing.T) {
 			t.Fatal("a refused discovery dialed the source or wrote a discovery row")
 		}
 	})
+}
+
+// newDiscoveryHarness composes the SQL harness and gives the fixture's PM
+// connection the connector that its customer SQL declaration names. A product
+// connection made for that connector has it; the shared fixture seeds another
+// connector identity, and discovery admission refuses a declaration of another
+// connector.
+func newDiscoveryHarness(t *testing.T, temporal *permitTemporalHarness, tuning sqlExecutionTuning) *sqlExecutionHarness {
+	t.Helper()
+	harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, tuning)
+	harness.fixture.SetupSQL(t, harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `UPDATE pm.connections SET connector_id = $1 WHERE connection_id = $2`,
+			sqlExecutionConnectorID, harness.fixture.Connection.ConnectionID)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return fmt.Errorf("give the fixture connection the declared connector: %d rows", tag.RowsAffected())
+		}
+		return nil
+	})
+	return harness
 }
 
 // discover admits one discovery of the declared resource through the route and
