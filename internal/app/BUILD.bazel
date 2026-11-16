@@ -72,6 +72,7 @@ go_test(
         "unadmitted_recovery_test.go",
         "worker_callback_deadline_test.go",
         "worker_plan_test.go",
+        "worker_reservation_id_test.go",
         "worker_result_receipt_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
@@ -153,6 +154,13 @@ go_test(
         "//internal/contract",
         "//internal/store",
     ],
+)
+
+go_test(
+    name = "worker_reservation_id_test",
+    srcs = ["worker_reservation_id_test.go"],
+    embed = [":app"],
+    deps = ["//internal/contract"],
 )
 
 go_test(

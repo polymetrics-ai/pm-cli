@@ -626,22 +626,10 @@ func (service *ContinuationService) reserveWorkerContinuation(
 		plan.state.budget.Policy.HTTP == nil {
 		return nil, workerFailure(ErrWorkerCapabilityUnavailable, ErrContinuationInvalid)
 	}
-	identity := struct {
-		Scope      contract.Scope      `json:"scope"`
-		RunID      string              `json:"run_id"`
-		TaskID     string              `json:"task_id"`
-		DispatchID contract.DispatchID `json:"dispatch_id"`
-		OwnerID    string              `json:"owner_id"`
-		Fence      uint64              `json:"fence"`
-	}{
-		plan.state.route.Scope,
-		plan.task.RunID,
-		plan.task.TaskID,
-		plan.dispatch.Intent.DispatchID,
-		plan.lease.OwnerID,
-		plan.lease.Fence,
-	}
-	id, err := workerRecordID("worker-continuation-v1-", identity)
+	id, err := workerAttemptReservationID(
+		workerContinuationReservationPrefix, plan.state.route.Scope, plan.task.RunID, plan.task.TaskID,
+		plan.dispatch.Intent.DispatchID, plan.lease.OwnerID, plan.lease.Fence,
+	)
 	if err != nil {
 		return nil, err
 	}

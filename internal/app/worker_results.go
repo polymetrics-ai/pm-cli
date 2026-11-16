@@ -10,21 +10,45 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
-// Capacity joins the lease/attempt preparation transaction, so a refusal cannot
-// leave a recorded send or call an execution handler without result storage.
-func (service *WorkerService) reserveWorkerResult(ctx context.Context, tx *store.Transaction, plan workerUnitPlan) (store.ObjectReservation, error) {
-	if service.artifactPublisher == nil {
-		return store.ObjectReservation{}, nil
-	}
-	identity := struct {
+// The ID prefixes of the object reservations that one worker attempt makes.
+const (
+	workerResultReservationPrefix       = "worker-result-v1-"
+	workerContinuationReservationPrefix = "worker-continuation-v1-"
+)
+
+// workerAttemptReservationID returns the object reservation ID with prefix for
+// one attempt of a dispatch. The task lease owner and fence that the attempt
+// claimed identify the attempt. Every stored reservation ID depends on these
+// fields, their order and their JSON names, so they must not change.
+func workerAttemptReservationID(
+	prefix string,
+	scope contract.Scope,
+	runID string,
+	taskID string,
+	dispatchID contract.DispatchID,
+	ownerID string,
+	fence uint64,
+) (string, error) {
+	return workerRecordID(prefix, struct {
 		Scope      contract.Scope      `json:"scope"`
 		RunID      string              `json:"run_id"`
 		TaskID     string              `json:"task_id"`
 		DispatchID contract.DispatchID `json:"dispatch_id"`
 		OwnerID    string              `json:"owner_id"`
 		Fence      uint64              `json:"fence"`
-	}{plan.state.route.Scope, plan.task.RunID, plan.task.TaskID, plan.dispatch.Intent.DispatchID, plan.lease.OwnerID, plan.lease.Fence}
-	id, err := workerRecordID("worker-result-v1-", identity)
+	}{scope, runID, taskID, dispatchID, ownerID, fence})
+}
+
+// Capacity joins the lease/attempt preparation transaction, so a refusal cannot
+// leave a recorded send or call an execution handler without result storage.
+func (service *WorkerService) reserveWorkerResult(ctx context.Context, tx *store.Transaction, plan workerUnitPlan) (store.ObjectReservation, error) {
+	if service.artifactPublisher == nil {
+		return store.ObjectReservation{}, nil
+	}
+	id, err := workerAttemptReservationID(
+		workerResultReservationPrefix, plan.state.route.Scope, plan.task.RunID, plan.task.TaskID,
+		plan.dispatch.Intent.DispatchID, plan.lease.OwnerID, plan.lease.Fence,
+	)
 	if err != nil {
 		return store.ObjectReservation{}, err
 	}
