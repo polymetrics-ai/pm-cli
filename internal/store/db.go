@@ -15,8 +15,8 @@ const (
 	MigratorRole          = "pm_app_migrator"
 	RuntimeRole           = "pm_app_runtime"
 	BootstrapRole         = "pm_app_bootstrap"
-	ControlSchemaRevision = "pm.control/v22"
-	ControlSchemaVersion  = int64(22)
+	ControlSchemaRevision = "pm.control/v23"
+	ControlSchemaVersion  = int64(23)
 )
 
 type PoolConfig struct {

@@ -19,7 +19,7 @@ BEGIN
         RAISE EXCEPTION 'runtime role has prohibited PostgreSQL authority';
     END IF;
     IF NOT EXISTS (
-        SELECT 1 FROM pm.control_schema WHERE singleton AND revision = 'pm.control/v21'
+        SELECT 1 FROM pm.control_schema WHERE singleton AND revision = 'pm.control/v22'
     ) THEN
         RAISE EXCEPTION 'schema discovery migration requires the operator bootstrap schema';
     END IF;
@@ -131,10 +131,10 @@ GRANT INSERT (org_id, workspace_id, connection_id, schema_ref, connector_id, pro
     ON pm.schema_snapshots TO pm_app_runtime;
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
-UPDATE pm.control_schema SET revision = 'pm.control/v22', installed_at = clock_timestamp()
-WHERE singleton AND revision = 'pm.control/v21';
+UPDATE pm.control_schema SET revision = 'pm.control/v23', installed_at = clock_timestamp()
+WHERE singleton AND revision = 'pm.control/v22';
 ALTER TABLE pm.control_schema
-    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v22');
+    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v23');
 -- +goose StatementEnd
 
 -- +goose Down
@@ -160,8 +160,8 @@ DROP TABLE pm.schema_snapshots;
 DROP TABLE pm.schema_discoveries;
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
-UPDATE pm.control_schema SET revision = 'pm.control/v21', installed_at = clock_timestamp()
-WHERE singleton AND revision = 'pm.control/v22';
+UPDATE pm.control_schema SET revision = 'pm.control/v22', installed_at = clock_timestamp()
+WHERE singleton AND revision = 'pm.control/v23';
 ALTER TABLE pm.control_schema
-    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v21');
+    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v22');
 -- +goose StatementEnd
