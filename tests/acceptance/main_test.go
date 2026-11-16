@@ -30,7 +30,7 @@ type binaries struct {
 func TestFeatures(t *testing.T) {
 	bins := buildBinaries(t)
 	stack := newStackHarness(bins, t.TempDir())
-	lane := newLane(bins)
+	lane := newLane(stack)
 	t.Cleanup(func() {
 		if err := lane.close(); err != nil {
 			t.Errorf("stop the acceptance lane: %v", err)

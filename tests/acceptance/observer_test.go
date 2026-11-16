@@ -2,20 +2,12 @@ package acceptance
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"fmt"
-	"net"
-	"os"
-	"path/filepath"
-	"slices"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	enumspb "go.temporal.io/api/enums/v1"
-	"go.temporal.io/sdk/client"
 )
 
 // observedTables are the PM run and audit tables that the observer counts.
@@ -23,24 +15,28 @@ import (
 // writes to them first.
 var observedTables = []string{"runs", "run_specs", "admission_keys", "outbox_commands", "audit_entries"}
 
-const observerIdentity = "pm-acceptance-observer"
+// stackAdminRole is the stack administrator account. The observer uses it
+// only to make and drop its own role.
+const stackAdminRole = "pm_stack_admin"
 
 // observer reads the stack independently of the PM processes. It reads
-// PostgreSQL through its own role, which can only read the observed tables,
-// and Temporal through its own client. It never decrypts, repairs or writes.
+// PostgreSQL through its own role, which can only read the observed tables.
+// It never decrypts, repairs or writes.
 //
 // The stack has no observer role, so the lane makes one with the stack
 // administrator account and drops it when the suite ends. The role has
 // BYPASSRLS, so row-level security cannot hide a row from a count.
 type observer struct {
-	adminDSN  string
-	role      string
-	database  *pgx.Conn
-	temporal  client.Client
-	namespace string
+	adminDSN string
+	role     string
+	database *pgx.Conn
 }
 
-func openObserver(ctx context.Context, stack stackInputs) (*observer, error) {
+// openObserver makes the observer role, connects it and checks its limits.
+// One deadline, the limit of one lane command, bounds these requests.
+func openObserver(parent context.Context, stack stackInputs) (*observer, error) {
+	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
+	defer cancel()
 	role := "pm_acceptance_observer_" + randomHex(6)
 	password := randomHex(24)
 	result := &observer{adminDSN: stack.postgres.dsn(stackAdminRole, stack.postgres.adminPassword, applicationDatabase)}
@@ -58,12 +54,6 @@ func openObserver(ctx context.Context, stack stackInputs) (*observer, error) {
 	if err := result.checkReadOnly(ctx); err != nil {
 		return fail(err)
 	}
-	temporal, err := dialObserverTemporal(ctx, stack.temporal)
-	if err != nil {
-		return fail(err)
-	}
-	result.temporal = temporal
-	result.namespace = stack.temporal.namespace
 	return result, nil
 }
 
@@ -121,7 +111,10 @@ func (o *observer) checkReadOnly(ctx context.Context) error {
 }
 
 // countRows counts the rows of each observed table in one read-only snapshot.
-func (o *observer) countRows(ctx context.Context) (map[string]int64, error) {
+// One deadline, the limit of one lane command, bounds the snapshot.
+func (o *observer) countRows(parent context.Context) (map[string]int64, error) {
+	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
+	defer cancel()
 	tx, err := o.database.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, fmt.Errorf("begin the observer snapshot: %w", err)
@@ -138,33 +131,10 @@ func (o *observer) countRows(ctx context.Context) (map[string]int64, error) {
 	return counts, nil
 }
 
-// seesPoller reports an error unless the identity polls both the workflow and
-// the activity tasks of the task queue.
-func (o *observer) seesPoller(ctx context.Context, taskQueue, identity string) error {
-	for _, kind := range []enumspb.TaskQueueType{enumspb.TASK_QUEUE_TYPE_WORKFLOW, enumspb.TASK_QUEUE_TYPE_ACTIVITY} {
-		response, err := o.temporal.DescribeTaskQueue(ctx, taskQueue, kind)
-		if err != nil {
-			return fmt.Errorf("describe the %s task queue %q: %w", kind, taskQueue, err)
-		}
-		identities := make([]string, 0, len(response.GetPollers()))
-		for _, poller := range response.GetPollers() {
-			identities = append(identities, poller.GetIdentity())
-		}
-		if !slices.Contains(identities, identity) {
-			return fmt.Errorf("no %s poller %q on task queue %q in namespace %q; pollers: %q",
-				kind, identity, taskQueue, o.namespace, identities)
-		}
-	}
-	return nil
-}
-
-// close drops the observer role and closes both clients.
+// close closes the observer connection and drops the observer role.
 func (o *observer) close() error {
 	if o == nil {
 		return nil
-	}
-	if o.temporal != nil {
-		o.temporal.Close()
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
@@ -187,63 +157,4 @@ func (o *observer) close() error {
 		}
 	}
 	return nil
-}
-
-func dialObserverTemporal(ctx context.Context, access stackTemporal) (client.Client, error) {
-	read := func(member string) ([]byte, error) {
-		return readBoundedFile(filepath.Join(access.bundle, member), 64<<10)
-	}
-	caPEM, err := read("ca.pem")
-	if err != nil {
-		return nil, err
-	}
-	certificatePEM, err := read("client.pem")
-	if err != nil {
-		return nil, err
-	}
-	keyPEM, err := read("client-key.pem")
-	if err != nil {
-		return nil, err
-	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(caPEM) {
-		return nil, errors.New("the stack Temporal CA is invalid")
-	}
-	certificate, err := tls.X509KeyPair(certificatePEM, keyPEM)
-	if err != nil {
-		return nil, errors.New("the stack Temporal client identity is invalid")
-	}
-	host, _, err := net.SplitHostPort(access.endpoint)
-	if err != nil {
-		return nil, fmt.Errorf("the stack Temporal endpoint is invalid: %w", err)
-	}
-	temporal, err := client.DialContext(ctx, client.Options{
-		HostPort:  access.endpoint,
-		Namespace: access.namespace,
-		Identity:  observerIdentity,
-		Logger:    observerTemporalLog{},
-		ConnectionOptions: client.ConnectionOptions{TLS: &tls.Config{
-			MinVersion:   tls.VersionTLS12,
-			RootCAs:      roots,
-			ServerName:   host,
-			Certificates: []tls.Certificate{certificate},
-		}},
-	})
-	if err != nil {
-		return nil, fmt.Errorf("connect the observer Temporal client: %w", err)
-	}
-	return temporal, nil
-}
-
-// observerTemporalLog drops the SDK debug and info lines and keeps warnings
-// and errors on stderr.
-type observerTemporalLog struct{}
-
-func (observerTemporalLog) Debug(string, ...interface{}) {}
-func (observerTemporalLog) Info(string, ...interface{})  {}
-func (observerTemporalLog) Warn(message string, keyvals ...interface{}) {
-	fmt.Fprintln(os.Stderr, append([]interface{}{"temporal observer warning:", message}, keyvals...)...)
-}
-func (observerTemporalLog) Error(message string, keyvals ...interface{}) {
-	fmt.Fprintln(os.Stderr, append([]interface{}{"temporal observer error:", message}, keyvals...)...)
 }
