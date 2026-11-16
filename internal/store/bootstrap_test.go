@@ -464,8 +464,12 @@ func TestBootstrapMigrationChecksTheBootstrapRole(t *testing.T) {
 		t.Fatalf("connect the stack administrator: %v", err)
 	}
 	defer func() { _ = admin.Close(context.Background()) }()
-	if err := migrateOneStoreVersionDown(ctx, s.credentials.migratorDSN, ControlSchemaVersion); err != nil {
-		t.Fatalf("return the store to the version before the bootstrap schema: %v", err)
+	// The bootstrap schema is migration 0021, so the version before it is 20.
+	// Later migrations step down first.
+	for version := ControlSchemaVersion; version > 20; version-- {
+		if err := migrateOneStoreVersionDown(ctx, s.credentials.migratorDSN, version); err != nil {
+			t.Fatalf("return the store to the version before the bootstrap schema: %v", err)
+		}
 	}
 	t.Cleanup(func() {
 		cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), bootstrapWaitLimit)
