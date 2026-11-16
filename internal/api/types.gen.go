@@ -276,6 +276,7 @@ const (
 	MutationResultDispositionCreated   MutationResultDisposition = "created"
 	MutationResultDispositionRevoked   MutationResultDisposition = "revoked"
 	MutationResultDispositionUnchanged MutationResultDisposition = "unchanged"
+	MutationResultDispositionUpdated   MutationResultDisposition = "updated"
 )
 
 // Valid indicates whether the value is a known member of the MutationResultDisposition enum.
@@ -286,6 +287,8 @@ func (e MutationResultDisposition) Valid() bool {
 	case MutationResultDispositionRevoked:
 		return true
 	case MutationResultDispositionUnchanged:
+		return true
+	case MutationResultDispositionUpdated:
 		return true
 	default:
 		return false
@@ -1133,6 +1136,16 @@ type MembershipRevokeRequest struct {
 	Protocol ProtocolMetadata `json:"protocol"`
 }
 
+// MembershipUpdateRequest defines model for MembershipUpdateRequest.
+type MembershipUpdateRequest struct {
+	Membership struct {
+		// AddConnectionIds Strictly sorted, unique connection IDs to add.
+		AddConnectionIds []string `json:"add_connection_ids"`
+		MembershipRef    string   `json:"membership_ref"`
+	} `json:"membership"`
+	Protocol ProtocolMetadata `json:"protocol"`
+}
+
 // MutationReplayResponse defines model for MutationReplayResponse.
 type MutationReplayResponse struct {
 	EffectiveActorRef *string                                 `json:"effective_actor_ref,omitempty"`
@@ -1959,6 +1972,22 @@ type GrantMembershipParams struct {
 	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
 }
 
+// UpdateMembershipParams defines parameters for UpdateMembership.
+type UpdateMembershipParams struct {
+	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
+
+	// IfMatch Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope.
+	IfMatch *IfMatch `json:"If-Match,omitempty"`
+
+	// XCSRFToken Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization.
+	XCSRFToken *CSRFToken `json:"X-CSRF-Token,omitempty"`
+}
+
+// UpdateMembership200JSONResponseBody defines parameters for UpdateMembership.
+type UpdateMembership200JSONResponseBody struct {
+	union json.RawMessage
+}
+
 // RevokeMembershipParams defines parameters for RevokeMembership.
 type RevokeMembershipParams struct {
 	IdempotencyKey IdempotencyKey `json:"Idempotency-Key"`
@@ -2086,6 +2115,9 @@ type SubmitInvocationJSONRequestBody = InvocationRequest
 
 // GrantMembershipJSONRequestBody defines body for GrantMembership for application/json ContentType.
 type GrantMembershipJSONRequestBody = MembershipGrantRequest
+
+// UpdateMembershipJSONRequestBody defines body for UpdateMembership for application/json ContentType.
+type UpdateMembershipJSONRequestBody = MembershipUpdateRequest
 
 // RevokeMembershipJSONRequestBody defines body for RevokeMembership for application/json ContentType.
 type RevokeMembershipJSONRequestBody = MembershipRevokeRequest
@@ -2441,6 +2473,68 @@ func (t RevokeDelegation200JSONResponseBody) MarshalJSON() ([]byte, error) {
 }
 
 func (t *RevokeDelegation200JSONResponseBody) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsMutationResultResponse returns the union data inside the UpdateMembership200JSONResponseBody as a MutationResultResponse
+func (t UpdateMembership200JSONResponseBody) AsMutationResultResponse() (MutationResultResponse, error) {
+	var body MutationResultResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMutationResultResponse overwrites any union data inside the UpdateMembership200JSONResponseBody as the provided MutationResultResponse
+func (t *UpdateMembership200JSONResponseBody) FromMutationResultResponse(v MutationResultResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMutationResultResponse performs a merge with any union data inside the UpdateMembership200JSONResponseBody, using the provided MutationResultResponse
+func (t *UpdateMembership200JSONResponseBody) MergeMutationResultResponse(v MutationResultResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsMutationReplayResponse returns the union data inside the UpdateMembership200JSONResponseBody as a MutationReplayResponse
+func (t UpdateMembership200JSONResponseBody) AsMutationReplayResponse() (MutationReplayResponse, error) {
+	var body MutationReplayResponse
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromMutationReplayResponse overwrites any union data inside the UpdateMembership200JSONResponseBody as the provided MutationReplayResponse
+func (t *UpdateMembership200JSONResponseBody) FromMutationReplayResponse(v MutationReplayResponse) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeMutationReplayResponse performs a merge with any union data inside the UpdateMembership200JSONResponseBody, using the provided MutationReplayResponse
+func (t *UpdateMembership200JSONResponseBody) MergeMutationReplayResponse(v MutationReplayResponse) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t UpdateMembership200JSONResponseBody) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *UpdateMembership200JSONResponseBody) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }

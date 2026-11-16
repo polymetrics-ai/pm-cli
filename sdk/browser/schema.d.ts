@@ -538,6 +538,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{workspace_id}/memberships/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Add connections to a workspace membership
+         * @description Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+         */
+        patch: operations["updateMembership"];
+        trace?: never;
+    };
     "/v1/workspaces/{workspace_id}/memberships/{id}/revoke": {
         parameters: {
             query?: never;
@@ -1117,6 +1140,14 @@ export interface components {
             };
             protocol: components["schemas"]["ProtocolMetadata"];
         };
+        MembershipUpdateRequest: {
+            membership: {
+                /** @description Strictly sorted, unique connection IDs to add. */
+                add_connection_ids: string[];
+                membership_ref: string;
+            };
+            protocol: components["schemas"]["ProtocolMetadata"];
+        };
         MutationReplayResponse: {
             effective_actor_ref?: string;
             outcome_reference: components["schemas"]["SafeOutcomeReference"];
@@ -1129,7 +1160,7 @@ export interface components {
             result_revision: string;
         };
         /** @enum {string} */
-        MutationResultDisposition: "created" | "revoked" | "unchanged";
+        MutationResultDisposition: "created" | "updated" | "revoked" | "unchanged";
         MutationResultResponse: {
             effective_actor_ref?: string;
             outcome_reference: components["schemas"]["SafeOutcomeReference"];
@@ -2848,6 +2879,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MutationResultResponse"];
+                };
+            };
+            400: components["responses"]["Problem400"];
+            401: components["responses"]["Problem401"];
+            403: components["responses"]["Problem403"];
+            404: components["responses"]["Problem404"];
+            409: components["responses"]["Problem409"];
+            410: components["responses"]["Problem410"];
+            412: components["responses"]["Problem412"];
+            428: components["responses"]["Problem428"];
+            503: components["responses"]["Problem503"];
+        };
+    };
+    updateMembership: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope. */
+                "If-Match"?: components["parameters"]["IfMatch"];
+                /** @description Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization. */
+                "X-CSRF-Token"?: components["parameters"]["CSRFToken"];
+            };
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Original updated or unchanged result, or exact safe replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MutationResultResponse"] | components["schemas"]["MutationReplayResponse"];
                 };
             };
             400: components["responses"]["Problem400"];

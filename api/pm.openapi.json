@@ -2016,6 +2016,46 @@
         ],
         "type": "object"
       },
+      "MembershipUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "membership": {
+            "additionalProperties": false,
+            "properties": {
+              "add_connection_ids": {
+                "description": "Strictly sorted, unique connection IDs to add.",
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "membership_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "membership_ref",
+              "add_connection_ids"
+            ],
+            "type": "object"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          }
+        },
+        "required": [
+          "protocol",
+          "membership"
+        ],
+        "type": "object"
+      },
       "MutationReplayResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2063,6 +2103,7 @@
       "MutationResultDisposition": {
         "enum": [
           "created",
+          "updated",
           "revoked",
           "unchanged"
         ],
@@ -6221,6 +6262,99 @@
           }
         ],
         "summary": "Grant a workspace membership",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/memberships/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ResourceID"
+        }
+      ],
+      "patch": {
+        "description": "Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.",
+        "operationId": "updateMembership",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MutationResultResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MutationReplayResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Original updated or unchanged result, or exact safe replay"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Add connections to a workspace membership",
         "tags": [
           "access"
         ]

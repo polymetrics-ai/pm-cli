@@ -373,6 +373,24 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/workspaces/{workspace_id}/memberships (the `GrantMembership` operationId).
 	GrantMembership(ctx context.Context, workspaceId WorkspaceID, params *GrantMembershipParams, body GrantMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// UpdateMembershipWithBody Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembershipWithBody(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateMembership Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembership(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RevokeMembershipWithBody Revoke a workspace membership
 	//
 	// Takes any type of body and a specified content type.
@@ -1193,6 +1211,44 @@ func (c *Client) GrantMembershipWithBody(ctx context.Context, workspaceId Worksp
 // Corresponds with POST /v1/workspaces/{workspace_id}/memberships (the `GrantMembership` operationId).
 func (c *Client) GrantMembership(ctx context.Context, workspaceId WorkspaceID, params *GrantMembershipParams, body GrantMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGrantMembershipRequest(c.Server, workspaceId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateMembershipWithBody Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *Client) UpdateMembershipWithBody(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateMembershipRequestWithBody(c.Server, workspaceId, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateMembership Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *Client) UpdateMembership(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateMembershipRequest(c.Server, workspaceId, id, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3354,6 +3410,95 @@ func NewGrantMembershipRequestWithBody(server string, workspaceId WorkspaceID, p
 	return req, nil
 }
 
+// NewUpdateMembershipRequest calls the generic UpdateMembership builder with application/json body
+func NewUpdateMembershipRequest(server string, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateMembershipRequestWithBody(server, workspaceId, id, params, "application/json", bodyReader)
+}
+
+// NewUpdateMembershipRequestWithBody constructs an http.Request for the UpdateMembership method, with any body, and a specified content type
+func NewUpdateMembershipRequestWithBody(server string, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/memberships/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewRevokeMembershipRequest calls the generic RevokeMembership builder with application/json body
 func NewRevokeMembershipRequest(server string, workspaceId WorkspaceID, id ResourceID, params *RevokeMembershipParams, body RevokeMembershipJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -4509,6 +4654,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/workspaces/{workspace_id}/memberships (the `GrantMembership` operationId).
 	GrantMembershipWithResponse(ctx context.Context, workspaceId WorkspaceID, params *GrantMembershipParams, body GrantMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMembershipResponse, error)
+
+	// UpdateMembershipWithBodyWithResponse Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembershipWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error)
+
+	// UpdateMembershipWithResponse Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembershipWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error)
 
 	// RevokeMembershipWithBodyWithResponse Revoke a workspace membership
 	//
@@ -6983,6 +7146,110 @@ func (r GrantMembershipResponse) ContentType() string {
 	return ""
 }
 
+type UpdateMembershipResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UpdateMembership200JSONResponseBody
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateMembershipResponse) GetJSON200() *UpdateMembership200JSONResponseBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateMembershipResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateMembershipResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateMembershipResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateMembershipResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type RevokeMembershipResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -8556,6 +8823,36 @@ func (c *ClientWithResponses) GrantMembershipWithResponse(ctx context.Context, w
 		return nil, err
 	}
 	return ParseGrantMembershipResponse(rsp)
+}
+
+// UpdateMembershipWithBodyWithResponse Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *ClientWithResponses) UpdateMembershipWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error) {
+	rsp, err := c.UpdateMembershipWithBody(ctx, workspaceId, id, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateMembershipResponse(rsp)
+}
+
+// UpdateMembershipWithResponse Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership under its current control revision. An actor that holds workspace.access.manage and connection.manage can add a connection to its own membership. For another membership, the actor can add only connections that its own current grants hold.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *ClientWithResponses) UpdateMembershipWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error) {
+	rsp, err := c.UpdateMembership(ctx, workspaceId, id, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateMembershipResponse(rsp)
 }
 
 // RevokeMembershipWithBodyWithResponse Revoke a workspace membership
@@ -10634,6 +10931,95 @@ func ParseGrantMembershipResponse(rsp *http.Response) (*GrantMembershipResponse,
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateMembershipResponse parses an HTTP response from a UpdateMembershipWithResponse call
+func ParseUpdateMembershipResponse(rsp *http.Response) (*UpdateMembershipResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateMembershipResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpdateMembership200JSONResponseBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Problem400
