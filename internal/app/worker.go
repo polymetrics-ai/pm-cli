@@ -430,6 +430,7 @@ type workerUnitPlan struct {
 	task              contract.Task
 	dispatch          store.DispatchRecord
 	lease             store.Lease
+	leaseDeadline     time.Time
 	permit            store.AccountPermit
 	handler           ResolvedHandler
 	request           ExecutionRequest
@@ -470,6 +471,12 @@ func (service *WorkerService) ExecuteUnit(
 	}
 	stopHeartbeats := startWorkerHeartbeats(ctx, heartbeat, progress, plan.timeouts.Heartbeat)
 	defer stopHeartbeats()
+
+	// The provider callback, the publication step and the settlement take
+	// their limits from this context, so none of them is planned to end after
+	// the task lease ends.
+	ctx, cancelLease := workerLeaseContext(ctx, plan.leaseDeadline)
+	defer cancelLease()
 
 	// A reconcile callback has no accepted run deadline.
 	acceptedDeadline := plan.state.deadline
@@ -704,6 +711,9 @@ func (service *WorkerService) prepareWorkerUnit(
 			return workerFailure(ErrWorkerConflict, errors.New("dispatch state and attempt evidence are inconsistent"))
 		}
 
+		// A local time from before the claim: the lease deadline adds the lease
+		// TTL to it (workerLeaseDeadline).
+		claimStarted := time.Now()
 		lease, err := claimWorkerTask(
 			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend,
 		)
@@ -842,6 +852,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		plan.task = task
 		plan.dispatch = dispatch
 		plan.lease = lease
+		plan.leaseDeadline = workerLeaseDeadline(claimStarted, lease)
 		plan.permit = permit
 		plan.handler = handler
 		plan.reconcile = !freshSend
@@ -2574,7 +2585,9 @@ func minWorkerDuration(left, right time.Duration) time.Duration {
 //
 // So a callback that uses its whole bound ends at least one reserve before the
 // settlement deadline, whichever of the accepted run deadline and the activity
-// attempt deadline comes first. The settlement gets that reserve less the time
+// attempt deadline comes first. ExecuteUnit gives it the lease context
+// (workerLeaseContext), so the lease deadline counts as the attempt deadline
+// when it comes first. The settlement gets that reserve less the time
 // that the callback and the publication step take to return after their
 // deadlines.
 //
@@ -2618,8 +2631,10 @@ func workerSettlementContext(
 //
 // The step ends one settlement reserve before the settlement cutoff. The cutoff
 // is the earlier of the accepted run deadline and one reserve before the
-// activity attempt deadline. So the publication step does not use the reserve
-// that it leaves for the settlement, whichever deadline comes first. The bound
+// activity attempt deadline. ExecuteUnit gives this function the lease context
+// (workerLeaseContext), so the lease deadline counts as the attempt deadline
+// when it comes first. So the publication step does not use the reserve that
+// it leaves for the settlement, whichever deadline comes first. The bound
 // of the provider callback (workerCallbackContext) ends no later than the
 // bound of this step, so a late callback does not use that reserve either.
 //
@@ -2629,7 +2644,8 @@ func workerSettlementContext(
 // relies on this context.
 //
 // When ctx has no deadline and the unit has no accepted deadline, the step has
-// no bound of its own. That cannot occur in production. The worker runs
+// no bound of its own. That cannot occur in ExecuteUnit, which always gives
+// the lease context. It cannot occur in production either. The worker runs
 // ExecuteUnit as a Temporal activity with a StartToClose timeout
 // (internal/workflows/options.go), and contract.ActivityTimeouts.Validate
 // requires that timeout to be positive (internal/contract/workflow.go).
@@ -2645,6 +2661,31 @@ func workerPublicationContext(
 		return context.WithCancel(ctx)
 	}
 	return context.WithDeadline(ctx, cutoff.Add(-reserve))
+}
+
+// workerLeaseDeadline is the local time at which a task lease ends at the
+// latest. claimStarted is a local time taken before the claim. The function
+// adds the lease TTL (ExpiresAt minus ClaimedAt, both in the PostgreSQL clock)
+// to it. So it compares no local time with a PostgreSQL time, and, when the
+// two clocks run at the same rate, the result is not later than the real end
+// of the lease.
+func workerLeaseDeadline(claimStarted time.Time, lease store.Lease) time.Time {
+	return claimStarted.Add(lease.ExpiresAt.Sub(lease.ClaimedAt))
+}
+
+// workerLeaseContext is the context from which the steps of one unit take
+// their limits: the provider callback, the publication step and the
+// settlement. Its deadline is the earlier of the deadline of ctx and the lease
+// deadline. The settlement needs a current task lease, so a step that ends
+// after the lease ends makes the settlement fail with a stale task fence, and
+// the unit then settles nothing. A zero lease deadline ends every step at once.
+//
+// In the Temporal activity the attempt deadline comes first: the claim follows
+// the start of the attempt, and the lease TTL is at most the sealed
+// start_to_close. This context then keeps the attempt deadline exactly. A
+// caller with a later deadline, or with none, gets the lease deadline.
+func workerLeaseContext(ctx context.Context, leaseDeadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, leaseDeadline)
 }
 
 // workerSettlementCutoff is the latest time at which a unit settlement may end:
