@@ -23,8 +23,9 @@ type cliRun struct {
 	ran      bool
 }
 
-func registerCLISteps(sc *godog.ScenarioContext, bins binaries) {
+func registerCLISteps(sc *godog.ScenarioContext, bins binaries, stack *stackHarness) {
 	registerPmgenSteps(sc)
+	registerStackSteps(sc, stack)
 	run := &cliRun{bins: bins}
 	sc.Before(func(ctx context.Context, _ *godog.Scenario) (context.Context, error) {
 		home, err := os.MkdirTemp("", "pm-acceptance-home-")
@@ -34,13 +35,15 @@ func registerCLISteps(sc *godog.ScenarioContext, bins binaries) {
 		run.home = home
 		return ctx, nil
 	})
-	sc.After(func(ctx context.Context, _ *godog.Scenario, err error) (context.Context, error) {
+	// godog keeps the step error. The hook returns only its own cleanup
+	// error, so the step error is reported once.
+	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
 		if run.home != "" {
-			if removeErr := os.RemoveAll(run.home); removeErr != nil && err == nil {
-				return ctx, fmt.Errorf("remove scenario home: %w", removeErr)
+			if err := os.RemoveAll(run.home); err != nil {
+				return ctx, fmt.Errorf("remove scenario home: %w", err)
 			}
 		}
-		return ctx, err
+		return ctx, nil
 	})
 	sc.Step(`^I run "([^"]*)"$`, run.runCommand)
 	sc.Step(`^the exit code is (\d+)$`, run.exitCodeIs)
