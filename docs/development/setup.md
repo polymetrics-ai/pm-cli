@@ -154,6 +154,89 @@ An unconfirmed credential response is not a refusal. The page treats only HTTP 4
 
 `/health/live` can report the process live, but `/health/ready` remains HTTP 503 with dispatch false even when the PostgreSQL admission probe succeeds. The production handler registry composes only the connector bundles a deployment declares in `connectors.bundles`; a deployment that declares none registers no provider callback, so invocation submission returns unavailable capability rather than fabricating accepted work. The [admission checks](testing.md#authenticated-admission-and-run-controls-m4) register an explicit fixture capability; the [handoff checks](testing.md#temporal-handoff-and-projection-m4) exercise real PostgreSQL and Temporal. Neither makes this process a ready provider-execution backend.
 
+### Ready signal for a starter
+
+A starter can ask `pm-server` for one ready signal ([ADR 0005](../decisions/0005-process-ready-signal.md)). It passes `--ready-fd <n>`:
+
+```text
+--ready-fd fd   write one ready line to inherited descriptor fd (3 or more), then close it
+```
+
+- The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. Without the flag, `pm-server` sends no signal.
+- Descriptor `n` must be the write end of a pipe that the starter made, with no close-on-exec flag. `pm-server` keeps it in one handle and sets close-on-exec on that handle.
+- `pm-server` is ready when its admission probe passed, its state is serving and its HTTP accept loop calls Accept for the first time. Then it writes `pm-server ready` and one line feed in one write, apart from the serving path, and closes the handle. The write has no deadline: the signal waits until the starter reads. A start that fails before it is ready sends no signal, so the starter reads end of file with no data.
+- If the write fails, `pm-server` writes `pm-server: the ready signal write failed. The process continues.` on standard error once. It continues, and its exit code does not change.
+
+A refusal stops `pm-server` with exit code 1, one line on standard error and no signal, before it opens its configuration:
+
+| Order | Case | Standard error line |
+| --- | --- | --- |
+| 1, while the flags are read | `--ready-fd` is the last argument and has no value | `pm-server: flag needs an argument: --ready-fd` |
+| 1, while the flags are read | A second `--ready-fd` | `pm-server: invalid argument "<value>" for "--ready-fd" flag: --ready-fd may be supplied exactly once` |
+| 1, while the flags are read | A value that breaks the value rule | `pm-server: invalid argument "<value>" for "--ready-fd" flag: --ready-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | A descriptor that is not open for writing, or that has close-on-exec set | `pm-server: --ready-fd requires an inherited descriptor that is open for writing` |
+
+The starter must do these things:
+
+- Give `pm-server` only the write end of the pipe as descriptor `n`, and make sure that no other process that it starts holds that write end.
+- Close its own copy of the write end after the start. If it does not, end of file never comes.
+- Read the pipe until the line or end of file comes, with one time limit that the starter owns.
+- Read each pipe that it gives as standard output or standard error, or give a destination that cannot fill, for example a file. A full pipe blocks each write of the process.
+
+A supervisor of `pm-server` has this minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM. It bounds its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
+
+### Operator bootstrap
+
+The operator creates the first workspace and admin of an organization with `pm-server bootstrap` ([ADR 0006](../decisions/0006-operator-bootstrap.md)). The subcommand does not start the server, and no HTTP route bootstraps.
+
+```sh
+.cache/bin/pm-server bootstrap \
+  --config /absolute/path/to/operator-server.json \
+  --secrets-directory /absolute/path/to/operator-bootstrap-secrets \
+  --input /absolute/path/to/bootstrap-input.json
+```
+
+The input file is one JSON document with exactly these fields. It holds no secret:
+
+```json
+{
+  "org_id": "org-example",
+  "workspace_id": "workspace-example",
+  "workspace_name": "First workspace",
+  "admin_issuer": "https://identity.example.invalid",
+  "admin_subject": "admin-subject",
+  "provider_accounts": [{"connector_id": "postgres", "display_name": "Customer database"}]
+}
+```
+
+In one PostgreSQL transaction, the subcommand writes:
+
+- the workspace;
+- the admin identity, with its login binding for `admin_issuer` and `admin_subject` in the configured deployment;
+- an admin membership that holds every workspace permission and names no connection;
+- each provider account;
+- one bootstrap record for the deployment and the organization;
+- one audit record, with the actor kind `operator` and the actor `bootstrap`.
+
+Each provider account must name a connector that `connectors.bundles` declares. On success, the exit code is 0 and stdout holds one JSON document that names these rows. On a refusal, the exit code is 1, stdout is empty, nothing is written, and stderr holds exactly one of these lines:
+
+- `pm-server: bootstrap scope is already bootstrapped`
+- `pm-server: bootstrap admin login is already bound`
+- `pm-server: bootstrap workspace name is required`
+- `pm-server: bootstrap admin subject is required`
+- `pm-server: bootstrap provider account names an undeclared connector`
+- `pm-server: bootstrap requires operator authority`
+
+Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown; run the same bootstrap again`. After an unknown outcome, run the same bootstrap again. The refusal `bootstrap scope is already bootstrapped` then shows that the first bootstrap committed.
+
+The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role can only insert the bootstrap rows, and row-level security limits each insert to the configured deployment and the organization of the input.
+
+The operator has these duties:
+
+1. Run the privileged deployment bootstrap (`deploy/postgres/bootstrap.sql`) before the store migrations. It creates `pm_app_bootstrap` from the password file `pm-app-bootstrap-password`. An existing deployment must run it again before migration 0020, or that migration fails at its role check.
+2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the same deployment and organization is refused, also with the same input.
+3. Remove `pm-app-bootstrap-endpoint` from the secret directory after the bootstrap.
+
 ### Scoped event streams and artifact boundaries
 
 `GET /v1/workspaces/{workspace_id}/runs/{run_id}/events` serves authenticated SSE. Both `run.read` and `event.read` must authorize the parent run before event disclosure, and polling rechecks current authority. Foreign scopes and runs remain concealed. The stream begins with an authoritative `snapshot`; committed `run_event` frames follow in durable sequence order. Sequences, state revisions and safe-payload counts are decimal strings, including values beyond JavaScript's exact integer range.

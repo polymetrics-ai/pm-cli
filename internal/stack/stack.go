@@ -622,6 +622,7 @@ func (rt *runtime) validateSecretBundles(configuration config.Configuration) err
 			"superuser-password",
 			"pm-app-migrator-password",
 			"pm-app-runtime-password",
+			"pm-app-bootstrap-password",
 			"temporal-migrator-password",
 			"temporal-runtime-password",
 			"temporal-visibility-migrator-password",
@@ -1287,7 +1288,7 @@ func checkPostgres(ctx context.Context, configuration config.Configuration, rt *
 		return fmt.Errorf("pm_app database, role, version, or schema revision mismatch")
 	}
 	rows, err := pm.Query(ctx, `SELECT rolname FROM pg_roles WHERE rolname = ANY($1)`, []string{
-		"pm_app_migrator", "pm_app_runtime",
+		"pm_app_migrator", "pm_app_runtime", "pm_app_bootstrap",
 		"temporal_migrator", "temporal_runtime",
 		"temporal_visibility_migrator", "temporal_visibility_runtime",
 		"pm_objects_migrator", "pm_objects_runtime",
@@ -1307,7 +1308,7 @@ func checkPostgres(ctx context.Context, configuration config.Configuration, rt *
 	if err := rows.Err(); err != nil {
 		return fmt.Errorf("read PostgreSQL roles")
 	}
-	if len(roles) != 8 {
+	if len(roles) != 9 {
 		return fmt.Errorf("required PostgreSQL role set is incomplete")
 	}
 	return checkTemporalSchemas(ctx, configuration, rt)
