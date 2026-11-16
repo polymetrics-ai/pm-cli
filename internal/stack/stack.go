@@ -1528,9 +1528,9 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 	if err != nil {
 		return err
 	}
-	temporalClient, err := client.Dial(options)
+	temporalClient, err := client.DialContext(ctx, options)
 	if err != nil {
-		return fmt.Errorf("connect authenticated Temporal client")
+		return temporalConnectError{cause: err}
 	}
 	defer temporalClient.Close()
 	service := temporalClient.WorkflowService()
@@ -1571,6 +1571,33 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 		return fmt.Errorf("Temporal server version mismatch")
 	}
 	return nil
+}
+
+// temporalConnectError keeps the cause of a failed Temporal connection for
+// errors.As. Its text names only the class of the cause. The SDK text can
+// name the endpoint or its address, so the text does not include it.
+type temporalConnectError struct {
+	cause error
+}
+
+func (e temporalConnectError) Error() string {
+	var deadline *serviceerror.DeadlineExceeded
+	var canceled *serviceerror.Canceled
+	var unavailable *serviceerror.Unavailable
+	switch {
+	case errors.As(e.cause, &deadline):
+		return "connect authenticated Temporal client: the server did not answer within the connection limit"
+	case errors.As(e.cause, &canceled):
+		return "connect authenticated Temporal client: the check was cancelled"
+	case errors.As(e.cause, &unavailable):
+		return "connect authenticated Temporal client: the server refused or closed the connection"
+	default:
+		return "connect authenticated Temporal client: the connection failed"
+	}
+}
+
+func (e temporalConnectError) Unwrap() error {
+	return e.cause
 }
 
 func artifactClient(configuration config.Configuration, rt *runtime) (*s3.Client, error) {
