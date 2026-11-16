@@ -32,6 +32,29 @@ go_test(
         "identity_provider_test.go",
         "identity_test.go",
         "image_lock_test.go",
+        "no_recreate_test.go",
+        "temporal_connect_test.go",
     ],
     embed = [":stack"],
+    deps = [
+        "//internal/config",
+        "@io_temporal_go_api//serviceerror",
+    ],
+)
+
+go_test(
+    name = "no_recreate_test",
+    srcs = ["no_recreate_test.go"],
+    embed = [":stack"],
+    deps = ["//internal/config"],
+)
+
+go_test(
+    name = "temporal_connect_test",
+    srcs = ["temporal_connect_test.go"],
+    embed = [":stack"],
+    deps = [
+        "//internal/config",
+        "@io_temporal_go_api//serviceerror",
+    ],
 )
