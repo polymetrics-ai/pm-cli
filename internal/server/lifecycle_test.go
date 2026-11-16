@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -197,6 +198,20 @@ type lifecycleFixture struct {
 
 func startLifecycle(t *testing.T, dispatch server.Probe, register func(*server.Server, *gin.Engine)) *lifecycleFixture {
 	t.Helper()
+	return startLifecycleWith(t, lifecycleOptions{}, dispatch, register)
+}
+
+// lifecycleOptions changes the admission probe, the ready handle and the
+// diagnostics writer of a lifecycle fixture. A zero field keeps the default:
+// a passing probe, no ready handle and discarded diagnostics.
+type lifecycleOptions struct {
+	admission   server.Probe
+	ready       io.WriteCloser
+	diagnostics io.Writer
+}
+
+func newLifecycleServer(t *testing.T, options lifecycleOptions, dispatch server.Probe) *server.Server {
+	t.Helper()
 	raw := `{
   "schema_version":"1","deployment_id":"lifecycle-fixture","public_origin":"https://pm.example.invalid",
   "server":{"drain_timeout":"2s"},
@@ -215,10 +230,24 @@ func startLifecycle(t *testing.T, dispatch server.Probe, register func(*server.S
 	if err != nil {
 		t.Fatal(err)
 	}
-	service, err := server.New(configuration, func(context.Context) error { return nil }, dispatch, io.Discard)
+	admission := options.admission
+	if admission == nil {
+		admission = func(context.Context) error { return nil }
+	}
+	diagnostics := options.diagnostics
+	if diagnostics == nil {
+		diagnostics = io.Discard
+	}
+	service, err := server.New(configuration, admission, dispatch, diagnostics)
 	if err != nil {
 		t.Fatal(err)
 	}
+	return service
+}
+
+func startLifecycleWith(t *testing.T, options lifecycleOptions, dispatch server.Probe, register func(*server.Server, *gin.Engine)) *lifecycleFixture {
+	t.Helper()
+	service := newLifecycleServer(t, options, dispatch)
 	router := gin.New()
 	register(service, router)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -233,7 +262,7 @@ func startLifecycle(t *testing.T, dispatch server.Probe, register func(*server.S
 		url:     "http://" + listener.Addr().String(),
 		served:  make(chan error, 1),
 	}
-	go func() { fixture.served <- service.Serve(ctx, listener, router) }()
+	go func() { fixture.served <- service.Serve(ctx, listener, router, options.ready) }()
 	t.Cleanup(func() {
 		cancel()
 		closeContext, stop := context.WithTimeout(context.Background(), 4*time.Second)
@@ -274,5 +303,166 @@ func awaitLifecycleSignal(t *testing.T, signal <-chan struct{}) {
 	case <-signal:
 	case <-time.After(4 * time.Second):
 		t.Fatal("owned lifecycle activity did not finish within its bound")
+	}
+}
+
+// fakeReadyHandle is an in-process fake of the ready descriptor. It records
+// each Write and whether the admission probe had passed at that time. It
+// signals when the first Write starts and when Close runs. A non-nil release
+// blocks each Write until the test closes it, as a full pipe does. A non-nil
+// fail makes each Write fail.
+type fakeReadyHandle struct {
+	probePassed *atomic.Bool
+	release     chan struct{}
+	fail        error
+
+	mu        sync.Mutex
+	writes    []string
+	early     int
+	entered   chan struct{}
+	closed    chan struct{}
+	enterOnce sync.Once
+	closeOnce sync.Once
+}
+
+func newFakeReadyHandle(probePassed *atomic.Bool) *fakeReadyHandle {
+	return &fakeReadyHandle{probePassed: probePassed, entered: make(chan struct{}), closed: make(chan struct{})}
+}
+
+func (handle *fakeReadyHandle) Write(payload []byte) (int, error) {
+	handle.mu.Lock()
+	handle.writes = append(handle.writes, string(payload))
+	if handle.probePassed != nil && !handle.probePassed.Load() {
+		handle.early++
+	}
+	handle.mu.Unlock()
+	handle.enterOnce.Do(func() { close(handle.entered) })
+	if handle.release != nil {
+		<-handle.release
+	}
+	if handle.fail != nil {
+		return 0, handle.fail
+	}
+	return len(payload), nil
+}
+
+func (handle *fakeReadyHandle) Close() error {
+	handle.closeOnce.Do(func() { close(handle.closed) })
+	return nil
+}
+
+func (handle *fakeReadyHandle) record() ([]string, int) {
+	handle.mu.Lock()
+	defer handle.mu.Unlock()
+	return append([]string(nil), handle.writes...), handle.early
+}
+
+func (handle *fakeReadyHandle) isClosed() bool {
+	select {
+	case <-handle.closed:
+		return true
+	default:
+		return false
+	}
+}
+
+// lockedBuffer is a diagnostics writer that the test reads after a signal.
+type lockedBuffer struct {
+	mu   sync.Mutex
+	text strings.Builder
+}
+
+func (buffer *lockedBuffer) Write(payload []byte) (int, error) {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.text.Write(payload)
+}
+
+func (buffer *lockedBuffer) String() string {
+	buffer.mu.Lock()
+	defer buffer.mu.Unlock()
+	return buffer.text.String()
+}
+
+// Go developer test (a), not acceptance proof. Defect: a ready signal before
+// the admission probe passed, or a ready signal after a failed probe. With a
+// failing probe, Serve returns the probe failure, no write started and the
+// handle is closed. With a passing probe, one write of the ready line starts
+// after the probe passed, and the handle is closed after it. The test sees an
+// early write only when that write started before its check (criteria,
+// "Proof limits"); review check P1 covers the rest.
+func TestReadyWriteStartsOnlyAfterTheAdmissionProbePassed(t *testing.T) {
+	t.Run("failed probe", func(t *testing.T) {
+		handle := newFakeReadyHandle(nil)
+		service := newLifecycleServer(t, lifecycleOptions{
+			admission: func(context.Context) error { return errors.New("admission dependency failed") },
+		}, nil)
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = service.Serve(context.Background(), listener, gin.New(), handle)
+		if err == nil || err.Error() != "server admission dependencies are unavailable" {
+			t.Fatalf("serve result %v, want the admission failure", err)
+		}
+		if writes, _ := handle.record(); len(writes) != 0 || !handle.isClosed() {
+			t.Fatalf("after a failed probe: writes %q, handle closed %t; want no write and a closed handle", writes, handle.isClosed())
+		}
+	})
+	t.Run("passed probe", func(t *testing.T) {
+		var probePassed atomic.Bool
+		handle := newFakeReadyHandle(&probePassed)
+		startLifecycleWith(t, lifecycleOptions{
+			admission: func(context.Context) error { probePassed.Store(true); return nil },
+			ready:     handle,
+		}, nil, func(*server.Server, *gin.Engine) {})
+		awaitLifecycleSignal(t, handle.closed)
+		writes, early := handle.record()
+		if len(writes) != 1 || writes[0] != server.ReadyLine || early != 0 {
+			t.Fatalf("writes %q, %d before the probe passed; want one write of %q after it", writes, early, server.ReadyLine)
+		}
+	})
+}
+
+// Go developer test (b), not acceptance proof. Defect: a ready write on the
+// serving path, so that a blocked write stops the HTTP request. The test
+// waits once, with one limit, for the fake's signal that the write started.
+// Then it sends one request and waits once, with the client limit, for the
+// answer. Nothing repeats.
+func TestReadyWriteRunsApartFromServing(t *testing.T) {
+	handle := newFakeReadyHandle(nil)
+	handle.release = make(chan struct{})
+	fixture := startLifecycleWith(t, lifecycleOptions{ready: handle}, nil, func(_ *server.Server, router *gin.Engine) {
+		router.GET("/ordinary", func(c *gin.Context) { c.String(http.StatusOK, "served") })
+	})
+	t.Cleanup(func() { close(handle.release) })
+
+	awaitLifecycleSignal(t, handle.entered)
+	if writes, _ := handle.record(); len(writes) != 1 || writes[0] != server.ReadyLine {
+		t.Fatalf("ready writes %q, want one write of %q", writes, server.ReadyLine)
+	}
+	response, err := fixture.client.Get(fixture.url + "/ordinary")
+	if err != nil {
+		t.Fatalf("request while the ready write is blocked: %v", err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.StatusCode != http.StatusOK || string(body) != "served" {
+		t.Fatalf("request while the ready write is blocked: status %d body %q err %v", response.StatusCode, body, err)
+	}
+}
+
+// Go developer test, not acceptance proof. Defect: a failed ready write with
+// no write-failure line, more than one line, or a handle that stays open. The
+// test waits once, with one limit, for the fake's signal that the handle
+// closed.
+func TestFailedReadyWritePrintsOneLineAndClosesTheHandle(t *testing.T) {
+	handle := newFakeReadyHandle(nil)
+	handle.fail = errors.New("broken pipe")
+	diagnostics := &lockedBuffer{}
+	startLifecycleWith(t, lifecycleOptions{ready: handle, diagnostics: diagnostics}, nil, func(*server.Server, *gin.Engine) {})
+	awaitLifecycleSignal(t, handle.closed)
+	if got, want := diagnostics.String(), "pm-server: the ready signal write failed. The process continues.\n"; got != want {
+		t.Fatalf("diagnostics %q, want exactly %q", got, want)
 	}
 }
