@@ -251,6 +251,89 @@ func TestRunPathReturnsAfterAFatalWorkerError(t *testing.T) {
 	}
 }
 
+// runPathRun is one run path with a fake worker that counts Stop calls and
+// does not stop itself. So each Stop call is a call of the run path.
+type runPathRun struct {
+	worker   *fakeWorker
+	fatal    chan error
+	cancel   context.CancelFunc
+	returned chan error
+}
+
+// startRunPath starts the run path with no ready handle and waits once for
+// the fake's signal that Start returns.
+func startRunPath(t *testing.T) *runPathRun {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	run := &runPathRun{
+		worker:   newFakeWorker(&eventLog{}, nil),
+		fatal:    make(chan error, 1),
+		cancel:   cancel,
+		returned: make(chan error, 1),
+	}
+	started := make(chan struct{})
+	run.worker.onStart = func() { close(started) }
+	go func() { run.returned <- runWorker(ctx, run.worker, run.fatal, nil) }()
+	awaitSignal(t, started, "start of the worker")
+	return run
+}
+
+// The Stop-ownership test. The run path calls Stop only on the context
+// path. The test delivers the two inputs itself: the end of the context and
+// a fatal error. Defects: a run path that calls Stop after it took the fatal
+// path, or that calls Stop twice. Each case runs once. No case repeats a run
+// until a race happens. The double close inside the SDK is a proof limit.
+func TestRunPathCallsStopOnlyOnTheContextPath(t *testing.T) {
+	t.Run("the context ends first", func(t *testing.T) {
+		run := startRunPath(t)
+		run.cancel()
+		if err := awaitReturn(t, run.returned, "after the context ended"); err != nil {
+			t.Fatalf("run path after the context ended: %v", err)
+		}
+		if got := run.worker.stops.Load(); got != 1 {
+			t.Fatalf("run path made %d Stop calls when the context ended first, want exactly 1", got)
+		}
+	})
+	t.Run("a fatal error comes first", func(t *testing.T) {
+		run := startRunPath(t)
+		run.fatal <- errors.New("non-retryable poll error")
+		err := awaitReturn(t, run.returned, "after a fatal worker error")
+		if err == nil || err.Error() != "Temporal worker stopped after a fatal runtime error" {
+			t.Fatalf("run path after a fatal worker error: %v", err)
+		}
+		if got := run.worker.stops.Load(); got != 0 {
+			t.Fatalf("run path made %d Stop calls after it took the fatal path, want none", got)
+		}
+	})
+	t.Run("both come before the run path acts", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		t.Cleanup(cancel)
+		fatal := make(chan error, 1)
+		sdkWorker := newFakeWorker(&eventLog{}, nil)
+		// Both inputs come during Start, so both are there before the run
+		// path chooses its path.
+		sdkWorker.onStart = func() {
+			cancel()
+			fatal <- errors.New("non-retryable poll error")
+		}
+		returned := make(chan error, 1)
+		go func() { returned <- runWorker(ctx, sdkWorker, fatal, nil) }()
+		if err := awaitReturn(t, returned, "after both inputs came"); err != nil {
+			t.Fatalf("run path after both inputs came: %v", err)
+		}
+		// A run path that took the context path left the fatal error unread.
+		contextPath := len(fatal) == 1
+		got := sdkWorker.stops.Load()
+		if contextPath && got != 1 {
+			t.Fatalf("run path took the context path and made %d Stop calls, want exactly 1", got)
+		}
+		if !contextPath && got != 0 {
+			t.Fatalf("run path took the fatal path and made %d Stop calls, want none", got)
+		}
+	})
+}
+
 // Fact (c). Defect: a kept handle without FD_CLOEXEC after the check. The
 // handle is also descriptor n itself, not a copy.
 func TestReadyHandleHasCloseOnExecAfterTheCheck(t *testing.T) {
