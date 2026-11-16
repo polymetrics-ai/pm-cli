@@ -174,9 +174,9 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertEqual(workflow["permissions"],
                          {"actions": "read", "contents": "read", "pull-requests": "write"})
 
-    def test_agent_pr_ready_needs_both_required_checks(self):
+    def test_agent_pr_ready_needs_every_required_check(self):
         script = self.load("agent-pr.yml")["jobs"]["review-state"]["steps"][0]["with"]["script"]
-        self.assertIn("const requiredJobs = ['bdd', 'checks'];", script)
+        self.assertIn("const requiredJobs = ['bdd', 'checks', 'bazel'];", script)
         self.assertIn("matches[0].head_sha === head.commit.sha", script)
         self.assertIn("run.head_sha === head.commit.sha", script)
 

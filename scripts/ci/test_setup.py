@@ -206,7 +206,7 @@ class SetupContracts(unittest.TestCase):
 
     def test_checks_job_is_frozen(self):
         def checks_block(s):
-            return s[s.index("  checks:\n"):]
+            return s[s.index("  checks:\n"):s.index("\n  # The Bazel gate")] + "\n"
 
         cases = {
             "unknown job": (lambda s: s + checks_block(s).replace("  checks:\n", "  lint:\n", 1),
@@ -226,6 +226,56 @@ class SetupContracts(unittest.TestCase):
                 "      - name: Clean up the job container\n        if: always()",
                 "      - name: Clean up the job container\n        if: success()"),
                 "unapproved checks cleanup step"),
+        }
+        for name, (mutate, message) in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root, inventory = self.fixture(directory)
+                path = root / WORKFLOW
+                original = path.read_text()
+                changed = mutate(original)
+                self.assertNotEqual(changed, original, name + " did not change the workflow")
+                path.write_text(changed)
+                result = self.check(root, inventory)
+                self.assertNotEqual(result.returncode, 0, name + " was accepted")
+                self.assertIn(message, result.stderr, name + " failed for another reason")
+
+    def test_bazel_job_is_frozen(self):
+        def bazel_block(s):
+            return s[s.index("  bazel:\n"):]
+
+        cases = {
+            "missing bazel job": (lambda s: s.split("\n  # The Bazel gate", 1)[0] + "\n",
+                                  "unapproved job membership"),
+            "renamed bazel job": (lambda s: s.replace("\n  bazel:\n", "\n  bazel-build:\n"),
+                                  "unapproved job membership"),
+            "changed bazel step": (lambda s: s.replace(
+                "sh scripts/ci/check-bazel.sh", "sh scripts/ci/check-bazel.sh --keep_going"),
+                "unapproved bazel executable step"),
+            "bazel outside the CI image": (lambda s: s.replace(
+                "run: sh scripts/ci/in-ci-image.sh run bazel -- ", "run: "),
+                "unapproved bazel executable step"),
+            "bazel step timeout changed": (lambda s: s[:s.index("  bazel:\n")] + bazel_block(s).replace(
+                "        timeout-minutes: 50\n", "        timeout-minutes: 55\n", 1),
+                "unapproved bazel executable step"),
+            "bazel job timeout changed": (lambda s: s[:s.index("  bazel:\n")] + bazel_block(s).replace(
+                "    timeout-minutes: 60\n", "    timeout-minutes: 90\n", 1),
+                "bazel job timeout changed"),
+            "bazel waits for bdd": (lambda s: s.replace(
+                "  bazel:\n    if:", "  bazel:\n    needs: bdd\n    if:"),
+                "unapproved bazel job capability"),
+            "bazel continues on error": (lambda s: s.replace(
+                "      - name: Run the Bazel build and test\n",
+                "      - name: Run the Bazel build and test\n        continue-on-error: true\n"),
+                "unapproved bazel executable step"),
+            "bazel cleanup skipped on failure": (lambda s: s[:s.index("  bazel:\n")] + bazel_block(s).replace(
+                "        if: always()", "        if: success()", 1),
+                "unapproved bazel cleanup step"),
+            "bazel cleanup selects another manifest": (lambda s: s.replace(
+                "pmcli-bazel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json", "pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"),
+                "unapproved bazel cleanup step"),
+            "bazel on another runner": (lambda s: s[:s.index("  bazel:\n")] + bazel_block(s).replace(
+                "pm-cli-vps", "unrelated-runner", 1),
+                "bazel runner routing changed"),
         }
         for name, (mutate, message) in cases.items():
             with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:

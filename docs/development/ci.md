@@ -7,7 +7,7 @@
 | `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. A change that only adds Go files runs no check from `check-docs.sh` in this hook, unless a Go file is under `tools/`, `scripts/` or `build/ci/`. Such a file selects `setup` | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
 | `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push, without the `unit` check, because the hook ran those packages already. On macOS, it runs these six checks on the host | A failure stops the push |
-| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the stack run of the Go developer tests, then the Gherkin acceptance suite in `tests/acceptance` on a fresh stack. Job `checks`: the static checks and the unit run of the Go developer tests in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
+| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the stack run of the Go developer tests, then the Gherkin acceptance suite in `tests/acceptance` on a fresh stack. Job `checks`: the static checks and the unit run of the Go developer tests in `check-docs.sh`. Job `bazel`: `bazel build //...` and `bazel test //...` in `check-bazel.sh` | `bdd` is a required check. `checks` and `bazel` become required checks only by an owner decision |
 
 Install the scanner once per user. Install the hooks once per clone:
 
@@ -138,15 +138,50 @@ Issue #64 removed the `atlas` and `docs` checks. A Go-only change needs no owner
 
 Run by hand, the validator and its test fail on the live tree. Issue #64 changed two frozen files under `docs/architecture/pm-server/`: its `README.md` and its engineering and review policy. These files no longer match their digests in `IMPORT-MANIFEST.json`. Run by hand, the Atlas check fails for a Go file that has no ownership record.
 
+## The `bazel` check
+
+The `bazel` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and `checks` and does not wait for them. Issue #308 made it a blocking check. Issue #64 had made the Bazel checks non-blocking, and no workflow ran them. The job runs [check-bazel.sh](../../scripts/ci/check-bazel.sh) in the pinned job image:
+
+1. The script selects the cache class and takes a slot lock (see [Bazel caches](#bazel-caches)).
+2. It runs `bootstrap.py print-env` and records the toolchain identity.
+3. It runs `sh scripts/browser.sh install` and `sh scripts/browser.sh build`. `//tests/client-parity` needs the installed `node_modules` at loading time and the built browser SDK under `.cache/browser-sdk` as test data. Without them, `bazel build //...` fails.
+4. It builds `.cache/bin/pm-stack` and `.cache/bin/pm-stack-fixture` from the candidate. The stack fixture needs them.
+5. It runs `bazel build //...`.
+6. It starts a job-owned stack and runs `bazel test //... --test_output=errors --cache_test_results=no` in it. The physical test targets declare exclusive execution. `with-stack-fixture.py` stops the command 20 minutes after its start.
+7. It compares the toolchain identity again.
+
+The script uses no target filter, no tag filter and no `--keep_going`. A failed build, a failed test or a failed cleanup fails the job. Test results never come from a cache. `bazel test //...` does not run `tests/acceptance`, because that package has no `BUILD.bazel` file. The `bdd` job runs it.
+
+`bazel test //...` runs the stack packages a second time, after the stack run of the `bdd` job, and the client-parity test. So a push starts two job-owned stacks at the same time, one for `bdd` and one for `bazel`. Count this load when you plan runner slots.
+
+The frozen job limits are 60 minutes for the job, 50 minutes for the Bazel step and 6 minutes for the cleanup step. The cleanup step stops the job container and runs `with-stack-fixture.py --cleanup` on `$RUNNER_TEMP/pmcli-bazel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json`. The wrapper writes its manifest at that path before it starts a container.
+
+### Bazel caches
+
+`tools/bootstrap.py` sets the Bazel output user root to `$PM_TOOLS_CACHE/bazel`. In CI, that is `$PMCLI_CACHE_DIR/pm-tools/bazel`. The `bazel` job uses these caches under it:
+
+| Cache | Path under the output user root | Shared by |
+| --- | --- | --- |
+| Install base | `install/<md5>` | All jobs |
+| Repository download cache | `cache/repos/v1` | All jobs. Each entry is named by its SHA-256 |
+| Repository contents cache | `contents-main` or `contents-branch` | One cache class |
+| Output base | `base-<class>-<slot>`, for example `base-main-0` | One cache class and one slot |
+
+The class is `main` for a push to `refs/heads/main`. It is `branch` for every other ref. A `main` job never reads a branch output base or the branch repository contents cache. The `bazel` job adds no disk cache.
+
+The script takes the first free slot lock, `$PM_TOOLS_CACHE/locks/bazel-<class>-<n>.lock` for `n` 0 or 1. It holds the lock with `flock` until it exits, so two jobs never share an output base. If both slots of the class are locked, the job fails and names the lock files. Each host keeps at most two output bases for each class.
+
+All jobs run as one host user, and the pushed branch supplies `bdd.yml` and `check-bazel.sh`. So the split stops only accidental reuse of branch outputs in `main`. It cannot stop a job that writes to the `main` paths on purpose (see [Trust boundary without root](#trust-boundary-without-root)). The install base and the Go caches (`GOCACHE`, `GOMODCACHE`) stay shared, as they are for `bdd` and `checks`.
+
 ## Agent branches
 
 Agents push `agent/<issue>-<slug>` branches with git only and hold no GitHub API token. [agent-pr.yml](../../.github/workflows/agent-pr.yml) manages pull requests when `PM BDD` starts or finishes. It runs from the default branch on a GitHub-hosted runner. It never checks out agent code, downloads artifacts or runs pushed content.
 
-The workflow creates a draft pull request while checks are pending. It marks the pull request ready for owner review only after the latest `PM BDD` run succeeds for the exact current branch revision. The `bdd` and `checks` jobs in that run's latest attempt must both succeed for that revision. New work, reruns and failed checks return the pull request to draft when their workflow events arrive. Each event reconciles the current branch state, even if GitHub combines pending events. Delayed events cannot promote an older revision. A current revision without a BDD run stays draft. The workflow checks the branch again after promotion and restores draft if the head or checks changed.
+The workflow creates a draft pull request while checks are pending. It marks the pull request ready for owner review only after the latest `PM BDD` run succeeds for the exact current branch revision. The `bdd`, `checks` and `bazel` jobs in that run's latest attempt must all succeed for that revision. New work, reruns and failed checks return the pull request to draft when their workflow events arrive. Each event reconciles the current branch state, even if GitHub combines pending events. Delayed events cannot promote an older revision. A current revision without a BDD run stays draft. The workflow checks the branch again after promotion and restores draft if the head or checks changed.
 
-When this rule is on `main`, `agent-pr.yml` keeps a pull request in draft if the `PM BDD` run for its head has no `checks` job. A branch that started before this rule must merge `main` first.
+When this rule is on `main`, `agent-pr.yml` keeps a pull request in draft if the `PM BDD` run for its head has no `checks` job or no `bazel` job. A branch that started before this rule must merge `main` first.
 
-This policy manages all open pull requests from this repository's `agent/**` branches, including an owner-created draft. Branches such as `codex/**` need manual readiness changes. Readiness signals that the current `bdd` and `checks` gates passed. Successful CI does not prove that every task obligation is complete. The workflow has no separate task completion receipt. Readiness does not replace independent review or authorize a merge. Only the owner merges, manually and by squash. The workflow never merges or enables auto-merge. The owner must check the current revision and checks before merging.
+This policy manages all open pull requests from this repository's `agent/**` branches, including an owner-created draft. Branches such as `codex/**` need manual readiness changes. Readiness signals that the current `bdd`, `checks` and `bazel` gates passed. Successful CI does not prove that every task obligation is complete. The workflow has no separate task completion receipt. Readiness does not replace independent review or authorize a merge. Only the owner merges, manually and by squash. The workflow never merges or enables auto-merge. The owner must check the current revision and checks before merging.
 
 The workflow needs `actions: read`, `contents: read` and `pull-requests: write`. It accepts only owner-authored push runs from this repository's `.github/workflows/bdd.yml`. It becomes active after this workflow change reaches the default branch. Existing completed runs do not replay automatically.
 
