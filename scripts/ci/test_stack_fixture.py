@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Behavioral checks for fixture ownership and process-group cancellation."""
 
+import base64
 import contextlib
 import hashlib
 import importlib.util
@@ -10,6 +11,7 @@ import os
 from pathlib import Path
 import selectors
 import signal
+import socket
 import subprocess
 import sys
 import tempfile
@@ -239,6 +241,10 @@ class FixtureOwnershipTests(unittest.TestCase):
                 "PM_STACK_S3_PRIMARY_PORT": "12003",
                 "PM_STACK_S3_SECONDARY_PORT": "12004",
                 "PM_STACK_PUBLIC_PORT": "12005",
+                "PM_STACK_IDENTITY_PROVIDER_HOST": "127.31.41.59",
+                "PM_STACK_IDENTITY_PROVIDER_PORT": "12006",
+                "PM_STACK_IDENTITY_PROVIDER_ISSUER": "https://127.31.41.59:12006/realms/pm-test",
+                "PM_STACK_IDENTITY_PROVIDER_DIR": str(fixture_root / "identity-provider"),
             }
             environment_bytes = (json.dumps(environment, sort_keys=True) + "\n").encode()
             config_bytes = b'{"schema_version":"1"}\n'
@@ -372,6 +378,289 @@ class FixtureOwnershipTests(unittest.TestCase):
             except ProcessLookupError:
                 pass
             process.communicate(timeout=5)
+
+
+class IdentityProviderTests(unittest.TestCase):
+    """The job Keycloak: its environment, binding, hardening, networks and probes."""
+
+    # Synthetic test vectors. HOST stands for the per-job second loopback
+    # address; 192.0.2.10 is from the RFC 5737 documentation range.
+    PROJECT = "pmci-" + "6" * 20
+    HOST = "127.31.41.59"
+    ROOT = Path("/private/fixture")
+    PODMAN_ROOT = "/home/ghrunner/.local/share/containers/storage"
+    ENV = {
+        "PM_STACK_POSTGRES_PORT": "12001",
+        "PM_STACK_TEMPORAL_PORT": "12002",
+        "PM_STACK_S3_PRIMARY_PORT": "12003",
+        "PM_STACK_S3_SECONDARY_PORT": "12004",
+        "PM_STACK_PUBLIC_PORT": "12005",
+        "PM_STACK_IDENTITY_PROVIDER_HOST": HOST,
+        "PM_STACK_IDENTITY_PROVIDER_PORT": "12006",
+        "PM_STACK_IDENTITY_PROVIDER_ISSUER": f"https://{HOST}:12006/realms/pm-test",
+        "PM_STACK_IDENTITY_PROVIDER_DIR": "/private/fixture/identity-provider",
+    }
+    PORTS = ENV
+
+    def test_identity_environment_refuses_wildcard_non_loopback_and_first_loopback(self):
+        self.assertEqual(FIXTURE.identity_endpoint(self.ENV, self.ROOT), (self.HOST, 12006))
+        host = "PM_STACK_IDENTITY_PROVIDER_HOST"
+        for name, value, refusal in (
+            (host, "0.0.0.0", "wildcard"),
+            (host, "::", "wildcard"),
+            (host, "192.0.2.10", "non-loopback"),
+            (host, "127.0.0.1", "first loopback"),
+            (host, "localhost", "IPv4"),
+            (host, "::1", "IPv4"),
+            (host, "127.0.0.02", "IPv4"),
+            ("PM_STACK_IDENTITY_PROVIDER_PORT", "12005", "port"),
+            ("PM_STACK_IDENTITY_PROVIDER_PORT", "80", "port"),
+            ("PM_STACK_IDENTITY_PROVIDER_PORT", "012006", "port"),
+            ("PM_STACK_IDENTITY_PROVIDER_ISSUER", "https://localhost:12006/realms/pm-test", "issuer"),
+            ("PM_STACK_IDENTITY_PROVIDER_ISSUER", f"http://{self.HOST}:12006/realms/pm-test", "issuer"),
+            ("PM_STACK_IDENTITY_PROVIDER_ISSUER", f"https://{self.HOST}:12006/realms/master", "issuer"),
+            ("PM_STACK_IDENTITY_PROVIDER_DIR", "/private/fixture/other", "identity provider"),
+        ):
+            with self.subTest(name=name, value=value):
+                with self.assertRaisesRegex(FIXTURE.FixtureError, refusal):
+                    FIXTURE.identity_endpoint(dict(self.ENV, **{name: value}), self.ROOT)
+
+    def keycloak(self, podman=True, rootless=True):
+        refs = FIXTURE.load_image_refs(ROOT)
+        nano_cpus, memory, pids_limit, readonly, restart = FIXTURE.service_limits("keycloak")
+        network = f"{self.PROJECT}_identity-private"
+        mounts = [
+            {"Type": kind, "Source": source, "Destination": destination, "RW": read_write}
+            for source, destination, read_write, kind in FIXTURE.expected_mounts("keycloak", self.ROOT, ROOT)
+        ]
+        if podman:
+            tmpfs = {
+                "/tmp": "size=64m,mode=1777,tmpcopyup,rw,rprivate,nosuid,nodev,noexec",
+                "/opt/keycloak/data": "size=128m,mode=1777,tmpcopyup,rw,rprivate,nosuid,nodev,noexec",
+            }
+        else:
+            tmpfs = {"/tmp": "mode=1777,size=64m", "/opt/keycloak/data": "mode=1777,size=128m"}
+        value = {
+            "id": "f" * 64, "name": f"/{self.PROJECT}-keycloak-1", "service": "keycloak",
+            "project": self.PROJECT, "oneoff": "False",
+            "config_files": ",".join(sorted(FIXTURE.expected_config_files(ROOT))),
+            "working_dir": str(ROOT), "image": refs["keycloak"], "image_id": "sha256:" + "b" * 64,
+            "user": "1000:0" if rootless else f"{os.getuid()}:{os.getgid()}", "privileged": False,
+            "network_mode": "bridge" if podman else network, "networks": {network: {}},
+            "pid_mode": "private" if podman else "", "ipc_mode": "shareable" if podman else "private",
+            "uts_mode": "private" if podman else "", "userns_mode": "", "readonly_rootfs": readonly,
+            "auto_remove": False, "init": True, "nano_cpus": nano_cpus, "memory": memory,
+            "pids_limit": pids_limit, "restart": restart, "cap_add": [],
+            "cap_drop": sorted(FIXTURE.PODMAN_DEFAULT_CAPABILITIES) if podman else ["ALL"],
+            "security_opt": ["no-new-privileges"] if podman else ["no-new-privileges:true"],
+            "devices": [], "device_requests": None, "mounts": mounts, "tmpfs": tmpfs,
+            "port_bindings": {"8443/tcp": [{"HostIp": self.HOST, "HostPort": "12006"}]},
+        }
+        return value, refs
+
+    def validate(self, value, refs, podman=True, rootless=True):
+        return FIXTURE.validate_stack_container(
+            value, self.PROJECT, self.ROOT, ROOT, self.ENV, refs,
+            rootless=rootless, engine_root=self.PODMAN_ROOT if podman else None,
+        )
+
+    def test_keycloak_binds_only_the_second_loopback_address(self):
+        for podman in (True, False):
+            value, refs = self.keycloak(podman=podman)
+            self.assertEqual(self.validate(value, refs, podman=podman)["service"], "keycloak")
+        value, refs = self.keycloak()
+        for host_ip in ("127.0.0.1", "0.0.0.0", "", "::", "192.0.2.10"):
+            with self.subTest(host_ip=host_ip), self.assertRaises(FIXTURE.FixtureError):
+                self.validate(dict(value, port_bindings={"8443/tcp": [{"HostIp": host_ip, "HostPort": "12006"}]}), refs)
+        extra = {"8443/tcp": [{"HostIp": self.HOST, "HostPort": "12006"}],
+                 "8080/tcp": [{"HostIp": self.HOST, "HostPort": "12007"}]}
+        with self.assertRaises(FIXTURE.FixtureError):
+            self.validate(dict(value, port_bindings=extra), refs)
+        caddy, project, _ = FixtureOwnershipTests.stack_container(self, "caddy", self.ROOT, podman=True)
+        caddy = dict(caddy, project=self.PROJECT, name=f"/{self.PROJECT}-caddy-1",
+                     networks={f"{self.PROJECT}_stack-private": {}},
+                     port_bindings={"9443/tcp": [{"HostIp": self.HOST, "HostPort": "12005"}]})
+        with self.assertRaises(FIXTURE.FixtureError):
+            self.validate(caddy, refs)
+
+    def test_keycloak_container_must_stay_hardened(self):
+        value, refs = self.keycloak()
+        tmpfs = dict(value["tmpfs"])
+        for field, unsafe in (
+            ("user", "0:0"),
+            ("user", ""),
+            ("cap_drop", []),
+            ("cap_drop", sorted(FIXTURE.PODMAN_DEFAULT_CAPABILITIES - {"NET_BIND_SERVICE"})),
+            ("cap_add", ["NET_ADMIN"]),
+            ("security_opt", []),
+            ("security_opt", ["no-new-privileges", "seccomp=unconfined"]),
+            ("readonly_rootfs", False),
+            ("tmpfs", {"/tmp": tmpfs["/tmp"]}),
+            ("tmpfs", dict(tmpfs, **{"/opt/keycloak/data": "size=128m,mode=1777,exec"})),
+            ("memory", 4 << 30),
+            ("pids_limit", 4096),
+            ("restart", "unless-stopped"),
+            ("network_mode", "host"),
+            ("networks", {f"{self.PROJECT}_stack-private": {}}),
+            ("networks", {f"{self.PROJECT}_identity-private": {}, f"{self.PROJECT}_stack-private": {}}),
+        ):
+            with self.subTest(field=field, unsafe=unsafe), self.assertRaises(FIXTURE.FixtureError):
+                self.validate(dict(value, **{field: unsafe}), refs)
+        docker, refs = self.keycloak(podman=False)
+        with self.assertRaises(FIXTURE.FixtureError):
+            self.validate(dict(docker, cap_drop=sorted(FIXTURE.PODMAN_DEFAULT_CAPABILITIES)), refs, podman=False)
+
+    def test_rootful_keycloak_runs_as_the_job_account(self):
+        value, refs = self.keycloak(podman=False, rootless=False)
+        self.validate(value, refs, podman=False, rootless=False)
+        with self.assertRaises(FIXTURE.FixtureError):
+            self.validate(dict(value, user="1000:0"), refs, podman=False, rootless=False)
+
+    def test_private_tree_admits_group_read_only_for_identity_mounts(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "fixture"
+            identity = root / "identity-provider"
+            identity.mkdir(parents=True, mode=0o700)
+            os.chmod(root, 0o700)
+            modes = {"ca.pem": 0o600, "server.pem": 0o640, "server-key.pem": 0o640, "realm.json": 0o640,
+                     "admin-client-id": 0o600, "admin-client-secret": 0o600}
+            for name, mode in modes.items():
+                (identity / name).write_text("synthetic\n")
+                os.chmod(identity / name, mode)
+            (root / "server.json").write_text("{}\n")
+            os.chmod(root / "server.json", 0o600)
+            FIXTURE.validate_private_tree(root)
+            FIXTURE.validate_identity_files(root)
+            for path, mode in ((identity / "realm.json", 0o644), (identity / "admin-client-secret", 0o640),
+                               (root / "server.json", 0o640)):
+                with self.subTest(path=path.name, mode=oct(mode)):
+                    original = stat_mode(path)
+                    os.chmod(path, mode)
+                    try:
+                        with self.assertRaises(FIXTURE.FixtureError):
+                            FIXTURE.validate_private_tree(root)
+                            FIXTURE.validate_identity_files(root)
+                    finally:
+                        os.chmod(path, original)
+            (identity / "extra").write_text("x")
+            os.chmod(identity / "extra", 0o600)
+            with self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.validate_identity_files(root)
+
+    READY = (
+        b"2026-11-16 12:00:00,000 INFO  [io.quarkus] (main) Profile prod activated.\n"
+        b"2026-11-16 12:00:00,001 INFO  [io.quarkus] (main) Keycloak 26.8.1 on JVM (powered by Quarkus 3.27.1) "
+        b"started in 23.456s. Listening on: https://0.0.0.0:8443\n"
+    )
+
+    def test_keycloak_ready_line_requires_production_https(self):
+        self.assertEqual(FIXTURE.keycloak_start_summary(self.READY), "23.456")
+        for unsafe in (
+            self.READY.replace(b"Profile prod", b"Profile dev"),
+            self.READY.replace(b"https://0.0.0.0:8443", b"http://0.0.0.0:8080 and https://0.0.0.0:8443"),
+            self.READY.replace(b"8443\n", b"8443. Management interface listening on https://0.0.0.0:9000.\n"),
+            self.READY.replace(b"26.8.1", b"26.8.0"),
+            self.READY + b"Running the server in development mode. DO NOT use this configuration in production.\n",
+            b"",
+        ):
+            with self.subTest(log=unsafe[-90:]), self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.keycloak_start_summary(unsafe)
+
+    def test_secret_scan_finds_raw_and_encoded_forms(self):
+        secret = FIXTURE.secrets.token_hex(32)
+        FIXTURE.require_secret_absent(b'{"Cmd":["start","--optimized"]}', secret, "container record")
+        raw = secret.encode()
+        for form in (raw, base64.b64encode(raw), base64.urlsafe_b64encode(raw).rstrip(b"="),
+                     base64.b64encode(b"pm-test-admin:" + raw)):
+            with self.subTest(form=form[:12]), self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.require_secret_absent(b"prefix " + form + b" suffix", secret, "provider log", "pm-test-admin")
+
+    def test_owned_networks_keep_the_identity_provider_alone(self):
+        containers = [{"id": "1" * 64, "service": "postgres"}, {"id": "2" * 64, "service": "keycloak"}]
+
+        def network(name, attached):
+            return {"id": "9" * 64, "name": f"{self.PROJECT}_{name}", "driver": "bridge", "scope": "local",
+                    "internal": False, "attachable": False, "ingress": False, "project": self.PROJECT,
+                    "network": name, "owner": "true", "containers": {item: {} for item in attached}}
+
+        record = FIXTURE.validate_owned_network(network("identity-private", ["2" * 64]), self.PROJECT, containers)
+        self.assertEqual(record["network"], "identity-private")
+        FIXTURE.validate_owned_network(network("stack-private", ["1" * 64]), self.PROJECT, containers)
+        for name, attached in (("identity-private", ["1" * 64]), ("stack-private", ["2" * 64]),
+                               ("other-private", []), ("identity-private", ["3" * 64])):
+            with self.subTest(name=name, attached=attached), self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.validate_owned_network(network(name, attached), self.PROJECT, containers)
+
+    def test_running_fixture_needs_both_owned_networks(self):
+        containers = [{"id": f"{index:064x}", "service": service, "state": "running", "oneoff": False}
+                      for index, service in enumerate(sorted(FIXTURE.PERSISTENT_SERVICES), start=1)]
+        provider = next(item["id"] for item in containers if item["service"] == "keycloak")
+        stack = sorted(item["id"] for item in containers if item["service"] != "keycloak")
+        networks = [{"id": "a" * 64, "name": "x", "network": "stack-private", "containers": stack},
+                    {"id": "b" * 64, "name": "y", "network": "identity-private", "containers": [provider]}]
+        FIXTURE.verify_running_resources({"containers": containers, "networks": networks, "helper": None})
+        for broken in (networks[:1], [networks[0], dict(networks[1], containers=[])]):
+            with self.subTest(networks=len(broken)), self.assertRaises(FIXTURE.FixtureError):
+                FIXTURE.verify_running_resources({"containers": containers, "networks": broken, "helper": None})
+        with self.assertRaises(FIXTURE.FixtureError):
+            FIXTURE.verify_running_resources({"containers": containers[1:], "networks": networks, "helper": None})
+
+    def serve_once(self, reply):
+        listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(5)
+
+        def answer():
+            try:
+                connection, _ = listener.accept()
+            except OSError:
+                return
+            with connection:
+                connection.settimeout(5)
+                try:
+                    connection.recv(1024)
+                except OSError:
+                    pass
+                if reply:
+                    connection.sendall(reply)
+
+        thread = threading.Thread(target=answer)
+        thread.start()
+        return listener, thread
+
+    def test_plain_http_probe_needs_no_http_answer(self):
+        for reply, refused in ((b"", True), (b"\x15\x03\x03\x00\x02\x02\x50", True),
+                               (b"HTTP/1.1 400 Bad Request\r\n\r\n", True),
+                               (b"HTTP/1.1 200 OK\r\n\r\n{}", False), (b"HTTP/1.1 302 Found\r\n\r\n", False)):
+            with self.subTest(reply=reply[:16]):
+                listener, thread = self.serve_once(reply)
+                try:
+                    port = listener.getsockname()[1]
+                    if refused:
+                        self.assertIsInstance(FIXTURE.plain_http_refusal("127.0.0.1", port, "pm-test"), str)
+                    else:
+                        with self.assertRaises(FIXTURE.FixtureError):
+                            FIXTURE.plain_http_refusal("127.0.0.1", port, "pm-test")
+                finally:
+                    thread.join(timeout=10)
+                    listener.close()
+                self.assertFalse(thread.is_alive())
+
+    def test_memory_file_system_is_read_from_the_longest_mount(self):
+        mountinfo = (
+            "22 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n"
+            "30 22 0:25 / /runner/_temp rw,nosuid - tmpfs tmpfs rw,size=1024k\n"
+            "31 22 0:26 / /runner/_temp2 rw - xfs /dev/sdb rw\n"
+        )
+        self.assertEqual(FIXTURE.filesystem_type(Path("/runner/_temp/job/realm.json"), mountinfo), "tmpfs")
+        self.assertEqual(FIXTURE.filesystem_type(Path("/runner/_temp2/job/realm.json"), mountinfo), "xfs")
+        self.assertEqual(FIXTURE.filesystem_type(Path("/home/runner/realm.json"), mountinfo), "ext4")
+        self.assertEqual(FIXTURE.filesystem_type(Path("/home/runner/realm.json"), ""), "unknown")
+
+
+def stat_mode(path):
+    return os.stat(path).st_mode & 0o777
 
 
 if __name__ == "__main__":
