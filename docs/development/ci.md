@@ -146,9 +146,11 @@ The `bazel` job is in the same workflow as `bdd`. It has the same admission cond
 2. It runs `bootstrap.py print-env` and records the toolchain identity.
 3. It runs `sh scripts/browser.sh install` and `sh scripts/browser.sh build`. `//tests/client-parity` needs the installed `node_modules` at loading time and the built browser SDK under `.cache/browser-sdk` as test data. Without them, `bazel build //...` fails.
 4. It builds `.cache/bin/pm-stack` and `.cache/bin/pm-stack-fixture` from the candidate. The stack fixture needs them.
-5. It runs `bazel build //...` and records its exit status.
-6. If the build passed, it starts a job-owned stack and runs `bazel test //... --test_output=errors --cache_test_results=no` in it. It records the exit status. The physical test targets declare exclusive execution. `with-stack-fixture.py` stops the command 20 minutes after its start. If the build failed, the test does not run, and the log says so.
+5. It runs `bazel build --lockfile_mode=error //...` and records its exit status.
+6. If the build passed, it starts a job-owned stack and runs `bazel test --lockfile_mode=error //... --test_output=errors --cache_test_results=no` in it. It records the exit status. The physical test targets declare exclusive execution. `with-stack-fixture.py` stops the command 20 minutes after its start. If the build failed, the test does not run, and the log says so.
 7. It compares the toolchain identity again, also when the build or the test failed. It prints `check-bazel: bazel build exit N; bazel test exit M` or `bazel test did not run`.
+
+Both commands use `--lockfile_mode=error`. A module, registry file or module extension result that `MODULE.bazel.lock` does not record fails the command. Bazel does not fetch it and does not update the lock. Bazel's default mode, `update`, fetches it and adds it to the lock, and the job passes. So `MODULE.bazel.lock` must record each fetch at every pushed commit.
 
 The script uses no target filter, no tag filter and no `--keep_going`. A failed build, a failed test, a failed cleanup or a toolchain drift fails the job. A Bazel phase that stops on a signal (exit 129, 130 or 143) ends the script at once. Test results never come from a cache. `bazel test //...` does not run `tests/acceptance`, because that package has no `BUILD.bazel` file. The `bdd` job runs it.
 

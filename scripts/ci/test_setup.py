@@ -291,6 +291,14 @@ class SetupContracts(unittest.TestCase):
                 self.assertNotEqual(result.returncode, 0, name + " was accepted")
                 self.assertIn(message, result.stderr, name + " failed for another reason")
 
+    def test_bazel_commands_refuse_an_unrecorded_fetch(self):
+        # Both Bazel commands of check-bazel.sh use --lockfile_mode=error, so a
+        # fetch that MODULE.bazel.lock does not record fails the job.
+        script = (ROOT / "scripts/ci/check-bazel.sh").read_text()
+        lines = [line.strip() for line in script.splitlines() if not line.lstrip().startswith("#")]
+        self.assertEqual([line for line in lines if "--lockfile_mode" in line],
+                         ["build --lockfile_mode=error \\", "test --lockfile_mode=error \\"])
+
     def test_missing_required_tool_fails(self):
         with tempfile.TemporaryDirectory() as directory:
             root, inventory = self.fixture(directory)

@@ -110,10 +110,14 @@ python3 tools/bootstrap.py exec docker-compose -- version
 # Each phase records its exit status. The toolchain comparison and the
 # closing line run on every path, and the script exits nonzero when any part
 # failed. The test phase runs only after a passing build.
+# --lockfile_mode=error: a module, registry file or extension result that
+# MODULE.bazel.lock does not record fails the command. Bazel does not fetch
+# it and does not update the lock (the default mode, `update`, does both).
 step 'bazel build //...'
 build_status=0
 python3 tools/bootstrap.py exec bazelisk -- --output_base="$output_base" --batch \
-  build --repository_cache="$repository_cache" --repo_contents_cache="$contents_cache" \
+  build --lockfile_mode=error \
+  --repository_cache="$repository_cache" --repo_contents_cache="$contents_cache" \
   //... || build_status=$?
 step "bazel build //... ended with exit $build_status"
 
@@ -127,7 +131,8 @@ if [ "$build_status" -eq 0 ]; then
   step 'starting a fresh job-owned stack for bazel test //...'
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 tools/bootstrap.py exec bazelisk -- --output_base="$output_base" --batch \
-    test --repository_cache="$repository_cache" --repo_contents_cache="$contents_cache" \
+    test --lockfile_mode=error \
+    --repository_cache="$repository_cache" --repo_contents_cache="$contents_cache" \
     --test_output=errors --cache_test_results=no \
     //... || test_status=$?
   step "bazel test //... ended with exit $test_status"
