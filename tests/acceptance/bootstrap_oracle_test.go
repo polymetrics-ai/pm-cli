@@ -88,12 +88,27 @@ func TestBootstrapSecretCheckRefusesOutputThatItCannotInspect(t *testing.T) {
 		bootstrapCredentialMember: []byte("postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"),
 	})
 	escaped := unicodeEscaped(password)
+	// The escaped string of these cases is closed, so the scan decodes it and
+	// finds the secret. The output is still not complete.
 	for name, output := range map[string]string{
 		"truncated escaped JSON":      `{"note":"` + escaped + `"`,
 		"escaped JSON after a prefix": `error: {"note":"` + escaped + `"}`,
 	} {
-		if _, found, complete := findSecret([]byte(output), forms); !found && complete {
+		_, found, complete := findSecret([]byte(output), forms)
+		if name == "truncated escaped JSON" && !found {
+			t.Errorf("%s case: the check does not find the closed escaped secret", name)
+		}
+		if complete {
+			t.Errorf("%s case: the check reports the output as complete", name)
+		}
+		if !found && complete {
 			t.Errorf("%s case: the check reports the output as clean and complete", name)
+		}
+	}
+	// Output that stops inside an open object or array, with no secret.
+	for _, output := range []string{`{"a":1`, `[1,2`, `{"note":`} {
+		if _, found, complete := findSecret([]byte(output), forms); found || complete {
+			t.Errorf("%q: found %t, complete %t, want found false and complete false", output, found, complete)
 		}
 	}
 }

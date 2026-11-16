@@ -125,20 +125,31 @@ func findSecret(output []byte, forms []secretForm) (source string, found, comple
 // token, and returns every string token: each object key and each string
 // value. A token scan keeps each member of an object, also a duplicate member
 // that a decoded map would lose. complete is false when output holds text
-// that is not JSON, or a JSON value that does not end.
+// that is not JSON, or a JSON value that does not end. The scan counts the
+// open objects and arrays, because the decoder reports end of file without
+// an error when output stops between tokens inside an open value.
 func jsonStringTokens(output []byte) ([]string, bool) {
 	var values []string
+	depth := 0
 	decoder := json.NewDecoder(bytes.NewReader(output))
 	for {
 		token, err := decoder.Token()
 		if errors.Is(err, io.EOF) {
-			return values, true
+			return values, depth == 0
 		}
 		if err != nil {
 			return values, false
 		}
-		if value, ok := token.(string); ok {
+		switch value := token.(type) {
+		case string:
 			values = append(values, value)
+		case json.Delim:
+			switch value {
+			case '{', '[':
+				depth++
+			case '}', ']':
+				depth--
+			}
 		}
 	}
 }
