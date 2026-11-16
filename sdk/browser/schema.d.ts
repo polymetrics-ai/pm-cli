@@ -1618,7 +1618,7 @@ export interface components {
         };
     };
     responses: {
-        /** @description Device login conflict. A device_authorization_pending answer carries Retry-After; a login_challenge_used answer does not. */
+        /** @description Device login conflict. A device_authorization_pending answer carries Retry-After. A login_challenge_used answer does not. */
         DevicePoll409: {
             headers: {
                 "Retry-After": components["headers"]["DevicePollRetryAfter"];
@@ -1628,7 +1628,7 @@ export interface components {
                 "application/problem+json": components["schemas"]["Problem"];
             };
         };
-        /** @description Device login limit. A device_poll_too_soon answer carries Retry-After; an authentication_rate_limited answer does not. */
+        /** @description Device login limit. A device_poll_too_soon answer carries Retry-After. An authentication_rate_limited answer does not. */
         DevicePoll429: {
             headers: {
                 "Retry-After": components["headers"]["DevicePollRetryAfter"];
