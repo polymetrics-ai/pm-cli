@@ -23,8 +23,10 @@ const (
 	// killLimit bounds the wait for the exit after SIGKILL, and the two more
 	// bounded waits of the starter.
 	killLimit = 10 * time.Second
-	// buildLimit bounds each go build (source: the #261 build bound,
-	// tests/acceptance/main_test.go:70 at 4be05ea).
+	// buildLimit bounds each go build with its own deadline (source: the #261
+	// build bound, tests/acceptance/main_test.go:70 at 4be05ea). The shared
+	// migration also has its own deadline of this value: the criteria name
+	// four constants, so the migration adds no fifth one.
 	buildLimit = 10 * time.Minute
 )
 
@@ -77,15 +79,15 @@ func newStackHarness(bins binaries, dir string) *stackHarness {
 
 // prepare is the shared build and migration step. It builds pm-server and
 // pm-worker once for the suite. When stack is not nil, it also applies the PM
-// application migrations once for the suite. One deadline, the build limit,
-// bounds each call. A failure stays failed: a later call reports the same
-// error and does not try again.
+// application migrations once for the suite. Each go build waits once, with
+// its own build-limit deadline, created right before that build. The
+// migration waits once, with its own deadline of the build-limit value. A
+// failure stays failed: a later call reports the same error and does not
+// try again.
 func (h *stackHarness) prepare(parent context.Context, stack *stackInputs) error {
-	ctx, cancel := context.WithTimeout(parent, buildLimit)
-	defer cancel()
 	if !h.built {
 		h.built = true
-		h.buildErr = h.build(ctx)
+		h.buildErr = h.build(parent)
 	}
 	if h.buildErr != nil {
 		return fmt.Errorf("the shared build of pm-server and pm-worker failed in this suite: %w", h.buildErr)
@@ -95,12 +97,7 @@ func (h *stackHarness) prepare(parent context.Context, stack *stackInputs) error
 	}
 	if !h.migrated {
 		h.migrated = true
-		// pm-server and pm-worker never migrate. The harness acts as the
-		// operator and applies the PM application migrations with the
-		// migrator role.
-		if err := store.Migrate(ctx, stack.postgres.dsn(store.MigratorRole, stack.postgres.migratorPassword, applicationDatabase)); err != nil {
-			h.migrateErr = fmt.Errorf("migrate the PM application store: %w", err)
-		}
+		h.migrateErr = migrate(parent, *stack)
 	}
 	if h.migrateErr != nil {
 		return fmt.Errorf("the shared migration failed in this suite: %w", h.migrateErr)
@@ -108,13 +105,33 @@ func (h *stackHarness) prepare(parent context.Context, stack *stackInputs) error
 	return nil
 }
 
-func (h *stackHarness) build(ctx context.Context) error {
+func (h *stackHarness) build(parent context.Context) error {
 	var err error
-	if h.server, err = buildBinary(ctx, h.bins, h.dir, "pm-server", "./cmd/pm-server", false); err != nil {
+	if h.server, err = h.buildOne(parent, "pm-server", "./cmd/pm-server"); err != nil {
 		return err
 	}
-	h.worker, err = buildBinary(ctx, h.bins, h.dir, "pm-worker", "./cmd/pm-worker", false)
+	h.worker, err = h.buildOne(parent, "pm-worker", "./cmd/pm-worker")
 	return err
+}
+
+// buildOne runs one go build. It waits once, with its own deadline: the
+// build limit.
+func (h *stackHarness) buildOne(parent context.Context, name, pkg string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, buildLimit)
+	defer cancel()
+	return buildBinary(ctx, h.bins, h.dir, name, pkg, false)
+}
+
+// migrate applies the PM application migrations. pm-server and pm-worker
+// never migrate. The harness acts as the operator and uses the migrator role.
+// It waits once, with its own deadline of the build-limit value.
+func migrate(parent context.Context, stack stackInputs) error {
+	ctx, cancel := context.WithTimeout(parent, buildLimit)
+	defer cancel()
+	if err := store.Migrate(ctx, stack.postgres.dsn(store.MigratorRole, stack.postgres.migratorPassword, applicationDatabase)); err != nil {
+		return fmt.Errorf("migrate the PM application store: %w", err)
+	}
+	return nil
 }
 
 // binary returns the built pm-server or pm-worker. Call prepare first.
