@@ -10,7 +10,10 @@
 #
 # PMCLI_PYTHON names the Python interpreter for the checks (default python3).
 # The macOS git hooks set it. CI ignores it and uses python3.
-# Checks: setup python generate gofmt vet boundaries tools unit.
+# Checks: setup python generate gofmt constraints vet boundaries tools unit.
+# `constraints` fails on each Go build constraint that names the `race` tag,
+# in every tracked Go file. -race sets that tag, so such a file would drop out
+# of the Go test runs without a failure.
 # `vet` runs `go vet ./...` in the root module. The pre-push hook runs it only
 # through this script.
 # `unit` runs `go test -race` of every root-module package outside the stack
@@ -21,7 +24,7 @@
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
-all='setup python generate gofmt vet boundaries tools unit'
+all='setup python generate gofmt constraints vet boundaries tools unit'
 if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
   # shellcheck disable=SC2086
   printf '%s\n' $all
@@ -122,6 +125,36 @@ check_gofmt() {
     printf 'check-docs: these files need gofmt:\n%s\n' "$unformatted" >&2
     return 1
   fi
+}
+
+# The unit run and the stack run use -race, and -race sets the `race` build
+# tag. A file with a constraint such as `//go:build !race` then does not
+# compile, and its tests do not run. A package with no other test files
+# reports "no test files", which is not a failure. So no tracked Go file of
+# any module may have a build constraint that names `race`, in the
+# `//go:build` or the `// +build` form. Each finding names the file and the
+# line. There is no exception list.
+check_constraints() {
+  step 'Go build constraints that name race (every tracked Go file)'
+  # `race` is a whole build tag: no letter, digit, `_` or `.` next to it.
+  race='(.*[^A-Za-z0-9_.])?race([^A-Za-z0-9_.].*)?$'
+  constraints_status=0
+  git grep -n -I -E \
+    -e "^[[:space:]]*//go:build[[:space:]]$race" \
+    -e "^[[:space:]]*//[[:space:]]*\+build[[:space:]]$race" \
+    -- '*.go' > "$work/race-constraints" || constraints_status=$?
+  case "$constraints_status" in
+    0)
+      printf '%s\n' 'check-docs: these Go build constraints name race; -race would skip their files:' >&2
+      sed 's/^/  /' "$work/race-constraints" >&2
+      return 1
+      ;;
+    1) ;;
+    *)
+      printf 'check-docs: git grep failed with exit %s\n' "$constraints_status" >&2
+      return 1
+      ;;
+  esac
 }
 
 # go vet of every root-module package, also the stack packages. Each finding

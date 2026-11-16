@@ -250,7 +250,8 @@ class SetupContracts(unittest.TestCase):
 
 CHECK_DOCS = ROOT / "scripts/ci/check-docs.sh"
 HOOK_LIB = ROOT / "scripts/dev/hook-lib.sh"
-CHECK_NAMES = ["setup", "python", "generate", "gofmt", "vet", "boundaries", "tools", "unit"]
+CHECK_NAMES = ["setup", "python", "generate", "gofmt", "constraints", "vet", "boundaries", "tools",
+               "unit"]
 
 
 class HookCheckSelection(unittest.TestCase):
@@ -364,6 +365,68 @@ class HookCheckSelection(unittest.TestCase):
             importlib.util.find_spec(name) for name in ("tomllib", "yaml", "markdown_it", "mdurl"))
         result = self.lib('"$1" -I -B -c "$pm_python_probe"', sys.executable)
         self.assertEqual(result.returncode == 0, expected, result.stderr)
+
+
+class RaceConstraintCheck(unittest.TestCase):
+    """Developer checks of the `constraints` check of check-docs.sh."""
+
+    def run_check(self, files):
+        # The real script runs in a new Git repository that tracks FILES.
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            script = root / "scripts/ci/check-docs.sh"
+            script.parent.mkdir(parents=True)
+            script.write_bytes(CHECK_DOCS.read_bytes())
+            for name, content in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_text(content)
+            # A git hook exports GIT_DIR, GIT_INDEX_FILE and other GIT_*
+            # variables. With them, git would use the repository of the hook,
+            # not the new one. So no GIT_* variable reaches these commands.
+            env = {name: value for name, value in os.environ.items()
+                   if not name.startswith("GIT_")
+                   and name not in ("GITHUB_ACTIONS", "PMCLI_PYTHON")}
+            subprocess.run(["git", "init", "-q", str(root)], check=True, timeout=30, env=env)
+            subprocess.run(["git", "-C", str(root), "add", "-A"], check=True, timeout=30, env=env)
+            return subprocess.run(["/bin/sh", str(script), "constraints"], cwd=root,
+                                  capture_output=True, text=True, timeout=60, env=env)
+
+    def test_each_constraint_that_names_race_fails_with_its_file_and_line(self):
+        cases = {
+            "go:build not race": "//go:build !race",
+            "go:build race": "//go:build race",
+            "go:build expression": "//go:build linux && (race || cgo)",
+            "go:build tab": "//go:build\t!race",
+            "plus build": "// +build !race",
+            "plus build no space": "//+build linux,race",
+            "plus build list": "// +build cgo !race",
+        }
+        for name, line in cases.items():
+            with self.subTest(case=name):
+                result = self.run_check({"m/a/a_test.go": line + "\n\npackage a\n"})
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertIn("these Go build constraints name race", result.stderr)
+                self.assertIn("  m/a/a_test.go:1:" + line + "\n", result.stderr)
+
+    def test_other_tags_and_text_pass(self):
+        files = {
+            "m/a/a.go": "//go:build linux && cgo\n\npackage a\n",
+            "m/b/b_test.go": "//go:build norace || race_detector || go1.21\n\npackage b\n",
+            "m/c/c.go": "// The race detector runs these tests.\npackage c\n",
+            "race/d.go": "// +build linux\n\npackage race\n",
+            "notes.txt": "//go:build !race\n",
+        }
+        result = self.run_check(files)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("name race", result.stderr)
+
+    def test_every_module_is_checked(self):
+        result = self.run_check({"go.mod": "module m\n",
+                                 "tools/go.mod": "module t\n",
+                                 "tools/x/x_test.go": "//go:build !race\n\npackage x\n"})
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("  tools/x/x_test.go:1://go:build !race\n", result.stderr)
 
 
 REPORT = ROOT / "scripts/ci/go-test-report.py"

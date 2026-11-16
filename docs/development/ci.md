@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. A change that only adds Go files runs no check from `check-docs.sh` in this hook, unless a Go file is under `tools/`, `scripts/` or `build/ci/`. Such a file selects `setup` | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
-| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...` and `go test` of every package that needs no stack, without `-race`. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push, without the `unit` check, because the hook ran those packages already. The `vet` check of `check-docs.sh` runs `go vet ./...`, and the hook does not run `go vet` again. On macOS, it runs these seven checks on the host | A failure stops the push |
+| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...` and `go test` of every package that needs no stack, without `-race`. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push, without the `unit` check, because the hook ran those packages already. The `vet` check of `check-docs.sh` runs `go vet ./...`, and the hook does not run `go vet` again. On macOS, it runs these eight checks on the host | A failure stops the push |
 | CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the stack run of the Go developer tests with the race detector, then the Gherkin acceptance suite in `tests/acceptance` on a fresh stack. Job `checks`: the static checks, `go vet ./...` and the unit run of the Go developer tests with the race detector in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
 
 Install the scanner once per user. Install the hooks once per clone:
@@ -35,7 +35,7 @@ On macOS, the hooks run on the host. The `pre-push` hook, and a `pre-commit` hoo
 
 The hooks select the Python interpreter for `check-docs.sh`. They try `python3`, `python3.13`, `python3.12` and `python3.11` on `PATH`, in that order. They select the first one that is Python 3.11 or later and imports the four modules. The hook prints the version of that interpreter and gives its name to `check-docs.sh` in `PMCLI_PYTHON`. If no interpreter qualifies, the hook prints the prerequisite and stops the commit or push. The hook does not skip the `python` check. Other Python commands still use the first `python3` on `PATH`. Examples are the secret scan, `generate.sh` and `check-boundaries.sh`. CI ignores `PMCLI_PYTHON` and uses `python3`.
 
-The macOS hooks skip no check. The `pre-push` hook runs the unit packages and the other seven checks of the CI `checks` job, and it prints no skip notice.
+The macOS hooks skip no check. The `pre-push` hook runs the unit packages and the other eight checks of the CI `checks` job, and it prints no skip notice.
 
 ## Required developer secret scans
 
@@ -120,12 +120,13 @@ The rule selects the packages, so a new package goes to the unit run with no lis
 
 ## The `checks` check
 
-The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these eight checks:
+The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these nine checks:
 
 - `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
 - `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
 - `generate`: `generate.sh --check` for the API and the connectors.
 - `gofmt`: `gofmt -l` on every tracked Go file.
+- `constraints`: a Go build constraint that names the `race` tag fails the check, in the `//go:build` or the `// +build` form, in every tracked Go file of every module. The output names the file and the line. There is no exception list (see [The race detector](#the-race-detector)).
 - `vet`: `go vet ./...` in the root module, with `CGO_ENABLED=1`. It vets every root-module package, also the stack packages. A finding fails the check. The `pre-push` hook runs `go vet` only through this check.
 - `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
 - `tools`: `go test` for the tools module.
@@ -136,6 +137,8 @@ In CI, the script installs the pinned, checksummed Gitleaks binary into the job 
 ### The race detector
 
 The unit run and the stack run each run one time, with `-race` and `-count=1`. There is no second run without `-race`. The Gherkin run does not use `-race`. A data race that a test finds fails that test, and the report names the test and the package. No package or test is excluded from `-race`.
+
+`-race` sets the `race` build tag. A file with a constraint such as `//go:build !race` is then not compiled, and its tests do not run. A package with no other test files reports `SKIP (no test files)`, which does not fail the run. So the `constraints` check refuses each build constraint that names `race`. The `pre-push` hook runs the same check.
 
 `-race` needs cgo. The two runs set `CGO_ENABLED=1`, and `tools/bootstrap.py exec go` selects the pinned Clang from `build/toolchains.lock.json` as the C compiler and linker. No other compiler is used. The race detector makes the tests slower and uses more memory. The time limits of the two runs did not change.
 
