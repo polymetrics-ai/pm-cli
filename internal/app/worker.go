@@ -2468,16 +2468,10 @@ func workerSettlementContext(
 	heartbeatTimeout time.Duration,
 	transportTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	now := time.Now()
-	deadline := now.Add(transportTimeout)
-	if !acceptedDeadline.IsZero() && acceptedDeadline.Before(deadline) {
-		deadline = acceptedDeadline
-	}
-	if activityDeadline, ok := ctx.Deadline(); ok {
-		activitySettlementDeadline := activityDeadline.Add(-workerSettlementReserve(heartbeatTimeout, transportTimeout))
-		if activitySettlementDeadline.Before(deadline) {
-			deadline = activitySettlementDeadline
-		}
+	deadline := time.Now().Add(transportTimeout)
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	if cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve); ok && cutoff.Before(deadline) {
+		deadline = cutoff
 	}
 	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
 }
@@ -2485,30 +2479,49 @@ func workerSettlementContext(
 // workerPublicationContext bounds the publication of PM's own objects for one
 // unit: the continuation envelope and the result. The transport limit
 // (worker.activity_timeouts.transport) bounds the provider callback only, so
-// this context does not inherit the callback deadline. The publication step
-// ends at the accepted run deadline. It also ends two settlement reserves
-// before the activity attempt deadline, so the settlement that follows keeps
-// one reserve to commit and one reserve before the attempt ends. Each
-// object-store request in the step keeps its own bound,
-// artifacts.execution.request_timeout, in the object-store adapter.
+// this context does not inherit the callback deadline.
+//
+// The step ends one settlement reserve before the settlement cutoff. The cutoff
+// is the earlier of the accepted run deadline and one reserve before the
+// activity attempt deadline. So the settlement that follows always keeps a
+// positive budget of at least one reserve, whichever deadline comes first.
+//
+// Each object-store request in the step keeps its own bound,
+// artifacts.execution.request_timeout, in the object-store adapter. The
+// PostgreSQL bind in objects.Publisher.Upload has no bound of its own. It
+// relies on this context.
+//
+// When ctx has no deadline and the unit has no accepted deadline, the step has
+// no bound of its own. That cannot occur in production. The worker runs
+// ExecuteUnit as a Temporal activity with a StartToClose timeout
+// (internal/workflows/options.go), and contract.ActivityTimeouts.Validate
+// requires that timeout to be positive (internal/contract/workflow.go).
 func workerPublicationContext(
 	ctx context.Context,
 	acceptedDeadline time.Time,
 	heartbeatTimeout time.Duration,
 	transportTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	deadline := acceptedDeadline
-	if activityDeadline, ok := ctx.Deadline(); ok {
-		reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
-		publicationDeadline := activityDeadline.Add(-2 * reserve)
-		if deadline.IsZero() || publicationDeadline.Before(deadline) {
-			deadline = publicationDeadline
-		}
-	}
-	if deadline.IsZero() {
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve)
+	if !ok {
 		return context.WithCancel(ctx)
 	}
-	return context.WithDeadline(ctx, deadline)
+	return context.WithDeadline(ctx, cutoff.Add(-reserve))
+}
+
+// workerSettlementCutoff is the latest time at which a unit settlement may end:
+// the accepted run deadline, or one settlement reserve before the activity
+// attempt deadline, whichever is earlier. ok is false when neither exists.
+func workerSettlementCutoff(ctx context.Context, acceptedDeadline time.Time, reserve time.Duration) (time.Time, bool) {
+	cutoff := acceptedDeadline
+	if activityDeadline, ok := ctx.Deadline(); ok {
+		activityCutoff := activityDeadline.Add(-reserve)
+		if cutoff.IsZero() || activityCutoff.Before(cutoff) {
+			cutoff = activityCutoff
+		}
+	}
+	return cutoff, !cutoff.IsZero()
 }
 
 // workerSettlementReserve is the part of the activity attempt that the worker
