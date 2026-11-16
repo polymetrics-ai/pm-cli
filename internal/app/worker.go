@@ -471,6 +471,7 @@ func (service *WorkerService) ExecuteUnit(
 	stopHeartbeats := startWorkerHeartbeats(ctx, heartbeat, progress, plan.timeouts.Heartbeat)
 	defer stopHeartbeats()
 
+	// A reconcile callback has no accepted run deadline.
 	acceptedDeadline := plan.state.deadline
 	if plan.reconcile {
 		acceptedDeadline = time.Time{}
@@ -483,15 +484,9 @@ func (service *WorkerService) ExecuteUnit(
 	// permit already proves that no send happened, and the settlement records
 	// that fact from the permit alone.
 	if !plan.unadmitted {
-		var callbackCtx context.Context
-		var cancel context.CancelFunc
-		if plan.reconcile {
-			callbackCtx, cancel = context.WithTimeout(ctx, plan.timeouts.Transport)
-		} else {
-			callbackCtx, cancel = workerCallbackContext(
-				ctx, plan.state.deadline, plan.timeouts.Transport,
-			)
-		}
+		callbackCtx, cancel := workerCallbackContext(
+			ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+		)
 		if plan.reconcile {
 			observation, callbackErr = plan.handler.Reconcile(callbackCtx, plan.request)
 		} else {
@@ -2572,14 +2567,32 @@ func minWorkerDuration(left, right time.Duration) time.Duration {
 	return right
 }
 
+// workerCallbackContext bounds the provider callback of one unit: Execute, or
+// Reconcile when acceptedDeadline is zero. The callback ends at the earlier of
+// one transport limit (worker.activity_timeouts.transport) from now and one
+// settlement reserve before the settlement cutoff (workerSettlementCutoff).
+//
+// So a callback that uses its whole bound ends at least one reserve before the
+// settlement deadline, whichever of the accepted run deadline and the activity
+// attempt deadline comes first. The settlement gets that reserve less the time
+// that the callback and the publication step take to return after their
+// deadlines.
+//
+// The publication step (workerPublicationContext) ends at the same time as
+// this bound, so the callback and the publication step share the time before
+// it. A callback that uses its whole bound leaves the publication step no
+// time. The worker then settles the unit with a publication failure, which
+// does not change the provider member outcomes.
 func workerCallbackContext(
 	ctx context.Context,
 	acceptedDeadline time.Time,
-	transport time.Duration,
+	heartbeatTimeout time.Duration,
+	transportTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(transport)
-	if acceptedDeadline.Before(deadline) {
-		deadline = acceptedDeadline
+	deadline := time.Now().Add(transportTimeout)
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	if cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve); ok && cutoff.Add(-reserve).Before(deadline) {
+		deadline = cutoff.Add(-reserve)
 	}
 	return context.WithDeadline(ctx, deadline)
 }
@@ -2606,10 +2619,9 @@ func workerSettlementContext(
 // The step ends one settlement reserve before the settlement cutoff. The cutoff
 // is the earlier of the accepted run deadline and one reserve before the
 // activity attempt deadline. So the publication step does not use the reserve
-// that it leaves for the settlement, whichever deadline comes first. This is a
-// nominal separation only. The provider callback can run until the accepted
-// run deadline (workerCallbackContext), so a late callback can leave the
-// settlement less than one reserve, or none. Issue #281 owns that gap.
+// that it leaves for the settlement, whichever deadline comes first. The bound
+// of the provider callback (workerCallbackContext) ends no later than the
+// bound of this step, so a late callback does not use that reserve either.
 //
 // Each object-store request in the step keeps its own bound,
 // artifacts.execution.request_timeout, in the object-store adapter. The
