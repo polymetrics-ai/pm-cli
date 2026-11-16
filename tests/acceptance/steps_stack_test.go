@@ -16,20 +16,23 @@ import (
 
 	"github.com/cucumber/godog"
 
+	"github.com/polymetrics-ai/pm-cli/tests/keyring"
 	"github.com/polymetrics-ai/pm-cli/tests/starter"
 )
 
 const laneCommandTimeout = 60 * time.Second
 
 // stackScenario is the state of one scenario that uses the shared steps: its
-// deployment configuration, the processes that the starter started, and the
-// shared result state of the last pm command.
+// deployment configuration, the processes that the starter started, the pm
+// client HOME and private keyring, and the shared result state of the last pm
+// command.
 type stackScenario struct {
 	harness    *stackHarness
 	deployment *deployment
 	processes  map[string]*startedProcess
 	runDir     string
 	home       string
+	keyring    *keyring.Keyring
 	workspace  string
 	result     commandResult
 }
@@ -309,7 +312,8 @@ func (s *stackScenario) runDirectory() (string, error) {
 }
 
 // close runs the stop sequence for each started process that the starter has
-// not finished, closes the deployment and removes the scenario directories.
+// not finished, closes the deployment, stops the private keyring and removes
+// its directory, and removes the scenario directories.
 // A process that the stop sequence stopped, but not with exit code 0 after
 // SIGTERM, is an error. A process that exited by itself is not: the steps
 // check it.
@@ -328,6 +332,7 @@ func (s *stackScenario) close() error {
 	if s.deployment != nil {
 		errs = append(errs, s.deployment.close())
 	}
+	errs = append(errs, s.keyring.Stop())
 	for _, directory := range []string{s.runDir, s.home} {
 		if directory != "" {
 			errs = append(errs, os.RemoveAll(directory))
@@ -337,9 +342,10 @@ func (s *stackScenario) close() error {
 }
 
 // addServerProfile adds a pm server profile for the deployment with the real
-// pm binary, in a new HOME for this scenario. It also selects a new workspace
-// ID for the scenario. The server never creates that workspace unless a
-// scenario runs an authenticated command.
+// pm binary, in a new HOME for this scenario. With the HOME, it starts the
+// private keyring of the scenario's pm client and selects a new workspace ID
+// for the scenario. The server never creates that workspace unless a scenario
+// runs an authenticated command.
 func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d *deployment) error {
 	if s.home == "" {
 		home, err := os.MkdirTemp("", "pm-acceptance-stack-home-")
@@ -348,6 +354,9 @@ func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d 
 		}
 		s.home = home
 		s.workspace = "acceptance-workspace-" + randomHex(6)
+		if s.keyring, err = startKeyring(ctx); err != nil {
+			return err
+		}
 	}
 	code, stdout, stderr, err := s.runPM(ctx, d.caFile, []string{
 		"server", "profiles", "add", profile,
@@ -385,13 +394,34 @@ func (s *stackScenario) runAgainst(ctx context.Context, line, profile string, d 
 	return nil
 }
 
+// startKeyring starts the private Secret Service of the scenario's pm
+// client. Its directory is in the job directory, RUNNER_TEMP, and the stop
+// step removes it (D1-10). The start checks the owner of
+// org.freedesktop.secrets (D1-11). The start waits use the start limit.
+func startKeyring(ctx context.Context) (*keyring.Keyring, error) {
+	job := os.Getenv("RUNNER_TEMP")
+	if !filepath.IsAbs(job) {
+		return nil, errors.New("RUNNER_TEMP must name the job directory: run the @stack scenarios through scripts/ci/check-bdd.sh")
+	}
+	started, err := keyring.Start(job, keyring.Limits{Start: startLimit, Stop: stopLimit, Kill: killLimit})
+	if err != nil {
+		return nil, err
+	}
+	godog.Logf(ctx, "private keyring: org.freedesktop.secrets is owned by the keyring daemon that the harness started (process %d)", started.KeyringPID())
+	return started, nil
+}
+
 // runPM runs the built pm binary with the scenario HOME. SSL_CERT_FILE makes
-// the deployment CA the only trusted root of this pm process.
+// the deployment CA the only trusted root of this pm process. The pm process
+// is the only process that gets the private bus address of the keyring.
 func (s *stackScenario) runPM(parent context.Context, caFile string, args []string) (int, string, string, error) {
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, s.harness.bins.pm, args...)
 	command.Env = []string{"HOME=" + s.home, "PATH=/usr/bin:/bin", "LANG=C", "SSL_CERT_FILE=" + caFile}
+	if s.keyring != nil {
+		command.Env = append(command.Env, s.keyring.Environment()...)
+	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
