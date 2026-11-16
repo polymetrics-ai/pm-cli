@@ -109,7 +109,7 @@ func serve(ctx context.Context, configurationPath, secretsDirectory string, diag
 	if err != nil {
 		return errors.New("configured server listener is unavailable")
 	}
-	return application.Serve(ctx, listener)
+	return application.Serve(ctx, listener, nil)
 }
 
 type singleStringFlag struct {
