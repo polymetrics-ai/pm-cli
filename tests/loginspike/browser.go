@@ -152,8 +152,8 @@ func (r pmResponse) problemCode() string {
 		Code  string `json:"code"`
 		Title string `json:"title"`
 	}
-	if json.Unmarshal(r.body, &problem) == nil {
-		return problem.Code
+	if json.Unmarshal(r.body, &problem) == nil && problem.Code != "" {
+		return problem.Code + ": " + problem.Title
 	}
 	return ""
 }
@@ -163,10 +163,13 @@ func (b *pmBrowser) post(path string, body any, headers map[string]string) (pmRe
 	if err != nil {
 		return pmResponse{}, err
 	}
+	// Run 2 cleared this buffer before the send. bytes.NewReader shares it, so
+	// PM received zero bytes as the JSON body and answered invalid_request.
+	// Clear it only after the request is complete.
+	defer clear(encoded)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, b.origin+path, bytes.NewReader(encoded))
-	clear(encoded)
 	if err != nil {
 		return pmResponse{}, err
 	}
@@ -236,6 +239,23 @@ func (b *pmBrowser) approveDevice(challengeID, userCode string) (pmResponse, err
 	return b.post("/v1/sessions/device/approve",
 		map[string]string{"challenge_id": challengeID, "user_code": userCode},
 		map[string]string{"X-CSRF-Token": b.cookie("__Host-pm_csrf")})
+}
+
+// page reads one browser page of the PM origin and returns its status and body.
+func (b *pmBrowser) page(path string) (int, []byte) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, b.origin+path, nil)
+	if err != nil {
+		return 0, nil
+	}
+	response, err := b.client.Do(request)
+	if err != nil {
+		return 0, nil
+	}
+	defer response.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(response.Body, 1<<20))
+	return response.StatusCode, body
 }
 
 // storeCredential is the request that the browser credential page

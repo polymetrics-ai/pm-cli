@@ -11,8 +11,13 @@ import (
 const spikeLabel = "ai.polymetrics.pm-login-spike"
 
 // previousSpikeImages are the spike CI image tags of earlier spike runs. Run 1
-// (98c363c) built localhost/pmcli-ci:94299bba324a71d55e10d959c22955bc.
-var previousSpikeImages = []string{"localhost/pmcli-ci:94299bba324a71d55e10d959c22955bc"}
+// (98c363c) built localhost/pmcli-ci:94299bba324a71d55e10d959c22955bc and run 2
+// (157e2c3) built localhost/pmcli-ci:2f8a51d64bafdce9333782d80f3c9707. The
+// cleanup skips the tag that the running job container uses.
+var previousSpikeImages = []string{
+	"localhost/pmcli-ci:94299bba324a71d55e10d959c22955bc",
+	"localhost/pmcli-ci:2f8a51d64bafdce9333782d80f3c9707",
+}
 
 // show runs one engine command through the job's engine socket and prints the
 // command, each output line and the exit result.

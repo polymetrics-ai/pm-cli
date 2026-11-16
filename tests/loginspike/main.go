@@ -233,6 +233,8 @@ func runCandidate(c candidate, stack stackInputs, work string, k *keyring, pm, p
 	} else {
 		report.FAIL(id+".pm.device", "not run: no private keyring")
 	}
+	status, page := browser.page("/admin/credentials")
+	report.check(id+".w2.page", status == 200 && strings.Contains(string(page), "credentials.js"), "the browser credential page /admin/credentials is served (status %d); the spike sends the same request as its script", status)
 	if tokens.file != nil {
 		response, err := browser.storeCredential(value.workspaceID, value.connectionID, tokens.file)
 		stored := err == nil && response.status == 200 && findString(response.body, "status") == "active"
