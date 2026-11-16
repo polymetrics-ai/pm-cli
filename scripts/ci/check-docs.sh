@@ -1,6 +1,8 @@
 #!/bin/sh
-# Static repository checks for the `checks` CI job and the git hooks. They run
-# no behavior test: the Gherkin suite (`bdd`) is the only behavior gate.
+# Static repository checks and the Go unit run for the `checks` CI job and the
+# git hooks. They run no behavior test: the Gherkin suite (`bdd`) is the only
+# behavior gate. The `unit` check runs Go developer tests. They are developer
+# checks, never acceptance proof of PM behavior.
 #
 #   check-docs.sh            run every check below
 #   check-docs.sh NAME...    run only the named checks (the git hooks use this)
@@ -8,13 +10,21 @@
 #
 # PMCLI_PYTHON names the Python interpreter for the checks (default python3).
 # The macOS git hooks set it. CI ignores it and uses python3.
-# Checks: setup python generate gofmt boundaries tools.
+# Checks: setup python generate gofmt constraints vet boundaries tools unit.
+# `constraints` fails on each Go build constraint that names the `race` tag,
+# in every tracked Go file. -race sets that tag, so such a file would drop out
+# of the Go test runs without a failure.
+# `vet` runs `go vet ./...` in the root module. The pre-push hook runs it only
+# through this script.
+# `unit` runs `go test -race` of every root-module package outside the stack
+# list (scripts/ci/go-packages.sh). The pre-push hook runs the same packages
+# itself, without -race, and does not select `unit`.
 # CI and the Linux git hooks run this script inside the pinned job image
 # (scripts/ci/in-ci-image.sh). See docs/development/ci.md.
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
-all='setup python generate gofmt boundaries tools'
+all='setup python generate gofmt constraints vet boundaries tools unit'
 if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
   # shellcheck disable=SC2086
   printf '%s\n' $all
@@ -117,6 +127,44 @@ check_gofmt() {
   fi
 }
 
+# The unit run and the stack run use -race, and -race sets the `race` build
+# tag. A file with a constraint such as `//go:build !race` then does not
+# compile, and its tests do not run. A package with no other test files
+# reports "no test files", which is not a failure. So no tracked Go file of
+# any module may have a build constraint that names `race`, in the
+# `//go:build` or the `// +build` form. Each finding names the file and the
+# line. There is no exception list.
+check_constraints() {
+  step 'Go build constraints that name race (every tracked Go file)'
+  # `race` is a whole build tag: no letter, digit, `_` or `.` next to it.
+  race='(.*[^A-Za-z0-9_.])?race([^A-Za-z0-9_.].*)?$'
+  constraints_status=0
+  git grep -n -I -E \
+    -e "^[[:space:]]*//go:build[[:space:]]$race" \
+    -e "^[[:space:]]*//[[:space:]]*\+build[[:space:]]$race" \
+    -- '*.go' > "$work/race-constraints" || constraints_status=$?
+  case "$constraints_status" in
+    0)
+      printf '%s\n' 'check-docs: these Go build constraints name race; -race would skip their files:' >&2
+      sed 's/^/  /' "$work/race-constraints" >&2
+      return 1
+      ;;
+    1) ;;
+    *)
+      printf 'check-docs: git grep failed with exit %s\n' "$constraints_status" >&2
+      return 1
+      ;;
+  esac
+}
+
+# go vet of every root-module package, also the stack packages. Each finding
+# fails the check. The pre-push hook does not run go vet itself; it selects
+# this check.
+check_vet() {
+  step 'go vet ./... (root module)'
+  CGO_ENABLED=1 pgo vet ./...
+}
+
 check_boundaries() {
   step 'check-boundaries.sh'
   sh scripts/check-boundaries.sh
@@ -125,6 +173,48 @@ check_boundaries() {
 check_tools() {
   step 'go test (tools module)'
   CGO_ENABLED=0 pgo -C tools test -count=1 -timeout 10m ./...
+}
+
+# The unit run: Go developer tests of every root-module package that is not in
+# scripts/ci/stack-packages.txt and not excluded. The packages are selected by
+# rule, so a new package runs here with no list edit. A failed or skipped test
+# fails the check. A package with no test files is not a test skip. The report
+# lists each package with its result and time, in the log and, in CI, in the
+# job summary. go-test-report.py --expect fails the check when a selected
+# package has no result or more than one result, or when the stream is empty.
+# The command uses no -run and no build-tag filter, and go-test-report.py
+# refuses one. The -timeout bounds each test binary. --timeout stops the
+# whole run after 10 minutes and still reports, inside the 17-minute step
+# limit of the `checks` job.
+# The run uses the race detector (-race). A data race fails the test that
+# found it. -race needs cgo, so CGO_ENABLED=1 and the pinned Clang that
+# tools/bootstrap.py selects build the test binaries.
+check_unit() {
+  step 'go test -race (unit run: root-module packages outside the stack list)'
+  # shellcheck source=scripts/ci/go-packages.sh disable=SC1091
+  . scripts/ci/go-packages.sh
+  module=$(pgo list -m)
+  CGO_ENABLED=1 pgo list ./... > "$work/go-packages"
+  sed "s#^$module#.#" "$work/go-packages" > "$work/go-packages-relative"
+  pm_drop_stack_packages < "$work/go-packages-relative" > "$work/unit-packages"
+  if [ ! -s "$work/unit-packages" ]; then
+    printf '%s\n' 'check-docs: the unit run selected no package' >&2
+    return 1
+  fi
+  printf 'check-docs: unit run packages (%s):\n' "$(wc -l < "$work/unit-packages" | tr -d ' ')"
+  sed 's/^/  /' "$work/unit-packages"
+  sed "s#^\.#$module#" "$work/unit-packages" > "$work/unit-expected"
+  set -- --output "$work/go-test-unit.json" --fail-on-skip \
+    --expect "$work/unit-expected" --timeout 600 \
+    --title 'Go developer tests: unit run (checks job). Developer checks, not acceptance proof.'
+  if [ "${GITHUB_ACTIONS:-}" = true ]; then
+    set -- "$@" --summary-file "${GITHUB_STEP_SUMMARY:?GitHub job summary file required}"
+  fi
+  # Word splitting of the package list is intended; package paths have no spaces.
+  # shellcheck disable=SC2046
+  "$py" -I -B scripts/ci/go-test-report.py "$@" -- \
+    env CGO_ENABLED=1 "$py" tools/bootstrap.py exec go -- \
+    test -json -race -count=1 -timeout 10m $(cat "$work/unit-packages")
 }
 
 tools=
