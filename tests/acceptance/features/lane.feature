@@ -14,3 +14,9 @@ Feature: The acceptance lane runs the real PM processes on the job-owned stack
     Then the lane command exits with code 0
     And the lane command stdout contains the lane deployment ID
     And the observer reads the lane server information through its own HTTPS client, and its instance ID equals the instance ID in the lane command stdout
+
+  Scenario: The CLI refuses a command without a PM session, and the PM run and audit tables gain no row
+    When I run "pm runs list" against the lane server
+    Then the lane command exits with code 3
+    And the lane command stderr contains "PM session is required"
+    And the observer sees no new row in the PM run and audit tables
