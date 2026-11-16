@@ -118,6 +118,11 @@ EXPECTED_IMAGES: dict[str, dict[str, str]] = {
         "tag": "2.11.4",
         "index_digest": "sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017",
     },
+    "keycloak": {
+        "repository": "docker.io/keycloak/keycloak",
+        "tag": "26.8.1",
+        "index_digest": "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332",
+    },
     "postgres": {
         "repository": "docker.io/library/postgres",
         "tag": "16.15",
