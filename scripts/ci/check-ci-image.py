@@ -8,7 +8,9 @@ keyring daemon.
 
 The check fails when one of these items is false:
 - Each package of build/ci/keyring-packages.txt is installed at its version.
-- dbus-x11 is not installed, and no dbus-launch file is on a binary path.
+- dbus-x11 is not installed. No file or link named dbus-launch is in a
+  binary directory, in a directory of the runtime PATH, or anywhere in the
+  whole-root walk below.
 - /usr/bin/dbus-daemon and /usr/bin/gnome-keyring-daemon are executable
   regular files of the packages dbus-daemon and gnome-keyring.
 - No D-Bus service file names org.freedesktop.secrets or starts
@@ -43,8 +45,10 @@ BINARIES = {"/usr/bin/dbus-daemon": "dbus-daemon",
             "/usr/bin/gnome-keyring-daemon": "gnome-keyring"}
 ABSENT_PACKAGES = ("dbus-x11",)
 ABSENT_FILE = "dbus-launch"
-BINARY_DIRECTORIES = ("/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin",
-                      "/bin", "/sbin", "/usr/libexec", "/opt/pmcli/bin")
+# The image PATH (build/ci/Dockerfile ENV PATH) and /usr/libexec. The runtime
+# PATH is added when the check runs.
+BINARY_DIRECTORIES = ("/opt/pmcli/venv/bin", "/opt/pmcli/bin", "/usr/local/sbin", "/usr/local/bin",
+                      "/usr/sbin", "/usr/bin", "/sbin", "/bin", "/usr/libexec")
 SERVICE_DIRECTORIES = ("/usr/share/dbus-1", "/usr/local/share/dbus-1", "/etc/dbus-1")
 SECRETS_NAME = "org.freedesktop.secrets"
 KEYRING_DAEMON = "gnome-keyring-daemon"
@@ -121,8 +125,16 @@ def installed_packages():
     return packages
 
 
-def check_packages(record, installed, binary_directories=BINARY_DIRECTORIES):
+def launcher_directories():
+    """Return BINARY_DIRECTORIES and each directory of the runtime PATH."""
+    runtime = [entry for entry in os.environ.get("PATH", "").split(":") if entry]
+    return tuple(dict.fromkeys((*BINARY_DIRECTORIES, *runtime)))
+
+
+def check_packages(record, installed, binary_directories=None):
     start = len(failures)
+    if binary_directories is None:
+        binary_directories = launcher_directories()
     for name, version in record.items():
         have = installed.get(name)
         if have is None:
@@ -200,15 +212,16 @@ def can_access(path, mode):
 def scan_privileges(root="/", capability=read_capability):
     """Walk the file system of root on its own device, as `find -xdev`.
 
-    Return (setid, closed, searchable, count): the setuid and setgid regular
-    files as {path: "MODE UID:GID"}, the directories that the job user cannot
-    search, the directories that the job user can search but the walk cannot
-    list, and the number of regular files. A file with a capability, or with an
+    Return (setid, closed, searchable, launchers, count): the setuid and
+    setgid regular files as {path: "MODE UID:GID"}, the directories that the
+    job user cannot search, the directories that the job user can search but
+    the walk cannot list, each file, link or directory named dbus-launch, and
+    the number of regular files. A file with a capability, or with an
     unknown capability state, is a failure. Paths are absolute in the image, so
     root can be a fixture directory.
     """
     device = os.lstat(root).st_dev
-    setid, closed, searchable, count = {}, set(), set(), 0
+    setid, closed, searchable, launchers, count = {}, set(), set(), set(), 0
 
     def image_path(path):
         relative = os.path.relpath(path, root)
@@ -221,6 +234,9 @@ def scan_privileges(root="/", capability=read_capability):
             closed.add(image_path(error.filename))
 
     for current, directories, names in os.walk(root, onerror=unreadable):
+        for name in (*directories, *names):
+            if name == ABSENT_FILE:
+                launchers.add(image_path(os.path.join(current, name)))
         kept = []
         for name in directories:
             path = os.path.join(current, name)
@@ -255,12 +271,14 @@ def scan_privileges(root="/", capability=read_capability):
                 continue
             if has_capability:
                 fail(f"{image_path(path)} has a file capability")
-    return setid, closed, searchable, count
+    return setid, closed, searchable, launchers, count
 
 
 def check_privileges(recorded, recorded_closed, root="/", capability=read_capability):
     start = len(failures)
-    setid, closed, searchable, count = scan_privileges(root, capability)
+    setid, closed, searchable, launchers, count = scan_privileges(root, capability)
+    for path in sorted(launchers):
+        fail(f"{path} exists")
     for path in sorted(searchable):
         fail(f"{path}: the job user can search it, but the walk cannot list it, "
              "so a privileged file in it is not checked")
@@ -282,7 +300,7 @@ def check_privileges(recorded, recorded_closed, root="/", capability=read_capabi
         if not stat.S_ISDIR(information.st_mode) or information.st_mode & 0o001:
             fail(f"closed directory {path}: recorded in {PRIVILEGED.name}, but it is not a directory "
                  f"that denies search to others ({stat.filemode(information.st_mode)})")
-    passed(start, f"{count} regular files on the root file system checked: no file capability; "
+    passed(start, f"{count} regular files on the root file system checked: no file capability; no {ABSENT_FILE}; "
                   f"{len(setid)} setuid or setgid files match {PRIVILEGED.name}; "
                   f"{len(closed)} directories the job user cannot search, all recorded closed")
 

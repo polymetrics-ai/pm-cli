@@ -187,6 +187,21 @@ class CheckCiImage(unittest.TestCase):
                                           root=str(self.root), capability=no_capability)
         self.assert_failed_without_pass(failures, output, "/root: the job user can search it")
 
+    # Review #pr-333 brahmagupta F2 at 3786ed9: dbus-launch in a directory on
+    # the image PATH that the fixed directory list did not name.
+    def test_dbus_launch_anywhere_in_the_walk_fails(self):
+        self.file("opt/pmcli/venv/bin/dbus-launch", 0o755)
+        failures, output = self.run_check(check.check_privileges, {}, set(),
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "/opt/pmcli/venv/bin/dbus-launch exists")
+
+    def test_the_launcher_search_covers_the_image_path(self):
+        dockerfile = (ROOT / "build/ci/Dockerfile").read_text()
+        line = next(line for line in dockerfile.splitlines() if line.startswith("ENV PATH="))
+        image_path = line.split("=", 1)[1].split()[0].split(":")
+        missing = [entry for entry in image_path if entry not in check.BINARY_DIRECTORIES]
+        self.assertEqual(missing, [], "BINARY_DIRECTORIES must cover the image PATH")
+
 
 if __name__ == "__main__":
     unittest.main()
