@@ -32,6 +32,7 @@ go_library(
         "run_inputs.go",
         "run_views.go",
         "runs.go",
+        "schema_discoveries.go",
         "scope.go",
         "secrets.go",
         "settlements.go",

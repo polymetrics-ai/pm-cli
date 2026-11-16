@@ -23,6 +23,7 @@ go_library(
         "revocation.go",
         "runs.go",
         "runtime.go",
+        "schema_discovery.go",
         "service_accounts.go",
         "sql_composition.go",
         "worker.go",
@@ -65,6 +66,8 @@ go_test(
         "load_boundary_test.go",
         "physical_boundary_test.go",
         "provider_http_tls_test.go",
+        "schema_discovery_internal_test.go",
+        "schema_discovery_test.go",
         "sql_composition_test.go",
         "worker_plan_test.go",
         "worker_results_test.go",
@@ -119,6 +122,18 @@ go_test(
     srcs = ["worker_runtime_test.go"],
     embed = [":app"],
     deps = ["//internal/credentials"],
+)
+
+go_test(
+    name = "schema_discovery_internal_test",
+    srcs = ["schema_discovery_internal_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/contract",
+        "//internal/runtime",
+        "//internal/schema",
+        "//internal/store",
+    ],
 )
 
 go_test(
