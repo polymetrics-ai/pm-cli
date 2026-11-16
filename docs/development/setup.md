@@ -154,6 +154,37 @@ An unconfirmed credential response is not a refusal. The page treats only HTTP 4
 
 `/health/live` can report the process live, but `/health/ready` remains HTTP 503 with dispatch false even when the PostgreSQL admission probe succeeds. The production handler registry composes only the connector bundles a deployment declares in `connectors.bundles`; a deployment that declares none registers no provider callback, so invocation submission returns unavailable capability rather than fabricating accepted work. The [admission checks](testing.md#authenticated-admission-and-run-controls-m4) register an explicit fixture capability; the [handoff checks](testing.md#temporal-handoff-and-projection-m4) exercise real PostgreSQL and Temporal. Neither makes this process a ready provider-execution backend.
 
+### Ready signal for a starter
+
+A starter can ask `pm-server` for one ready signal ([ADR 0005](../decisions/0005-process-ready-signal.md)). It passes `--ready-fd <n>`:
+
+```text
+--ready-fd fd   write one ready line to inherited descriptor fd (3 or more), then close it
+```
+
+- The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. Without the flag, `pm-server` sends no signal.
+- Descriptor `n` must be the write end of a pipe that the starter made, with no close-on-exec flag. `pm-server` keeps it in one handle and sets close-on-exec on that handle.
+- `pm-server` is ready when its admission probe passed, its state is serving and its HTTP accept loop calls Accept for the first time. Then it writes `pm-server ready` and one line feed in one write, apart from the serving path, and closes the handle. The write has no deadline: the signal waits until the starter reads. A start that fails before it is ready sends no signal, so the starter reads end of file with no data.
+- If the write fails, `pm-server` writes `pm-server: the ready signal write failed. The process continues.` on standard error once. It continues, and its exit code does not change.
+
+A refusal stops `pm-server` with exit code 1, one line on standard error and no signal, before it opens its configuration:
+
+| Order | Case | Standard error line |
+| --- | --- | --- |
+| 1, while the flags are read | `--ready-fd` is the last argument and has no value | `pm-server: flag needs an argument: --ready-fd` |
+| 1, while the flags are read | A second `--ready-fd` | `pm-server: invalid argument "<value>" for "--ready-fd" flag: --ready-fd may be supplied exactly once` |
+| 1, while the flags are read | A value that breaks the value rule | `pm-server: invalid argument "<value>" for "--ready-fd" flag: --ready-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | A descriptor that is not open for writing, or that has close-on-exec set | `pm-server: --ready-fd requires an inherited descriptor that is open for writing` |
+
+The starter must do these things:
+
+- Give `pm-server` only the write end of the pipe as descriptor `n`, and make sure that no other process that it starts holds that write end.
+- Close its own copy of the write end after the start. If it does not, end of file never comes.
+- Read the pipe until the line or end of file comes, with one time limit that the starter owns.
+- Read each pipe that it gives as standard output or standard error, or give a destination that cannot fill, for example a file. A full pipe blocks each write of the process.
+
+A supervisor of `pm-server` has this minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM. It bounds its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
+
 ### Scoped event streams and artifact boundaries
 
 `GET /v1/workspaces/{workspace_id}/runs/{run_id}/events` serves authenticated SSE. Both `run.read` and `event.read` must authorize the parent run before event disclosure, and polling rechecks current authority. Foreign scopes and runs remain concealed. The stream begins with an authoritative `snapshot`; committed `run_event` frames follow in durable sequence order. Sequences, state revisions and safe-payload counts are decimal strings, including values beyond JavaScript's exact integer range.
@@ -199,6 +230,52 @@ These are placeholder paths, not a runnable deployment. The complete server conf
 `task_queue` must be `pm-control` and appear in `temporal.task_queues`. Dial and drain timeouts must be positive and at most five minutes; each concurrency bound must be 1–65,536. The nested timeouts require `schedule_to_close > start_to_close > 0`, with positive `heartbeat` and `transport` both below `start_to_close`. Schedule-to-close cannot exceed `limits.run_lifetime`. The Go validator enforces these relational constraints in addition to the JSON Schema's closed shape.
 
 The worker opens the configured application PostgreSQL endpoint and authenticated Temporal client from the confined operator secret bundles. It uses `pm-app-endpoint` and Temporal `ca.pem`, `client.pem`, and `client-key.pem`; it does not provision dependencies, migrate the store, or perform OIDC discovery. Workflow and activity polling share one SDK client. Shutdown stops the worker before closing the client and application resources, without cancelling accepted durable runs.
+
+#### Ready signal of `pm-worker`
+
+A starter can ask `pm-worker` for one ready signal on an inherited descriptor. [Decision 0005](../decisions/0005-process-ready-signal.md) is the contract. The `--help` line is:
+
+```text
+--ready-fd fd   write one ready line to inherited descriptor fd (3 or more), then close it
+```
+
+The value of `--ready-fd` has only the ASCII digits 0-9 and no leading zero. It fits in a 32-bit signed int and is 3 or more. "The int maximum" in the refusal text is 2147483647. The flag may appear once. Without the flag, `pm-worker` sends no signal.
+
+`pm-worker` is ready only while its context is not done. It is ready when these steps passed, in this order:
+
+1. After the dial, `pm-worker` called GetSystemInfo once and DescribeNamespace once for the configured namespace, with no retry options. Only a success answer passes. The DescribeNamespace answer must name the configured namespace.
+2. `pm-worker` registered its workflows and activities in its own SDK worker.
+3. The Temporal worker start returned without an error.
+
+Then `pm-worker` writes `pm-worker ready` and one line feed in one write, and it closes the descriptor. The write runs apart from the work and the stop. It has no time limit, so the signal waits until the starter reads. The signal does not say that Temporal lists the poller or answered a poll. When the write fails, `pm-worker` writes `pm-worker: the ready signal write failed. The process continues.` on stderr once. It continues, and its exit code does not change.
+
+Each refusal stops `pm-worker` with exit code 1, one stderr line and no signal, before it opens the configuration. The checks come in this order:
+
+| Order | Case | Stderr line |
+| --- | --- | --- |
+| 1, while `pm-worker` reads its flags | `--ready-fd` is the last argument and has no value | `pm-worker: flag needs an argument: --ready-fd` |
+| 1, while `pm-worker` reads its flags | A second `--ready-fd` | `pm-worker: invalid argument "<value>" for "--ready-fd" flag: --ready-fd may be supplied exactly once` |
+| 1, while `pm-worker` reads its flags | A value that breaks the value rule | `pm-worker: invalid argument "<value>" for "--ready-fd" flag: --ready-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | A descriptor that is not open for writing, or that has close-on-exec set at the check | `pm-worker: --ready-fd requires an inherited descriptor that is open for writing` |
+
+The flag parser owns the missing-value text and the `invalid argument` prefix. A parser upgrade can change them.
+
+Ready step 1 has its own failure texts. The text depends on the call, not on the status code:
+
+- A failed dial or a failed GetSystemInfo call: `pm-worker: Temporal worker dependency is unavailable`.
+- A failed DescribeNamespace call, or an answer that names another namespace: `pm-worker: Temporal namespace is unavailable`. A namespace that does not exist takes this path.
+
+Each other result, also "not implemented", stops the start with exit code 1 and no signal. The dial and the two calls finish within `worker.dial_timeout`, counted from the start of the dial. `pm-worker` does not retry them, so a short transient error stops the start. A `pm-worker` that its starter stops before it is ready sends no signal, and its exit code does not change.
+
+The starter must do these steps:
+
+- Give `pm-worker` only the write end of a pipe as the descriptor.
+- Make sure that no other process that it starts holds that write end.
+- Close its own copy of the write end after the start. Otherwise it never reads end of file.
+- Read the pipe until the line or end of file comes, with one time limit that the starter owns.
+- Read each pipe that it gives as stdout or stderr, or give a destination that cannot fill, for example a file.
+
+A supervisor of `pm-worker` has a minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM, and its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
 
 At each new physical-unit boundary, the worker checks the accepted durable grant against current connection, principal and grant authority. Login-session expiry alone does not revoke accepted work. PostgreSQL account permits are shared across worker instances and connection aliases; authorization checks database-time expiry before committing a new attempt. An expired reservation is not renewed and dispatched in the same acquisition. Workspace admission budgets remain independent. These are the bounded [grant and permit checks](testing.md#current-grants-and-shared-account-permits-m4), not a measured fairness guarantee.
 

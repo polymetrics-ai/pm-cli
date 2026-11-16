@@ -35,7 +35,8 @@ func pmgenRepositoryRoot() (string, error) {
 	return root, nil
 }
 
-// pmgenBinary builds ./cmd/pmgen with CGO_ENABLED=0 and the go tool on PATH.
+// pmgenBinary builds ./cmd/pmgen with CGO_ENABLED=0 and the go tool on PATH,
+// with the build limit.
 // The binary goes to the ignored .cache directory of the checkout, so a new run
 // replaces it. CI sets TMPDIR to a persistent cache, so a new temporary
 // directory for each run would stay there.
@@ -56,12 +57,11 @@ func pmgenBinary() (string, error) {
 			pmgenBuild.err = fmt.Errorf("create the binary directory: %w", err)
 			return
 		}
-		binary := filepath.Join(dir, "pmgen")
-		cmd := exec.Command(goTool, "build", "-o", binary, "./cmd/pmgen")
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			pmgenBuild.err = fmt.Errorf("build pmgen: %v\n%s", err, out)
+		ctx, cancel := context.WithTimeout(context.Background(), buildLimit)
+		defer cancel()
+		binary, err := buildBinary(ctx, binaries{root: root, goTool: goTool}, dir, "pmgen", "./cmd/pmgen", false)
+		if err != nil {
+			pmgenBuild.err = err
 			return
 		}
 		pmgenBuild.path = binary

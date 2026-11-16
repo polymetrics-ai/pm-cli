@@ -39,6 +39,7 @@ type Server struct {
 	http           *http.Server
 	requestContext context.Context
 	cancelRequests context.CancelFunc
+	diagnostics    io.Writer
 
 	mu        sync.Mutex
 	state     lifecycleState
@@ -60,6 +61,7 @@ func New(configuration config.Configuration, admission, dispatch Probe, diagnost
 		dispatchProbe:  dispatch,
 		requestContext: requestContext,
 		cancelRequests: cancel,
+		diagnostics:    diagnostics,
 		draining:       make(chan struct{}),
 		stopped:        make(chan struct{}),
 	}
@@ -98,7 +100,18 @@ func (server *Server) Draining() <-chan struct{} {
 // Serve accepts ownership of listener even when startup fails. A Server serves
 // once. Cancellation of ctx initiates bounded drain, rather than immediately
 // cancelling otherwise healthy in-flight requests.
-func (server *Server) Serve(ctx context.Context, listener net.Listener, handler http.Handler) error {
+//
+// Serve also accepts ownership of a non-nil ready handle (ADR 0005). When the
+// admission probe passed, the state is serving and the accept loop calls
+// Accept for the first time, Serve starts the one write of ReadyLine in its
+// own goroutine, apart from the accept loop. Serve closes a handle that got no
+// write. A nil handle means no signal.
+func (server *Server) Serve(ctx context.Context, listener net.Listener, handler http.Handler, ready io.WriteCloser) error {
+	var signal *readySignal
+	if ready != nil {
+		signal = &readySignal{ready: ready, diagnostics: server.diagnostics}
+		defer signal.drop()
+	}
 	if listener == nil {
 		return errors.New("server listener is required")
 	}
@@ -144,7 +157,11 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener, handler 
 		}
 	}()
 	transportListener := httpapi.CloseOnWriteTimeout(listener)
-	err := server.http.Serve(netutil.LimitListener(transportListener, int(server.settings.MaxConnections)))
+	serving := netutil.LimitListener(transportListener, int(server.settings.MaxConnections))
+	if signal != nil {
+		serving = readyListener{Listener: serving, signal: signal}
+	}
+	err := server.http.Serve(serving)
 	server.beginDrain()
 	<-server.stopped
 	<-watchStopped
@@ -197,4 +214,49 @@ func (server *Server) beginDrain() {
 			close(server.stopped)
 		}()
 	})
+}
+
+// ReadyLine is the one ready line of pm-server (ADR 0005).
+const ReadyLine = "pm-server ready\n"
+
+// readyWriteFailed is the one standard error line after a failed ready write.
+const readyWriteFailed = "pm-server: the ready signal write failed. The process continues.\n"
+
+// readySignal owns the ready handle of one Serve call. Either start or drop
+// runs, once. The write has no deadline: the signal waits until the starter
+// reads (ADR 0005). The handle is closed on every path.
+type readySignal struct {
+	once        sync.Once
+	ready       io.WriteCloser
+	diagnostics io.Writer
+}
+
+// start runs the one write in its own goroutine, so a full pipe cannot stop
+// the accept loop.
+func (signal *readySignal) start() {
+	signal.once.Do(func() { go signal.write() })
+}
+
+// drop closes a handle that got no write.
+func (signal *readySignal) drop() {
+	signal.once.Do(func() { _ = signal.ready.Close() })
+}
+
+func (signal *readySignal) write() {
+	if _, err := io.WriteString(signal.ready, ReadyLine); err != nil {
+		_, _ = io.WriteString(signal.diagnostics, readyWriteFailed)
+	}
+	_ = signal.ready.Close()
+}
+
+// readyListener starts the ready signal when the accept loop calls Accept
+// for the first time.
+type readyListener struct {
+	net.Listener
+	signal *readySignal
+}
+
+func (listener readyListener) Accept() (net.Conn, error) {
+	listener.signal.start()
+	return listener.Listener.Accept()
 }
