@@ -21,7 +21,7 @@ This is a portable index, not a second decision log. The complete accepted ratio
 | Durable events | PostgreSQL transactionally owns safe sequence/history; live notification loss cannot erase replayable committed events | [ADR475-14](pm-server/architecture/ADRS.md#adr475-14--durable-events) |
 | Lifecycle and recovery | Operators explicitly own stack lifecycle, coordinated backup, compatibility, and quarantined restore; storage restore does not undo provider effects | [ADR475-15](pm-server/architecture/ADRS.md#adr475-15--operator-lifecycle-and-recovery) |
 | Process ready signal | `pm-server` and `pm-worker` send one fixed ready line on a descriptor that the starter names with `--ready-fd`, or end their start with exit code 1 within their own start budget. The worker line means that its own Temporal checks passed and its pollers started | [0005](../decisions/0005-process-ready-signal.md) |
-| Operator bootstrap | The operator creates the first workspace, admin, login binding and provider accounts with `pm-server bootstrap` and a dedicated bootstrap database credential, once for each deployment and organization. Proposed, not accepted | [0006](../decisions/0006-operator-bootstrap.md) |
+| Operator bootstrap | The operator creates the first workspace, admin, login binding and provider accounts with `pm-server bootstrap` and a dedicated bootstrap database credential, once for each deployment and organization. Accepted 2026-11-16 | [0006](../decisions/0006-operator-bootstrap.md) |
 
 ## Applying a decision
 

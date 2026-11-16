@@ -1,6 +1,6 @@
 # 0006: Operator bootstrap of the first workspace and admin
 
-Date: 2026-11-16. Status: proposed. This record does not authorize application work. Every command, flag, role, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #284, a sub-issue of #72.
+Date: 2026-11-16. Status: accepted 2026-11-16. This record does not authorize application work. Every command, flag, role, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #284, a sub-issue of #72.
 
 ## Context
 
