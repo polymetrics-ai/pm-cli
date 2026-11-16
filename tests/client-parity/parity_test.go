@@ -210,6 +210,8 @@ type bootstrapMarker struct {
 	Executables map[string]string `json:"executables"`
 }
 
+const playwrightReportLimit = 4 << 20
+
 type playwrightReport struct {
 	Suites []playwrightSuite `json:"suites"`
 	Errors []json.RawMessage `json:"errors"`
@@ -1142,9 +1144,62 @@ func runPinnedPlaywright(t *testing.T, root, inputPath, certificatePin string) {
 		t.Fatalf("pinned Playwright exceeded its owned time bound: %v", ctx.Err())
 	}
 	if runErr != nil {
-		t.Fatalf("pinned Playwright failed: %v (stdout=%d bytes, stderr=%d bytes)", runErr, stdout.Len(), stderr.Len())
+		report := readPlaywrightFailureReport(reportPath, playwrightReportLimit)
+		t.Fatal(playwrightFailureText(report, runErr, stdout.Len(), stderr.Len()))
 	}
 	validatePlaywrightReport(t, reportPath)
+}
+
+// readPlaywrightFailureReport reads the owned report after a failed run. It
+// returns nil instead of failing the test, so a missing, oversized or
+// replaced report cannot hide the process exit error.
+func readPlaywrightFailureReport(path string, maximum int64) []byte {
+	information, err := os.Lstat(path)
+	if err != nil || !information.Mode().IsRegular() || information.Size() > maximum {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil
+	}
+	defer file.Close()
+	document, err := io.ReadAll(io.LimitReader(file, maximum+1))
+	if err != nil || int64(len(document)) > maximum {
+		return nil
+	}
+	return document
+}
+
+// playwrightFailureText names each spec in the report that did not execute
+// once and pass, in report order, and ends with the process exit error. A
+// report that does not parse adds no line. The text holds only the byte
+// counts of the browser output, never the output itself.
+func playwrightFailureText(document []byte, runErr error, stdoutBytes, stderrBytes int) string {
+	var lines []string
+	var report playwrightReport
+	if json.Unmarshal(document, &report) == nil {
+		var visit func(playwrightSuite)
+		visit = func(suite playwrightSuite) {
+			for _, spec := range suite.Specs {
+				if !playwrightSpecPassed(spec) {
+					lines = append(lines, fmt.Sprintf("Playwright spec %q did not execute once and pass", spec.Title))
+				}
+			}
+			for _, child := range suite.Suites {
+				visit(child)
+			}
+		}
+		for _, suite := range report.Suites {
+			visit(suite)
+		}
+	}
+	lines = append(lines, fmt.Sprintf("pinned Playwright failed: %v (stdout=%d bytes, stderr=%d bytes)", runErr, stdoutBytes, stderrBytes))
+	return strings.Join(lines, "\n")
+}
+
+func playwrightSpecPassed(spec playwrightSpec) bool {
+	return spec.OK && len(spec.Tests) == 1 && spec.Tests[0].ExpectedStatus == "passed" &&
+		len(spec.Tests[0].Results) == 1 && spec.Tests[0].Results[0].Status == "passed"
 }
 
 func parityProcessEnvironment(overrides map[string]string) []string {
@@ -1302,7 +1357,7 @@ func hashRegularFile(t *testing.T, path string) string {
 
 func validatePlaywrightReport(t *testing.T, path string) {
 	t.Helper()
-	document := readBoundedFile(t, path, 4<<20)
+	document := readBoundedFile(t, path, playwrightReportLimit)
 	var report playwrightReport
 	if err := json.Unmarshal(document, &report); err != nil || len(report.Suites) == 0 || len(report.Errors) != 0 {
 		t.Fatal("Playwright did not produce a clean bounded JSON report")
@@ -1321,8 +1376,7 @@ func validatePlaywrightReport(t *testing.T, path string) {
 	visit = func(suite playwrightSuite) {
 		for _, spec := range suite.Specs {
 			total++
-			if !spec.OK || len(spec.Tests) != 1 || spec.Tests[0].ExpectedStatus != "passed" ||
-				len(spec.Tests[0].Results) != 1 || spec.Tests[0].Results[0].Status != "passed" {
+			if !playwrightSpecPassed(spec) {
 				t.Fatalf("Playwright spec %q did not execute once and pass", spec.Title)
 			}
 			for caseID := range cases {

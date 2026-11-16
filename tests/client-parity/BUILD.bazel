@@ -8,6 +8,7 @@ go_test(
         "artifact_test.go",
         "fixture_test.go",
         "parity_test.go",
+        "playwright_report_test.go",
     ],
     data = [
         "browser.ts",
