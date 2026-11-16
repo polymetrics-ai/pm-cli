@@ -1,6 +1,6 @@
 # 0007: Schema discovery and selection in PM PostgreSQL
 
-Date: 2026-11-16. Status: proposed. This record does not authorize application work. Every table, route, command and check below is a planned contract until the owning implementation creates and runs it. Issue: #285, a sub-issue of #72.
+Date: 2026-11-16. Status: accepted 2026-11-16. This record does not authorize application work. Every table, route, command and check below is a planned contract until the owning implementation creates and runs it. Issue: #285, a sub-issue of #72.
 
 ## Context
 

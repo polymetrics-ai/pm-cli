@@ -21,7 +21,7 @@ This is a portable index, not a second decision log. The complete accepted ratio
 | Durable events | PostgreSQL transactionally owns safe sequence/history; live notification loss cannot erase replayable committed events | [ADR475-14](pm-server/architecture/ADRS.md#adr475-14--durable-events) |
 | Lifecycle and recovery | Operators explicitly own stack lifecycle, coordinated backup, compatibility, and quarantined restore; storage restore does not undo provider effects | [ADR475-15](pm-server/architecture/ADRS.md#adr475-15--operator-lifecycle-and-recovery) |
 | Process ready signal | `pm-server` and `pm-worker` send one fixed ready line on a descriptor that the starter names with `--ready-fd`, or end their start with exit code 1 within their own start budget. The worker line means that its own Temporal checks passed and its pollers started | [0005](../decisions/0005-process-ready-signal.md) |
-| Schema discovery and selection | Discovered metadata snapshots and each connection's schema selection live in PM PostgreSQL; pm-server and pm-worker read them only from there. Proposed, not accepted | [0007](../decisions/0007-schema-discovery-and-selection.md) |
+| Schema discovery and selection | Discovered metadata snapshots and each connection's schema selection live in PM PostgreSQL; pm-server and pm-worker read them only from there. Accepted 2026-11-16 | [0007](../decisions/0007-schema-discovery-and-selection.md) |
 
 ## Applying a decision
 
