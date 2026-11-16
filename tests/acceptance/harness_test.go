@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/cucumber/godog"
+
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 	"github.com/polymetrics-ai/pm-cli/tests/starter"
 )
@@ -71,6 +73,9 @@ type stackHarness struct {
 
 	migrated   bool
 	migrateErr error
+
+	scoped   bool
+	scopeErr error
 }
 
 func newStackHarness(bins binaries, dir string) *stackHarness {
@@ -79,11 +84,13 @@ func newStackHarness(bins binaries, dir string) *stackHarness {
 
 // prepare is the shared build and migration step. It builds pm-server and
 // pm-worker once for the suite. When stack is not nil, it also applies the PM
-// application migrations once for the suite. Each go build waits once, with
-// its own build-limit deadline, created right before that build. The
-// migration waits once, with its own deadline of the build-limit value. A
-// failure stays failed: a later call reports the same error and does not
-// try again.
+// application migrations once for the suite, and it checks once for the suite
+// that the scoped Keycloak admin client is refused a change outside its roles
+// (D1-4, D1-5). Each go build waits once, with its own build-limit deadline,
+// created right before that build. The migration waits once, with its own
+// deadline of the build-limit value. Each request of the scope check waits
+// once, with its own request limit. A failure stays failed: a later call
+// reports the same error and does not try again.
 func (h *stackHarness) prepare(parent context.Context, stack *stackInputs) error {
 	if !h.built {
 		h.built = true
@@ -101,6 +108,15 @@ func (h *stackHarness) prepare(parent context.Context, stack *stackInputs) error
 	}
 	if h.migrateErr != nil {
 		return fmt.Errorf("the shared migration failed in this suite: %w", h.migrateErr)
+	}
+	if !h.scoped {
+		h.scoped = true
+		if h.scopeErr = stack.identity.admin.CheckScope(); h.scopeErr == nil {
+			godog.Logf(parent, "the scoped Keycloak admin client was refused a change to the master realm and to its own realm settings (403 each)")
+		}
+	}
+	if h.scopeErr != nil {
+		return fmt.Errorf("the scope check of the Keycloak admin client failed in this suite: %w", h.scopeErr)
 	}
 	return nil
 }

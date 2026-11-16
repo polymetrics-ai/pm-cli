@@ -25,6 +25,7 @@ type stackInputs struct {
 	artifactsRef string
 	postgres     stackPostgres
 	temporal     stackTemporal
+	identity     stackIdentity
 }
 
 type stackPostgres struct {
@@ -92,6 +93,10 @@ func readStackInputs() (stackInputs, error) {
 	if sections.Temporal.Endpoint == "" || sections.Temporal.Namespace == "" {
 		return stackInputs{}, errors.New("the stack configuration has no Temporal endpoint or namespace")
 	}
+	identity, err := readStackIdentity()
+	if err != nil {
+		return stackInputs{}, err
+	}
 	return stackInputs{
 		document:     document,
 		secretsDir:   environment["PM_STACK_SECRETS_DIR"],
@@ -104,6 +109,7 @@ func readStackInputs() (stackInputs, error) {
 			namespace: sections.Temporal.Namespace,
 			bundle:    filepath.Join(environment["PM_STACK_SECRETS_DIR"], temporalBundle),
 		},
+		identity: identity,
 	}, nil
 }
 

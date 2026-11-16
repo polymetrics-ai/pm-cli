@@ -3,8 +3,11 @@
 
 from __future__ import annotations
 
+import base64
 import copy
 import hashlib
+import http.client
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -14,16 +17,17 @@ import secrets
 import shutil
 import signal
 import socket
+import ssl
 import stat
 import subprocess
 import sys
 import tempfile
 import time
 from typing import Any, Mapping, Sequence
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
 
-SCHEMA_VERSION = "pm.stack-fixture-ownership/v1"
+SCHEMA_VERSION = "pm.stack-fixture-ownership/v2"
 PROJECT_PREFIX = "pmci-"
 PARENT_PREFIX = "pm-stack-job-"
 TOKEN_PATTERN = re.compile(r"[0-9a-f]{20}\Z")
@@ -88,8 +92,14 @@ ENVIRONMENT_KEYS = frozenset(
         "PM_STACK_S3_PRIMARY_PORT",
         "PM_STACK_S3_SECONDARY_PORT",
         "PM_STACK_PUBLIC_PORT",
+        "PM_STACK_IDENTITY_PROVIDER_HOST",
+        "PM_STACK_IDENTITY_PROVIDER_PORT",
+        "PM_STACK_IDENTITY_PROVIDER_ISSUER",
+        "PM_STACK_IDENTITY_PROVIDER_DIR",
     }
 )
+# PORT_KEYS publish on the first loopback address. The job identity provider
+# publishes its own port on a second loopback address (IDENTITY_* below).
 PORT_KEYS = (
     "PM_STACK_POSTGRES_PORT",
     "PM_STACK_TEMPORAL_PORT",
@@ -107,6 +117,7 @@ PERSISTENT_SERVICES = frozenset(
         "seaweed-s3-a",
         "seaweed-s3-b",
         "caddy",
+        "keycloak",
     }
 )
 ONEOFF_SERVICES = frozenset({"postgres-bootstrap", "temporal-schema"})
@@ -117,6 +128,11 @@ EXPECTED_IMAGES: dict[str, dict[str, str]] = {
         "repository": "docker.io/library/caddy",
         "tag": "2.11.4",
         "index_digest": "sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017",
+    },
+    "keycloak": {
+        "repository": "docker.io/keycloak/keycloak",
+        "tag": "26.8.1",
+        "index_digest": "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332",
     },
     "postgres": {
         "repository": "docker.io/library/postgres",
@@ -138,6 +154,51 @@ EXPECTED_IMAGES: dict[str, dict[str, str]] = {
         "tag": "1.31.2",
         "index_digest": "sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da",
     },
+}
+# The job-owned test identity provider (deploy/compose.identity.yaml). It is
+# the only service on the identity network and on the second loopback address.
+IDENTITY_SERVICE = "keycloak"
+STACK_NETWORK = "stack-private"
+IDENTITY_NETWORK = "identity-private"
+OWNED_NETWORKS = (STACK_NETWORK, IDENTITY_NETWORK)
+IDENTITY_DIRECTORY = "identity-provider"
+IDENTITY_REALM = "pm-test"
+IDENTITY_ADMIN_ROLES = ("manage-clients", "manage-users")
+# The Keycloak image's own non-root user. A rootless engine maps container
+# group 0 to the job account's group, which owns the group-readable mounts.
+IDENTITY_IMAGE_USER = "1000:0"
+IDENTITY_FILES = {
+    "ca.pem": 0o600,
+    "server.pem": 0o640,
+    "server-key.pem": 0o640,
+    "realm.json": 0o640,
+    "admin-client-id": 0o600,
+    "admin-client-secret": 0o600,
+}
+IDENTITY_PROBE_TIMEOUT = 10
+MAX_PROVIDER_LOG_BYTES = 4 << 20
+KEYCLOAK_READY_LINE = re.compile(
+    rb"Keycloak 26\.8\.1 on JVM \(powered by Quarkus [0-9][0-9.]*\) started in ([0-9]+\.[0-9]+)s\. "
+    rb"Listening on: (\S+)([^\r\n]*)"
+)
+# pm-stack up names its failed step with a fixed code (internal/stack). A
+# failed start prints only fixed codes, never pm-stack or provider text.
+STACK_FAILED_STEP = re.compile(
+    rb"pm-stack: failed step ((?:configuration|deployment-lock|render|compose-validate|postgres-start|migrate"
+    rb"|temporal-start|temporal-namespace|artifacts-start|artifact-bucket|identity-provider-start"
+    rb"|identity-provider-ready|stack-ready)(?:/(?:connection-refused|connection-closed"
+    rb"|tls-certificate|timeout|unavailable|status-[1-5][0-9]{2}|not-json|issuer-mismatch))?)"
+)
+PROVIDER_STATES = ("created", "configured", "running", "paused", "restarting", "stopping", "stopped", "exited", "dead")
+PROVIDER_LOG_MARKERS = {
+    "ready-line": KEYCLOAK_READY_LINE,
+    "realm-imported": re.compile(rb"Realm 'pm-test' imported"),
+    "start-error": re.compile(rb"\[org\.keycloak\.quarkus\.runtime\.cli\.ExecutionExceptionHandler\]"),
+    "cluster-error": re.compile(rb" (?:ERROR|FATAL) +\[org\.(?:infinispan|jgroups)"),
+    "read-only-file-system": re.compile(rb"Read-only file system"),
+    "permission-denied": re.compile(rb"Permission denied|AccessDeniedException"),
+    "out-of-memory": re.compile(rb"OutOfMemoryError"),
+    "build-option": re.compile(rb"(?i)build[ -]time option|first ever server start"),
 }
 EXPECTED_COMPOSE_DIGESTS = {
     "darwin-arm64": "998735c9b6fe68a4f05895e6ea73d71ad06f9fc7046383ad89e47346781b6af5",
@@ -438,6 +499,7 @@ def run_quiet(
     timeout: int,
     stage: str,
     check: bool = True,
+    stderr: Any = subprocess.DEVNULL,
 ) -> int:
     try:
         process = subprocess.Popen(
@@ -446,7 +508,7 @@ def run_quiet(
             env=dict(env),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr,
             start_new_session=True,
         )
     except OSError as exc:
@@ -834,7 +896,11 @@ def validate_private_tree(root: Path) -> None:
                 if stat.S_IMODE(status.st_mode) & 0o077:
                     raise FixtureError("generated fixture directory is not private")
             elif stat.S_ISREG(status.st_mode):
-                if stat.S_IMODE(status.st_mode) & 0o077 or status.st_size > MAX_JSON_BYTES:
+                # The identity provider's non-root user reads its mounted
+                # files through the job account's group, never as other.
+                shared = path.parent == root / IDENTITY_DIRECTORY and IDENTITY_FILES.get(name) == 0o640
+                allowed = 0o040 if shared else 0
+                if stat.S_IMODE(status.st_mode) & 0o077 & ~allowed or status.st_size > MAX_JSON_BYTES:
                     raise FixtureError("generated fixture file is not private and bounded")
             else:
                 raise FixtureError("generated fixture contains a special file")
@@ -862,6 +928,52 @@ def parse_loopback_endpoint(value: str, expected_port: str, name: str) -> None:
         or endpoint.fragment
     ):
         raise FixtureError(f"generated {name} endpoint is not the selected loopback endpoint")
+
+
+def identity_endpoint(environment: Mapping[str, str], fixture_root: Path) -> tuple[str, int]:
+    """Return the identity provider's second loopback address and port."""
+    host = environment["PM_STACK_IDENTITY_PROVIDER_HOST"]
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError as exc:
+        raise FixtureError("identity provider host is not a canonical IPv4 address") from exc
+    if address.is_unspecified:
+        raise FixtureError("identity provider host must not be a wildcard address")
+    if address.version != 4 or str(address) != host:
+        raise FixtureError("identity provider host is not a canonical IPv4 address")
+    if not address.is_loopback:
+        raise FixtureError("identity provider host must not be a non-loopback address")
+    if host == "127.0.0.1":
+        raise FixtureError("identity provider host must differ from the first loopback address")
+    port_value = environment["PM_STACK_IDENTITY_PROVIDER_PORT"]
+    try:
+        port = int(port_value)
+    except ValueError as exc:
+        raise FixtureError("identity provider port is invalid") from exc
+    if (
+        not 1024 <= port <= 65535
+        or str(port) != port_value
+        or port_value in {environment[name] for name in PORT_KEYS}
+    ):
+        raise FixtureError("identity provider port must be a distinct canonical non-privileged port")
+    if environment["PM_STACK_IDENTITY_PROVIDER_ISSUER"] != f"https://{host}:{port}/realms/{IDENTITY_REALM}":
+        raise FixtureError("identity provider issuer is not the exact realm issuer at its address")
+    require_exact_path(environment["PM_STACK_IDENTITY_PROVIDER_DIR"], fixture_root / IDENTITY_DIRECTORY, "identity provider")
+    return host, port
+
+
+def validate_identity_files(fixture_root: Path) -> None:
+    directory = fixture_root / IDENTITY_DIRECTORY
+    try:
+        names = set(os.listdir(directory))
+    except OSError as exc:
+        raise FixtureError("identity provider material is unavailable") from exc
+    if names != set(IDENTITY_FILES):
+        raise FixtureError("identity provider material has an unexpected file set")
+    for name, mode in IDENTITY_FILES.items():
+        status = (directory / name).lstat()
+        if not stat.S_ISREG(status.st_mode) or stat.S_IMODE(status.st_mode) != mode:
+            raise FixtureError(f"identity provider file {name} has an unexpected mode")
 
 
 def expected_temporal_profile(base: bytes, namespace: str) -> bytes:
@@ -937,6 +1049,7 @@ def validate_generated_environment(
         environment["PM_STACK_S3_SECONDARY_PORT"],
         "secondary S3",
     )
+    identity_endpoint(environment, fixture_root)
     environment_path = fixture_root / "environment.json"
     environment_bytes = read_limited(environment_path)
     if decode_json_bytes(environment_bytes, "fixture environment file") != environment:
@@ -977,6 +1090,7 @@ def validate_generated_environment(
     if configuration != expected:
         raise FixtureError("generated configuration is not the bounded template projection")
     validate_private_tree(fixture_root)
+    validate_identity_files(fixture_root)
     return (
         environment,
         hashlib.sha256(environment_bytes).hexdigest(),
@@ -987,11 +1101,15 @@ def validate_generated_environment(
 
 def reserve_ports(environment: Mapping[str, str]) -> list[socket.socket]:
     reservations: list[socket.socket] = []
+    addresses = [("127.0.0.1", int(environment[name])) for name in PORT_KEYS]
+    addresses.append(
+        (environment["PM_STACK_IDENTITY_PROVIDER_HOST"], int(environment["PM_STACK_IDENTITY_PROVIDER_PORT"]))
+    )
     try:
-        for name in PORT_KEYS:
+        for address in addresses:
             reservation = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             reservation.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 0)
-            reservation.bind(("127.0.0.1", int(environment[name])))
+            reservation.bind(address)
             reservation.listen(1)
             reservations.append(reservation)
     except OSError as exc:
@@ -1057,7 +1175,7 @@ class OwnershipManifest:
                 "daemon": dict(daemon),
             },
             "fixture": None,
-            "resources": {"containers": [], "network": None, "helper": None},
+            "resources": {"containers": [], "networks": [], "helper": None},
             "diagnostic": None,
             "updated_at_ns": time.time_ns(),
         }
@@ -1213,12 +1331,12 @@ class OwnershipManifest:
         if any(not isinstance(value, int) for value in socket_value.values()):
             raise FixtureError("ownership manifest socket identity is invalid")
         resources = document.get("resources")
-        if not isinstance(resources, dict) or set(resources) != {"containers", "network", "helper"}:
+        if not isinstance(resources, dict) or set(resources) != {"containers", "networks", "helper"}:
             raise FixtureError("ownership manifest resource record is invalid")
-        if not isinstance(resources["containers"], list):
-            raise FixtureError("ownership manifest container record is invalid")
+        if not isinstance(resources["containers"], list) or not isinstance(resources["networks"], list):
+            raise FixtureError("ownership manifest container or network record is invalid")
         if document["phase"] == "cleaned" and (
-            resources != {"containers": [], "network": None, "helper": None}
+            resources != {"containers": [], "networks": [], "helper": None}
             or document.get("diagnostic") is not None
         ):
             raise FixtureError("cleaned ownership receipt contains live-resource authority")
@@ -1368,6 +1486,7 @@ def expected_config_files(repo_root: Path) -> set[str]:
     return {
         str(repo_root / "deploy" / "compose.yaml"),
         str(repo_root / "deploy" / "compose.managed.yaml"),
+        str(repo_root / "deploy" / "compose.identity.yaml"),
     }
 
 
@@ -1382,6 +1501,8 @@ def image_for_service(service: str, image_refs: Mapping[str, str]) -> str:
         return image_refs["seaweedfs"]
     if service == "caddy":
         return image_refs["caddy"]
+    if service == IDENTITY_SERVICE:
+        return image_refs["keycloak"]
     raise FixtureError("unknown fixture service")
 
 
@@ -1397,6 +1518,7 @@ def service_limits(service: str) -> tuple[int, int, int, bool, str]:
         "seaweed-s3-a": (500_000_000, 384 << 20, 160, False, "unless-stopped"),
         "seaweed-s3-b": (500_000_000, 384 << 20, 160, False, "unless-stopped"),
         "caddy": (500_000_000, 256 << 20, 128, True, "unless-stopped"),
+        IDENTITY_SERVICE: (2_000_000_000, 1536 << 20, 512, True, "no"),
     }
     return values[service]
 
@@ -1502,6 +1624,13 @@ def expected_mounts(service: str, fixture_root: Path, repo_root: Path) -> set[tu
         return {
             mount(repo_root / "deploy" / "caddy" / "Caddyfile", "/etc/caddy/Caddyfile", False),
         } | artifact_tls
+    if service == IDENTITY_SERVICE:
+        identity = fixture_root / IDENTITY_DIRECTORY
+        return {
+            mount(identity / "server.pem", "/run/secrets/identity-provider-server.pem", False),
+            mount(identity / "server-key.pem", "/run/secrets/identity-provider-server-key.pem", False),
+            mount(identity / "realm.json", "/opt/keycloak/data/import/realm.json", False),
+        }
     raise FixtureError("unknown fixture service mounts")
 
 
@@ -1552,6 +1681,18 @@ def actual_mounts(
 
 
 def expected_ports(service: str, environment: Mapping[str, str]) -> dict[str, list[dict[str, str]]]:
+    # Only the identity provider binds the second loopback address. Every
+    # other service binds 127.0.0.1. A wildcard or non-loopback binding never
+    # matches either expectation.
+    if service == IDENTITY_SERVICE:
+        return {
+            "8443/tcp": [
+                {
+                    "HostIp": environment["PM_STACK_IDENTITY_PROVIDER_HOST"],
+                    "HostPort": environment["PM_STACK_IDENTITY_PROVIDER_PORT"],
+                }
+            ]
+        }
     mapping = {
         "postgres": ("5432/tcp", "PM_STACK_POSTGRES_PORT"),
         "temporal": ("7233/tcp", "PM_STACK_TEMPORAL_PORT"),
@@ -1563,6 +1704,17 @@ def expected_ports(service: str, environment: Mapping[str, str]) -> dict[str, li
         return {}
     container_port, environment_name = mapping[service]
     return {container_port: [{"HostIp": "127.0.0.1", "HostPort": environment[environment_name]}]}
+
+
+def network_for_service(service: str) -> str:
+    return IDENTITY_NETWORK if service == IDENTITY_SERVICE else STACK_NETWORK
+
+
+def tmpfs_options(value: Any, podman: bool) -> set[str]:
+    if not isinstance(value, str):
+        raise FixtureError("container tmpfs options are invalid")
+    options = set(value.split(","))
+    return options - PODMAN_TMPFS_DEFAULTS if podman else options
 
 
 def bool_label(value: Any) -> bool | None:
@@ -1588,7 +1740,8 @@ def validate_stack_container(
     if not isinstance(value, dict):
         raise FixtureError("container inspection is invalid")
     podman = engine_root is not None
-    network = f"{project}_stack-private"
+    service_name = value.get("service")
+    network = f"{project}_{network_for_service(service_name if isinstance(service_name, str) else '')}"
     networks = value.get("networks")
     attached_networks = set(networks) if isinstance(networks, dict) else None
     container_id = value.get("id")
@@ -1615,7 +1768,7 @@ def validate_stack_container(
     config_files = value.get("config_files")
     if (
         not isinstance(config_files, str)
-        or len(config_files.split(",")) != 2
+        or len(config_files.split(",")) != len(expected_config_files(repo_root))
         or set(config_files.split(",")) != expected_config_files(repo_root)
     ):
         raise FixtureError("container Compose configuration ownership mismatched")
@@ -1629,6 +1782,13 @@ def validate_stack_container(
     nano_cpus, memory, pids_limit, readonly, restart = service_limits(service)
     mapped_user = "0:0" if rootless else f"{os.getuid()}:{os.getgid()}"
     expected_user = "" if service in {"postgres", "postgres-bootstrap"} else mapped_user
+    identity = service == IDENTITY_SERVICE
+    if identity:
+        # Never container root: the image's user under a rootless engine,
+        # else the non-root job account.
+        if not rootless and (os.getuid() == 0 or os.getgid() == 0):
+            raise FixtureError("identity provider cannot run as the root account")
+        expected_user = IDENTITY_IMAGE_USER if rootless else mapped_user
     if (
         value.get("user") != expected_user
         or value.get("privileged") is not False
@@ -1645,11 +1805,23 @@ def validate_stack_container(
         or value.get("pids_limit") != pids_limit
         or value.get("restart") != restart
         or value.get("cap_add") not in (None, [])
-        or value.get("security_opt") not in (None, [])
+        or (not identity and value.get("security_opt") not in (None, []))
         or value.get("devices") not in (None, [])
         or value.get("device_requests") not in (None, [])
     ):
         raise FixtureError("container privileges or resource bounds changed")
+    if identity:
+        cap_drop = value.get("cap_drop")
+        dropped = {str(item).upper() for item in cap_drop} if isinstance(cap_drop, list) else None
+        if dropped != {"ALL"} and not (podman and dropped == PODMAN_DEFAULT_CAPABILITIES):
+            raise FixtureError("identity provider kept a Linux capability")
+        security_opt = value.get("security_opt")
+        if (
+            not isinstance(security_opt, list)
+            or not security_opt
+            or any(not str(item).startswith("no-new-privileges") for item in security_opt)
+        ):
+            raise FixtureError("identity provider privilege boundary changed")
     wanted_ports = expected_ports(service, environment)
     allowed_ports = (wanted_ports,) if wanted_ports else ({}, None)
     if value.get("port_bindings") not in allowed_ports:
@@ -1661,7 +1833,22 @@ def validate_stack_container(
     ) != expected_mounts(service, fixture_root, repo_root):
         raise FixtureError("container mounts changed or escaped the owned fixture")
     tmpfs = value.get("tmpfs")
-    if service == "caddy":
+    if identity:
+        build_output = "/opt/keycloak/lib/quarkus"
+        if not isinstance(tmpfs, dict) or set(tmpfs) != {"/tmp", "/opt/keycloak/data", build_output}:
+            raise FixtureError("identity provider tmpfs bounds changed")
+        if tmpfs_options(tmpfs["/tmp"], podman) not in (
+            {"mode=1777", "size=67108864"},
+            {"mode=1777", "size=64m"},
+        ) or tmpfs_options(tmpfs["/opt/keycloak/data"], podman) not in (
+            {"mode=1777", "size=134217728"},
+            {"mode=1777", "size=128m"},
+        ) or tmpfs_options(tmpfs[build_output], podman) - {"tmpcopyup"} not in (
+            {"mode=0770", "size=67108864"},
+            {"mode=0770", "size=64m"},
+        ):
+            raise FixtureError("identity provider tmpfs options changed")
+    elif service == "caddy":
         if not isinstance(tmpfs, dict) or set(tmpfs) != {"/tmp"}:
             raise FixtureError("Caddy tmpfs bound changed")
         options = tmpfs["/tmp"]
@@ -1883,45 +2070,29 @@ def discover_resources(
             [f"label=com.docker.compose.project={manifest.project}"],
         )
     )
-    network_ids.update(
-        list_network_ids(
-            docker,
-            config,
-            endpoint,
-            docker_env,
-            repo_root,
-            [f"name=^{re.escape(manifest.project + '_stack-private')}$"],
+    for name in OWNED_NETWORKS:
+        network_ids.update(
+            list_network_ids(
+                docker,
+                config,
+                endpoint,
+                docker_env,
+                repo_root,
+                [f"name=^{re.escape(manifest.project + '_' + name)}$"],
+            )
         )
-    )
-    if len(network_ids) > 1:
+    if len(network_ids) > len(OWNED_NETWORKS):
         raise FixtureError("multiple networks claim the fixture identity")
-    network_record = None
-    if network_ids:
-        network_value = inspect_network(next(iter(network_ids)), docker, config, endpoint, docker_env, repo_root)
-        if not isinstance(network_value, dict):
-            raise FixtureError("network inspection is invalid")
-        network_id = network_value.get("id")
-        attached = network_value.get("containers")
-        if (
-            not isinstance(network_id, str)
-            or CONTAINER_ID_PATTERN.fullmatch(network_id) is None
-            or network_value.get("name") != f"{manifest.project}_stack-private"
-            or network_value.get("driver") != "bridge"
-            or network_value.get("scope") != "local"
-            or network_value.get("internal") is not False
-            or network_value.get("attachable") is not False
-            or network_value.get("ingress") is not False
-            or network_value.get("project") != manifest.project
-            or network_value.get("network") != "stack-private"
-            or bool_label(network_value.get("owner")) is not True
-            or not isinstance(attached, dict)
-        ):
-            raise FixtureError("fixture network ownership or isolation changed")
-        known_ids = {container["id"] for container in containers}
-        # Stopped and not-yet-started owned containers need not be attached.
-        if not set(attached).issubset(known_ids):
-            raise FixtureError("fixture network has an unknown attached container")
-        network_record = {"id": network_id, "name": network_value["name"], "containers": sorted(attached)}
+    networks = [
+        validate_owned_network(
+            inspect_network(network_id, docker, config, endpoint, docker_env, repo_root),
+            manifest.project,
+            containers,
+        )
+        for network_id in sorted(network_ids)
+    ]
+    if len({network["network"] for network in networks}) != len(networks):
+        raise FixtureError("multiple networks claim the fixture identity")
     volume_ids = docker_lines(
         docker,
         config,
@@ -1933,7 +2104,36 @@ def discover_resources(
     )
     if volume_ids:
         raise FixtureError("fixture unexpectedly owns a named volume")
-    return {"containers": containers, "network": network_record, "helper": helper}
+    return {"containers": containers, "networks": networks, "helper": helper}
+
+
+def validate_owned_network(value: Any, project: str, containers: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Accept one owned Compose network whose members all belong on it."""
+    if not isinstance(value, dict):
+        raise FixtureError("network inspection is invalid")
+    network_id = value.get("id")
+    attached = value.get("containers")
+    name = value.get("network")
+    if (
+        not isinstance(network_id, str)
+        or CONTAINER_ID_PATTERN.fullmatch(network_id) is None
+        or name not in OWNED_NETWORKS
+        or value.get("name") != f"{project}_{name}"
+        or value.get("driver") != "bridge"
+        or value.get("scope") != "local"
+        or value.get("internal") is not False
+        or value.get("attachable") is not False
+        or value.get("ingress") is not False
+        or value.get("project") != project
+        or bool_label(value.get("owner")) is not True
+        or not isinstance(attached, dict)
+    ):
+        raise FixtureError("fixture network ownership or isolation changed")
+    # Stopped and not-yet-started owned containers need not be attached.
+    members = {container["id"] for container in containers if network_for_service(container["service"]) == name}
+    if not set(attached).issubset(members):
+        raise FixtureError("fixture network has an unknown or misplaced attached container")
+    return {"id": network_id, "name": value["name"], "network": name, "containers": sorted(attached)}
 
 
 def require_empty_before_start(
@@ -1956,7 +2156,7 @@ def require_empty_before_start(
         docker_env,
         repo_root,
     )
-    if resources["containers"] or resources["network"] is not None or resources["helper"] is not None:
+    if resources["containers"] or resources["networks"] or resources["helper"] is not None:
         raise FixtureError("fixture project or resource name collided before startup")
 
 
@@ -1975,11 +2175,8 @@ def resource_manifest(resources: Mapping[str, Any]) -> dict[str, Any]:
     helper_record = None
     if helper is not None:
         helper_record = {"id": helper["id"], "name": helper["name"], "image_id": helper["image_id"]}
-    network = resources.get("network")
-    network_record = None
-    if network is not None:
-        network_record = {"id": network["id"], "name": network["name"]}
-    return {"containers": containers, "network": network_record, "helper": helper_record}
+    networks = [{"id": network["id"], "name": network["name"]} for network in resources.get("networks", [])]
+    return {"containers": containers, "networks": networks, "helper": helper_record}
 
 
 def verify_running_resources(resources: Mapping[str, Any]) -> None:
@@ -1989,11 +2186,342 @@ def verify_running_resources(resources: Mapping[str, Any]) -> None:
         raise FixtureError("started fixture does not have exactly one container for every selected service")
     if any(container["state"] != "running" or container["oneoff"] for container in containers):
         raise FixtureError("started fixture has an unexpected container state")
-    network = resources.get("network")
-    if network is None or set(network["containers"]) != {container["id"] for container in containers}:
+    attached = {network["network"]: set(network["containers"]) for network in resources.get("networks", [])}
+    expected = {
+        name: {container["id"] for container in containers if network_for_service(container["service"]) == name}
+        for name in OWNED_NETWORKS
+    }
+    if attached != expected:
         raise FixtureError("started fixture network membership is incomplete")
     if resources.get("helper") is not None:
         raise FixtureError("cleanup helper exists during fixture execution")
+
+
+def report(message: str) -> None:
+    """Print one safe result line. It never names an address or a secret."""
+    print(f"with-stack-fixture: {message}", flush=True)
+
+
+def keycloak_start_summary(log: bytes) -> str:
+    """Return the start time of a production, HTTPS-only Keycloak 26.8.1."""
+    matches = list(KEYCLOAK_READY_LINE.finditer(log))
+    if len(matches) != 1:
+        raise FixtureError("identity provider log lacks exactly one Keycloak 26.8.1 ready line")
+    listener, rest = matches[0].group(2), matches[0].group(3)
+    if not listener.startswith(b"https://") or b"http://" in rest or b"Management interface" in rest:
+        raise FixtureError("identity provider is not HTTPS-only without a management listener")
+    if (
+        b"Profile prod activated" not in log
+        or b"Profile dev activated" in log
+        or b"Running the server in development mode" in log
+    ):
+        raise FixtureError("identity provider did not start in production mode")
+    return matches[0].group(1).decode("ascii")
+
+
+def stack_failed_step(output: bytes) -> str:
+    """Return the fixed code of pm-stack's last failed-step line, or "unknown"."""
+    lines = [line for line in output.splitlines() if line.startswith(b"pm-stack: failed step ")]
+    match = STACK_FAILED_STEP.fullmatch(lines[-1]) if lines else None
+    return match.group(1).decode("ascii") if match else "unknown"
+
+
+def identity_provider_state(
+    project: str, docker: Path, config: Path, endpoint: str, env: Mapping[str, str], cwd: Path
+) -> str:
+    """Describe the job Keycloak after a failed start with fixed codes only."""
+    filters = (f"label=com.docker.compose.project={project}", f"label=com.docker.compose.service={IDENTITY_SERVICE}")
+    ids = list_container_ids(docker, config, endpoint, env, cwd, filters)
+    if len(ids) != 1:
+        return "provider=absent" if not ids else "provider=unknown"
+    state_format = '{"status":{{json .State.Status}},"exit":{{json .State.ExitCode}},"oom":{{json .State.OOMKilled}}}'
+    inspect = ["container", "inspect", "--format", state_format, ids[0]]
+    state = docker_json(docker, config, endpoint, env, cwd, inspect, "inspect the identity provider")
+    status, code, oom = (state.get(key) if isinstance(state, dict) else None for key in ("status", "exit", "oom"))
+    if status not in PROVIDER_STATES or type(code) is not int or not 0 <= code <= 255 or type(oom) is not bool:
+        return "provider=unknown"
+    _, out, err = run_capture(
+        docker_command(docker, config, endpoint, "container", "logs", ids[0]),
+        env=env, cwd=cwd, timeout=DOCKER_TIMEOUT, stage="read the identity provider log",
+        max_output=MAX_PROVIDER_LOG_BYTES,
+    )
+    markers = [name for name, pattern in PROVIDER_LOG_MARKERS.items() if pattern.search(out + b"\n" + err)]
+    oom_code = "yes" if oom else "no"
+    return f"provider={status} provider-exit={code} provider-oom={oom_code} provider-log={','.join(markers) or 'none'}"
+
+
+def require_secret_absent(data: bytes, secret: str, context: str, client_id: str | None = None) -> None:
+    """Refuse the raw admin secret and its plain and Basic Base64 forms.
+
+    This is detection: an encoding at another offset is not found."""
+    raw = secret.encode("ascii")
+    forms = {raw}
+    candidates = [raw]
+    if client_id is not None:
+        candidates.append(client_id.encode("ascii") + b":" + raw)
+    for value in candidates:
+        encoded = base64.b64encode(value)
+        forms |= {encoded, encoded.rstrip(b"="), base64.urlsafe_b64encode(value).rstrip(b"=")}
+    if any(form in data for form in forms):
+        raise FixtureError(f"{context} holds the identity provider admin secret")
+
+
+def filesystem_type(path: Path, mountinfo: str) -> str:
+    """Return the file system type of the longest mount that holds path."""
+    target = str(path)
+    best, kind = "", "unknown"
+    for line in mountinfo.splitlines():
+        fields = line.split(" ")
+        if "-" not in fields:
+            continue
+        separator = fields.index("-")
+        if separator < 6 or len(fields) <= separator + 1:
+            continue
+        mount_point = fields[4].replace("\\040", " ")
+        inside = target == mount_point or target.startswith(mount_point.rstrip("/") + "/")
+        if inside and len(mount_point) > len(best):
+            best, kind = mount_point, fields[separator + 1]
+    return kind
+
+
+def plain_http_refusal(host: str, port: int, realm: str) -> str:
+    """Send plain HTTP to the TLS listener and describe how it was refused."""
+    request = (
+        f"GET /realms/{realm}/.well-known/openid-configuration HTTP/1.1\r\n"
+        f"Host: {host}:{port}\r\nConnection: close\r\n\r\n"
+    ).encode("ascii")
+    try:
+        with socket.create_connection((host, port), timeout=IDENTITY_PROBE_TIMEOUT) as connection:
+            connection.sendall(request)
+            reply = connection.recv(64)
+    except (ConnectionResetError, BrokenPipeError):
+        return "the connection was reset without an HTTP answer"
+    except socket.timeout:
+        return "no HTTP answer came before the probe limit"
+    except OSError as exc:
+        raise FixtureError("plain HTTP probe could not reach the identity provider") from exc
+    if not reply:
+        return "the connection closed without an HTTP answer"
+    if reply[:1] == b"\x15":
+        return "a TLS alert came without an HTTP answer"
+    status = re.match(rb"HTTP/1\.[01] (4[0-9]{2})", reply)
+    if status is not None:
+        return f"an HTTP {status.group(1).decode('ascii')} refusal came without content"
+    raise FixtureError("identity provider answered a plain HTTP request")
+
+
+def identity_tls_context(ca: Path) -> ssl.SSLContext:
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile=str(ca))
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
+
+
+def identity_request(
+    host: str,
+    port: int,
+    context: ssl.SSLContext,
+    method: str,
+    path: str,
+    *,
+    host_header: str | None = None,
+    body: bytes | None = None,
+    headers: Mapping[str, str] | None = None,
+) -> tuple[int, Any]:
+    connection = http.client.HTTPSConnection(host, port, timeout=IDENTITY_PROBE_TIMEOUT, context=context)
+    try:
+        connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
+        connection.putheader("Host", host_header or f"{host}:{port}")
+        for name, value in (headers or {}).items():
+            connection.putheader(name, value)
+        if body is not None:
+            connection.putheader("Content-Length", str(len(body)))
+        connection.endheaders(body)
+        response = connection.getresponse()
+        data = response.read(MAX_JSON_BYTES + 1)
+        status = response.status
+    except (OSError, http.client.HTTPException) as exc:
+        raise FixtureError("identity provider HTTPS request failed") from exc
+    finally:
+        connection.close()
+    if len(data) > MAX_JSON_BYTES:
+        raise FixtureError("identity provider answer exceeds its limit")
+    try:
+        return status, json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return status, None
+
+
+def admin_client_roles(
+    host: str, port: int, issuer: str, context: ssl.SSLContext, client_id: str, secret: str
+) -> list[str]:
+    """Return the admin client's realm-management roles from a fresh token."""
+    credential = base64.b64encode(f"{client_id}:{secret}".encode("ascii")).decode("ascii")
+    status, value = identity_request(
+        host,
+        port,
+        context,
+        "POST",
+        f"/realms/{IDENTITY_REALM}/protocol/openid-connect/token",
+        body=urlencode({"grant_type": "client_credentials"}).encode("ascii"),
+        headers={"Authorization": "Basic " + credential, "Content-Type": "application/x-www-form-urlencoded"},
+    )
+    token = value.get("access_token") if status == 200 and isinstance(value, dict) else None
+    if not isinstance(token, str) or token.count(".") != 2:
+        raise FixtureError("identity provider admin client received no access token")
+    encoded = token.split(".")[1]
+    try:
+        claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise FixtureError("identity provider admin token is not a JWT") from exc
+    access = claims.get("resource_access") if isinstance(claims, dict) else None
+    management = access.get("realm-management") if isinstance(access, dict) else None
+    roles = management.get("roles") if isinstance(management, dict) else None
+    if (
+        claims.get("iss") != issuer
+        or claims.get("azp") != client_id
+        or not isinstance(roles, list)
+        or sorted(roles) != sorted(IDENTITY_ADMIN_ROLES)
+    ):
+        raise FixtureError("identity provider admin client roles are not exactly its realm-management roles")
+    return sorted(roles)
+
+
+def operator_refusals(
+    pm_stack: Path, stack_env: Mapping[str, str], environment: Mapping[str, str], repo_root: Path
+) -> list[str]:
+    """Run the real operator with unsafe identity provider hosts.
+
+    The selected host passes first, so each refusal names only its host."""
+    command = [str(pm_stack), "check", "--config", environment["PM_STACK_TEST_CONFIG"]]
+    code, _, _ = run_capture(
+        command, env=stack_env, cwd=repo_root, timeout=HELPER_TIMEOUT, stage="check the owned fixture", check=False
+    )
+    if code != 0:
+        raise FixtureError("pm-stack check refused the selected identity provider")
+    port = environment["PM_STACK_IDENTITY_PROVIDER_PORT"]
+    refused = []
+    # 192.0.2.10 is from the RFC 5737 documentation range, not a host.
+    for label, host, refusal in (
+        ("wildcard", "0.0.0.0", b"must not be a wildcard address"),
+        ("non-loopback", "192.0.2.10", b"must not be a non-loopback address"),
+        ("first loopback", "127.0.0.1", b"must differ from the first loopback address"),
+    ):
+        unsafe = dict(stack_env)
+        unsafe["PM_STACK_IDENTITY_PROVIDER_HOST"] = host
+        unsafe["PM_STACK_IDENTITY_PROVIDER_ISSUER"] = f"https://{host}:{port}/realms/{IDENTITY_REALM}"
+        code, _, stderr = run_capture(
+            command, env=unsafe, cwd=repo_root, timeout=HELPER_TIMEOUT, stage="probe an unsafe host", check=False
+        )
+        if code == 0 or refusal not in stderr:
+            raise FixtureError(f"pm-stack did not refuse a {label} identity provider host")
+        refused.append(label)
+    return refused
+
+
+def verify_identity_provider(
+    environment: Mapping[str, str],
+    resources: Mapping[str, Any],
+    fixture_root: Path,
+    pm_stack: Path,
+    stack_env: Mapping[str, str],
+    rootless: bool,
+    docker: Path,
+    docker_config: Path,
+    endpoint: str,
+    docker_env: Mapping[str, str],
+    repo_root: Path,
+) -> None:
+    """Check the started Keycloak and print the D1 demonstrations.
+
+    D1-2 production start, HTTPS only, strict hostname; D1-3 the second
+    loopback binding and its refusals; D1-4 the scoped admin client; D1-5 the
+    secret checks and the import file removal; D1-7 and D1-8 the container."""
+    host, port = identity_endpoint(environment, fixture_root)
+    issuer = environment["PM_STACK_IDENTITY_PROVIDER_ISSUER"]
+    directory = fixture_root / IDENTITY_DIRECTORY
+    container_id = next(item["id"] for item in resources["containers"] if item["service"] == IDENTITY_SERVICE)
+    client_id = read_limited(directory / "admin-client-id", 256).decode("ascii")
+    secret = read_limited(directory / "admin-client-secret", 256).decode("ascii")
+    if re.fullmatch(r"[0-9a-f]{64}", secret) is None or client_id != "pm-test-admin":
+        raise FixtureError("identity provider admin credential is malformed")
+
+    _, record, _ = run_capture(
+        docker_command(docker, docker_config, endpoint, "container", "inspect", container_id),
+        env=docker_env, cwd=repo_root, timeout=DOCKER_TIMEOUT, stage="inspect the identity provider",
+    )
+    _, log_out, log_err = run_capture(
+        docker_command(docker, docker_config, endpoint, "container", "logs", container_id),
+        env=docker_env, cwd=repo_root, timeout=DOCKER_TIMEOUT, stage="read the identity provider log",
+        max_output=MAX_PROVIDER_LOG_BYTES,
+    )
+    log = log_out + b"\n" + log_err
+    started = keycloak_start_summary(log)
+    require_secret_absent(record, secret, "identity provider container record", client_id)
+    require_secret_absent(log, secret, "identity provider log", client_id)
+
+    realm_import = directory / "realm.json"
+    try:
+        mountinfo = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        mountinfo = ""
+    file_system = filesystem_type(realm_import.resolve(), mountinfo)
+    try:
+        realm_import.unlink()
+    except OSError as exc:
+        raise FixtureError("identity provider realm import file was not removed") from exc
+    if os.path.lexists(realm_import):
+        raise FixtureError("identity provider realm import file remains")
+
+    plain = plain_http_refusal(host, port, IDENTITY_REALM)
+    context = identity_tls_context(directory / "ca.pem")
+    status, discovery = identity_request(
+        host, port, context, "GET", f"/realms/{IDENTITY_REALM}/.well-known/openid-configuration",
+        host_header=f"localhost:{port}",
+    )
+    if status != 200 or not isinstance(discovery, dict) or discovery.get("issuer") != issuer:
+        raise FixtureError("identity provider derived its issuer from a request host")
+    try:
+        with socket.create_connection((host, port), timeout=IDENTITY_PROBE_TIMEOUT) as raw:
+            with context.wrap_socket(raw, server_hostname="localhost"):
+                pass
+        raise FixtureError("identity provider certificate verified for another name")
+    except ssl.SSLCertVerificationError:
+        pass
+    except OSError as exc:
+        raise FixtureError("identity provider TLS name probe failed") from exc
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=IDENTITY_PROBE_TIMEOUT):
+            pass
+        raise FixtureError("the first loopback address also serves the identity provider port")
+    except ConnectionRefusedError:
+        pass
+    except OSError as exc:
+        raise FixtureError("first loopback probe failed") from exc
+    roles = admin_client_roles(host, port, issuer, context, client_id, secret)
+    refused = operator_refusals(pm_stack, stack_env, environment, repo_root)
+
+    user = IDENTITY_IMAGE_USER if rootless else f"{os.getuid()}:{os.getgid()}"
+    memory_file_system = file_system in {"tmpfs", "ramfs"}
+    report(f"identity provider: Keycloak 26.8.1 ready in production start mode after {started} s (profile prod)")
+    report("identity provider: one HTTPS listener and no management listener in the ready line")
+    report(f"identity provider: HTTPS only: plain HTTP was refused: {plain}")
+    report("identity provider: strict hostname: a request that named another host got the exact configured issuer")
+    report("identity provider: strict hostname: TLS for another name was refused; the certificate names only its address")
+    report("identity provider: one published port on the second loopback address; the first loopback address refused it")
+    report("identity provider: every other service publishes only on the first loopback address")
+    report("identity provider: pm-stack refused a " + ", a ".join(refused) + " identity provider host")
+    report(
+        f"identity provider: hardened container: user {user} (not root), every capability dropped, "
+        "no new privileges, read-only root file system, tmpfs /tmp, data and build output, "
+        "1536 MiB memory, 512 processes, 2 CPUs, its own identity network"
+    )
+    report("identity provider: test realm admin client token holds only realm-management roles " + ", ".join(roles))
+    report("identity provider: the container record and the provider log hold no form of the admin secret")
+    report(
+        "identity provider: realm import file was on "
+        + (f"a memory file system ({file_system})" if memory_file_system else f"{file_system}, not a memory file system")
+        + "; removed after the ready line"
+    )
 
 
 def fixture_environment(base: Mapping[str, str], generated: Mapping[str, str], config: Path, endpoint: str) -> dict[str, str]:
@@ -2082,6 +2610,7 @@ def validate_fixture_record(manifest: OwnershipManifest) -> dict[str, str]:
         environment["PM_STACK_S3_SECONDARY_PORT"],
         "secondary S3",
     )
+    identity_endpoint(environment, manifest.fixture_root)
     root_identity = fixture["root_identity"]
     if (
         not isinstance(root_identity, dict)
@@ -2358,7 +2887,7 @@ def cleanup_fixture(
             remove_owned_parent(manifest)
             manifest.update(
                 "cleaned",
-                resources={"containers": [], "network": None, "helper": None},
+                resources={"containers": [], "networks": [], "helper": None},
                 diagnostic=None,
             )
             return True
@@ -2525,15 +3054,14 @@ def cleanup_fixture(
                 diagnostic=safe_diagnostic("owned-containers-remain", remaining, errors),
             )
             return False
-        if remaining["network"] is not None:
-            network = remaining["network"]
-            if network["containers"]:
-                manifest.update(
-                    "cleanup_failed",
-                    resources=resource_manifest(remaining),
-                    diagnostic=safe_diagnostic("owned-network-not-empty", remaining, errors),
-                )
-                return False
+        if any(network["containers"] for network in remaining["networks"]):
+            manifest.update(
+                "cleanup_failed",
+                resources=resource_manifest(remaining),
+                diagnostic=safe_diagnostic("owned-network-not-empty", remaining, errors),
+            )
+            return False
+        for network in remaining["networks"]:
             network_code = run_quiet(
                 docker_command(docker, docker_config, endpoint, "network", "rm", network["id"]),
                 env=docker_env,
@@ -2558,7 +3086,7 @@ def cleanup_fixture(
         except FixtureError:
             manifest.update("cleanup_failed", diagnostic=safe_diagnostic("final-resource-ownership-mismatch", errors=errors))
             return False
-        if final_resources["containers"] or final_resources["network"] is not None or final_resources["helper"] is not None:
+        if final_resources["containers"] or final_resources["networks"] or final_resources["helper"] is not None:
             manifest.update(
                 "cleanup_failed",
                 resources=resource_manifest(final_resources),
@@ -2590,7 +3118,7 @@ def cleanup_fixture(
         except FixtureError:
             manifest.update("cleanup_failed", diagnostic=safe_diagnostic("post-helper-ownership-mismatch", errors=errors))
             return False
-        if post_helper["containers"] or post_helper["network"] is not None or post_helper["helper"] is not None:
+        if post_helper["containers"] or post_helper["networks"] or post_helper["helper"] is not None:
             manifest.update(
                 "cleanup_failed",
                 resources=resource_manifest(post_helper),
@@ -2606,14 +3134,14 @@ def cleanup_fixture(
             return False
         manifest.update(
             "cleaning",
-            resources={"containers": [], "network": None, "helper": None},
+            resources={"containers": [], "networks": [], "helper": None},
             diagnostic=None,
             authorize_deletion=True,
         )
         remove_owned_parent(manifest)
         manifest.update(
             "cleaned",
-            resources={"containers": [], "network": None, "helper": None},
+            resources={"containers": [], "networks": [], "helper": None},
             diagnostic=None,
         )
         return True
@@ -2797,13 +3325,19 @@ def run_mode(
         manifest.update("starting", fixture=record, authorize_docker=True)
         close_reservations(reservations)
         stack_env = fixture_environment(base_environment, environment, docker_config, endpoint)
-        run_quiet(
-            [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]],
-            env=stack_env,
-            cwd=repo_root,
-            timeout=STARTUP_TIMEOUT,
-            stage="start owned fixture",
-        )
+        with tempfile.TemporaryFile(dir=parent) as stack_errors:
+            code = run_quiet(
+                [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]], env=stack_env, cwd=repo_root,
+                timeout=STARTUP_TIMEOUT, stage="start owned fixture", check=False, stderr=stack_errors,
+            )
+            if code != 0:
+                stack_errors.seek(max(0, stack_errors.seek(0, os.SEEK_END) - MAX_GENERATOR_OUTPUT))
+                step = stack_failed_step(stack_errors.read())
+                try:
+                    provider = identity_provider_state(project, docker, docker_config, endpoint, docker_env, repo_root)
+                except FixtureError:
+                    provider = "provider=unknown"
+                raise FixtureError(f"start owned fixture failed with exit status {code}: step={step} {provider}")
         resources = discover_resources(
             manifest,
             environment,
@@ -2815,6 +3349,19 @@ def run_mode(
             repo_root,
         )
         verify_running_resources(resources)
+        verify_identity_provider(
+            environment,
+            resources,
+            fixture_root,
+            pm_stack,
+            stack_env,
+            manifest.daemon["rootless"],
+            docker,
+            docker_config,
+            endpoint,
+            docker_env,
+            repo_root,
+        )
         manifest.update("running", resources=resource_manifest(resources), diagnostic=None)
         result = run_child(command, env=stack_env, cwd=repo_root)
     except Cancellation as cancelled:
