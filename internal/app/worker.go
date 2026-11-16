@@ -2483,8 +2483,11 @@ func workerSettlementContext(
 //
 // The step ends one settlement reserve before the settlement cutoff. The cutoff
 // is the earlier of the accepted run deadline and one reserve before the
-// activity attempt deadline. So the settlement that follows always keeps a
-// positive budget of at least one reserve, whichever deadline comes first.
+// activity attempt deadline. So the publication step does not use the reserve
+// that it leaves for the settlement, whichever deadline comes first. This is a
+// nominal separation only. The provider callback can run until the accepted
+// run deadline (workerCallbackContext), so a late callback can leave the
+// settlement less than one reserve, or none. Issue #281 owns that gap.
 //
 // Each object-store request in the step keeps its own bound,
 // artifacts.execution.request_timeout, in the object-store adapter. The
