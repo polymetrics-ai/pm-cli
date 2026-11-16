@@ -82,6 +82,10 @@ func (l *lane) running() error {
 	return nil
 }
 
+// workerProcess returns the pm-worker process that the lane started. It is
+// nil until the lane starts pm-worker.
+func (l *lane) workerProcess() *starter.Process { return l.worker }
+
 // start opens the observer and the deployment. Then it starts pm-server and,
 // after the pm-server ready line, pm-worker. pm-worker does not start when
 // pm-server sent no ready line.
