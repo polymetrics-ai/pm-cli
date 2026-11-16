@@ -21,7 +21,7 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM pm.control_schema WHERE singleton AND revision = 'pm.control/v22'
     ) THEN
-        RAISE EXCEPTION 'schema discovery migration requires the operator bootstrap schema';
+        RAISE EXCEPTION 'schema discovery migration requires the membership update schema';
     END IF;
 END
 $$;
