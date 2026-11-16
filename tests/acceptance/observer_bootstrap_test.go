@@ -39,12 +39,18 @@ func openBootstrapObserver(parent context.Context, stack stackInputs) (*observer
 
 // createBootstrapRole makes the bootstrap observer role with the stack
 // administrator account.
-func (o *observer) createBootstrapRole(ctx context.Context, role, password string) error {
+func (o *observer) createBootstrapRole(ctx context.Context, role, password string) (err error) {
 	admin, err := pgx.Connect(ctx, o.adminDSN)
 	if err != nil {
 		return fmt.Errorf("connect the stack administrator: %w", err)
 	}
-	defer func() { _ = admin.Close(context.Background()) }()
+	// The close uses the deadline of ctx, the limit of one lane command. A
+	// failed close fails the step.
+	defer func() {
+		if closeErr := admin.Close(ctx); closeErr != nil {
+			err = errors.Join(err, fmt.Errorf("close the stack administrator connection: %w", closeErr))
+		}
+	}()
 	name := pgx.Identifier{role}.Sanitize()
 	tables := make([]string, 0, len(bootstrapTables))
 	for _, table := range bootstrapTables {
@@ -73,16 +79,24 @@ func (o *observer) createBootstrapRole(ctx context.Context, role, password strin
 // readBootstrapState reads every row of each bootstrap table in one
 // read-only snapshot, as JSON text in sorted order. An empty organization
 // reads the whole stack. Another organization reads only its rows. One
-// deadline, the limit of one lane command, bounds the snapshot.
-func (o *observer) readBootstrapState(parent context.Context, orgID string) (bootstrapState, error) {
+// deadline, the limit of one lane command, bounds the whole snapshot: the
+// begin, each read and the rollback that ends it. A failed rollback fails the
+// reading.
+func (o *observer) readBootstrapState(parent context.Context, orgID string) (state bootstrapState, err error) {
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
 	tx, err := o.database.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
 		return nil, fmt.Errorf("begin the bootstrap observer snapshot: %w", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
-	state := make(bootstrapState, len(bootstrapTables))
+	// This deferred call runs before the deferred cancel, so the rollback
+	// has the same deadline as the snapshot.
+	defer func() {
+		if rollbackErr := tx.Rollback(ctx); rollbackErr != nil {
+			state, err = nil, errors.Join(err, fmt.Errorf("end the bootstrap observer snapshot: %w", rollbackErr))
+		}
+	}()
+	state = make(bootstrapState, len(bootstrapTables))
 	for _, table := range bootstrapTables {
 		query := "SELECT COALESCE(array_agg(r.row ORDER BY r.row COLLATE \"C\"), '{}') FROM (SELECT to_jsonb(t)::text AS row FROM " +
 			pgx.Identifier{"pm", table}.Sanitize() + " t WHERE $1::text = '' OR t.org_id = $1::text) r"
