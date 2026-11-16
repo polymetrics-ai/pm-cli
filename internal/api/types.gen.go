@@ -1139,7 +1139,7 @@ type MembershipRevokeRequest struct {
 // MembershipUpdateRequest defines model for MembershipUpdateRequest.
 type MembershipUpdateRequest struct {
 	Membership struct {
-		// AddConnectionIds Strictly sorted, unique connection IDs to add.
+		// AddConnectionIds Connection IDs to add, in strictly ascending byte order.
 		AddConnectionIds []string `json:"add_connection_ids"`
 		MembershipRef    string   `json:"membership_ref"`
 	} `json:"membership"`
