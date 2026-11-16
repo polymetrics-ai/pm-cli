@@ -185,6 +185,58 @@ The starter must do these things:
 
 A supervisor of `pm-server` has this minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM. It bounds its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
 
+### Operator bootstrap
+
+The operator creates the first workspace and admin of an organization with `pm-server bootstrap` ([ADR 0006](../decisions/0006-operator-bootstrap.md)). The subcommand does not start the server, and no HTTP route bootstraps.
+
+```sh
+.cache/bin/pm-server bootstrap \
+  --config /absolute/path/to/operator-server.json \
+  --secrets-directory /absolute/path/to/operator-bootstrap-secrets \
+  --input /absolute/path/to/bootstrap-input.json
+```
+
+The input file is one JSON document with exactly these fields. It holds no secret:
+
+```json
+{
+  "org_id": "org-example",
+  "workspace_id": "workspace-example",
+  "workspace_name": "First workspace",
+  "admin_issuer": "https://identity.example.invalid",
+  "admin_subject": "admin-subject",
+  "provider_accounts": [{"connector_id": "postgres", "display_name": "Customer database"}]
+}
+```
+
+In one PostgreSQL transaction, the subcommand writes:
+
+- the workspace;
+- the admin identity, with its login binding for `admin_issuer` and `admin_subject` in the configured deployment;
+- an admin membership that holds every workspace permission and names no connection;
+- each provider account;
+- one bootstrap record for the deployment and the organization;
+- one audit record, with the actor kind `operator` and the actor `bootstrap`.
+
+Each provider account must name a connector that `connectors.bundles` declares. On success, the exit code is 0 and stdout holds one JSON document that names these rows. On a refusal, the exit code is 1, stdout is empty, nothing is written, and stderr holds exactly one of these lines:
+
+- `pm-server: bootstrap scope is already bootstrapped`
+- `pm-server: bootstrap admin login is already bound`
+- `pm-server: bootstrap workspace name is required`
+- `pm-server: bootstrap admin subject is required`
+- `pm-server: bootstrap provider account names an undeclared connector`
+- `pm-server: bootstrap requires operator authority`
+
+Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown; run the same bootstrap again`. After an unknown outcome, run the same bootstrap again. The refusal `bootstrap scope is already bootstrapped` then shows that the first bootstrap committed.
+
+The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role can only insert the bootstrap rows, and row-level security limits each insert to the configured deployment and the organization of the input.
+
+The operator has these duties:
+
+1. Run the privileged deployment bootstrap (`deploy/postgres/bootstrap.sql`) before the store migrations. It creates `pm_app_bootstrap` from the password file `pm-app-bootstrap-password`. An existing deployment must run it again before migration 0021, or that migration fails at its role check.
+2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the same deployment and organization is refused, also with the same input.
+3. Remove `pm-app-bootstrap-endpoint` from the secret directory after the bootstrap.
+
 ### Scoped event streams and artifact boundaries
 
 `GET /v1/workspaces/{workspace_id}/runs/{run_id}/events` serves authenticated SSE. Both `run.read` and `event.read` must authorize the parent run before event disclosure, and polling rechecks current authority. Foreign scopes and runs remain concealed. The stream begins with an authoritative `snapshot`; committed `run_event` frames follow in durable sequence order. Sequences, state revisions and safe-payload counts are decimal strings, including values beyond JavaScript's exact integer range.
