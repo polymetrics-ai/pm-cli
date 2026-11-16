@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/polymetrics-ai/pm-cli/internal/config"
 	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/server"
 	"github.com/spf13/cobra"
@@ -87,6 +86,7 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 	command.Flags().Var(configurationFlag, "config", "absolute or operator-selected PM Server configuration file")
 	command.Flags().Var(secretsFlag, "secrets-directory", "descriptor-confined operator secret bundle root")
 	command.Flags().Var(readyFlag, "ready-fd", "write one ready line to inherited descriptor fd (3 or more), then close it")
+	command.AddCommand(newBootstrapCommand(ctx, stdout))
 	return command.ExecuteContext(ctx)
 }
 
@@ -99,17 +99,7 @@ func serve(ctx context.Context, configurationPath, secretsDirectory string, diag
 			_ = ready.Close()
 		}
 	}()
-	file, err := os.Open(configurationPath)
-	if err != nil {
-		return errors.New("server configuration is unavailable")
-	}
-	defer file.Close()
-
-	document, err := config.Load(file)
-	if err != nil {
-		return err
-	}
-	configuration, err := config.Validate(document, config.Prelaunch{})
+	configuration, err := loadConfiguration(configurationPath)
 	if err != nil {
 		return err
 	}
