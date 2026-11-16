@@ -10,11 +10,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,9 +44,28 @@ const (
 	maximumSecretBytes       = 64 << 10
 	readinessTimeout         = 2 * time.Minute
 	deploymentLockRetryDelay = 100 * time.Millisecond
+
+	// The job identity provider is a test-only Keycloak in its own Compose
+	// overlay. Only this service may publish on the second loopback address.
+	identityProviderService          = "keycloak"
+	identityProviderNetwork          = "identity-private"
+	identityProviderComposeFile      = "deploy/compose.identity.yaml"
+	identityProviderBinding          = "${PM_STACK_IDENTITY_PROVIDER_HOST:?}:${PM_STACK_IDENTITY_PROVIDER_PORT:?}:8443"
+	identityProviderUserVariable     = "${PM_STACK_IDENTITY_PROVIDER_USER:?}"
+	identityProviderImageUser        = "1000:0"
+	identityProviderReadinessTimeout = 4 * time.Minute
 )
 
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
+
+var identityProviderRealmPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+var identityProviderVariables = []string{
+	"PM_STACK_IDENTITY_PROVIDER_HOST",
+	"PM_STACK_IDENTITY_PROVIDER_PORT",
+	"PM_STACK_IDENTITY_PROVIDER_ISSUER",
+	"PM_STACK_IDENTITY_PROVIDER_DIR",
+}
 
 var processDeploymentFence = make(chan struct{}, 1)
 
@@ -70,8 +91,19 @@ type runtime struct {
 	images            map[string]string
 	uid               string
 	gid               string
+	identityProvider  *identityProvider
+	identityUser      string
 	stdout            io.Writer
 	stderr            io.Writer
+}
+
+// identityProvider is the job-owned test identity provider that the job
+// environment selects. It is nil for every other stack.
+type identityProvider struct {
+	host   string
+	port   string
+	issuer string
+	dir    string
 }
 
 type imageLock struct {
@@ -95,6 +127,11 @@ type composeService struct {
 	Ports       []string `yaml:"ports"`
 	Privileged  bool     `yaml:"privileged"`
 	Volumes     []string `yaml:"volumes"`
+	User        string   `yaml:"user"`
+	ReadOnly    bool     `yaml:"read_only"`
+	CapDrop     []string `yaml:"cap_drop"`
+	SecurityOpt []string `yaml:"security_opt"`
+	Networks    []string `yaml:"networks"`
 }
 
 type postgresConnection struct {
@@ -377,6 +414,19 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 		}
 	}
 
+	if rt.identityProvider != nil {
+		// --no-recreate keeps a running provider: the job removes its realm
+		// import file after the first ready answer.
+		if err := rt.compose(ctx, configuration, "up", "-d", "--no-recreate", identityProviderService); err != nil {
+			return fmt.Errorf("start the job identity provider: %w", err)
+		}
+		if err := waitFor(ctx, identityProviderReadinessTimeout, func(checkCtx context.Context) error {
+			return checkIdentityProvider(checkCtx, rt.identityProvider)
+		}); err != nil {
+			return fmt.Errorf("job identity provider readiness: %w", err)
+		}
+	}
+
 	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 		return checkLive(checkCtx, configuration, rt)
 	}); err != nil {
@@ -446,7 +496,10 @@ func drainStack(ctx context.Context, configuration config.Configuration, selecte
 	}
 	defer releaseDeploymentLock(lock)
 
-	services := make([]string, 0, 8)
+	services := make([]string, 0, 9)
+	if rt.identityProvider != nil {
+		services = append(services, identityProviderService)
+	}
 	if selected[config.DependencyArtifacts] {
 		services = append(services, "caddy", "seaweed-s3-a", "seaweed-s3-b", "seaweed-filer", "seaweed-volume", "seaweed-master")
 	}
@@ -496,6 +549,8 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	if len(bundledDependencies(configuration)) == 0 {
 		return rt, nil
 	}
+	// PM's own services publish only on 127.0.0.1. The job identity provider
+	// has its own variables and is checked after the port selection below.
 	if host := os.Getenv("PM_STACK_PUBLISH_HOST"); host != "" && host != "127.0.0.1" {
 		return nil, fmt.Errorf("published infrastructure ports must bind only to 127.0.0.1")
 	}
@@ -516,6 +571,10 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	if err != nil {
 		return nil, err
 	}
+	rt.identityProvider, err = identityProviderFromEnvironment(os.Getenv, rt.ports)
+	if err != nil {
+		return nil, err
+	}
 	if err := rt.validateBundledEndpoints(configuration); err != nil {
 		return nil, err
 	}
@@ -528,8 +587,94 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	}
 	rt.uid = strconv.Itoa(os.Getuid())
 	rt.gid = strconv.Itoa(os.Getgid())
+	// Compose validation interpolates the overlay before the engine is known.
+	// rt.compose replaces this value with the engine-specific user.
+	rt.identityUser = rt.uid + ":" + rt.gid
 
 	return rt, nil
+}
+
+// identityProviderFromEnvironment returns the job identity provider that the
+// environment selects, or nil when it selects none. Its address must be a
+// second IPv4 loopback address, so that PM cookies for 127.0.0.1 never reach it.
+func identityProviderFromEnvironment(lookup func(string) string, ports map[string]string) (*identityProvider, error) {
+	values := make(map[string]string, len(identityProviderVariables))
+	for _, name := range identityProviderVariables {
+		if value := lookup(name); value != "" {
+			values[name] = value
+		}
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	if len(values) != len(identityProviderVariables) {
+		return nil, fmt.Errorf("the job identity provider requires %s together", strings.Join(identityProviderVariables, ", "))
+	}
+	host := values["PM_STACK_IDENTITY_PROVIDER_HOST"]
+	if err := validateIdentityProviderHost(host); err != nil {
+		return nil, err
+	}
+	port := values["PM_STACK_IDENTITY_PROVIDER_PORT"]
+	if number, err := strconv.Atoi(port); err != nil || number < 1024 || number > 65535 || strconv.Itoa(number) != port {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_PORT must be an explicit non-privileged TCP port")
+	}
+	for name, value := range ports {
+		if value == port {
+			return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_PORT and %s must not publish the same port", name)
+		}
+	}
+	issuer := values["PM_STACK_IDENTITY_PROVIDER_ISSUER"]
+	realm, found := strings.CutPrefix(issuer, "https://"+net.JoinHostPort(host, port)+"/realms/")
+	if !found || !identityProviderRealmPattern.MatchString(realm) {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_ISSUER must be the exact HTTPS realm issuer at the identity provider address")
+	}
+	directory := values["PM_STACK_IDENTITY_PROVIDER_DIR"]
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_DIR must be an absolute clean path")
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return nil, fmt.Errorf("identity provider directory is unavailable")
+	}
+	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("identity provider directory is not a directory")
+	}
+	if _, err := readBundleFile(resolved, "ca.pem"); err != nil {
+		return nil, fmt.Errorf("identity provider CA: %w", err)
+	}
+	return &identityProvider{host: host, port: port, issuer: issuer, dir: resolved}, nil
+}
+
+// validateIdentityProviderHost admits only a canonical IPv4 loopback address
+// other than 127.0.0.1. It refuses wildcard and non-loopback addresses.
+func validateIdentityProviderHost(host string) error {
+	address, err := netip.ParseAddr(host)
+	if err == nil && address.IsUnspecified() {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must not be a wildcard address")
+	}
+	if err != nil || !address.Is4() || address.String() != host {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must be a canonical IPv4 address")
+	}
+	if !address.IsLoopback() {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must not be a non-loopback address")
+	}
+	if address == netip.AddrFrom4([4]byte{127, 0, 0, 1}) {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must differ from the first loopback address that PM uses")
+	}
+	return nil
+}
+
+// identityProviderUser selects a non-root container user that can read the
+// provider's group-readable mounts. A rootless engine maps container group 0
+// to the job account's group, so the image's own user 1000:0 reads them.
+func identityProviderUser(rootless bool, uid, gid int) (string, error) {
+	if rootless {
+		return identityProviderImageUser, nil
+	}
+	if uid == 0 || gid == 0 {
+		return "", fmt.Errorf("the job identity provider must not run as the root account or group")
+	}
+	return strconv.Itoa(uid) + ":" + strconv.Itoa(gid), nil
 }
 
 func repositoryRoot() (string, error) {
@@ -829,34 +974,74 @@ func loadImageLock(root string) (map[string]string, error) {
 	return images, nil
 }
 
+// validateComposeSource checks the bundled projection and the identity
+// provider overlay. Every service publishes only on 127.0.0.1, except the
+// identity provider, which publishes exactly its second loopback binding.
 func validateComposeSource(root string) error {
-	contents, err := os.ReadFile(filepath.Join(root, "deploy/compose.yaml"))
+	bundled, err := readComposeDocument(root, "deploy/compose.yaml", "bundled Compose projection")
 	if err != nil {
-		return fmt.Errorf("read bundled Compose projection: %w", err)
+		return err
+	}
+	if len(bundled.Services) == 0 {
+		return fmt.Errorf("bundled Compose projection contains no services")
+	}
+	if _, exists := bundled.Services[identityProviderService]; exists {
+		return fmt.Errorf("service %q must stay outside the bundled Compose projection", identityProviderService)
+	}
+	identity, err := readComposeDocument(root, identityProviderComposeFile, "identity provider Compose overlay")
+	if err != nil {
+		return err
+	}
+	for name := range identity.Services {
+		if name != identityProviderService {
+			return fmt.Errorf("service %q must not join the identity provider overlay", name)
+		}
+	}
+	provider, exists := identity.Services[identityProviderService]
+	if !exists {
+		return fmt.Errorf("identity provider overlay does not define service %q", identityProviderService)
+	}
+	for _, document := range []composeDocument{bundled, identity} {
+		for name, service := range document.Services {
+			if service.Privileged || service.NetworkMode == "host" {
+				return fmt.Errorf("service %q requests prohibited host privileges", name)
+			}
+			for _, binding := range service.Ports {
+				if name == identityProviderService {
+					if binding != identityProviderBinding {
+						return fmt.Errorf("service %q publishes a port outside its second loopback binding", name)
+					}
+				} else if !strings.HasPrefix(binding, "127.0.0.1:") {
+					return fmt.Errorf("service %q publishes a non-loopback port", name)
+				}
+			}
+			for _, mount := range service.Volumes {
+				if strings.Contains(mount, "/var/run/docker.sock") {
+					return fmt.Errorf("service %q mounts the Docker socket", name)
+				}
+			}
+		}
+	}
+	if provider.User != identityProviderUserVariable || !provider.ReadOnly ||
+		!slices.Equal(provider.CapDrop, []string{"ALL"}) ||
+		!slices.Equal(provider.SecurityOpt, []string{"no-new-privileges:true"}) ||
+		!slices.Equal(provider.Networks, []string{identityProviderNetwork}) ||
+		provider.NetworkMode != "" || len(provider.Ports) != 1 {
+		return fmt.Errorf("service %q must run as the selected non-root user with no capabilities, no new privileges, a read-only root file system, its own network and one published port", identityProviderService)
+	}
+	return nil
+}
+
+func readComposeDocument(root, relative, description string) (composeDocument, error) {
+	contents, err := os.ReadFile(filepath.Join(root, relative))
+	if err != nil {
+		return composeDocument{}, fmt.Errorf("read %s: %w", description, err)
 	}
 	var document composeDocument
 	if err := yaml.Unmarshal(contents, &document); err != nil {
-		return fmt.Errorf("parse bundled Compose projection: %w", err)
+		return composeDocument{}, fmt.Errorf("parse %s: %w", description, err)
 	}
-	if len(document.Services) == 0 {
-		return fmt.Errorf("bundled Compose projection contains no services")
-	}
-	for name, service := range document.Services {
-		if service.Privileged || service.NetworkMode == "host" {
-			return fmt.Errorf("service %q requests prohibited host privileges", name)
-		}
-		for _, binding := range service.Ports {
-			if !strings.HasPrefix(binding, "127.0.0.1:") {
-				return fmt.Errorf("service %q publishes a non-loopback port", name)
-			}
-		}
-		for _, mount := range service.Volumes {
-			if strings.Contains(mount, "/var/run/docker.sock") {
-				return fmt.Errorf("service %q mounts the Docker socket", name)
-			}
-		}
-	}
-	return nil
+	return document, nil
 }
 
 func (rt *runtime) render(configuration config.Configuration) error {
@@ -1096,11 +1281,18 @@ func (rt *runtime) composeEnvironment() []string {
 		"PM_STACK_IMAGE_TEMPORAL_SERVER": rt.images["temporal-server"],
 		"PM_STACK_IMAGE_SEAWEEDFS":       rt.images["seaweedfs"],
 		"PM_STACK_IMAGE_CADDY":           rt.images["caddy"],
+		"PM_STACK_IMAGE_KEYCLOAK":        rt.images["keycloak"],
 		"COMPOSE_DISABLE_ENV_FILE":       "true",
 		"COMPOSE_ENV_FILES":              "",
 	}
 	for name, value := range rt.ports {
 		values[name] = value
+	}
+	if provider := rt.identityProvider; provider != nil {
+		values["PM_STACK_IDENTITY_PROVIDER_HOST"] = provider.host
+		values["PM_STACK_IDENTITY_PROVIDER_PORT"] = provider.port
+		values["PM_STACK_IDENTITY_PROVIDER_DIR"] = provider.dir
+		values["PM_STACK_IDENTITY_PROVIDER_USER"] = rt.identityUser
 	}
 	environment := make([]string, 0, len(os.Environ())+len(values))
 	for _, entry := range os.Environ() {
@@ -1128,6 +1320,9 @@ func (rt *runtime) composeArguments(configuration config.Configuration, argument
 		"--project-name", rt.project,
 		"-f", filepath.Join(rt.root, "deploy/compose.yaml"),
 		"-f", filepath.Join(rt.root, "deploy/compose.managed.yaml"),
+	}
+	if rt.identityProvider != nil {
+		command = append(command, "-f", filepath.Join(rt.root, identityProviderComposeFile))
 	}
 	if configuration.Postgres().Ownership == config.OwnershipBundled {
 		command = append(command, "--profile", "bundled-postgres")
@@ -1173,13 +1368,34 @@ func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
 		return err
 	}
 	rt.uid, rt.gid = uid, gid
+	if rt.identityProvider != nil {
+		rootless, err := rootlessDaemon(output)
+		if err != nil {
+			return err
+		}
+		rt.identityUser, err = identityProviderUser(rootless, os.Getuid(), os.Getgid())
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func containerIdentity(output []byte, uid, gid int) (string, string, error) {
+	rootless, err := rootlessDaemon(output)
+	if err != nil {
+		return "", "", err
+	}
+	if rootless {
+		return "0", "0", nil
+	}
+	return strconv.Itoa(uid), strconv.Itoa(gid), nil
+}
+
+func rootlessDaemon(output []byte) (bool, error) {
 	var options []string
 	if err := json.Unmarshal(output, &options); err != nil || options == nil {
-		return "", "", fmt.Errorf("Docker security options are invalid")
+		return false, fmt.Errorf("Docker security options are invalid")
 	}
 	rootless, remapped := false, false
 	for _, option := range options {
@@ -1187,13 +1403,10 @@ func containerIdentity(output []byte, uid, gid int) (string, string, error) {
 		rootless = rootless || name == "name=rootless"
 		remapped = remapped || name == "name=userns"
 	}
-	if rootless {
-		return "0", "0", nil
+	if !rootless && remapped {
+		return false, fmt.Errorf("rootful Docker userns-remap requires an explicit bind-mount ownership mapping")
 	}
-	if remapped {
-		return "", "", fmt.Errorf("rootful Docker userns-remap requires an explicit bind-mount ownership mapping")
-	}
-	return strconv.Itoa(uid), strconv.Itoa(gid), nil
+	return rootless, nil
 }
 
 func (rt *runtime) validateCompose(ctx context.Context, configuration config.Configuration) error {
@@ -1269,6 +1482,58 @@ func checkLive(ctx context.Context, configuration config.Configuration, rt *runt
 	}
 	if err := ensureArtifactBucket(ctx, configuration, rt, false); err != nil {
 		return fmt.Errorf("artifact readiness: %w", err)
+	}
+	if rt.identityProvider != nil {
+		if err := checkIdentityProvider(ctx, rt.identityProvider); err != nil {
+			return fmt.Errorf("job identity provider readiness: %w", err)
+		}
+	}
+	return nil
+}
+
+// checkIdentityProvider reads the realm discovery document over TLS that the
+// identity provider CA and the exact IP address verify. The provider is ready
+// only when it names the exact configured issuer, whatever the request host.
+// Errors omit the address and the response.
+func checkIdentityProvider(ctx context.Context, provider *identityProvider) error {
+	ca, err := readBundleFile(provider.dir, "ca.pem")
+	if err != nil {
+		return fmt.Errorf("identity provider CA: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		return fmt.Errorf("identity provider CA bundle is invalid")
+	}
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: provider.host},
+		DisableKeepAlives: true,
+	}
+	defer transport.CloseIdleConnections()
+	httpClient := &http.Client{
+		Transport:     transport,
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, provider.issuer+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return fmt.Errorf("build identity provider discovery request")
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		return fmt.Errorf("identity provider discovery is unavailable")
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return fmt.Errorf("identity provider discovery returned status %d", response.StatusCode)
+	}
+	var discovery struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&discovery); err != nil {
+		return fmt.Errorf("identity provider discovery is not JSON")
+	}
+	if discovery.Issuer != provider.issuer {
+		return fmt.Errorf("identity provider discovery does not name the exact configured issuer")
 	}
 	return nil
 }
