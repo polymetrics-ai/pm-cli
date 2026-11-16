@@ -29,6 +29,7 @@ func registerLaneSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane
 	sc.Step(`^the lane runs pm-server on the job-owned stack$`, scenario.laneRuns)
 	sc.Step(`^a pm server profile for the lane server$`, scenario.addProfile)
 	sc.Step(`^I run "([^"]*)" against the lane server$`, scenario.runAgainstLane)
+	sc.Step(`^the observer reads the lane server information through its own HTTPS client, and its instance ID equals the instance ID in the lane command stdout$`, scenario.observerReadsLaneInstanceID)
 	sc.Step(`^the observer sees no new row in the PM run and audit tables$`, scenario.observerSeesNoNewRow)
 }
 
@@ -62,6 +63,33 @@ func (s *laneScenario) runAgainstLane(ctx context.Context, line string) error {
 		return err
 	}
 	s.baseline = baseline
+	return nil
+}
+
+// observerReadsLaneInstanceID is step 29. The observer makes one HTTPS
+// request for the server information of the lane pm-server through the lane
+// edge, with the helper of step 30 (criteria N22). Its client trusts only the
+// lane CA and uses no pm profile and no PM session. The step compares the
+// instance ID of the answer with the one instance ID that the lane command
+// printed.
+func (s *laneScenario) observerReadsLaneInstanceID(ctx context.Context) error {
+	if err := s.lane.running(); err != nil {
+		return err
+	}
+	if !s.shared.result.ran {
+		return errors.New("no lane command ran")
+	}
+	printed, err := instanceIDInOutput(s.shared.result.stdout)
+	if err != nil {
+		return err
+	}
+	observed, err := readServerInstanceID(ctx, s.lane.deployment.origin, s.lane.deployment.authority.pem)
+	if err != nil {
+		return err
+	}
+	if observed != printed {
+		return fmt.Errorf("the observer read instance ID %q from the lane pm-server, but the lane command printed %q", observed, printed)
+	}
 	return nil
 }
 

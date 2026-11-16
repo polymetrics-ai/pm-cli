@@ -21,7 +21,9 @@ const stackAdminRole = "pm_stack_admin"
 
 // observer reads the stack independently of the PM processes. It reads
 // PostgreSQL through its own role, which can only read the observed tables.
-// It never decrypts, repairs or writes.
+// It never decrypts, repairs or writes. Step 29 also reads the lane server
+// information through the observer HTTPS client of steps 29 and 30
+// (readServerInstanceID).
 //
 // The stack has no observer role, so the lane makes one with the stack
 // administrator account and drops it when the suite ends. The role has
