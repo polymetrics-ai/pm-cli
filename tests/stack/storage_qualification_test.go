@@ -97,10 +97,16 @@ func TestSelectedPostgresTemporalQualification(t *testing.T) {
 	defer cancel()
 	fixture := loadSelectedStackFixture(t)
 	qualifyOperatorConfigurationBoundary(t, fixture)
+	// The fixture started the stack with pm-stack up. The next up is a second
+	// up of the same, unchanged deployment.
+	beforeSecondUp := fixtureServiceContainers(t, ctx)
 	t.Run("operator ignores unapproved Compose dotenv inputs", func(t *testing.T) {
 		t.Setenv("COMPOSE_DISABLE_ENV_FILE", "false")
 		t.Setenv("COMPOSE_ENV_FILES", filepath.Join(t.TempDir(), "must-not-read.env"))
 		runOperator(t, ctx, fixture.configPath, "up")
+	})
+	t.Run("a second up keeps each running service container", func(t *testing.T) {
+		assertSameServiceContainers(t, beforeSecondUp, fixtureServiceContainers(t, ctx))
 	})
 	t.Run("cancelled changed-config contender preserves fenced deployment inputs", func(t *testing.T) {
 		qualifyDeploymentInputFence(t, fixture)
@@ -156,6 +162,72 @@ func TestSelectedPostgresTemporalQualification(t *testing.T) {
 		t.Fatalf("managed stop refusal mutated operator state: %v", err)
 	}
 	runOperator(t, ctx, managedPath, "check")
+}
+
+// bundledFixtureServices are the long-running services of the bundled stack.
+var bundledFixtureServices = []string{
+	"caddy", "postgres", "seaweed-filer", "seaweed-master", "seaweed-s3-a", "seaweed-s3-b", "seaweed-volume", "temporal",
+}
+
+type serviceContainerIdentity struct {
+	id        string
+	startedAt string
+}
+
+// fixtureServiceContainers returns the container ID and the start time of the
+// one running container of each bundled service of the fixture project.
+func fixtureServiceContainers(t *testing.T, ctx context.Context) map[string]serviceContainerIdentity {
+	t.Helper()
+	project := requiredEnvironment(t, "PM_STACK_PROJECT")
+	list, err := exec.CommandContext(ctx, "docker", "ps", "--quiet", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--filter", "label=com.docker.compose.oneoff=False").Output()
+	if err != nil {
+		t.Fatalf("list the fixture service containers: %v", err)
+	}
+	containers := make(map[string]serviceContainerIdentity)
+	for _, id := range strings.Fields(string(list)) {
+		state, err := exec.CommandContext(ctx, "docker", "inspect", "--format",
+			`{{index .Config.Labels "com.docker.compose.service"}} {{.Id}} {{.State.StartedAt}}`, id).Output()
+		if err != nil {
+			t.Fatalf("inspect a fixture service container: %v", err)
+		}
+		fields := strings.Fields(string(state))
+		if len(fields) != 3 {
+			t.Fatalf("a fixture service container has an unexpected state of %d fields", len(fields))
+		}
+		if _, duplicate := containers[fields[0]]; duplicate {
+			t.Fatalf("service %s has more than one running container", fields[0])
+		}
+		containers[fields[0]] = serviceContainerIdentity{id: fields[1], startedAt: fields[2]}
+	}
+	services := make([]string, 0, len(containers))
+	for service := range containers {
+		services = append(services, service)
+	}
+	sort.Strings(services)
+	if strings.Join(services, ",") != strings.Join(bundledFixtureServices, ",") {
+		t.Fatalf("running fixture services = %q, want %q", services, bundledFixtureServices)
+	}
+	return containers
+}
+
+// assertSameServiceContainers requires that each bundled service keeps its
+// container and its start time.
+func assertSameServiceContainers(t *testing.T, before, after map[string]serviceContainerIdentity) {
+	t.Helper()
+	var changed []string
+	for _, service := range bundledFixtureServices {
+		switch {
+		case before[service].id != after[service].id:
+			changed = append(changed, service+": container replaced")
+		case before[service].startedAt != after[service].startedAt:
+			changed = append(changed, service+": container restarted")
+		}
+	}
+	if len(changed) > 0 {
+		t.Fatalf("a second pm-stack up of the unchanged running deployment changed service containers: %s", strings.Join(changed, "; "))
+	}
 }
 
 func loadSelectedStackFixture(t *testing.T) selectedStackFixture {
