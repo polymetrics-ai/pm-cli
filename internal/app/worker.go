@@ -60,6 +60,22 @@ func workerFailure(kind, cause error) error {
 	return &WorkerFailure{Kind: kind, Cause: cause}
 }
 
+// WorkerLeaseHeldError reports that another attempt still holds the task
+// lease of a unit, so this attempt claimed nothing and did nothing else. It
+// unwraps to store.ErrClaimLost. RetryAfter is the remaining lease time,
+// measured on the database clock from the stored lease end.
+type WorkerLeaseHeldError struct {
+	RetryAfter time.Duration
+}
+
+func (held *WorkerLeaseHeldError) Error() string {
+	return "worker task lease is held by another attempt"
+}
+
+func (held *WorkerLeaseHeldError) Unwrap() error {
+	return store.ErrClaimLost
+}
+
 type ScheduledRunAdmitter func(
 	context.Context,
 	contract.WorkflowExecution,
@@ -932,7 +948,7 @@ func claimWorkerTask(
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
 		if current.ExpiresAt.After(state.now) {
-			return store.Lease{}, store.ErrClaimLost
+			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(state.now)}
 		}
 		expectedFence = current.Fence
 	} else if !errors.Is(err, store.ErrNotFound) {
