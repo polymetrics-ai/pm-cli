@@ -547,7 +547,7 @@ class GoPackageSelection(unittest.TestCase):
     def test_each_package_has_exactly_one_place(self):
         entries = self.lines("pm_stack_entries")
         excluded = [line.split()[0] for line in self.lines_raw("pm_excluded_packages")]
-        self.assertEqual(excluded, ["./tests/client-parity"])
+        self.assertEqual(excluded, [])
         packages = sorted(set(entries) | set(excluded) | {
             "./cmd/pm", "./internal/compile", "./tests/starter", "./tests/acceptance"})
         unit = self.lines("pm_drop_stack_packages", "\n".join(packages) + "\n")
@@ -555,9 +555,19 @@ class GoPackageSelection(unittest.TestCase):
         gherkin = self.lines('printf "%s\\n" "$pm_gherkin_package"')
         self.assertEqual(gherkin, ["./tests/acceptance"])
         self.assertIn("./tests/starter", unit)
+        self.assertIn("./tests/client-parity", stack)
         places = unit + stack + gherkin + excluded
         self.assertEqual(sorted(places), packages)
         self.assertEqual(len(places), len(set(places)))
+
+    def test_bdd_prepares_the_browser_before_the_stack_run(self):
+        script = (ROOT / "scripts/ci/check-bdd.sh").read_text()
+        prepare = script.index("{ sh scripts/browser.sh install && sh scripts/browser.sh build; } || browser_status=$?")
+        stack_run = script.index('python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \\\n'
+                                 '    python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-stack.json"')
+        self.assertLess(prepare, stack_run)
+        self.assertIn('if [ "$browser_status" -ne 0 ] && [ "$stack_status" -eq 0 ]; then\n'
+                      '    stack_status=1', script)
 
     def lines_raw(self, script):
         result = self.sh(script)

@@ -62,8 +62,9 @@ step() {
 # The allowances are upper bounds of the phases of with-stack-fixture.py: a
 # fixture start (generator 60 s, `pm-stack up` 600 s and its 30-second Docker
 # calls) and a fixture cleanup (drain 120 s, container stop 75 s, cleanup
-# helper 60 s and its 30-second Docker calls). The prelude (tool builds and
-# package selection) must take 8 minutes or less. Then, in minutes after the
+# helper 60 s and its 30-second Docker calls). The prelude (tool builds,
+# package selection and the browser preparation) must take 8 minutes or less.
+# Then, in minutes after the
 # start, on the longest path:
 #   stack go test stop  <= +20   (stack deadline)
 #   stack run end       <= +20.5 (stop grace)
@@ -154,6 +155,24 @@ pm_excluded_packages | while IFS=' ' read -r package reason; do
   printf 'check-bdd: excluded from the Go test runs: %s. Reason: %s\n' "$package" "$reason"
 done
 
+# The browser preparation for tests/client-parity, a stack run package. Its
+# Playwright tests need the npm packages of the committed locks, the browser
+# SDK in .cache/browser-sdk and the pinned Chromium. browser.sh install runs
+# `npm ci --ignore-scripts` of the two lock files, which carry the integrity
+# hash of each package. browser.sh build checks the generated browser schema,
+# builds the SDK, type-checks the parity tests and starts the pinned Chromium
+# once. The first print-env above already put the checksummed Node and
+# Chromium archives of build/toolchains.lock.json in PM_TOOLS_CACHE. A failed
+# preparation fails the stack run. The stack run still runs, and
+# tests/client-parity then fails with its own message.
+step 'prepare the locked browser packages, the browser SDK and the pinned Chromium for tests/client-parity'
+browser_status=0
+{ sh scripts/browser.sh install && sh scripts/browser.sh build; } || browser_status=$?
+step "browser preparation ended with exit $browser_status"
+if [ "$browser_status" -ne 0 ]; then
+  printf 'check-bdd: the browser preparation failed (exit %s), so the stack run fails\n' "$browser_status" >&2
+fi
+
 # The stack run: Go developer tests of the stack packages, one package at a
 # time (-p 1), because they share one schema, its roles and one Temporal
 # history. A failed or skipped test fails the run. go-test-report.py --expect
@@ -181,6 +200,9 @@ if [ "$stack_status" -eq 0 ]; then
       exit "$stack_status"
       ;;
   esac
+  if [ "$browser_status" -ne 0 ] && [ "$stack_status" -eq 0 ]; then
+    stack_status=1
+  fi
 else
   printf '%s\n' 'check-bdd: the stack run did not run: its package selection failed' >&2
   stack_ran=false

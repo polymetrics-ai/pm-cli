@@ -72,13 +72,20 @@ The Gherkin run also runs when the stack run fails, and the stack run does not s
 
 The stack run is a developer check. It is not acceptance proof of PM behavior. A failed test fails the run. A test that calls `t.Skip` also fails the run, and the log and the job summary name it. Before the stack run, the script builds `.cache/bin/pm-api-generate` from the candidate and unsets `PM_API_GENERATE`, because the `internal/api` tests use the generator at that default path. Each step line of the log shows the seconds since the script started, so the log shows the order of the phases.
 
+The stack run includes `tests/client-parity`. Its Playwright tests run the pinned Chromium against the job-owned stack. Before the stack run, the script runs `sh scripts/browser.sh install` and `sh scripts/browser.sh build`:
+
+- `install` runs `npm ci --ignore-scripts` for the lock files of `sdk/browser` and `tests/client-parity`. Each lock entry has the integrity hash of its package. npm uses the pinned Node and npm of [toolchains.lock.json](../../build/toolchains.lock.json), with empty npm configuration files.
+- `build` checks the generated browser schema, builds the browser SDK into `.cache/browser-sdk`, type-checks the parity tests and starts the pinned Chromium one time.
+
+The first `print-env` of the script already puts the checksummed Node and Chromium archives of the lock file in the tool cache. The checkout removes `.cache/browser-npm`, so the npm downloads run on each job. A failed browser preparation fails the stack run. The stack run still runs, and `tests/client-parity` then fails with its own message.
+
 ### Time budget of the `bdd` job
 
 The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops the go test command of each run at an absolute time, and the run still reports. The fixture start before that command and the fixture cleanup after it are outside the deadlines. `--timeout 1140` also stops each go test command 19 minutes after its start, before the 20-minute command limit of `with-stack-fixture.py`. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When a command ends, the reporter stops each process that is left in its process group. The allowances are upper bounds of the phases of `with-stack-fixture.py`:
 
 | Phase | Allowance | Source of the bound |
 | --- | --- | --- |
-| Prelude: tool builds and package selection | 8 minutes or less (assumed) | none |
+| Prelude: tool builds, package selection and browser preparation | 8 minutes or less (assumed) | none |
 | Fixture start | 12 minutes | generator 60 s, `pm-stack up` 600 s, 30-second Docker calls |
 | Fixture cleanup | 6 minutes | drain 120 s, container stop 75 s, cleanup helper 60 s, 30-second Docker calls |
 | Report, receipt move, toolchain check | 1 minute | none |
@@ -112,7 +119,7 @@ Missing prerequisites, test failures and cleanup failures remain failures.
 | Unit run (`checks` job) | Every package that is not in the stack list and not excluded |
 | Stack run (`bdd` job) | Every stack list entry except `tests/acceptance` and the excluded packages |
 | Gherkin run (`bdd` job) | `tests/acceptance` |
-| Exclusion list | `tests/client-parity`. It also runs the Playwright browser tests, which need a browser as well as the stack. Issue #274 runs it in CI. The `bdd` job log prints this name and reason |
+| Exclusion list | Empty. Issue #274 moved `tests/client-parity` to the stack run. The `bdd` job log prints the name and reason of each excluded package |
 
 The rule selects the packages, so a new package goes to the unit run with no list edit. A package that needs the stack fails in the unit run until you add it to the stack list. The stack tests fail, and do not skip, without their fixture inputs. A stack list entry that `go list ./...` does not print fails the `bdd` job, and the log names the path. The hooks skip the stack packages and the excluded packages.
 

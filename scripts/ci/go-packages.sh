@@ -31,8 +31,9 @@ pm_stack_entries() {
 
 # pm_excluded_packages prints the root-module packages that neither Go test
 # run runs, one "PATH REASON" line each. The bdd job log prints each line.
+# The list is empty. Issue #274 runs tests/client-parity in the stack run.
 pm_excluded_packages() {
-  printf '%s\n' './tests/client-parity it also runs the Playwright browser tests, which need a browser as well as the stack. Issue #274 runs it in CI.'
+  :
 }
 
 # pm_drop_paths FILE reads ./relative package paths on stdin and prints the
