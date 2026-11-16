@@ -3,8 +3,8 @@
 # behavior gate. The workflow starts it through scripts/ci/in-ci-image.sh.
 #
 # Before the Gherkin run, the script runs the stack run: the Go developer tests
-# of the stack packages (scripts/ci/go-packages.sh) against their own job-owned
-# stack. The Gherkin run then starts a fresh stack. Both runs always run and
+# of the stack packages (scripts/ci/go-packages.sh), with the race detector,
+# against their own job-owned stack. The Gherkin run then starts a fresh stack. Both runs always run and
 # report; the job fails when either run fails. Go developer tests are developer
 # checks, never acceptance proof of PM behavior. See docs/development/ci.md.
 set -eu
@@ -156,7 +156,10 @@ done
 
 # The stack run: Go developer tests of the stack packages, one package at a
 # time (-p 1), because they share one schema, its roles and one Temporal
-# history. A failed or skipped test fails the run. go-test-report.py --expect
+# history. The run uses the race detector (-race). It needs cgo, so
+# CGO_ENABLED=1 and the pinned Clang that tools/bootstrap.py selects build the
+# test binaries. A data race fails the test that found it. A failed or skipped
+# test fails the run. go-test-report.py --expect
 # fails the run when a selected package has no result or more than one
 # result, or when the stream is empty. The command uses no -run and no
 # build-tag filter, and go-test-report.py refuses one. The -timeout bounds
@@ -172,7 +175,7 @@ if [ "$stack_status" -eq 0 ]; then
     --summary-file "$GITHUB_STEP_SUMMARY" \
     --title 'Go developer tests: stack run (bdd job). Developer checks, not acceptance proof.' -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
-    test -json -p 1 -count=1 -timeout 15m $(cat "$RUNNER_TEMP/bdd-stack-packages.txt") ||
+    test -json -race -p 1 -count=1 -timeout 15m $(cat "$RUNNER_TEMP/bdd-stack-packages.txt") ||
     stack_status=$?
   step "stack run ended with exit $stack_status"
   case "$stack_status" in

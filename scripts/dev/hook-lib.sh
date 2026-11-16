@@ -34,7 +34,8 @@ pm_host_checks() {
 # on the host OS (the output of `uname -s`), one per line. The names come from
 # `check-docs.sh --list`. The hook runs the packages of the `unit` check with
 # its own `go test`, so the list never has `unit`: a push runs one local unit
-# run on every OS.
+# run on every OS. The list has `vet`, and the hook runs go vet only through
+# it: a push runs go vet one time.
 pm_push_checks() {
   pm_push_names=$(sh scripts/ci/check-docs.sh --list) || return 1
   # Word splitting of the check names is intended.

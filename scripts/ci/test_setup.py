@@ -248,7 +248,7 @@ class SetupContracts(unittest.TestCase):
 
 CHECK_DOCS = ROOT / "scripts/ci/check-docs.sh"
 HOOK_LIB = ROOT / "scripts/dev/hook-lib.sh"
-CHECK_NAMES = ["setup", "python", "generate", "gofmt", "boundaries", "tools", "unit"]
+CHECK_NAMES = ["setup", "python", "generate", "gofmt", "vet", "boundaries", "tools", "unit"]
 
 
 class HookCheckSelection(unittest.TestCase):
@@ -300,6 +300,35 @@ class HookCheckSelection(unittest.TestCase):
                     capture_output=True, text=True, timeout=30, cwd=ROOT)
                 self.assertEqual(result.returncode, 0, result.stderr)
                 self.assertEqual(result.stdout.split(), expected)
+
+    def test_pre_push_runs_go_vet_one_time(self):
+        # The hook selects the `vet` check of check-docs.sh and does not run
+        # go vet itself, so a push runs go vet one time.
+        self.assertIn("vet", [name for name in CHECK_NAMES if name != "unit"])
+        hook = (ROOT / "scripts/dev/hook-pre-push.sh").read_text()
+        commands = [line for line in hook.splitlines() if not line.lstrip().startswith("#")]
+        self.assertEqual([line for line in commands if " vet" in line], [])
+        check_docs = CHECK_DOCS.read_text()
+        self.assertIn("check_vet() {\n  step 'go vet ./... (root module)'\n"
+                      "  CGO_ENABLED=1 pgo vet ./...\n}\n", check_docs)
+
+    def test_go_test_runs_use_the_race_detector(self):
+        # The unit run (checks job) and the stack run (bdd job) are one run
+        # each, with -race and -count=1. The Gherkin run has no -race.
+        runs = {
+            CHECK_DOCS: ["test -json -race -count=1 -timeout 10m "],
+            ROOT / "scripts/ci/check-bdd.sh": [
+                "test -json -race -p 1 -count=1 -timeout 15m ",
+                "test -json -p 1 -count=1 -timeout 40m \"$pm_gherkin_package/...\"",
+            ],
+        }
+        for path, expected in runs.items():
+            with self.subTest(script=path.name):
+                lines = [line.strip() for line in path.read_text().splitlines()
+                         if line.strip().startswith("test -json")]
+                self.assertEqual(len(lines), len(expected), lines)
+                for line, prefix in zip(lines, expected):
+                    self.assertTrue(line.startswith(prefix), line)
 
     def test_macos_python_selection(self):
         def fake(directory, name, passes, version="3.12.9"):

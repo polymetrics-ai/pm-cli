@@ -10,16 +10,18 @@
 #
 # PMCLI_PYTHON names the Python interpreter for the checks (default python3).
 # The macOS git hooks set it. CI ignores it and uses python3.
-# Checks: setup python generate gofmt boundaries tools unit.
-# `unit` runs `go test` of every root-module package outside the stack list
-# (scripts/ci/go-packages.sh). The pre-push hook runs the same packages itself
-# and does not select `unit`.
+# Checks: setup python generate gofmt vet boundaries tools unit.
+# `vet` runs `go vet ./...` in the root module. The pre-push hook runs it only
+# through this script.
+# `unit` runs `go test -race` of every root-module package outside the stack
+# list (scripts/ci/go-packages.sh). The pre-push hook runs the same packages
+# itself, without -race, and does not select `unit`.
 # CI and the Linux git hooks run this script inside the pinned job image
 # (scripts/ci/in-ci-image.sh). See docs/development/ci.md.
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
-all='setup python generate gofmt boundaries tools unit'
+all='setup python generate gofmt vet boundaries tools unit'
 if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
   # shellcheck disable=SC2086
   printf '%s\n' $all
@@ -122,6 +124,14 @@ check_gofmt() {
   fi
 }
 
+# go vet of every root-module package, also the stack packages. Each finding
+# fails the check. The pre-push hook does not run go vet itself; it selects
+# this check.
+check_vet() {
+  step 'go vet ./... (root module)'
+  CGO_ENABLED=1 pgo vet ./...
+}
+
 check_boundaries() {
   step 'check-boundaries.sh'
   sh scripts/check-boundaries.sh
@@ -143,8 +153,11 @@ check_tools() {
 # refuses one. The -timeout bounds each test binary. --timeout stops the
 # whole run after 10 minutes and still reports, inside the 17-minute step
 # limit of the `checks` job.
+# The run uses the race detector (-race). A data race fails the test that
+# found it. -race needs cgo, so CGO_ENABLED=1 and the pinned Clang that
+# tools/bootstrap.py selects build the test binaries.
 check_unit() {
-  step 'go test (unit run: root-module packages outside the stack list)'
+  step 'go test -race (unit run: root-module packages outside the stack list)'
   # shellcheck source=scripts/ci/go-packages.sh disable=SC1091
   . scripts/ci/go-packages.sh
   module=$(pgo list -m)
@@ -168,7 +181,7 @@ check_unit() {
   # shellcheck disable=SC2046
   "$py" -I -B scripts/ci/go-test-report.py "$@" -- \
     env CGO_ENABLED=1 "$py" tools/bootstrap.py exec go -- \
-    test -json -count=1 -timeout 10m $(cat "$work/unit-packages")
+    test -json -race -count=1 -timeout 10m $(cat "$work/unit-packages")
 }
 
 tools=

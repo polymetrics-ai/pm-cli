@@ -1,7 +1,8 @@
 #!/bin/sh
-# Git pre-push hook: refuse a push to main, then build, vet and test every
-# package that needs no dependency stack, and run the static checks one time
-# for the push. A failure stops the push.
+# Git pre-push hook: refuse a push to main, then build every package, test
+# every package that needs no dependency stack, and run the static checks one
+# time for the push. The static checks include `vet` (go vet ./...), so the
+# hook does not run go vet itself. A failure stops the push.
 set -eu
 root=$(git rev-parse --show-toplevel)
 cd "$root"
@@ -14,8 +15,6 @@ pushing=$(python3 -I -B scripts/dev/secret_scan.py push)
 
 printf '%s\n' 'pre-push: go build ./...'
 CGO_ENABLED=1 pgo build ./...
-printf '%s\n' 'pre-push: go vet ./...'
-CGO_ENABLED=1 pgo vet ./...
 module=$(pgo list -m)
 unit=$(CGO_ENABLED=1 pgo list ./... | sed "s#^$module#.#" | drop_stack_packages)
 printf '%s\n' 'pre-push: go test (packages that need no stack)'
