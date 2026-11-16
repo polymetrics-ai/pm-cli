@@ -21,6 +21,16 @@ go_library(
 )
 
 go_test(
+    name = "artifact_volumes_test",
+    srcs = [
+        "artifact_volumes_test.go",
+        "no_recreate_test.go",
+    ],
+    embed = [":stack"],
+    deps = ["//internal/config"],
+)
+
+go_test(
     name = "identity_test",
     srcs = ["identity_test.go"],
     embed = [":stack"],
@@ -29,6 +39,7 @@ go_test(
 go_test(
     name = "stack_test",
     srcs = [
+        "artifact_volumes_test.go",
         "identity_provider_test.go",
         "identity_test.go",
         "image_lock_test.go",
