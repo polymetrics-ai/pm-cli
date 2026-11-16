@@ -76,33 +76,36 @@ func listenAndClose(t *testing.T) string {
 }
 
 // listenAndHold accepts each connection and never answers.
+//
+// Only the accept goroutine writes the held connections. The cleanup closes
+// the listener, which ends Accept, and waits until the goroutine returns.
+// Then the cleanup closes the held connections. Nothing sends on a closed
+// channel, and no connection stays open after the test.
 func listenAndHold(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
-	held := make(chan net.Conn, 8)
-	t.Cleanup(func() {
-		_ = listener.Close()
-		close(held)
-		for connection := range held {
-			_ = connection.Close()
-		}
-	})
+	var held []net.Conn
+	accepting := make(chan struct{})
 	go func() {
+		defer close(accepting)
 		for {
 			connection, err := listener.Accept()
 			if err != nil {
 				return
 			}
-			select {
-			case held <- connection:
-			default:
-				_ = connection.Close()
-			}
+			held = append(held, connection)
 		}
 	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		<-accepting
+		for _, connection := range held {
+			_ = connection.Close()
+		}
+	})
 	return listener.Addr().String()
 }
 
