@@ -187,6 +187,14 @@ class CheckCiImage(unittest.TestCase):
                                           root=str(self.root), capability=no_capability)
         self.assert_failed_without_pass(failures, output, "/root: the job user can search it")
 
+    def test_a_recorded_closed_directory_that_others_can_search_fails(self):
+        recorded = self.root / "var/cache/ldconfig"
+        recorded.mkdir(parents=True)
+        recorded.chmod(0o701)
+        failures, output = self.run_check(check.check_privileges, {}, {"/var/cache/ldconfig"},
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "denies search to others")
+
     # Review #pr-333 brahmagupta F2 at 3786ed9: dbus-launch in a directory on
     # the image PATH that the fixed directory list did not name.
     def test_dbus_launch_anywhere_in_the_walk_fails(self):
