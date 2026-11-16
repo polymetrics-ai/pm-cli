@@ -372,6 +372,67 @@ func TestWorkerPublicationContextIsNotTheTransportBound(t *testing.T) {
 	}
 }
 
+// A provider callback that uses its whole bound must leave the settlement at
+// least one settlement reserve, whichever of the accepted run deadline and the
+// activity attempt deadline comes first. ExecuteUnit runs the callback, then
+// the publication step, then the settlement. The check takes the callback
+// deadline as the moment the callback ends: the latest end that its bound
+// allows. It reads context deadlines only and does not wait.
+//
+// In each cutoff case the settlement cutoff is less than one transport limit
+// ahead. The settlement deadline is then the cutoff, whether the worker makes
+// the settlement context now or when the callback ends.
+func TestProviderCallbackLeavesTheSettlementOneReserve(t *testing.T) {
+	// The settlement reserve is min(heartbeat/2, transport/2) = 1s.
+	const heartbeat, transport, reserve = 2 * time.Second, 5 * time.Second, time.Second
+
+	for _, testCase := range []struct {
+		name     string
+		attempt  time.Duration
+		accepted time.Duration // Zero for a reconcile callback: it has no accepted run deadline.
+	}{
+		{name: "accepted run deadline first", attempt: 4500 * time.Millisecond, accepted: 2 * time.Second},
+		{name: "attempt deadline first", attempt: 4 * time.Second, accepted: time.Hour},
+		{name: "reconcile callback", attempt: 4 * time.Second},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			now := time.Now()
+			attempt, cancelAttempt := context.WithDeadline(context.Background(), now.Add(testCase.attempt))
+			defer cancelAttempt()
+			var accepted time.Time
+			if testCase.accepted != 0 {
+				accepted = now.Add(testCase.accepted)
+			}
+			callback, cancelCallback := workerCallbackContext(attempt, accepted, heartbeat, transport)
+			defer cancelCallback()
+			settlement, cancelSettlement := workerSettlementContext(attempt, accepted, heartbeat, transport)
+			defer cancelSettlement()
+			callbackEnd, callbackBounded := callback.Deadline()
+			settlementEnd, settlementBounded := settlement.Deadline()
+			if !callbackBounded || !settlementBounded || settlementEnd.Sub(callbackEnd) < reserve {
+				t.Fatalf("settlement budget after a provider callback that uses its whole bound = %v "+
+					"(callback ends %v, settlement ends %v); want at least one %v reserve",
+					settlementEnd.Sub(callbackEnd), callbackEnd.Sub(now), settlementEnd.Sub(now), reserve)
+			}
+		})
+	}
+
+	// Far from both deadlines, the callback keeps its whole transport limit.
+	t.Run("transport limit first", func(t *testing.T) {
+		attempt, cancelAttempt := context.WithTimeout(context.Background(), time.Hour)
+		defer cancelAttempt()
+		before := time.Now()
+		callback, cancelCallback := workerCallbackContext(attempt, before.Add(time.Hour), heartbeat, transport)
+		defer cancelCallback()
+		after := time.Now()
+		callbackEnd, callbackBounded := callback.Deadline()
+		if !callbackBounded || callbackEnd.Before(before.Add(transport)) || callbackEnd.After(after.Add(transport)) {
+			t.Fatalf("callback deadline = %v %t; want one %v transport limit after the call",
+				callbackEnd.Sub(before), callbackBounded, transport)
+		}
+	})
+}
+
 func pageCheckInteger(t *testing.T, exact string) contract.PresentValue {
 	t.Helper()
 	value, err := contract.NewIntegerValue(exact)
