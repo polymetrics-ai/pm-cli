@@ -88,26 +88,41 @@ func TestBootstrapSecretCheckFindsBase64WrappingKey(t *testing.T) {
 	}
 }
 
-func TestBootstrapFailureMessageWithholdsSecret(t *testing.T) {
-	const password = "Zq9-oracle-Pass"
-	root := t.TempDir()
-	endpoint := "postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"
-	if err := os.WriteFile(filepath.Join(root, bootstrapCredentialMember), []byte(endpoint), 0o600); err != nil {
-		t.Fatalf("write the oracle secret: %v", err)
+// assertDescriptionHoldsNoSecret fails when the description of output holds
+// the secret value or one of its forms.
+func assertDescriptionHoldsNoSecret(t *testing.T, name, output string, forms []secretForm) {
+	t.Helper()
+	description := describeOutput(output)
+	if want := fmt.Sprintf("%d bytes, not shown", len(output)); description != want {
+		t.Errorf("%s case: the description is %q, want %q", name, description, want)
 	}
-	run := &bootstrapRun{deployment: &deployment{secrets: root}}
-	if shown := run.shown("pm-server: unknown flag: --input\n"); shown != `"pm-server: unknown flag: --input\n"` {
-		t.Fatalf("the message shows clean output as %s", shown)
-	}
-	for name, output := range map[string]string{
-		"raw":     "connect " + endpoint,
-		"escaped": `{"note":"` + unicodeEscaped(password) + `"}`,
-	} {
-		shown := run.shown(output)
-		if strings.Contains(shown, password) || strings.Contains(shown, unicodeEscaped(password)) ||
-			!strings.Contains(shown, "withheld") {
-			t.Errorf("%s case: the message does not withhold the output: %s", name, shown)
+	for _, form := range forms {
+		if strings.Contains(description, string(form.value)) {
+			t.Errorf("%s case: the description holds the form %s", name, form.source)
 		}
+	}
+}
+
+func TestBootstrapFailureMessageShowsNoRawOutput(t *testing.T) {
+	const password = "Zq9-oracle-Pass"
+	endpoint := "postgresql://pm_app_bootstrap:" + password + "@db.invalid:5432/pm_app\n"
+	forms := writeOracleSecrets(t, map[string][]byte{bootstrapCredentialMember: []byte(endpoint)})
+	if got, want := describeOutput("pm-server: unknown flag: --input\n"),
+		`33 bytes, the known line "pm-server: unknown flag: --input"`; got != want {
+		t.Fatalf("the description of a known line is %q, want %q", got, want)
+	}
+	if got := describeOutput(""); got != "0 bytes" {
+		t.Fatalf("the description of empty output is %q, want %q", got, "0 bytes")
+	}
+	escaped := unicodeEscaped(password)
+	for name, output := range map[string]string{
+		"raw":                          "connect " + endpoint,
+		"complete escaped JSON":        `{"note":"` + escaped + `"}`,
+		"truncated escaped JSON":       `{"note":"` + escaped + `"`,
+		"escaped JSON after a prefix":  `error: {"note":"` + escaped + `"}`,
+		"a known line with the secret": "pm-server: unknown flag: --input " + password + "\n",
+	} {
+		assertDescriptionHoldsNoSecret(t, name, output, forms)
 	}
 }
 
