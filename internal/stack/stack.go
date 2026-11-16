@@ -356,39 +356,79 @@ func requestedLifecycle(action string, selected dependencySet) (config.Prelaunch
 	return config.Prelaunch{Lifecycle: requests}, nil
 }
 
-func upStack(ctx context.Context, configuration config.Configuration, selected dependencySet, stdout, stderr io.Writer) error {
+// stepError names the failed step of pm-stack up, and causeError the cause of
+// a failed provider check, with fixed codes. The job launcher prints only the
+// codes, never the error text, which can name a path or an address.
+type stepError struct {
+	step string
+	err  error
+}
+
+func (e *stepError) Error() string { return e.err.Error() }
+func (e *stepError) Unwrap() error { return e.err }
+
+type causeError struct{ code, text string }
+
+func (e causeError) Error() string { return e.text }
+
+// FailedStep returns "<step>" or "<step>/<cause>" for err, or "".
+func FailedStep(err error) string {
+	var step *stepError
+	var cause causeError
+	if !errors.As(err, &step) {
+		return ""
+	} else if errors.As(step.err, &cause) {
+		return step.step + "/" + cause.code
+	}
+	return step.step
+}
+
+func upStack(ctx context.Context, configuration config.Configuration, selected dependencySet, stdout, stderr io.Writer) (err error) {
 	if len(selected) == 0 {
 		return CheckStack(ctx, configuration, stdout, stderr)
 	}
+	step := "configuration"
+	defer func() {
+		if err != nil {
+			err = &stepError{step: step, err: err}
+		}
+	}()
 	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
 		return err
 	}
+	step = "deployment-lock"
 	lock, err := acquireDeploymentLock(ctx, rt.stateDir)
 	if err != nil {
 		return err
 	}
 	defer releaseDeploymentLock(lock)
+	step = "render"
 	if err := rt.render(configuration); err != nil {
 		return err
 	}
+	step = "compose-validate"
 	if err := rt.validateCompose(ctx, configuration); err != nil {
 		return err
 	}
 
+	step = "postgres-start"
 	if selected[config.DependencyPostgres] {
 		if err := rt.startServices(ctx, configuration, true, "postgres"); err != nil {
 			return fmt.Errorf("start PostgreSQL: %w", err)
 		}
 	}
+	step = "migrate"
 	if err := migrateUnderLock(ctx, configuration, selected, rt); err != nil {
 		return err
 	}
 
 	if selected[config.DependencyTemporal] {
+		step = "temporal-start"
 		if err := rt.startServices(ctx, configuration, false, "temporal"); err != nil {
 			return fmt.Errorf("start Temporal: %w", err)
 		}
+		step = "temporal-namespace"
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 			return ensureTemporalNamespace(checkCtx, configuration, rt, true)
 		}); err != nil {
@@ -397,6 +437,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyArtifacts] {
+		step = "artifacts-start"
 		for _, services := range [][]string{
 			{"seaweed-master"},
 			{"seaweed-volume"},
@@ -407,6 +448,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 				return fmt.Errorf("start artifact services: %w", err)
 			}
 		}
+		step = "artifact-bucket"
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 			return ensureArtifactBucket(checkCtx, configuration, rt, true)
 		}); err != nil {
@@ -417,9 +459,11 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	if rt.identityProvider != nil {
 		// --no-recreate keeps a running provider: the job removes its realm
 		// import file after the first ready answer.
+		step = "identity-provider-start"
 		if err := rt.compose(ctx, configuration, "up", "-d", "--no-recreate", identityProviderService); err != nil {
 			return fmt.Errorf("start the job identity provider: %w", err)
 		}
+		step = "identity-provider-ready"
 		if err := waitFor(ctx, identityProviderReadinessTimeout, func(checkCtx context.Context) error {
 			return checkIdentityProvider(checkCtx, rt.identityProvider)
 		}); err != nil {
@@ -427,6 +471,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 		}
 	}
 
+	step = "stack-ready"
 	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 		return checkLive(checkCtx, configuration, rt)
 	}); err != nil {
@@ -1617,6 +1662,23 @@ func checkLive(ctx context.Context, configuration config.Configuration, rt *runt
 	return nil
 }
 
+// transportFailure returns the fixed class of a failed discovery request.
+func transportFailure(err error) string {
+	var certificate *tls.CertificateVerificationError
+	var network net.Error
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection-refused"
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection-closed"
+	case errors.As(err, &certificate):
+		return "tls-certificate"
+	case errors.As(err, &network) && network.Timeout():
+		return "timeout"
+	}
+	return "unavailable"
+}
+
 // checkIdentityProvider reads the realm discovery document over TLS that the
 // identity provider CA and the exact IP address verify. The provider is ready
 // only when it names the exact configured issuer, whatever the request host.
@@ -1646,20 +1708,22 @@ func checkIdentityProvider(ctx context.Context, provider *identityProvider) erro
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		return fmt.Errorf("identity provider discovery is unavailable")
+		code := transportFailure(err)
+		return causeError{code, "identity provider discovery is unavailable: " + code}
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return fmt.Errorf("identity provider discovery returned status %d", response.StatusCode)
+		code, text := fmt.Sprintf("status-%d", response.StatusCode), "identity provider discovery returned status"
+		return causeError{code, fmt.Sprintf("%s %d", text, response.StatusCode)}
 	}
 	var discovery struct {
 		Issuer string `json:"issuer"`
 	}
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&discovery); err != nil {
-		return fmt.Errorf("identity provider discovery is not JSON")
+		return causeError{"not-json", "identity provider discovery is not JSON"}
 	}
 	if discovery.Issuer != provider.issuer {
-		return fmt.Errorf("identity provider discovery does not name the exact configured issuer")
+		return causeError{"issuer-mismatch", "identity provider discovery does not name the exact configured issuer"}
 	}
 	return nil
 }

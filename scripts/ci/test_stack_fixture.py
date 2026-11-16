@@ -566,6 +566,30 @@ class IdentityProviderTests(unittest.TestCase):
             with self.subTest(log=unsafe[-90:]), self.assertRaises(FIXTURE.FixtureError):
                 FIXTURE.keycloak_start_summary(unsafe)
 
+    def test_failed_start_names_only_fixed_codes(self):
+        noise = b" Container pmci-x-keycloak-1  Started\npm-stack: job identity provider readiness: /private/a\n"
+        for code, step in (("identity-provider-ready/connection-refused", None), ("stack-ready/status-503", None),
+                           ("identity-provider-start", None), ("render/" + self.HOST, "unknown"), ("a" * 64, "unknown")):
+            with self.subTest(code=code[-40:]):
+                output = noise + b"pm-stack: failed step " + code.encode() + b"\n"
+                self.assertEqual(FIXTURE.stack_failed_step(output), step or code)
+        self.assertEqual(FIXTURE.stack_failed_step(noise), "unknown")
+        log = self.READY.replace(b"Profile prod", b"ERROR [org.keycloak.quarkus.runtime.cli.ExecutionExceptionHandler] "
+                                 b"(main) ERROR: /opt/keycloak/lib/quarkus: Read-only file system\nProfile prod")
+        state = {"status": "exited", "exit": 1, "oom": False}
+        with mock.patch.object(FIXTURE, "list_container_ids", return_value=["c" * 64]), \
+                mock.patch.object(FIXTURE, "docker_json", return_value=state), \
+                mock.patch.object(FIXTURE, "run_capture", return_value=(0, log, b"")):
+            described = FIXTURE.identity_provider_state(self.PROJECT, Path("/unused"), Path("/unused"), "", {}, ROOT)
+        self.assertEqual(described, "provider=exited provider-exit=1 provider-oom=no "
+                                    "provider-log=ready-line,start-error,read-only-file-system")
+        for ids, state in (([], state), (["c" * 64] * 2, state), (["c" * 64], {"status": ["exited"], "exit": 1})):
+            with self.subTest(ids=len(ids), state=state), \
+                    mock.patch.object(FIXTURE, "list_container_ids", return_value=ids), \
+                    mock.patch.object(FIXTURE, "docker_json", return_value=state):
+                described = FIXTURE.identity_provider_state(self.PROJECT, Path("/unused"), Path("/unused"), "", {}, ROOT)
+                self.assertEqual(described, "provider=absent" if not ids else "provider=unknown")
+
     def test_secret_scan_finds_raw_and_encoded_forms(self):
         secret = FIXTURE.secrets.token_hex(32)
         FIXTURE.require_secret_absent(b'{"Cmd":["start","--optimized"]}', secret, "container record")

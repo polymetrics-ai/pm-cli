@@ -9,6 +9,8 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
+	"fmt"
 	"math/big"
 	"net"
 	"net/http"
@@ -165,19 +167,24 @@ func TestIdentityProviderReadinessRequiresTheExactIssuerOverVerifiedTLS(t *testi
 	if err := checkIdentityProvider(context.Background(), provider); err != nil {
 		t.Fatalf("exact issuer was not ready: %v", err)
 	}
+	failedStep := func() string { // the code that pm-stack prints for a failed wait
+		err := checkIdentityProvider(context.Background(), provider)
+		return FailedStep(&stepError{"identity-provider-ready", fmt.Errorf("job identity provider readiness: %w", err)})
+	}
 	for _, test := range []struct {
 		name   string
 		issuer string
 		status int
+		step   string
 	}{
-		{"request-derived issuer", "https://localhost:" + port + "/realms/pm-test", http.StatusOK},
-		{"other realm", "https://" + net.JoinHostPort(host, port) + "/realms/master", http.StatusOK},
-		{"not ready", issuer, http.StatusServiceUnavailable},
+		{"request-derived issuer", "https://localhost:" + port + "/realms/pm-test", http.StatusOK, "issuer-mismatch"},
+		{"other realm", "https://" + net.JoinHostPort(host, port) + "/realms/master", http.StatusOK, "issuer-mismatch"},
+		{"not ready", issuer, http.StatusServiceUnavailable, "status-503"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			served, status = test.issuer, test.status
-			if err := checkIdentityProvider(context.Background(), provider); err == nil {
-				t.Fatal("identity provider readiness accepted a wrong discovery answer")
+			if step := failedStep(); step != "identity-provider-ready/"+test.step {
+				t.Fatalf("identity provider readiness gave step %q for a wrong discovery answer", step)
 			}
 		})
 	}
@@ -185,8 +192,15 @@ func TestIdentityProviderReadinessRequiresTheExactIssuerOverVerifiedTLS(t *testi
 	if err := os.WriteFile(filepath.Join(directory, "ca.pem"), otherCertificateAuthorityPEM(t), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := checkIdentityProvider(context.Background(), provider); err == nil {
-		t.Fatal("identity provider readiness trusted a server outside the stack CA")
+	if step := failedStep(); step != "identity-provider-ready/tls-certificate" {
+		t.Fatalf("identity provider readiness gave step %q for a server outside the stack CA", step)
+	}
+	server.Close()
+	if step := failedStep(); step != "identity-provider-ready/connection-refused" {
+		t.Fatalf("identity provider readiness gave step %q for a closed port", step)
+	}
+	if FailedStep(&stepError{"render", errors.New("a path")}) != "render" || FailedStep(errors.New("no step")) != "" {
+		t.Fatal("FailedStep did not give only the fixed step code")
 	}
 }
 

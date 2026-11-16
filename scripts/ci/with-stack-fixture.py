@@ -181,6 +181,25 @@ KEYCLOAK_READY_LINE = re.compile(
     rb"Keycloak 26\.8\.1 on JVM \(powered by Quarkus [0-9][0-9.]*\) started in ([0-9]+\.[0-9]+)s\. "
     rb"Listening on: (\S+)([^\r\n]*)"
 )
+# pm-stack up names its failed step with a fixed code (internal/stack). A
+# failed start prints only fixed codes, never pm-stack or provider text.
+STACK_FAILED_STEP = re.compile(
+    rb"pm-stack: failed step ((?:configuration|deployment-lock|render|compose-validate|postgres-start|migrate"
+    rb"|temporal-start|temporal-namespace|artifacts-start|artifact-bucket|identity-provider-start"
+    rb"|identity-provider-ready|stack-ready)(?:/(?:connection-refused|connection-closed"
+    rb"|tls-certificate|timeout|unavailable|status-[1-5][0-9]{2}|not-json|issuer-mismatch))?)"
+)
+PROVIDER_STATES = ("created", "configured", "running", "paused", "restarting", "stopping", "stopped", "exited", "dead")
+PROVIDER_LOG_MARKERS = {
+    "ready-line": KEYCLOAK_READY_LINE,
+    "realm-imported": re.compile(rb"Realm 'pm-test' imported"),
+    "start-error": re.compile(rb"\[org\.keycloak\.quarkus\.runtime\.cli\.ExecutionExceptionHandler\]"),
+    "cluster-error": re.compile(rb" (?:ERROR|FATAL) +\[org\.(?:infinispan|jgroups)"),
+    "read-only-file-system": re.compile(rb"Read-only file system"),
+    "permission-denied": re.compile(rb"Permission denied|AccessDeniedException"),
+    "out-of-memory": re.compile(rb"OutOfMemoryError"),
+    "build-option": re.compile(rb"(?i)build[ -]time option|--optimized"),
+}
 EXPECTED_COMPOSE_DIGESTS = {
     "darwin-arm64": "998735c9b6fe68a4f05895e6ea73d71ad06f9fc7046383ad89e47346781b6af5",
     "linux-amd64": "db1889184726840f75c4f9c001048430d4f25b3be3cb084d3ddd762bc0aed576",
@@ -480,6 +499,7 @@ def run_quiet(
     timeout: int,
     stage: str,
     check: bool = True,
+    stderr: Any = subprocess.DEVNULL,
 ) -> int:
     try:
         process = subprocess.Popen(
@@ -488,7 +508,7 @@ def run_quiet(
             env=dict(env),
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            stderr=stderr,
             start_new_session=True,
         )
     except OSError as exc:
@@ -2193,6 +2213,37 @@ def keycloak_start_summary(log: bytes) -> str:
     return matches[0].group(1).decode("ascii")
 
 
+def stack_failed_step(output: bytes) -> str:
+    """Return the fixed code of pm-stack's last failed-step line, or "unknown"."""
+    lines = [line for line in output.splitlines() if line.startswith(b"pm-stack: failed step ")]
+    match = STACK_FAILED_STEP.fullmatch(lines[-1]) if lines else None
+    return match.group(1).decode("ascii") if match else "unknown"
+
+
+def identity_provider_state(
+    project: str, docker: Path, config: Path, endpoint: str, env: Mapping[str, str], cwd: Path
+) -> str:
+    """Describe the job Keycloak after a failed start with fixed codes only."""
+    filters = (f"label=com.docker.compose.project={project}", f"label=com.docker.compose.service={IDENTITY_SERVICE}")
+    ids = list_container_ids(docker, config, endpoint, env, cwd, filters)
+    if len(ids) != 1:
+        return "provider=absent" if not ids else "provider=unknown"
+    state_format = '{"status":{{json .State.Status}},"exit":{{json .State.ExitCode}},"oom":{{json .State.OOMKilled}}}'
+    inspect = ["container", "inspect", "--format", state_format, ids[0]]
+    state = docker_json(docker, config, endpoint, env, cwd, inspect, "inspect the identity provider")
+    status, code, oom = (state.get(key) if isinstance(state, dict) else None for key in ("status", "exit", "oom"))
+    if status not in PROVIDER_STATES or type(code) is not int or not 0 <= code <= 255 or type(oom) is not bool:
+        return "provider=unknown"
+    _, out, err = run_capture(
+        docker_command(docker, config, endpoint, "container", "logs", ids[0]),
+        env=env, cwd=cwd, timeout=DOCKER_TIMEOUT, stage="read the identity provider log",
+        max_output=MAX_PROVIDER_LOG_BYTES,
+    )
+    markers = [name for name, pattern in PROVIDER_LOG_MARKERS.items() if pattern.search(out + b"\n" + err)]
+    oom_code = "yes" if oom else "no"
+    return f"provider={status} provider-exit={code} provider-oom={oom_code} provider-log={','.join(markers) or 'none'}"
+
+
 def require_secret_absent(data: bytes, secret: str, context: str, client_id: str | None = None) -> None:
     """Refuse the raw admin secret and its plain and Basic Base64 forms.
 
@@ -3268,13 +3319,19 @@ def run_mode(
         manifest.update("starting", fixture=record, authorize_docker=True)
         close_reservations(reservations)
         stack_env = fixture_environment(base_environment, environment, docker_config, endpoint)
-        run_quiet(
-            [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]],
-            env=stack_env,
-            cwd=repo_root,
-            timeout=STARTUP_TIMEOUT,
-            stage="start owned fixture",
-        )
+        with tempfile.TemporaryFile(dir=parent) as stack_errors:
+            code = run_quiet(
+                [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]], env=stack_env, cwd=repo_root,
+                timeout=STARTUP_TIMEOUT, stage="start owned fixture", check=False, stderr=stack_errors,
+            )
+            if code != 0:
+                stack_errors.seek(max(0, stack_errors.seek(0, os.SEEK_END) - MAX_GENERATOR_OUTPUT))
+                step = stack_failed_step(stack_errors.read())
+                try:
+                    provider = identity_provider_state(project, docker, docker_config, endpoint, docker_env, repo_root)
+                except FixtureError:
+                    provider = "provider=unknown"
+                raise FixtureError(f"start owned fixture failed with exit status {code}: step={step} {provider}")
         resources = discover_resources(
             manifest,
             environment,
