@@ -38,7 +38,7 @@ jobs:
             const {data: workflow} = await github.rest.actions.getWorkflow({
               ...repo, workflow_id: 'bdd.yml'
             });
-            const requiredJobs = ['bdd', 'checks'];
+            const requiredJobs = ['bdd', 'checks', 'bazel'];
 
             function admitted(run) {
               return run.event === 'push' && run.path === '.github/workflows/bdd.yml' &&
@@ -72,7 +72,7 @@ jobs:
                 const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRunAttempt, {
                   ...repo, run_id: run.id, attempt_number: run.run_attempt, per_page: 100
                 });
-                // Both required checks must pass for this exact head.
+                // Every required check must pass for this exact head.
                 ready = requiredJobs.every(name => {
                   const matches = jobs.filter(job => job.name === name);
                   return matches.length === 1 && matches[0].status === 'completed' &&
@@ -106,7 +106,7 @@ jobs:
                 ({data: pull} = await github.rest.pulls.create({
                   ...repo, base: 'main', head: branch, draft: true, title,
                   body: 'PM BDD controls the draft state for this agent branch.\n\n' +
-                    'Successful bdd and checks jobs for the current branch revision make this pull request ready for owner review.\n\n' +
+                    'Successful bdd, checks and bazel jobs for the current branch revision make this pull request ready for owner review.\n\n' +
                     'Only the owner merges, manually and by squash. Readiness does not authorize a merge.'
                 }));
               } catch (error) {
@@ -142,4 +142,4 @@ jobs:
                 return;
               }
             }
-            core.info(ready ? 'The pull request is ready for owner review.' : 'The pull request remains draft until bdd and checks pass.');
+            core.info(ready ? 'The pull request is ready for owner review.' : 'The pull request remains draft until bdd, checks and bazel pass.');

@@ -31,9 +31,12 @@
     ".github/workflows/bdd.yml",
     ".github/workflows/agent-pr.yml",
     "scripts/ci/check-bdd.sh",
+    "scripts/ci/check-bazel.sh",
     "scripts/ci/check-docs.sh",
     "scripts/ci/in-ci-image.sh",
     "scripts/ci/go-test-report.py",
+    "scripts/ci/go-packages.sh",
+    "scripts/ci/stack-packages.txt",
     "build/ci/Dockerfile",
     "build/ci/requirements.txt",
     "build/ci/capture-native-profile.py"

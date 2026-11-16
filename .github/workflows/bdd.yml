@@ -13,8 +13,10 @@ concurrency:
 
 jobs:
   # The behavior gate: the Gherkin acceptance suite runs real PM binaries in the
-  # pinned CI image on a rootless Podman runner. Go developer tests run in the
-  # git hooks. See docs/development/ci.md.
+  # pinned CI image on a rootless Podman runner. Before it, the same step runs
+  # the stack run: the Go developer tests of the stack packages, on their own
+  # stack. Go tests are developer checks, not acceptance proof. See
+  # docs/development/ci.md.
   bdd:
     if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
     runs-on: [self-hosted, Linux, X64, pm-cli-vps]
@@ -41,8 +43,9 @@ jobs:
             --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
 
   # The static checks: setup, the Python script tests, generated code, gofmt,
-  # import boundaries and the tools module tests. They run no behavior test
-  # and do not wait for bdd. See docs/development/ci.md.
+  # import boundaries, the tools module tests and the unit run of the Go
+  # developer tests. They run no behavior test and do not wait for bdd. See
+  # docs/development/ci.md.
   checks:
     if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
     runs-on: [self-hosted, Linux, X64, pm-cli-vps]
@@ -64,3 +67,32 @@ jobs:
         if: always()
         timeout-minutes: 2
         run: sh scripts/ci/in-ci-image.sh stop checks
+
+  # The Bazel gate: `bazel build //...`, then `bazel test //...` against a
+  # job-owned dependency stack, with no cached test results. It uses Bazel
+  # caches that are separate for main and for other branches. It does not
+  # wait for bdd. See docs/development/ci.md.
+  bazel:
+    if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
+    runs-on: [self-hosted, Linux, X64, pm-cli-vps]
+    timeout-minutes: 60
+    steps:
+      - name: Check out the exact pushed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+      - name: Run the Bazel build and test
+        timeout-minutes: 50
+        run: sh scripts/ci/in-ci-image.sh run bazel -- sh scripts/ci/check-bazel.sh
+      - name: Clean up the job container and dependency fixture
+        if: always()
+        timeout-minutes: 6
+        run: |
+          sh scripts/ci/in-ci-image.sh stop bazel
+          sh scripts/ci/in-ci-image.sh run bazel-cleanup -- python3 scripts/ci/with-stack-fixture.py \
+            --cleanup "$RUNNER_TEMP/pmcli-bazel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"

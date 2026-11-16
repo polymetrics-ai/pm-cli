@@ -36,6 +36,7 @@ go_test(
         "//internal/app",
         "//internal/config",
         "//internal/contract",
+        "//internal/runtime",
         "//internal/store",
         "//internal/temporal",
         "//internal/testfixture",

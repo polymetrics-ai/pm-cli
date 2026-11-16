@@ -302,6 +302,11 @@ CLEANUP_RUN = ("sh scripts/ci/in-ci-image.sh stop bdd\n"
                '  --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n')
 CHECKS_RUN = "sh scripts/ci/in-ci-image.sh run checks -- sh scripts/ci/check-docs.sh"
 CHECKS_CLEANUP_RUN = "sh scripts/ci/in-ci-image.sh stop checks"
+BAZEL_RUN = "sh scripts/ci/in-ci-image.sh run bazel -- sh scripts/ci/check-bazel.sh"
+BAZEL_CLEANUP_RUN = ("sh scripts/ci/in-ci-image.sh stop bazel\n"
+                     "sh scripts/ci/in-ci-image.sh run bazel-cleanup -- "
+                     "python3 scripts/ci/with-stack-fixture.py \\\n"
+                     '  --cleanup "$RUNNER_TEMP/pmcli-bazel-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n')
 
 
 def frozen_job(jobs, name, timeout, check, cleanup):
@@ -330,7 +335,7 @@ def frozen_job(jobs, name, timeout, check, cleanup):
 
 
 def workflow_check(path, actionlint):
-    """Freeze the required checks: `bdd` and `checks` on owner pushes, in the CI image."""
+    """Freeze the required checks: `bdd`, `checks` and `bazel` on owner pushes, in the CI image."""
     obj = read_yaml(path.read_text())
     require(isinstance(obj, dict), "workflow must be an object")
     require(set(obj) == {"name", "on", "permissions", "concurrency", "jobs"},
@@ -341,7 +346,7 @@ def workflow_check(path, actionlint):
             "group": "bdd-${{ github.ref }}",
             "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}"},
             "unapproved workflow concurrency")
-    require(isinstance(obj["jobs"], dict) and set(obj["jobs"]) == {"bdd", "checks"},
+    require(isinstance(obj["jobs"], dict) and set(obj["jobs"]) == {"bdd", "checks", "bazel"},
             "unapproved job membership")
     frozen_job(obj["jobs"], "bdd", "60",
                {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "50", "run": BDD_RUN},
@@ -351,6 +356,10 @@ def workflow_check(path, actionlint):
                {"name": "Run the static checks", "timeout-minutes": "17", "run": CHECKS_RUN},
                {"name": "Clean up the job container",
                 "if": "always()", "timeout-minutes": "2", "run": CHECKS_CLEANUP_RUN})
+    frozen_job(obj["jobs"], "bazel", "60",
+               {"name": "Run the Bazel build and test", "timeout-minutes": "50", "run": BAZEL_RUN},
+               {"name": "Clean up the job container and dependency fixture",
+                "if": "always()", "timeout-minutes": "6", "run": BAZEL_CLEANUP_RUN})
     config = Path(__file__).with_name("actionlint.yaml")
     workflows = sorted(str(item) for item in path.parent.glob("*.yml"))
     command([actionlint, "-no-color", "-config-file", str(config), *workflows], path.parent)
