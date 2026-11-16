@@ -233,7 +233,7 @@ The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle
 
 The operator has these duties:
 
-1. Run the privileged deployment bootstrap (`deploy/postgres/bootstrap.sql`) before the store migrations. It creates `pm_app_bootstrap` from the password file `pm-app-bootstrap-password`. An existing deployment must run it again before migration 0021, or that migration fails at its role check.
+1. Run the privileged deployment bootstrap (`deploy/postgres/bootstrap.sql`) before the store migrations. It creates `pm_app_bootstrap` from the password file `pm-app-bootstrap-password`. An existing deployment must run it again before migration 0020, or that migration fails at its role check.
 2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the same deployment and organization is refused, also with the same input.
 3. Remove `pm-app-bootstrap-endpoint` from the secret directory after the bootstrap.
 

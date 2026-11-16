@@ -156,10 +156,10 @@ GRANT INSERT (org_id, workspace_id, audit_id, requested_actor_id, requested_acto
     ON pm.workspace_audit_entries TO pm_app_bootstrap;
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
-UPDATE pm.control_schema SET revision = 'pm.control/v21', installed_at = clock_timestamp()
+UPDATE pm.control_schema SET revision = 'pm.control/v20', installed_at = clock_timestamp()
 WHERE singleton AND revision = 'pm.control/v19';
 ALTER TABLE pm.control_schema
-    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v21');
+    ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v20');
 -- +goose StatementEnd
 
 -- +goose Down
@@ -203,7 +203,7 @@ ALTER TABLE pm.provider_accounts
 
 ALTER TABLE pm.control_schema DROP CONSTRAINT control_schema_revision_check;
 UPDATE pm.control_schema SET revision = 'pm.control/v19', installed_at = clock_timestamp()
-WHERE singleton AND revision = 'pm.control/v21';
+WHERE singleton AND revision = 'pm.control/v20';
 ALTER TABLE pm.control_schema
     ADD CONSTRAINT control_schema_revision_check CHECK (revision = 'pm.control/v19');
 -- +goose StatementEnd
