@@ -3,6 +3,8 @@
 import json
 import os
 from pathlib import Path
+import select
+import signal
 import subprocess
 import sys
 import tempfile
@@ -345,6 +347,42 @@ REPORT = ROOT / "scripts/ci/go-test-report.py"
 GO_PACKAGES = ROOT / "scripts/ci/go-packages.sh"
 
 
+def process_exits_within(pid, seconds):
+    """Wait one time for the exit event of process PID, for at most SECONDS.
+
+    Return True when the process has exited, also as a zombie that no parent
+    has reaped yet, or when no process has the ID. Return False when the time
+    limit ends first. Linux uses a pidfd, macOS a kqueue process filter. A
+    system with neither has no exit event, and the caller fails.
+    """
+    if hasattr(os, "pidfd_open"):
+        try:
+            descriptor = os.pidfd_open(pid)
+        except ProcessLookupError:
+            return True
+        try:
+            poller = select.poll()
+            poller.register(descriptor, select.POLLIN)
+            return bool(poller.poll(int(seconds * 1000)))
+        finally:
+            os.close(descriptor)
+    if hasattr(select, "kqueue"):
+        queue = select.kqueue()
+        try:
+            change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                   flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                   fflags=select.KQ_NOTE_EXIT)
+            try:
+                queue.control([change], 0, 0)
+            except ProcessLookupError:
+                return True
+            events = queue.control(None, 1, seconds)
+            return any(event.fflags & select.KQ_NOTE_EXIT for event in events)
+        finally:
+            queue.close()
+    raise AssertionError("this system has neither pidfd_open nor kqueue: no process exit event")
+
+
 def go_event(action, package, test=None, **extra):
     event = {"Action": action, "Package": package}
     if test:
@@ -418,6 +456,78 @@ class GoTestReport(unittest.TestCase):
         result, _ = self.report(broken)
         self.assertEqual(result.returncode, 1)
         self.assertIn("::group::FAIL m/q [m/q.test]", result.stdout)
+
+    def test_test_without_result_prints_its_output_and_fails(self):
+        # The shape of a real `go test -json` stream (Go 1.27.1) when a
+        # goroutine of a test panics: output under the running test, no test
+        # result, and a package fail.
+        events = [go_event("start", "m/a"),
+                  go_event("run", "m/a", "TestFirst"),
+                  go_event("output", "m/a", "TestFirst", Output="=== RUN   TestFirst\n"),
+                  go_event("output", "m/a", "TestFirst", Output="--- PASS: TestFirst (0.00s)\n"),
+                  go_event("pass", "m/a", "TestFirst", Elapsed=0),
+                  go_event("run", "m/a", "TestHelperGoroutinePanics"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="=== RUN   TestHelperGoroutinePanics\n"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="panic: send on closed channel\n"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="goroutine 37 [running]:\n"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="m/a.TestHelperGoroutinePanics.func1()\n"),
+                  go_event("output", "m/a", Output="FAIL\tm/a\t0.583s\n"),
+                  go_event("fail", "m/a", Elapsed=0.583)]
+        result, summary = self.report(events, "--title", "Unit run", "--summary-file", "SUMMARY")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("::group::FAIL (no result) m/a TestHelperGoroutinePanics\n"
+                      "=== RUN   TestHelperGoroutinePanics\n"
+                      "panic: send on closed channel\n"
+                      "goroutine 37 [running]:\n"
+                      "m/a.TestHelperGoroutinePanics.func1()\n"
+                      "::endgroup::\n", result.stdout)
+        self.assertIn("go test: a test started and has no result: m/a TestHelperGoroutinePanics\n",
+                      result.stdout)
+        self.assertIn("go test: 1 packages, 2 failures, 0 skipped tests", result.stdout)
+        self.assertNotIn("--- PASS: TestFirst", result.stdout)
+        self.assertIn("- `m/a TestHelperGoroutinePanics` (no result)", summary)
+        self.assertIn("- a test started and has no result: m/a TestHelperGoroutinePanics", summary)
+
+    def test_test_without_result_fails_a_passing_package(self):
+        events = [go_event("run", "m/p", "TestLost"),
+                  go_event("run", "m/p", "TestLost/sub"),
+                  go_event("output", "m/p", "TestLost/sub", Output="    p_test.go:4: last line\n"),
+                  go_event("pass", "m/p", "TestLost/sub"),
+                  go_event("pass", "m/p", Elapsed=0.3)]
+        result, summary = self.report(events, "--title", "Stack run", "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("PASS      0.3s m/p", result.stdout)
+        self.assertIn("::group::FAIL (no result) m/p TestLost\n", result.stdout)
+        self.assertIn("go test: a test started and has no result: m/p TestLost\n", result.stdout)
+        self.assertNotIn("no result: m/p TestLost/sub", result.stdout)
+        self.assertIn("go test: 1 packages, 1 failures, 0 skipped tests, exit 0", result.stdout)
+        self.assertIn("Result: FAILED.", summary)
+
+    def test_paused_parallel_tests_with_results_pass(self):
+        events = [go_event("run", "m/p", "TestA"),
+                  go_event("output", "m/p", "TestA", Output="=== RUN   TestA\n"),
+                  go_event("pause", "m/p", "TestA"),
+                  go_event("run", "m/p", "TestB"),
+                  go_event("output", "m/p", "TestB", Output="=== RUN   TestB\n"),
+                  go_event("pause", "m/p", "TestB"),
+                  go_event("cont", "m/p", "TestA"),
+                  go_event("cont", "m/p", "TestB"),
+                  go_event("output", "m/p", "TestB", Output="--- PASS: TestB (0.01s)\n"),
+                  go_event("pass", "m/p", "TestB", Elapsed=0.01),
+                  go_event("output", "m/p", "TestA", Output="--- PASS: TestA (0.02s)\n"),
+                  go_event("pass", "m/p", "TestA", Elapsed=0.02),
+                  go_event("pass", "m/p", Elapsed=0.1)]
+        result, summary = self.report(events, "--fail-on-skip", "--title", "Unit run",
+                                      "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("no result", result.stdout)
+        self.assertNotIn("=== RUN", result.stdout)
+        self.assertIn("go test: 1 packages, 0 failures, 0 skipped tests, exit 0", result.stdout)
+        self.assertIn("Result: PASSED.", summary)
 
     def passing(self, *packages):
         events = []
@@ -511,19 +621,22 @@ class GoTestReport(unittest.TestCase):
     def test_no_test_process_outlives_the_command(self):
         with tempfile.TemporaryDirectory() as directory:
             pidfile = Path(directory) / "pid"
-            script = (f'sleep 60 & echo $! > "{pidfile}"; '
+            # The background process has its own standard streams, so the
+            # captured pipes of the reporter end when the reporter exits, not
+            # when this process exits.
+            script = (f'sleep 60 </dev/null >/dev/null 2>&1 & echo $! > "{pidfile}"; '
                       "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
             command = ["/bin/sh", "-c", script, "sh", "-count=1"]
             result, _ = self.report([], expect=["m/a"], command=command)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             pid = int(pidfile.read_text())
-            for _ in range(50):
+            # One wait for the exit event, with one time limit. The reporter
+            # sends SIGKILL to the process group before it exits.
+            if not process_exits_within(pid, 5):
                 try:
-                    os.kill(pid, 0)
+                    os.kill(pid, signal.SIGKILL)
                 except ProcessLookupError:
-                    break
-                time.sleep(0.1)
-            else:
+                    pass
                 self.fail("the background process of the command is still alive")
 
     def test_command_stopped_by_a_signal_fails(self):
