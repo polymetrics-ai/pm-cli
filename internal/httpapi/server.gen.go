@@ -2606,6 +2606,24 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/tasks/:task_id", wrapper.GetTask)
 }
 
+type DevicePoll409ResponseHeaders struct {
+	RetryAfter *string
+}
+type DevicePoll409ApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers DevicePoll409ResponseHeaders
+}
+
+type DevicePoll429ResponseHeaders struct {
+	RetryAfter *string
+}
+type DevicePoll429ApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers DevicePoll429ResponseHeaders
+}
+
 type Problem400ApplicationProblemPlusJSONResponse Problem
 
 type Problem401ApplicationProblemPlusJSONResponse Problem
@@ -3442,16 +3460,19 @@ func (response ExchangeDeviceLogin403ApplicationProblemPlusJSONResponse) VisitEx
 }
 
 type ExchangeDeviceLogin409ApplicationProblemPlusJSONResponse struct {
-	Problem409ApplicationProblemPlusJSONResponse
+	DevicePoll409ApplicationProblemPlusJSONResponse
 }
 
 func (response ExchangeDeviceLogin409ApplicationProblemPlusJSONResponse) VisitExchangeDeviceLoginResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
 	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
@@ -3474,16 +3495,19 @@ func (response ExchangeDeviceLogin410ApplicationProblemPlusJSONResponse) VisitEx
 }
 
 type ExchangeDeviceLogin429ApplicationProblemPlusJSONResponse struct {
-	Problem429ApplicationProblemPlusJSONResponse
+	DevicePoll429ApplicationProblemPlusJSONResponse
 }
 
 func (response ExchangeDeviceLogin429ApplicationProblemPlusJSONResponse) VisitExchangeDeviceLoginResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
 	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
@@ -9308,6 +9332,8 @@ type DenyDeviceLoginJSONRequestBody = api.DenyDeviceLoginJSONRequestBody
 type DenyDeviceLoginParams = api.DenyDeviceLoginParams
 type DeviceApproval = api.DeviceApproval
 type DeviceChallenge = api.DeviceChallenge
+type DevicePoll409 = api.DevicePoll409
+type DevicePoll429 = api.DevicePoll429
 type DeviceProof = api.DeviceProof
 type DeviceStart = api.DeviceStart
 type EffectState = api.EffectState

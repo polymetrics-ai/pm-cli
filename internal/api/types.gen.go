@@ -1760,6 +1760,12 @@ type TaskID = string
 // WorkspaceID defines model for WorkspaceID.
 type WorkspaceID = string
 
+// DevicePoll409 defines model for DevicePoll409.
+type DevicePoll409 = Problem
+
+// DevicePoll429 defines model for DevicePoll429.
+type DevicePoll429 = Problem
+
 // Problem400 defines model for Problem400.
 type Problem400 = Problem
 

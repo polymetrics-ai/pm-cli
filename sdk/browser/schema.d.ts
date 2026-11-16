@@ -1649,6 +1649,26 @@ export interface components {
         };
     };
     responses: {
+        /** @description Device login conflict. A device_authorization_pending answer carries Retry-After. A login_challenge_used answer does not. */
+        DevicePoll409: {
+            headers: {
+                "Retry-After": components["headers"]["DevicePollRetryAfter"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Device login limit. A device_poll_too_soon answer carries Retry-After. An authentication_rate_limited answer does not. */
+        DevicePoll429: {
+            headers: {
+                "Retry-After": components["headers"]["DevicePollRetryAfter"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description Malformed or unsupported typed request */
         Problem400: {
             headers: {
@@ -1814,6 +1834,8 @@ export interface components {
         CacheControlNoStore: "no-store";
         /** @description Selected byte interval and complete registered length, or the complete length for a 416 response. */
         ContentRange: string;
+        /** @description Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it with device_authorization_pending and device_poll_too_soon only. */
+        DevicePollRetryAfter: string;
         /** @description Opaque scope-bound revision validator for this authorized representation; it is not a mutation idempotency key. */
         ETag: string;
     };
@@ -2037,9 +2059,9 @@ export interface operations {
             400: components["responses"]["Problem400"];
             401: components["responses"]["Problem401"];
             403: components["responses"]["Problem403"];
-            409: components["responses"]["Problem409"];
+            409: components["responses"]["DevicePoll409"];
             410: components["responses"]["Problem410"];
-            429: components["responses"]["Problem429"];
+            429: components["responses"]["DevicePoll429"];
             503: components["responses"]["Problem503"];
         };
     };
