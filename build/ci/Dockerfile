@@ -88,8 +88,7 @@ RUN set -eu; python3 -m venv /opt/pmcli/venv; \
 RUN set -eu; apt-get update; \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
       dbus-daemon dbus-bin dbus-session-bus-common gnome-keyring; \
-    rm /usr/share/dbus-1/services/org.freedesktop.secrets.service \
-      /usr/share/dbus-1/services/org.freedesktop.impl.portal.Secret.service \
+    rm /usr/share/dbus-1/services/org.freedesktop.impl.portal.Secret.service \
       /usr/share/dbus-1/services/org.gnome.keyring.service; \
     helper=/usr/lib/dbus-1.0/dbus-daemon-launch-helper; \
     dpkg-statoverride --remove "$helper"; \
