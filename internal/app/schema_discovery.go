@@ -132,6 +132,14 @@ func (service *AdmissionService) AcceptDiscovery(
 		if !present {
 			return schemaRelationUnknownFailure()
 		}
+		// A declaration of another connector does not describe this connection.
+		connection, err := store.LoadConnection(ctx, tx, invocation.ConnectionRef)
+		if err != nil {
+			return mapAdmissionFailure(err)
+		}
+		if connection.ConnectorID != declared.ConnectorID {
+			return schemaRelationUnknownFailure()
+		}
 		if service.resolveOperation == nil {
 			return capabilityUnavailableFailure(errors.New("operation resolver is unavailable"))
 		}
