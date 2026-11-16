@@ -321,9 +321,9 @@ func TestContinuationPublicationFailureComesFromThePublicationStep(t *testing.T)
 // The publication step does not inherit the provider callback deadline, and
 // it does not use the reserve that it leaves for the settlement, whether the
 // activity attempt deadline or the accepted run deadline comes first. The
-// check starts from the end of the publication step. This is a nominal
-// separation only. A late provider callback can still leave the settlement
-// less than one reserve, or none. Issue #281 owns that gap.
+// check starts from the end of the publication step.
+// TestProviderCallbackLeavesTheSettlementOneReserve checks the provider
+// callback bound.
 func TestWorkerPublicationContextIsNotTheTransportBound(t *testing.T) {
 	// The settlement reserve is min(heartbeat/2, transport/2) = 1s.
 	const heartbeat, transport, reserve = 2 * time.Second, 5 * time.Second, time.Second
