@@ -14,8 +14,8 @@ const (
 	ApplicationDatabase   = "pm_app"
 	MigratorRole          = "pm_app_migrator"
 	RuntimeRole           = "pm_app_runtime"
-	ControlSchemaRevision = "pm.control/v19"
-	ControlSchemaVersion  = int64(19)
+	ControlSchemaRevision = "pm.control/v22"
+	ControlSchemaVersion  = int64(22)
 )
 
 type PoolConfig struct {
