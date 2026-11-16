@@ -5,7 +5,6 @@ go_library(
     srcs = ["main.go"],
     importpath = "github.com/polymetrics-ai/pm-cli/cmd/pm",
     visibility = ["//visibility:private"],
-    deps = ["//internal/cli"],
 )
 
 go_binary(
