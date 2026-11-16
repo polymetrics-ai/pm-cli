@@ -75,11 +75,7 @@ func commitWorkerResult(ctx context.Context, tx *store.Transaction, plan workerU
 		if err != nil {
 			return "", err
 		}
-		if receipt.ReservationID != reservationID || receipt.ConnectionID != plan.state.input.ConnectionID ||
-			receipt.Purpose != store.ArtifactPurposePublic ||
-			receipt.Object.ArtifactID != plan.resultReservation.Request.ArtifactID {
-		}
-		return receipt.Object.ArtifactID, nil
+		return workerResultReceiptArtifactID(plan, receipt)
 	}
 	if reservationID == "" {
 		return "", nil
@@ -97,4 +93,18 @@ func commitWorkerResult(ctx context.Context, tx *store.Transaction, plan workerU
 		return "", nil
 	}
 	return "", errors.New("unsettled worker result reservation has incompatible state")
+}
+
+// workerResultReceiptArtifactID returns the result artifact ID of a committed
+// publication receipt for the unit's result reservation. A receipt that does
+// not match the reservation is a conflict. Its artifact never becomes the
+// unit's result.
+func workerResultReceiptArtifactID(plan workerUnitPlan, receipt store.ArtifactPublicationReceipt) (string, error) {
+	if receipt.ReservationID != plan.resultReservation.Request.ReservationID ||
+		receipt.ConnectionID != plan.state.input.ConnectionID ||
+		receipt.Purpose != store.ArtifactPurposePublic ||
+		receipt.Object.ArtifactID != plan.resultReservation.Request.ArtifactID {
+		return "", store.ErrImmutableConflict
+	}
+	return receipt.Object.ArtifactID, nil
 }
