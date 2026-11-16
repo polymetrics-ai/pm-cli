@@ -69,6 +69,7 @@ go_test(
         "sql_composition_test.go",
         "worker_callback_deadline_test.go",
         "worker_plan_test.go",
+        "worker_result_receipt_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
     ],
@@ -136,6 +137,16 @@ go_test(
         "//internal/runtime",
         "//internal/store",
         "//internal/sync",
+    ],
+)
+
+go_test(
+    name = "worker_result_receipt_test",
+    srcs = ["worker_result_receipt_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/contract",
+        "//internal/store",
     ],
 )
 
