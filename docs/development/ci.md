@@ -146,11 +146,11 @@ The `bazel` job is in the same workflow as `bdd`. It has the same admission cond
 2. It runs `bootstrap.py print-env` and records the toolchain identity.
 3. It runs `sh scripts/browser.sh install` and `sh scripts/browser.sh build`. `//tests/client-parity` needs the installed `node_modules` at loading time and the built browser SDK under `.cache/browser-sdk` as test data. Without them, `bazel build //...` fails.
 4. It builds `.cache/bin/pm-stack` and `.cache/bin/pm-stack-fixture` from the candidate. The stack fixture needs them.
-5. It runs `bazel build //...`.
-6. It starts a job-owned stack and runs `bazel test //... --test_output=errors --cache_test_results=no` in it. The physical test targets declare exclusive execution. `with-stack-fixture.py` stops the command 20 minutes after its start.
-7. It compares the toolchain identity again.
+5. It runs `bazel build //...` and records its exit status.
+6. If the build passed, it starts a job-owned stack and runs `bazel test //... --test_output=errors --cache_test_results=no` in it. It records the exit status. The physical test targets declare exclusive execution. `with-stack-fixture.py` stops the command 20 minutes after its start. If the build failed, the test does not run, and the log says so.
+7. It compares the toolchain identity again, also when the build or the test failed. It prints `check-bazel: bazel build exit N; bazel test exit M` or `bazel test did not run`.
 
-The script uses no target filter, no tag filter and no `--keep_going`. A failed build, a failed test or a failed cleanup fails the job. Test results never come from a cache. `bazel test //...` does not run `tests/acceptance`, because that package has no `BUILD.bazel` file. The `bdd` job runs it.
+The script uses no target filter, no tag filter and no `--keep_going`. A failed build, a failed test, a failed cleanup or a toolchain drift fails the job. A Bazel phase that stops on a signal (exit 129, 130 or 143) ends the script at once. Test results never come from a cache. `bazel test //...` does not run `tests/acceptance`, because that package has no `BUILD.bazel` file. The `bdd` job runs it.
 
 `bazel test //...` runs the stack packages a second time, after the stack run of the `bdd` job, and the client-parity test. So a push starts two job-owned stacks at the same time, one for `bdd` and one for `bazel`. Count this load when you plan runner slots.
 

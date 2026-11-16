@@ -107,26 +107,53 @@ CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-stack-fixture ./cmd/pm-stack-fixture
 python3 tools/bootstrap.py exec docker-compose -- version
 
+# Each phase records its exit status. The toolchain comparison and the
+# closing line run on every path, and the script exits nonzero when any part
+# failed. The test phase runs only after a passing build.
 step 'bazel build //...'
+build_status=0
 python3 tools/bootstrap.py exec bazelisk -- --output_base="$output_base" --batch \
   build --repository_cache="$repository_cache" --repo_contents_cache="$contents_cache" \
-  //...
-step 'bazel build //... passed'
+  //... || build_status=$?
+step "bazel build //... ended with exit $build_status"
 
 # Physical targets declare exclusive execution for their shared schema, roles
 # and history. with-stack-fixture.py stops the command 20 minutes after its
 # start (CHILD_TIMEOUT).
-step 'starting a fresh job-owned stack for bazel test //...'
-python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
-  python3 tools/bootstrap.py exec bazelisk -- --output_base="$output_base" --batch \
-  test --repository_cache="$repository_cache" --repo_contents_cache="$contents_cache" \
-  --test_output=errors --cache_test_results=no \
-  //...
-step 'bazel test //... passed'
+test_ran=false
+test_status=0
+if [ "$build_status" -eq 0 ]; then
+  test_ran=true
+  step 'starting a fresh job-owned stack for bazel test //...'
+  python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
+    python3 tools/bootstrap.py exec bazelisk -- --output_base="$output_base" --batch \
+    test --repository_cache="$repository_cache" --repo_contents_cache="$contents_cache" \
+    --test_output=errors --cache_test_results=no \
+    //... || test_status=$?
+  step "bazel test //... ended with exit $test_status"
+else
+  printf '%s\n' 'check-bazel: bazel test //... did not run: bazel build //... failed' >&2
+fi
+
+# A cancelled job stops on a signal. Stop at once, as check-bdd.sh does.
+for status in "$build_status" "$test_status"; do
+  case "$status" in
+    129 | 130 | 143)
+      printf 'check-bazel: a Bazel phase stopped on a signal (exit %s)\n' "$status" >&2
+      exit "$status"
+      ;;
+  esac
+done
 
 step 'compare the toolchain identity'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bazel-toolchain-after.json"
+if "$test_ran"; then test_result="exit $test_status"; else test_result='did not run'; fi
+printf 'check-bazel: bazel build exit %s; bazel test %s\n' "$build_status" "$test_result"
 if ! cmp -s "$RUNNER_TEMP/bazel-toolchain.json" "$RUNNER_TEMP/bazel-toolchain-after.json"; then
   printf '%s\n' 'Bazel native/tool identity drifted during execution' >&2
+  exit 1
+fi
+step 'the toolchain identity is unchanged'
+if [ "$build_status" -ne 0 ] || [ "$test_status" -ne 0 ]; then
   exit 1
 fi
