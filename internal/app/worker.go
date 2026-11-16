@@ -1187,6 +1187,10 @@ func (service *WorkerService) settleWorkerUnit(
 		if err != nil {
 			return err
 		}
+		earlier, err := service.resolveEarlierAttemptReservations(ctx, tx, plan)
+		if err != nil {
+			return err
+		}
 		commit := workerSettlementCommit(
 			plan.lease,
 			updatedTask,
@@ -1200,6 +1204,7 @@ func (service *WorkerService) settleWorkerUnit(
 			localCompletion,
 			unadmittedRecovered,
 			retry,
+			earlier,
 		)
 		if _, err := store.CommitSettlement(ctx, tx, commit); err != nil {
 			return err
@@ -1262,6 +1267,7 @@ func workerSettlementCommit(
 	localCompletion bool,
 	unadmittedRecovered bool,
 	retry *store.WorkerRetryPlan,
+	earlier earlierAttemptReservations,
 ) store.SettlementCommit {
 	reasonCodes := []string{"member_settlement"}
 	if resultPublicationUnavailable {
@@ -1310,7 +1316,7 @@ func workerSettlementCommit(
 		},
 		Audit: store.AuditEntry{
 			AuditID: "worker-settlement-audit-v1-" + base,
-			Action:  "worker_member_settlement", TargetRef: task.RunID, Payload: payload,
+			Action:  "worker_member_settlement", TargetRef: task.RunID, Payload: earlier.auditPayload(payload),
 		},
 		Event: store.EventInput{
 			EventID: "worker-settlement-event-v1-" + base,

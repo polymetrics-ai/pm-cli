@@ -228,6 +228,75 @@ func LoadObjectReservation(ctx context.Context, tx *Transaction, reservationID s
 	return loadObjectReservation(ctx, tx, reservationID, false)
 }
 
+// LockObjectReservations locks the scope's object capacity, then each existing
+// reservation among reservationIDs in reservation ID order, until the caller's
+// transaction ends. This is the lock order of every capacity change, so a
+// concurrent bind or cancel of one of these reservations waits for the caller.
+// It returns only the reservations that exist. A missing ID is not an error.
+// When none of them exists, it takes no lock. The caller must know that no
+// transaction can still create one of these reservations.
+func LockObjectReservations(ctx context.Context, tx *Transaction, reservationIDs []string) ([]ObjectReservation, error) {
+	scope, err := tx.requireScope()
+	if err != nil {
+		return nil, err
+	}
+	if len(reservationIDs) == 0 {
+		return nil, nil
+	}
+	for _, reservationID := range reservationIDs {
+		if !validStoreID(reservationID) {
+			return nil, errors.New("object reservation identity is invalid")
+		}
+	}
+	existing, err := selectObjectReservationIDs(ctx, tx, reservationIDs, false)
+	if err != nil || len(existing) == 0 {
+		return nil, err
+	}
+	if _, _, err := lockObjectCapacity(ctx, tx, scope); err != nil {
+		return nil, err
+	}
+	locked, err := selectObjectReservationIDs(ctx, tx, existing, true)
+	if err != nil {
+		return nil, err
+	}
+	reservations := make([]ObjectReservation, 0, len(locked))
+	for _, reservationID := range locked {
+		reservation, err := loadObjectReservation(ctx, tx, reservationID, false)
+		if err != nil {
+			return nil, err
+		}
+		reservations = append(reservations, reservation)
+	}
+	return reservations, nil
+}
+
+// selectObjectReservationIDs returns the existing IDs among reservationIDs in
+// reservation ID order. With lock, it also locks their rows.
+func selectObjectReservationIDs(ctx context.Context, tx *Transaction, reservationIDs []string, lock bool) ([]string, error) {
+	query := `SELECT reservation_id FROM pm.object_reservations
+		WHERE reservation_id = ANY($1) ORDER BY reservation_id`
+	if lock {
+		query += ` FOR UPDATE`
+	}
+	rows, err := tx.query(ctx, query, reservationIDs)
+	if err != nil {
+		return nil, fmt.Errorf("select object reservations: %w", err)
+	}
+	defer rows.Close()
+	var existing []string
+	for rows.Next() {
+		var reservationID string
+		if err := rows.Scan(&reservationID); err != nil {
+			return nil, fmt.Errorf("select object reservations: %w", err)
+		}
+		existing = append(existing, reservationID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("select object reservations: %w", err)
+	}
+	return existing, nil
+}
+
 // CommitObjectPublication registers verified bytes and their immutable receipt in
 // the caller's transaction. Result/outcome/manifest transitions may join this
 // transaction; there is deliberately no object I/O or second commit here.
