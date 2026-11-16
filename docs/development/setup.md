@@ -154,6 +154,37 @@ An unconfirmed credential response is not a refusal. The page treats only HTTP 4
 
 `/health/live` can report the process live, but `/health/ready` remains HTTP 503 with dispatch false even when the PostgreSQL admission probe succeeds. The production handler registry composes only the connector bundles a deployment declares in `connectors.bundles`; a deployment that declares none registers no provider callback, so invocation submission returns unavailable capability rather than fabricating accepted work. The [admission checks](testing.md#authenticated-admission-and-run-controls-m4) register an explicit fixture capability; the [handoff checks](testing.md#temporal-handoff-and-projection-m4) exercise real PostgreSQL and Temporal. Neither makes this process a ready provider-execution backend.
 
+### Ready signal for a starter
+
+A starter can ask `pm-server` for one ready signal ([ADR 0005](../decisions/0005-process-ready-signal.md)). It passes `--ready-fd <n>`:
+
+```text
+--ready-fd fd   write one ready line to inherited descriptor fd (3 or more), then close it
+```
+
+- The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. Without the flag, `pm-server` sends no signal.
+- Descriptor `n` must be the write end of a pipe that the starter made, with no close-on-exec flag. `pm-server` keeps it in one handle and sets close-on-exec on that handle.
+- `pm-server` is ready when its admission probe passed, its state is serving and its HTTP accept loop calls Accept for the first time. Then it writes `pm-server ready` and one line feed in one write, apart from the serving path, and closes the handle. The write has no deadline: the signal waits until the starter reads. A start that fails before it is ready sends no signal, so the starter reads end of file with no data.
+- If the write fails, `pm-server` writes `pm-server: the ready signal write failed. The process continues.` on standard error once. It continues, and its exit code does not change.
+
+A refusal stops `pm-server` with exit code 1, one line on standard error and no signal, before it opens its configuration:
+
+| Order | Case | Standard error line |
+| --- | --- | --- |
+| 1, while the flags are read | `--ready-fd` is the last argument and has no value | `pm-server: flag needs an argument: --ready-fd` |
+| 1, while the flags are read | A second `--ready-fd` | `pm-server: invalid argument "<value>" for "--ready-fd" flag: --ready-fd may be supplied exactly once` |
+| 1, while the flags are read | A value that breaks the value rule | `pm-server: invalid argument "<value>" for "--ready-fd" flag: --ready-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | A descriptor that is not open for writing, or that has close-on-exec set | `pm-server: --ready-fd requires an inherited descriptor that is open for writing` |
+
+The starter must do these things:
+
+- Give `pm-server` only the write end of the pipe as descriptor `n`, and make sure that no other process that it starts holds that write end.
+- Close its own copy of the write end after the start. If it does not, end of file never comes.
+- Read the pipe until the line or end of file comes, with one time limit that the starter owns.
+- Read each pipe that it gives as standard output or standard error, or give a destination that cannot fill, for example a file. A full pipe blocks each write of the process.
+
+A supervisor of `pm-server` has this minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM. It bounds its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
+
 ### Scoped event streams and artifact boundaries
 
 `GET /v1/workspaces/{workspace_id}/runs/{run_id}/events` serves authenticated SSE. Both `run.read` and `event.read` must authorize the parent run before event disclosure, and polling rechecks current authority. Foreign scopes and runs remain concealed. The stream begins with an authoritative `snapshot`; committed `run_event` frames follow in durable sequence order. Sequences, state revisions and safe-payload counts are decimal strings, including values beyond JavaScript's exact integer range.
