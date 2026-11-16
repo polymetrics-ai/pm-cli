@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -340,7 +341,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyPostgres] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "--wait", "postgres"); err != nil {
+		if err := rt.startServices(ctx, configuration, true, "postgres"); err != nil {
 			return fmt.Errorf("start PostgreSQL: %w", err)
 		}
 	}
@@ -349,7 +350,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyTemporal] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "temporal"); err != nil {
+		if err := rt.startServices(ctx, configuration, false, "temporal"); err != nil {
 			return fmt.Errorf("start Temporal: %w", err)
 		}
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
@@ -361,12 +362,12 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 
 	if selected[config.DependencyArtifacts] {
 		for _, services := range [][]string{
-			{"up", "-d", "seaweed-master"},
-			{"up", "-d", "seaweed-volume"},
-			{"up", "-d", "seaweed-filer"},
-			{"up", "-d", "seaweed-s3-a", "seaweed-s3-b", "caddy"},
+			{"seaweed-master"},
+			{"seaweed-volume"},
+			{"seaweed-filer"},
+			{"seaweed-s3-a", "seaweed-s3-b", "caddy"},
 		} {
-			if err := rt.compose(ctx, configuration, services...); err != nil {
+			if err := rt.startServices(ctx, configuration, false, services...); err != nil {
 				return fmt.Errorf("start artifact services: %w", err)
 			}
 		}
@@ -1153,6 +1154,132 @@ func (rt *runtime) compose(ctx context.Context, configuration config.Configurati
 		return fmt.Errorf("docker compose command failed: %w", err)
 	}
 	return nil
+}
+
+// serviceContainer is the state of one Compose service container that
+// decides whether pm-stack up keeps it.
+type serviceContainer struct {
+	running    bool
+	configHash string
+}
+
+// settledService reports whether a service keeps its container: the service
+// has exactly one container, the container runs, and its Compose config hash
+// label equals the hash that Compose expects for the current configuration.
+// A changed configuration, a missing container, a stopped container or an
+// unknown hash goes through the normal up.
+func settledService(expectedHash string, containers []serviceContainer) bool {
+	return expectedHash != "" &&
+		len(containers) == 1 &&
+		containers[0].running &&
+		containers[0].configHash == expectedHash
+}
+
+// startServices runs compose up for the named services. A settled service
+// (settledService) goes through up --no-recreate, so its running container
+// stays. Compose otherwise recreates a running container when the engine
+// reports a network ID that Compose cannot match, also when the configuration
+// is unchanged (rootless Podman). Every other service goes through the normal
+// up, which creates, starts or recreates it.
+func (rt *runtime) startServices(ctx context.Context, configuration config.Configuration, wait bool, services ...string) error {
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return err
+	}
+	expected, err := rt.expectedServiceHashes(ctx, configuration, services)
+	if err != nil {
+		return err
+	}
+	var recreate, keep []string
+	for _, service := range services {
+		containers, err := rt.serviceContainers(ctx, service)
+		if err != nil {
+			return err
+		}
+		if settledService(expected[service], containers) {
+			keep = append(keep, service)
+		} else {
+			recreate = append(recreate, service)
+		}
+	}
+	arguments := []string{"up", "-d"}
+	if wait {
+		arguments = append(arguments, "--wait")
+	}
+	if len(recreate) > 0 {
+		if err := rt.compose(ctx, configuration, append(slices.Clone(arguments), recreate...)...); err != nil {
+			return err
+		}
+	}
+	if len(keep) > 0 {
+		keepArguments := append(slices.Clone(arguments), "--no-recreate")
+		if err := rt.compose(ctx, configuration, append(keepArguments, keep...)...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expectedServiceHashes returns the config hash that Compose computes for
+// each named service from the current configuration.
+func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration config.Configuration, services []string) (map[string]string, error) {
+	command := exec.CommandContext(ctx, "python3",
+		rt.composeArguments(configuration, "config", "--hash", strings.Join(services, ","))...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	command.Stderr = rt.stderr
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("read Compose service configuration hashes: %w", err)
+	}
+	hashes := make(map[string]string, len(services))
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("Compose service configuration hash output is malformed")
+		}
+		hashes[fields[0]] = fields[1]
+	}
+	return hashes, nil
+}
+
+// serviceContainers returns the state of the containers of one service of
+// this Compose project. One-off containers (compose run) are not included.
+func (rt *runtime) serviceContainers(ctx context.Context, service string) ([]serviceContainer, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	list := exec.CommandContext(ctx, "docker", "ps", "--all", "--quiet", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+rt.project,
+		"--filter", "label=com.docker.compose.service="+service,
+		"--filter", "label=com.docker.compose.oneoff=False")
+	list.Dir = rt.root
+	output, err := list.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list the %s service containers: %w", service, err)
+	}
+	ids := strings.Fields(string(output))
+	containers := make([]serviceContainer, 0, len(ids))
+	for _, id := range ids {
+		inspect := exec.CommandContext(ctx, "docker", "inspect", "--format",
+			`{{.State.Running}} {{index .Config.Labels "com.docker.compose.config-hash"}}`, id)
+		inspect.Dir = rt.root
+		state, err := inspect.Output()
+		if err != nil {
+			return nil, fmt.Errorf("inspect a %s service container: %w", service, err)
+		}
+		fields := strings.Fields(string(state))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("inspect a %s service container: empty state", service)
+		}
+		container := serviceContainer{running: fields[0] == "true"}
+		if len(fields) == 2 {
+			container.configHash = fields[1]
+		}
+		containers = append(containers, container)
+	}
+	return containers, nil
 }
 
 func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {

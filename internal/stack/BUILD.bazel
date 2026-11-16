@@ -28,6 +28,17 @@ go_test(
 
 go_test(
     name = "stack_test",
-    srcs = ["identity_test.go"],
+    srcs = [
+        "identity_test.go",
+        "no_recreate_test.go",
+    ],
     embed = [":stack"],
+    deps = ["//internal/config"],
+)
+
+go_test(
+    name = "no_recreate_test",
+    srcs = ["no_recreate_test.go"],
+    embed = [":stack"],
+    deps = ["//internal/config"],
 )
