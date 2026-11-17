@@ -75,6 +75,21 @@ type Identity struct {
 func (Identity) String() string   { return "deployment identity [REDACTED]" }
 func (Identity) GoString() string { return "deployment identity [REDACTED]" }
 
+// Subject is the ID of the deployment user in the test realm: the last
+// segment of the Location of the user creation. Keycloak issues this ID as
+// the sub claim of the tokens of the user. It is not a secret. It sends no
+// request. It is empty when Provision did not create the user.
+func (identity *Identity) Subject() string {
+	if identity == nil {
+		return ""
+	}
+	index := strings.LastIndex(identity.userURL, "/")
+	if index < 0 {
+		return ""
+	}
+	return identity.userURL[index+1:]
+}
+
 // New checks the configuration. It sends no request.
 func New(config Config) (*Admin, error) {
 	issuer, err := url.Parse(config.Issuer)
