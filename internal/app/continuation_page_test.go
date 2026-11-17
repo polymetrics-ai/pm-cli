@@ -321,9 +321,9 @@ func TestContinuationPublicationFailureComesFromThePublicationStep(t *testing.T)
 // The publication step does not inherit the provider callback deadline, and
 // it does not use the reserve that it leaves for the settlement, whether the
 // activity attempt deadline or the accepted run deadline comes first. The
-// check starts from the end of the publication step. This is a nominal
-// separation only. A late provider callback can still leave the settlement
-// less than one reserve, or none. Issue #281 owns that gap.
+// check starts from the end of the publication step.
+// TestProviderCallbackLeavesTheSettlementOneReserve checks the provider
+// callback bound.
 func TestWorkerPublicationContextIsNotTheTransportBound(t *testing.T) {
 	// The settlement reserve is min(heartbeat/2, transport/2) = 1s.
 	const heartbeat, transport, reserve = 2 * time.Second, 5 * time.Second, time.Second
@@ -370,6 +370,197 @@ func TestWorkerPublicationContextIsNotTheTransportBound(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A provider callback that uses its whole bound must leave the settlement at
+// least one settlement reserve, whichever of the accepted run deadline and the
+// activity attempt deadline comes first. ExecuteUnit runs the callback, then
+// the publication step, then the settlement. The check takes the callback
+// deadline as the moment the callback ends: the latest end that its bound
+// allows. It reads context deadlines only and does not wait.
+//
+// In each cutoff case the settlement cutoff is less than one transport limit
+// ahead. The settlement deadline is then the cutoff, whether the worker makes
+// the settlement context now or when the callback ends.
+func TestProviderCallbackLeavesTheSettlementOneReserve(t *testing.T) {
+	// The settlement reserve is min(heartbeat/2, transport/2) = 1s.
+	const heartbeat, transport, reserve = 2 * time.Second, 5 * time.Second, time.Second
+
+	for _, testCase := range []struct {
+		name     string
+		attempt  time.Duration
+		accepted time.Duration // Zero for a reconcile callback: it has no accepted run deadline.
+	}{
+		{name: "accepted run deadline first", attempt: 4500 * time.Millisecond, accepted: 2 * time.Second},
+		{name: "attempt deadline first", attempt: 4 * time.Second, accepted: time.Hour},
+		{name: "reconcile callback", attempt: 4 * time.Second},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			now := time.Now()
+			attempt, cancelAttempt := context.WithDeadline(context.Background(), now.Add(testCase.attempt))
+			defer cancelAttempt()
+			var accepted time.Time
+			if testCase.accepted != 0 {
+				accepted = now.Add(testCase.accepted)
+			}
+			callback, cancelCallback := workerCallbackContext(attempt, accepted, heartbeat, transport)
+			defer cancelCallback()
+			settlement, cancelSettlement := workerSettlementContext(attempt, accepted, heartbeat, transport)
+			defer cancelSettlement()
+			callbackEnd, callbackBounded := callback.Deadline()
+			settlementEnd, settlementBounded := settlement.Deadline()
+			if !callbackBounded || !settlementBounded || settlementEnd.Sub(callbackEnd) < reserve {
+				t.Fatalf("settlement budget after a provider callback that uses its whole bound = %v "+
+					"(callback ends %v, settlement ends %v); want at least one %v reserve",
+					settlementEnd.Sub(callbackEnd), callbackEnd.Sub(now), settlementEnd.Sub(now), reserve)
+			}
+		})
+	}
+
+	// Far from both deadlines, the callback keeps its whole transport limit.
+	t.Run("transport limit first", func(t *testing.T) {
+		attempt, cancelAttempt := context.WithTimeout(context.Background(), time.Hour)
+		defer cancelAttempt()
+		before := time.Now()
+		callback, cancelCallback := workerCallbackContext(attempt, before.Add(time.Hour), heartbeat, transport)
+		defer cancelCallback()
+		after := time.Now()
+		callbackEnd, callbackBounded := callback.Deadline()
+		if !callbackBounded || callbackEnd.Before(before.Add(transport)) || callbackEnd.After(after.Add(transport)) {
+			t.Fatalf("callback deadline = %v %t; want one %v transport limit after the call",
+				callbackEnd.Sub(before), callbackBounded, transport)
+		}
+	})
+}
+
+// No step of a unit may be planned to end after its task lease ends. The
+// worker takes the limits of the provider callback, the publication step and
+// the settlement from the lease context (workerLeaseContext). A caller's
+// deadline can be later than the lease end: a direct caller can give a unit
+// more time than the lease, and a caller can set no deadline. The settlement
+// needs a current lease, so a step that ends after the lease makes the
+// settlement fail with a stale task fence (issue #279). The check reads
+// context deadlines only and does not wait.
+//
+// In each lease case the lease ends less than one transport limit ahead, so
+// each deadline is set by the lease, whether the worker makes the context now
+// or at the end of the step before it.
+func TestUnitStepsEndBeforeTheTaskLeaseEnds(t *testing.T) {
+	// The settlement reserve is min(heartbeat/2, transport/2) = 1s.
+	const heartbeat, transport, reserve = 2 * time.Second, 5 * time.Second, time.Second
+
+	for _, testCase := range []struct {
+		name     string
+		caller   time.Duration // Zero: the caller sets no deadline.
+		accepted time.Duration // Zero: a reconcile unit has no accepted run deadline.
+	}{
+		{name: "caller deadline after the lease", caller: 15 * time.Second, accepted: time.Hour},
+		{name: "no caller deadline", accepted: time.Hour},
+		{name: "reconcile unit with a caller deadline after the lease", caller: 15 * time.Second},
+		{name: "reconcile unit with no caller deadline"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			now := time.Now()
+			lease := now.Add(4 * time.Second)
+			caller, cancelCaller := context.WithCancel(context.Background())
+			if testCase.caller != 0 {
+				caller, cancelCaller = context.WithDeadline(context.Background(), now.Add(testCase.caller))
+			}
+			defer cancelCaller()
+			var accepted time.Time
+			if testCase.accepted != 0 {
+				accepted = now.Add(testCase.accepted)
+			}
+			unit, cancelUnit := workerLeaseContext(caller, lease)
+			defer cancelUnit()
+			callback, cancelCallback := workerCallbackContext(unit, accepted, heartbeat, transport)
+			defer cancelCallback()
+			publication, cancelPublication := workerPublicationContext(unit, accepted, heartbeat, transport)
+			defer cancelPublication()
+			settlement, cancelSettlement := workerSettlementContext(unit, accepted, heartbeat, transport)
+			defer cancelSettlement()
+			for _, step := range []struct {
+				name string
+				ctx  context.Context
+				want time.Time
+			}{
+				{name: "provider callback", ctx: callback, want: lease.Add(-2 * reserve)},
+				{name: "publication step", ctx: publication, want: lease.Add(-2 * reserve)},
+				{name: "settlement", ctx: settlement, want: lease.Add(-reserve)},
+			} {
+				if deadline, ok := step.ctx.Deadline(); !ok || !deadline.Equal(step.want) {
+					t.Errorf("%s deadline = %v (bounded %t); want %v, before the lease end at %v",
+						step.name, deadline.Sub(now), ok, step.want.Sub(now), lease.Sub(now))
+				}
+			}
+		})
+	}
+
+	// In the Temporal activity the attempt deadline comes before the lease end:
+	// the claim follows the start of the attempt, and both use the sealed
+	// start_to_close. The lease context then keeps the exact attempt deadline,
+	// so each step keeps the deadline that it has without the lease context.
+	for _, testCase := range []struct {
+		name    string
+		attempt time.Duration
+		lease   time.Duration
+	}{
+		{name: "attempt deadline 30 ms before the lease end", attempt: 9990 * time.Millisecond, lease: 10030 * time.Millisecond},
+		{name: "attempt deadline near the cutoff", attempt: 3990 * time.Millisecond, lease: 4030 * time.Millisecond},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			now := time.Now()
+			attemptDeadline := now.Add(testCase.attempt)
+			attempt, cancelAttempt := context.WithDeadline(context.Background(), attemptDeadline)
+			defer cancelAttempt()
+			accepted := now.Add(time.Hour)
+			unit, cancelUnit := workerLeaseContext(attempt, now.Add(testCase.lease))
+			defer cancelUnit()
+			if deadline, ok := unit.Deadline(); !ok || !deadline.Equal(attemptDeadline) {
+				t.Fatalf("lease context deadline = %v (bounded %t); want the attempt deadline %v",
+					deadline.Sub(now), ok, testCase.attempt)
+			}
+			for _, step := range []struct {
+				name string
+				make func(context.Context, time.Time, time.Duration, time.Duration) (context.Context, context.CancelFunc)
+			}{
+				{name: "provider callback", make: workerCallbackContext},
+				{name: "publication step", make: workerPublicationContext},
+				{name: "settlement", make: workerSettlementContext},
+			} {
+				before := time.Now()
+				today, cancelToday := step.make(attempt, accepted, heartbeat, transport)
+				leased, cancelLeased := step.make(unit, accepted, heartbeat, transport)
+				after := time.Now()
+				todayEnd, todayBounded := today.Deadline()
+				leasedEnd, leasedBounded := leased.Deadline()
+				cancelToday()
+				cancelLeased()
+				// A deadline set by the transport limit reads the clock, so the two
+				// calls can differ by the time between them. Every other deadline
+				// must be equal.
+				transportBound := !todayEnd.Before(before.Add(transport)) && !todayEnd.After(after.Add(transport))
+				if !todayBounded || !leasedBounded ||
+					(!transportBound && !leasedEnd.Equal(todayEnd)) ||
+					(transportBound && (leasedEnd.Before(before.Add(transport)) || leasedEnd.After(after.Add(transport)))) {
+					t.Errorf("%s deadline with the lease context = %v (bounded %t); want the deadline without it, %v (bounded %t)",
+						step.name, leasedEnd.Sub(now), leasedBounded, todayEnd.Sub(now), todayBounded)
+				}
+			}
+		})
+	}
+
+	// The lease deadline adds the lease TTL to a local time from before the
+	// claim. It compares no local time with a PostgreSQL time, so a PostgreSQL
+	// clock one hour ahead does not move it.
+	t.Run("lease deadline needs no clock comparison", func(t *testing.T) {
+		claimStarted := time.Now()
+		claimedAt := claimStarted.Add(time.Hour).Add(250 * time.Millisecond)
+		lease := store.Lease{ClaimedAt: claimedAt, ExpiresAt: claimedAt.Add(10 * time.Second)}
+		if deadline := workerLeaseDeadline(claimStarted, lease); !deadline.Equal(claimStarted.Add(10 * time.Second)) {
+			t.Fatalf("lease deadline = %v after the claim start; want the 10s lease TTL", deadline.Sub(claimStarted))
+		}
+	})
 }
 
 func pageCheckInteger(t *testing.T, exact string) contract.PresentValue {
