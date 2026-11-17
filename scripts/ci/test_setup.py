@@ -619,6 +619,32 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("- a test started and has no result: m/acc TestFeatures/second\n", summary)
         self.assertIn("Summary error: the godog scenario total is missing.", summary)
 
+    def test_report_prints_the_event_times_of_a_test_with_no_result(self):
+        # Issue #351: the times show if a test stopped making progress or if
+        # the run used all its time. The code before #351 prints no time.
+        events = [go_event("start", "m/a", Time="2026-11-17T10:00:00Z"),
+                  go_event("run", "m/a", "TestStuck", Time="2026-11-17T10:00:01.500000000Z"),
+                  go_event("output", "m/a", "TestStuck", Output="=== RUN   TestStuck\n",
+                           Time="2026-11-17T10:00:01.5Z"),
+                  go_event("output", "m/a", "TestStuck", Output="last line\n",
+                           Time="2026-11-17T10:00:03.5+00:00"),
+                  go_event("start", "m/b", Time="2026-11-17T10:00:10Z"),
+                  go_event("pass", "m/b", Elapsed=0.1, Time="2026-11-17T10:00:12.5Z"),
+                  go_event("output", "m/c", Output="an event with no time\n")]
+        result, _ = self.report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("go test: event times are seconds after the first event at "
+                      "2026-11-17T10:00:00+00:00\n", result.stdout)
+        self.assertIn("go test: package first event +0.0s m/a\n"
+                      "go test: package first event +10.0s m/b\n", result.stdout)
+        self.assertNotIn("first event none", result.stdout)
+        self.assertNotRegex(result.stdout, r"package first event \S+ m/c")
+        self.assertIn("go test: no result m/a TestStuck: run +1.5s, last output +3.5s\n", result.stdout)
+        self.assertIn("go test: last event +12.5s, command end at ", result.stdout)
+        result, _ = self.report([go_event("start", "m/a"), go_event("pass", "m/a", Elapsed=0.1)])
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("event times", result.stdout)
+
     def test_paused_parallel_tests_with_results_pass(self):
         events = [go_event("run", "m/p", "TestA"),
                   go_event("output", "m/p", "TestA", Output="=== RUN   TestA\n"),
