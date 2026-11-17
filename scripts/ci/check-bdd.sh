@@ -246,7 +246,10 @@ fi
 
 # Scenarios get the job-owned stack. Strict godog fails on undefined or pending
 # steps; a failed suite is never retried. The report lists each scenario and
-# the godog totals in the log and in the job summary, also on success.
+# the godog totals in the log and in the job summary, also on success. The run
+# fails on 0 scenarios, a skipped step or scenario (--scenarios) and a skipped
+# Go test or subtest (--fail-on-skip), and the log and the summary name each
+# cause (issue #350).
 # --expect checks one package result for each package of the intended set.
 # --deadline bounds the whole run.
 gherkin_status=1
@@ -259,7 +262,7 @@ elif "$gherkin_ready"; then
   gherkin_ran=true
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-bdd.json" \
-    --scenarios --expect "$RUNNER_TEMP/bdd-gherkin-expected.txt" \
+    --scenarios --fail-on-skip --expect "$RUNNER_TEMP/bdd-gherkin-expected.txt" \
     --deadline "$gherkin_deadline" --timeout 1140 \
     --summary-file "$GITHUB_STEP_SUMMARY" -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \

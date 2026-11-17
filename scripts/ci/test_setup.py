@@ -633,6 +633,103 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("- a test started and has no result: m/acc TestFeatures/second\n", summary)
         self.assertIn("Summary error: the godog scenario total is missing.", summary)
 
+    # Issue #350. The godog v0.16.0 pretty format prints each step keyword and
+    # text in the color of the step status: green passed, cyan skipped. A data
+    # table row is cyan too, but it starts with "|".
+    @staticmethod
+    def step_line(color, keyword, text):
+        return f"    \x1b[{color}m{keyword}\x1b[0m \x1b[{color}m{text}\x1b[0m \x1b[1;30m# steps.go:9\x1b[0m\n"
+
+    def gherkin_suite(self, scenarios, totals, extra=()):
+        """A Gherkin run stream. SCENARIOS maps a name to (result, step lines)."""
+        events = [go_event("run", "m/acc", "TestFeatures")]
+        for line, (name, (result, steps)) in enumerate(scenarios.items(), 3):
+            key = "TestFeatures/" + name
+            events += [go_event("run", "m/acc", key),
+                       go_event("output", "m/acc", key,
+                                Output=f"  \x1b[1;37mScenario:\x1b[0m {name} \x1b[1;30m# a.feature:{line}\x1b[0m\n")]
+            events += [go_event("output", "m/acc", key, Output=step) for step in steps]
+            events.append(go_event(result, "m/acc", key))
+        events += [go_event("output", "m/acc", "TestFeatures", Output=total + "\n") for total in totals]
+        events += [go_event("pass", "m/acc", "TestFeatures"), *extra, go_event("pass", "m/acc", Elapsed=1.0)]
+        return events
+
+    def gherkin_report(self, events):
+        """Run the reporter with the exact options of the Gherkin caller in check-bdd.sh."""
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("m/acc\n")
+            options = gherkin_caller_options({
+                "$gherkin_deadline": str(int(time.time()) + 600),
+                "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+            return self.report(events, *options)
+
+    def test_gherkin_run_passes_with_a_cyan_table_row(self):
+        table = "      | \x1b[36mname\x1b[0m | \x1b[36mvalue\x1b[0m |\n"
+        events = self.gherkin_suite(
+            {"first": ("pass", [self.step_line(32, "Given", "a table"), table,
+                                self.step_line(32, "Then", "it passes")])},
+            ["1 scenarios (\x1b[32m1 passed\x1b[0m)", "2 steps (\x1b[32m2 passed\x1b[0m)"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("| PASS | first | `a.feature:3` |", summary)
+        self.assertNotIn("Problems:", summary)
+
+    def test_gherkin_run_fails_on_zero_scenarios(self):
+        events = self.gherkin_suite({}, ["No scenarios", "No steps"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("go test: 0 scenarios ran\n", result.stdout)
+        self.assertIn("- 0 scenarios ran\n", summary)
+        self.assertIn("No scenarios", summary)
+
+    def test_gherkin_run_fails_on_a_skipped_step(self):
+        events = self.gherkin_suite(
+            {"first": ("pass", [self.step_line(32, "Given", "a state"),
+                                self.step_line(36, "Then", "it is skipped")])},
+            ["1 scenarios (\x1b[32m1 passed\x1b[0m)",
+             "2 steps (\x1b[32m1 passed\x1b[0m, \x1b[36m1 skipped\x1b[0m)"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for cause in ("skipped step: first / Then it is skipped",
+                      "the godog step total has 1 skipped steps"):
+            self.assertIn(f"go test: {cause}\n", result.stdout)
+            self.assertIn(f"- {cause}\n", summary)
+        self.assertIn("1 scenarios (1 passed)", summary)
+
+    def test_gherkin_run_fails_on_a_skipped_scenario(self):
+        events = self.gherkin_suite(
+            {"first": ("pass", [self.step_line(32, "Given", "a state")]),
+             "second": ("pass", [self.step_line(36, "Given", "a state"), self.step_line(36, "Then", "more")]),
+             "third": ("skip", [])},
+            ["3 scenarios (\x1b[32m3 passed\x1b[0m)",
+             "3 steps (\x1b[32m1 passed\x1b[0m, \x1b[36m2 skipped\x1b[0m)"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for cause in ("skipped scenario: second", "skipped scenario: third"):
+            self.assertIn(f"go test: {cause}\n", result.stdout)
+            self.assertIn(f"- {cause}\n", summary)
+        self.assertNotIn("skipped scenario: first", result.stdout)
+        self.assertIn("3 scenarios (3 passed)", summary)
+
+    def test_gherkin_run_fails_on_a_skipped_go_test(self):
+        # A Go test of the Gherkin package calls t.Skip. The caller passes
+        # --fail-on-skip, and the untitled summary names the test.
+        skipped = [go_event("run", "m/acc", "TestOther"),
+                   go_event("output", "m/acc", "TestOther", Output="    other_test.go:5: canary\n"),
+                   go_event("skip", "m/acc", "TestOther")]
+        events = self.gherkin_suite({"first": ("pass", [self.step_line(32, "Given", "a state")])},
+                                    ["1 scenarios (\x1b[32m1 passed\x1b[0m)", "1 steps (\x1b[32m1 passed\x1b[0m)"],
+                                    skipped)
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("go test: skipped test fails this run: m/acc TestOther\n", result.stdout)
+        self.assertIn("Skipped tests (each one fails this run):\n\n- `m/acc TestOther`\n", summary)
+        self.assertIn("1 scenarios (1 passed)", summary)
+        self.assertIn("| PASS | first | `a.feature:3` |", summary)
+        self.assertNotIn("Summary error", summary)
+
     def test_paused_parallel_tests_with_results_pass(self):
         events = [go_event("run", "m/p", "TestA"),
                   go_event("output", "m/p", "TestA", Output="=== RUN   TestA\n"),

@@ -74,8 +74,17 @@ or skipped test and each problem that --expect or --deadline found.
 With --scenarios, the summary also lists each godog scenario with its result
 and repeats the godog totals (`N scenarios (...)`, `N steps (...)`), also when
 the suite passes. A passing run without godog totals, or with a scenario count
-that differs from the godog total, fails. --summary-file appends the same
-report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
+that differs from the godog total, fails. These also fail the run (issue
+#350), and the log and the summary name each cause:
+  - the godog scenario total is 0 ("0 scenarios ran");
+  - the godog step total has skipped steps;
+  - a step of a scenario is skipped ("skipped step: SCENARIO / STEP"). godog
+    v0.16.0 prints a skipped step in cyan;
+  - a scenario is skipped as a whole: its test has the result skip, or each of
+    its steps is skipped ("skipped scenario: SCENARIO").
+Without --title, the scenario section of the summary also lists each test
+with no result, each skipped test and each problem. --summary-file appends
+the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
 --summary-file requires --title, --scenarios or both.
 """
 import argparse
@@ -94,11 +103,19 @@ import time
 ANSI = re.compile(r"\x1b?\[[0-9;]*m")
 SCENARIO = re.compile(r"^\s*Scenario(?: Outline)?:\s*(.*?)\s+#\s+(\S+)\s*$")
 TOTAL = re.compile(r"^(\d+) (scenarios?|steps?) \(.*\)$|^No (scenarios|steps)$")
+# A step line of the godog pretty format: the keyword and the text, each in
+# the color of the step status. Table rows start with "|" and do not match.
+STEP = re.compile(r"^\s*\x1b?\[(3[0-7])m([^\s\x1b]+)\x1b?\[0m \x1b?\[\1m([^\x1b]*?)\x1b?\[0m")
+SKIPPED_COLOR = "36"
+SKIPPED_STEPS = re.compile(r"\b(\d+) skipped\b")
 
 
 def scenario_report(order, results, output):
-    """Return the scenario rows, the godog total lines and their test."""
-    totals, suite = [], None
+    """Return the scenario rows, the godog total lines and the steps.
+
+    STEPS has one (name, step count, skipped steps) item for each row.
+    """
+    totals, suite, steps = [], None, []
     for key in order:
         for text in output.get(key, []):
             line = ANSI.sub("", text).strip()
@@ -107,7 +124,7 @@ def scenario_report(order, results, output):
                 suite = key
     rows = []
     if suite is None:
-        return rows, totals
+        return rows, totals, steps
     prefix = suite[1] + "/" if suite[1] else None
     for key in order:
         if prefix is None or key[0] != suite[0] or not key[1] or not key[1].startswith(prefix):
@@ -120,8 +137,36 @@ def scenario_report(order, results, output):
             if match:
                 name, location = match.group(1), match.group(2)
                 break
+        count, skipped = 0, []
+        for text in output.get(key, []):
+            match = STEP.match(text)
+            if match:
+                count += 1
+                if match.group(1) == SKIPPED_COLOR:
+                    skipped.append(f"{match.group(2)} {match.group(3)}")
         rows.append((results[key], name, location))
-    return rows, totals
+        steps.append((name, count, skipped))
+    return rows, totals, steps
+
+
+def scenario_causes(rows, totals, steps):
+    """Name each cause of issue #350: 0 scenarios and each skip."""
+    causes = []
+    for line in totals:
+        match = TOTAL.match(line)
+        if match and (match.group(3) == "scenarios" or
+                      (match.group(2) or "").startswith("scenario") and match.group(1) == "0"):
+            causes.append("0 scenarios ran")
+        elif match and (match.group(2) or "").startswith("step"):
+            skipped = SKIPPED_STEPS.search(line)
+            if skipped and int(skipped.group(1)):
+                causes.append(f"the godog step total has {skipped.group(1)} skipped steps")
+    for (action, _, _), (name, count, skipped) in zip(rows, steps):
+        if action == "skip" or (count and len(skipped) == count):
+            causes.append(f"skipped scenario: {name}")
+        else:
+            causes += [f"skipped step: {name} / {step}" for step in skipped]
+    return causes
 
 
 def scenario_problem(rows, totals):
@@ -140,9 +185,10 @@ def scenario_problem(rows, totals):
     return None
 
 
-def markdown(rows, totals, problem, unfinished=(), problems=()):
+def markdown(rows, totals, problem, unfinished=(), problems=(), skips=(), fail_on_skip=False):
     """The scenario section. A caller without --title also passes the tests
-    with no result and the problems, because no package section lists them."""
+    with no result, the skipped tests and the problems, because no package
+    section lists them."""
     lines = ["### Gherkin scenarios", ""]
     lines += [f"{line}  " for line in totals] or ["No godog totals were found.  "]
     if problem:
@@ -155,7 +201,9 @@ def markdown(rows, totals, problem, unfinished=(), problems=()):
             lines.append(f"| {action.upper()} | {cell} | `{location}` |" if location
                          else f"| {action.upper()} | {cell} | |")
         lines.append("")
+    skipped = "Skipped tests (each one fails this run)" if fail_on_skip else "Skipped tests"
     for heading, items in (("Tests with no result", [f"`{test_name(key)}`" for key in unfinished]),
+                           (skipped, [f"`{test_name(key)}`" for key in skips]),
                            ("Problems", list(problems))):
         if items:
             lines += [f"{heading}:", ""]
@@ -597,6 +645,9 @@ def main():
         problems += expect_problems(expected, counts, events, malformed)
         intended = (f"intended set: {len(set(expected))} packages from go list; "
                     f"package results: {sum(counts.values())}")
+    if args.scenarios:
+        rows, totals, steps = scenario_report(order, results, output)
+        problems += scenario_causes(rows, totals, steps)
     if args.title:
         print(args.title)
     for package, (action, elapsed) in sorted(packages.items(), key=lambda item: -item[1][1]):
@@ -628,7 +679,6 @@ def main():
                                            unfinished))
     problem = None
     if args.scenarios:
-        rows, totals = scenario_report(order, results, output)
         problem = scenario_problem(rows, totals)
         print("Scenarios:")
         for action, name, location in rows:
@@ -643,7 +693,9 @@ def main():
                 # result or the problems, so this section names them.
                 summary.write(markdown(rows, totals, problem,
                                        () if args.title else unfinished,
-                                       () if args.title else problems))
+                                       () if args.title else problems,
+                                       () if args.title else skips,
+                                       args.fail_on_skip))
     print(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
     return status or (1 if failures or problem or problems or skip_failure else 0)
