@@ -10,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 
@@ -480,18 +479,25 @@ func describeOutput(output string) string {
 	return fmt.Sprintf("%d bytes, not shown", len(output))
 }
 
-// configurationRefusalLine is the fixed form of a pm-server configuration
-// refusal line: "pm-server: configuration <kind> at <field>". The form holds
-// no secret and no configured value.
-var configurationRefusalLine = regexp.MustCompile(`^pm-server: configuration [a-z]+ at [a-z_.]+$`)
+// knownConfigurationRefusalLines are the complete pm-server configuration
+// refusal lines for identity.device_poll_interval that a bootstrap failure
+// message can show. Each is a fixed text with no secret and no configured
+// value.
+var knownConfigurationRefusalLines = []string{
+	"pm-server: configuration unknown at identity.device_poll_interval",
+	"pm-server: configuration type at identity.device_poll_interval",
+	"pm-server: configuration value at identity.device_poll_interval",
+	"pm-server: configuration bounds at identity.device_poll_interval",
+}
 
 // describeStderr describes the bootstrap stderr for the failure messages of
 // the steps "the bootstrap exits with code <n>" and "the bootstrap stderr is
-// exactly the line: <line>". When stderr is exactly one configuration
-// refusal line and one line feed, it shows that line. Every other stderr has
-// the description of describeOutput.
+// exactly the line: <line>". When stderr is exactly one known configuration
+// refusal line and one line feed, it shows that line. It compares the whole
+// line as a string. Every other stderr has the description of
+// describeOutput.
 func describeStderr(output string) string {
-	if line, found := strings.CutSuffix(output, "\n"); found && configurationRefusalLine.MatchString(line) {
+	if line, found := strings.CutSuffix(output, "\n"); found && slices.Contains(knownConfigurationRefusalLines, line) {
 		return fmt.Sprintf("%d bytes, the configuration refusal line %q", len(output), line)
 	}
 	return describeOutput(output)

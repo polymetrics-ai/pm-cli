@@ -3,6 +3,7 @@ package acceptance
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -146,26 +147,37 @@ func TestLoginStartPollIntervalParse(t *testing.T) {
 	}
 }
 
-// The bootstrap stderr description shows one configuration refusal line and
-// no other text. Developer check, not acceptance proof.
-func TestBootstrapStderrShowsOnlyConfigurationRefusalLines(t *testing.T) {
-	refusal := "pm-server: configuration unknown at identity.device_poll_interval\n"
-	want := `66 bytes, the configuration refusal line "pm-server: configuration unknown at identity.device_poll_interval"`
-	if got := describeStderr(refusal); got != want {
-		t.Fatalf("the description of a refusal line is %q, want %q", got, want)
+// The bootstrap stderr description shows only a complete known
+// configuration refusal line, and no other text. Developer check, not
+// acceptance proof.
+func TestBootstrapStderrShowsOnlyKnownConfigurationRefusalLines(t *testing.T) {
+	for _, kind := range []string{"unknown", "type", "value", "bounds"} {
+		line := "pm-server: configuration " + kind + " at identity.device_poll_interval"
+		want := fmt.Sprintf("%d bytes, the configuration refusal line %q", len(line)+1, line)
+		if got := describeStderr(line + "\n"); got != want {
+			t.Errorf("the description of the known line %q is %q, want %q", line, got, want)
+		}
 	}
-	const password = "Zq9-oracle-Pass"
+	refusal := "pm-server: configuration unknown at identity.device_poll_interval\n"
+	// The markers use only lowercase letters, underscores and dots, so each
+	// line has the shape of a refusal line. None is a known line.
+	const kindMarker, fieldMarker = "abcdef", "secret.value_x"
 	for name, output := range map[string]string{
-		"a configured value":    "pm-server: configuration value at identity.device_poll_interval: " + password + "\n",
-		"a value in the field":  "pm-server: configuration value at " + password + "\n",
-		"two lines":             refusal + refusal,
-		"a second line":         refusal + password + "\n",
-		"no line feed":          strings.TrimSuffix(refusal, "\n"),
-		"text before the line":  password + " " + refusal,
-		"a kind with a capital": "pm-server: configuration Value at identity.device_poll_interval\n",
+		"an unknown kind and field": "pm-server: configuration " + kindMarker + " at " + fieldMarker + "\n",
+		"an unknown kind":           "pm-server: configuration " + kindMarker + " at identity.device_poll_interval\n",
+		"an unknown field":          "pm-server: configuration unknown at " + fieldMarker + "\n",
+		"a longer field":            "pm-server: configuration unknown at identity.device_poll_interval." + fieldMarker + "\n",
+		"text after the line":       "pm-server: configuration unknown at identity.device_poll_interval " + fieldMarker + "\n",
+		"two lines":                 refusal + refusal,
+		"a second line":             refusal + fieldMarker + "\n",
+		"no line feed":              strings.TrimSuffix(refusal, "\n"),
+		"a carriage return":         strings.TrimSuffix(refusal, "\n") + "\r\n",
+		"text before the line":      fieldMarker + " " + refusal,
+		"a kind with a capital":     "pm-server: configuration Unknown at identity.device_poll_interval\n",
 	} {
 		got := describeStderr(output)
-		if got != describeOutput(output) || strings.Contains(got, "configuration") || strings.Contains(got, password) {
+		if got != describeOutput(output) || strings.Contains(got, "configuration") ||
+			strings.Contains(got, kindMarker) || strings.Contains(got, fieldMarker) {
 			t.Errorf("%s: the description shows the text: %q", name, got)
 		}
 	}
