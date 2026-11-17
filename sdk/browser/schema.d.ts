@@ -1014,6 +1014,8 @@ export interface components {
             /** Format: uri */
             verification_uri: string;
         };
+        /** @description Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it in Retry-After with device_authorization_pending and device_poll_too_soon only. */
+        DevicePollRetryAfterSeconds: string;
         DeviceProof: {
             challenge_id: string;
             proof: string;
@@ -1621,7 +1623,8 @@ export interface components {
         /** @description Device login conflict. A device_authorization_pending answer carries Retry-After. A login_challenge_used answer does not. */
         DevicePoll409: {
             headers: {
-                "Retry-After": components["headers"]["DevicePollRetryAfter"];
+                /** @description Whole seconds until the next permitted poll of the device challenge. A device_authorization_pending answer carries it. A login_challenge_used answer does not. */
+                "Retry-After"?: components["schemas"]["DevicePollRetryAfterSeconds"];
                 [name: string]: unknown;
             };
             content: {
@@ -1631,7 +1634,8 @@ export interface components {
         /** @description Device login limit. A device_poll_too_soon answer carries Retry-After. An authentication_rate_limited answer does not. */
         DevicePoll429: {
             headers: {
-                "Retry-After": components["headers"]["DevicePollRetryAfter"];
+                /** @description Whole seconds until the next permitted poll of the device challenge. A device_poll_too_soon answer carries it. An authentication_rate_limited answer does not. */
+                "Retry-After"?: components["schemas"]["DevicePollRetryAfterSeconds"];
                 [name: string]: unknown;
             };
             content: {
@@ -1803,8 +1807,6 @@ export interface components {
         CacheControlNoStore: "no-store";
         /** @description Selected byte interval and complete registered length, or the complete length for a 416 response. */
         ContentRange: string;
-        /** @description Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it with device_authorization_pending and device_poll_too_soon only. */
-        DevicePollRetryAfter: string;
         /** @description Opaque scope-bound revision validator for this authorized representation; it is not a mutation idempotency key. */
         ETag: string;
     };

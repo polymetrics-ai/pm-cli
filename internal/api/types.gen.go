@@ -993,6 +993,9 @@ type DeviceChallenge struct {
 	VerificationUri     string    `json:"verification_uri"`
 }
 
+// DevicePollRetryAfterSeconds Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it in Retry-After with device_authorization_pending and device_poll_too_soon only.
+type DevicePollRetryAfterSeconds = string
+
 // DeviceProof defines model for DeviceProof.
 type DeviceProof struct {
 	ChallengeId string `json:"challenge_id"`

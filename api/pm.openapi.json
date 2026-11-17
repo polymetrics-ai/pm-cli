@@ -46,15 +46,6 @@
           "type": "string"
         }
       },
-      "DevicePollRetryAfter": {
-        "description": "Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it with device_authorization_pending and device_poll_too_soon only.",
-        "schema": {
-          "maxLength": 2,
-          "minLength": 1,
-          "pattern": "^([1-9]|[1-5][0-9]|60)$",
-          "type": "string"
-        }
-      },
       "ETag": {
         "description": "Opaque scope-bound revision validator for this authorized representation; it is not a mutation idempotency key.",
         "schema": {
@@ -317,7 +308,10 @@
         "description": "Device login conflict. A device_authorization_pending answer carries Retry-After. A login_challenge_used answer does not.",
         "headers": {
           "Retry-After": {
-            "$ref": "#/components/headers/DevicePollRetryAfter"
+            "description": "Whole seconds until the next permitted poll of the device challenge. A device_authorization_pending answer carries it. A login_challenge_used answer does not.",
+            "schema": {
+              "$ref": "#/components/schemas/DevicePollRetryAfterSeconds"
+            }
           }
         }
       },
@@ -332,7 +326,10 @@
         "description": "Device login limit. A device_poll_too_soon answer carries Retry-After. An authentication_rate_limited answer does not.",
         "headers": {
           "Retry-After": {
-            "$ref": "#/components/headers/DevicePollRetryAfter"
+            "description": "Whole seconds until the next permitted poll of the device challenge. A device_poll_too_soon answer carries it. An authentication_rate_limited answer does not.",
+            "schema": {
+              "$ref": "#/components/schemas/DevicePollRetryAfterSeconds"
+            }
           }
         }
       },
@@ -1571,6 +1568,13 @@
           "poll_interval_seconds"
         ],
         "type": "object"
+      },
+      "DevicePollRetryAfterSeconds": {
+        "description": "Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it in Retry-After with device_authorization_pending and device_poll_too_soon only.",
+        "maxLength": 2,
+        "minLength": 1,
+        "pattern": "^([1-9]|[1-5][0-9]|60)$",
+        "type": "string"
       },
       "DeviceProof": {
         "additionalProperties": false,
