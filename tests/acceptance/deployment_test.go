@@ -1,6 +1,7 @@
 package acceptance
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
@@ -204,8 +205,9 @@ func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 // identity client, the wrapping key reference and the Temporal namespace,
 // and adds the server and worker controls. It adds
 // identity.device_poll_interval only when a device poll interval step
-// supplied a JSON token, and then it writes that token unchanged. The stack
-// configuration file does not change.
+// supplied a JSON token, and then it writes the token bytes unchanged: no
+// escaping, compaction or indentation. The stack configuration file does not
+// change.
 func (d *deployment) writeConfiguration(stack stackInputs, backend string) (string, error) {
 	document := maps.Clone(stack.document)
 	temporal := map[string]json.RawMessage{}
@@ -223,10 +225,18 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 		"client_secret_ref": laneIdentityRef,
 		"ca_ref":            laneIdentityRef,
 	}
-	// A device poll interval step supplied a JSON token. The writer keeps it
-	// as raw JSON, null included. Without a token, the key is absent.
+	// A device poll interval step supplied a JSON token. encoding/json would
+	// compact and escape a raw value, so the writer encodes a new placeholder
+	// string in its place. After the encoding, it replaces the one quoted
+	// placeholder with the token bytes, null included. Without a token, the
+	// key is absent.
+	var placeholder []byte
 	if d.devicePollInterval != nil {
-		identity["device_poll_interval"] = d.devicePollInterval
+		text := "pm-acceptance-device-poll-interval-" + randomHex(16)
+		if placeholder, err = json.Marshal(text); err != nil {
+			return "", fmt.Errorf("encode the device poll interval placeholder: %w", err)
+		}
+		identity["device_poll_interval"] = text
 	}
 	values := map[string]any{
 		"deployment_id": d.deploymentID,
@@ -251,6 +261,12 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("encode the deployment configuration: %w", err)
+	}
+	if placeholder != nil {
+		if bytes.Count(encoded, placeholder) != 1 {
+			return "", errors.New("the device poll interval placeholder does not occur exactly once in the deployment configuration")
+		}
+		encoded = bytes.Replace(encoded, placeholder, d.devicePollInterval, 1)
 	}
 	path := filepath.Join(d.dir, "pm-deployment.json")
 	if err := writePrivateFile(path, append(encoded, '\n')); err != nil {

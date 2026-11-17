@@ -3,11 +3,13 @@ package acceptance
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
 // writtenIdentity writes the configuration of the oracle deployment and
-// returns its identity object, each value as raw JSON.
+// returns its identity object, each value as the raw bytes of the file.
+// The file must be valid JSON and hold no placeholder.
 func writtenIdentity(t *testing.T, d *deployment) map[string]json.RawMessage {
 	t.Helper()
 	path, err := d.configurationPath()
@@ -17,6 +19,12 @@ func writtenIdentity(t *testing.T, d *deployment) map[string]json.RawMessage {
 	contents, err := readBoundedFile(path, laneFileLimit)
 	if err != nil {
 		t.Fatalf("read the oracle configuration: %v", err)
+	}
+	if !json.Valid(contents) {
+		t.Fatal("the written configuration is not valid JSON")
+	}
+	if bytes.Contains(contents, []byte("pm-acceptance-device-poll-interval-")) {
+		t.Fatal("the written configuration holds the placeholder")
 	}
 	var document map[string]json.RawMessage
 	if err := json.Unmarshal(contents, &document); err != nil {
@@ -29,9 +37,9 @@ func writtenIdentity(t *testing.T, d *deployment) map[string]json.RawMessage {
 	return identity
 }
 
-// The configuration writer keeps the token of a setting step byte for byte,
-// null included, and writes no key without a token. Developer check, not
-// acceptance proof.
+// The configuration writer writes the token of a setting step byte for
+// byte, with no escaping, compaction or indentation, null included. It
+// writes no key without a token. Developer check, not acceptance proof.
 func TestDevicePollIntervalWriterKeepsTheToken(t *testing.T) {
 	_, d := oracleBundleScenario(t)
 	identity := writtenIdentity(t, d)
@@ -51,6 +59,8 @@ func TestDevicePollIntervalWriterKeepsTheToken(t *testing.T) {
 		{`"60s"`, func(s *devicePollIntervalScenario) error { return s.setJSONValue(`"60s"`) }, `"60s"`},
 		{"60", func(s *devicePollIntervalScenario) error { return s.setJSONValue(`60`) }, `60`},
 		{"null", func(s *devicePollIntervalScenario) error { return s.setJSONValue(`null`) }, `null`},
+		{"object with a space", func(s *devicePollIntervalScenario) error { return s.setJSONValue(`{"a": 1}`) }, `{"a": 1}`},
+		{`"<5s>"`, func(s *devicePollIntervalScenario) error { return s.setJSONValue(`"<5s>"`) }, `"<5s>"`},
 		{`"+5s"`, func(s *devicePollIntervalScenario) error { return s.setJSONValue(`"+5s"`) }, `"+5s"`},
 		{"65 bytes", func(s *devicePollIntervalScenario) error {
 			return s.setJSONValue(`"0000000000000000000000000000000000000000000000000000000000000001s"`)
@@ -80,12 +90,12 @@ func TestDevicePollIntervalWriterKeepsTheToken(t *testing.T) {
 	}
 }
 
-// The setting steps refuse a written configuration and a value that the
-// writer cannot keep. Developer check, not acceptance proof.
+// The setting steps refuse invalid JSON and a written configuration.
+// Developer check, not acceptance proof.
 func TestDevicePollIntervalStepsRefuse(t *testing.T) {
 	bundle, d := oracleBundleScenario(t)
 	s := &devicePollIntervalScenario{shared: bundle.shared}
-	for _, value := range []string{`60s`, `"60s`, ` 60`, `{"a": 1}`, `"<5s>"`} {
+	for _, value := range []string{`60s`, `"60s`, `{"a":`, `60 60`} {
 		if err := s.setJSONValue(value); err == nil {
 			t.Errorf("the step accepts the JSON value %s", value)
 		}
@@ -132,6 +142,31 @@ func TestLoginStartPollIntervalParse(t *testing.T) {
 	} {
 		if got, ok := loginStartPollInterval([]byte(bad)); ok {
 			t.Errorf("the parser accepts %q as %d", bad, got)
+		}
+	}
+}
+
+// The bootstrap stderr description shows one configuration refusal line and
+// no other text. Developer check, not acceptance proof.
+func TestBootstrapStderrShowsOnlyConfigurationRefusalLines(t *testing.T) {
+	refusal := "pm-server: configuration unknown at identity.device_poll_interval\n"
+	want := `66 bytes, the configuration refusal line "pm-server: configuration unknown at identity.device_poll_interval"`
+	if got := describeStderr(refusal); got != want {
+		t.Fatalf("the description of a refusal line is %q, want %q", got, want)
+	}
+	const password = "Zq9-oracle-Pass"
+	for name, output := range map[string]string{
+		"a configured value":    "pm-server: configuration value at identity.device_poll_interval: " + password + "\n",
+		"a value in the field":  "pm-server: configuration value at " + password + "\n",
+		"two lines":             refusal + refusal,
+		"a second line":         refusal + password + "\n",
+		"no line feed":          strings.TrimSuffix(refusal, "\n"),
+		"text before the line":  password + " " + refusal,
+		"a kind with a capital": "pm-server: configuration Value at identity.device_poll_interval\n",
+	} {
+		got := describeStderr(output)
+		if got != describeOutput(output) || strings.Contains(got, "configuration") || strings.Contains(got, password) {
+			t.Errorf("%s: the description shows the text: %q", name, got)
 		}
 	}
 }
