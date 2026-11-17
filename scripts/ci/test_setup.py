@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the public setup checker against isolated, real file inventories."""
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -924,6 +926,54 @@ class GoTestReport(unittest.TestCase):
         else:
             self.assertNotEqual(status, 0)
             self.assertIn("refused to send SIGKILL", cleanup)
+
+    def test_signal_after_the_reap_is_recorded_and_not_forwarded(self):
+        # Deferred item (a): after the real reap of the command, the
+        # reporter's handlers are still in place. A signal then must not reach
+        # killpg, because the old process ID can name a new group, and it must
+        # still fail the run. The check calls the installed SIGTERM handler
+        # directly, right after the real reap, so it needs no timing. It covers
+        # the normal path and the path where ExitWatch cannot start.
+        module = self.load_reporter()
+        command = [sys.executable, "-c",
+                   "print('{\"Action\":\"pass\",\"Package\":\"m/a\"}', flush=True)", "-count=1"]
+        for path in ("normal", "no exit watch"):
+            events = []
+            real_killpg = os.killpg
+
+            class SignalAfterReap(subprocess.Popen):
+                # Only the command of the reporter. The reporter can also
+                # start ps (the Darwin path), which must not count here.
+                def wait(self, timeout=None):
+                    status = super().wait(timeout)
+                    if list(self.args) == command:
+                        events.append(("reaped", self.pid))
+                        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                    return status
+
+            def recording_killpg(group, signum):
+                reaped = any(event[0] == "reaped" for event in events)
+                events.append(("killpg", group, signum))
+                if not reaped:
+                    real_killpg(group, signum)
+
+            patches = [mock.patch.object(module.subprocess, "Popen", SignalAfterReap),
+                       mock.patch.object(module.os, "killpg", recording_killpg)]
+            if path == "no exit watch":
+                patches.append(mock.patch.object(module, "ExitWatch", side_effect=OSError("no watch")))
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as directory, \
+                    contextlib.ExitStack() as stack:
+                for patch in patches:
+                    stack.enter_context(patch)
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                result = module.run_command(command, Path(directory) / "out.json", None, None)
+                status, received = result[0], result[2]
+                reaped = [index for index, event in enumerate(events) if event[0] == "reaped"]
+                self.assertEqual(len(reaped), 1, events)
+                self.assertEqual([event for event in events[reaped[0]:] if event[0] == "killpg"], [],
+                                 f"killpg after the reap: {events}")
+                self.assertEqual(received, signal.SIGTERM)
+                self.assertEqual(status, 128 + signal.SIGTERM)
 
     def test_signal_to_the_reporter_fails_the_run(self):
         # The child prints a complete, passing stream, exits 0 on SIGTERM and

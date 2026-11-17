@@ -44,10 +44,13 @@ script waits up to 30 seconds for COMMAND to stop, then sends SIGKILL, prints
 "the reporter received SIG... and stopped the command" and exits with 128 plus
 the signal number, also when COMMAND exits 0. When COMMAND exits, the script sends SIGKILL to the rest of
 that process group, so that no test process of the run stays alive. It sends
-that SIGKILL before it reaps COMMAND: until then, the process ID of COMMAND,
-which is also the ID of its process group, names no other process. The script
-waits for the exit of COMMAND with a pidfd (Linux) or a kqueue process filter
-(macOS), which do not reap it.
+that SIGKILL before it reaps COMMAND. Until the reap, the system keeps the
+process ID of COMMAND, which is also the ID of its process group, for COMMAND,
+so no new process or process group can get that ID. After that SIGKILL, the
+script sends no more signals to the group: a signal that the script receives
+later is only recorded, and it still fails the run. The script waits for the
+exit of COMMAND with a pidfd (Linux) or a kqueue process filter (macOS), which
+do not reap it.
 
 With --title, --summary-file appends a Markdown section with that title: the
 result, the totals, each package with its result and elapsed time, each failed
@@ -295,7 +298,8 @@ def run_command(command, output, deadline, limit):
     shows no member of the group that has not exited, the refusal does not
     fail the run.
     """
-    state = {"process": None, "watch": None, "waiting": False}
+    # forward is False after the last signal to the group, before the reap.
+    state = {"process": None, "watch": None, "waiting": False, "forward": True}
     received = []
     denied = []
 
@@ -307,7 +311,7 @@ def run_command(command, output, deadline, limit):
 
     def forward(signum, _frame):
         process = state["process"]
-        if process is None:
+        if process is None or not state["forward"]:
             return
         try:
             os.killpg(process.pid, signum)
@@ -324,9 +328,14 @@ def run_command(command, output, deadline, limit):
         return (f"the system refused to send {names} to the process group of the command "
                 f"(permission denied), so a test process can still run")
 
+    def early_status():
+        # A received signal forces 128 plus its number on each path.
+        return 128 + received[0] if received else 1
+
     def on_signal(signum, frame):
         # Only a signal that this script receives comes here. The deadline
-        # and the final kill call forward() directly.
+        # and the final kill call forward() directly. The signal is always
+        # recorded, also after forwarding ended, so that it fails the run.
         received.append(signum)
         forward(signum, frame)
         if state["waiting"] and len(received) == 1:
@@ -342,7 +351,7 @@ def run_command(command, output, deadline, limit):
                 process = subprocess.Popen(command, stdout=stream, start_new_session=True)
             except OSError as exc:
                 print(f"go test: cannot start the command: {exc}")
-                return 1, False, received[0] if received else None, None
+                return early_status(), False, received[0] if received else None, None
             state["process"] = process
             if limit is not None:
                 relative = time.time() + limit
@@ -352,8 +361,9 @@ def run_command(command, output, deadline, limit):
             except OSError as exc:
                 print(f"go test: cannot watch the command: {exc}")
                 forward(signal.SIGKILL, None)
+                state["forward"] = False
                 process.wait()
-                return 1, False, received[0] if received else None, cleanup()
+                return early_status(), False, received[0] if received else None, cleanup()
             timed_out = False
             try:
                 try:
@@ -377,10 +387,12 @@ def run_command(command, output, deadline, limit):
             finally:
                 state["waiting"] = False
                 # A test process that outlives the command must not keep
-                # running. The command is not reaped yet, so its process
-                # group ID names no other group. Reap it only after this
-                # signal.
+                # running. The command is not reaped yet, so no new process
+                # or process group can have its ID. This is the last signal
+                # to the group: forwarding ends before the reap, because
+                # after the reap the ID can name a new group.
                 forward(signal.SIGKILL, None)
+                state["forward"] = False
                 status = process.wait()
                 watch.close()
             if timed_out:
