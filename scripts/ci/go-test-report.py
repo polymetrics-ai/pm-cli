@@ -35,12 +35,16 @@ variable before the command runs:
   - A word that starts with "-" is an option. The guard reads the forms -name,
     --name and -test.name, with "=value" or, in the command, with the value as
     the next word.
-  - It refuses each option that selects or filters tests (-run, -skip, -list,
-    -short, -failfast, -tags), and -args.
+  - It accepts only the go test options of the CI commands and -race (for
+    #312): -json, -p, -count, -timeout and -race. It refuses each other
+    option, for example -exec, -overlay, -toolexec (crrao N1), or a filter
+    such as -run, -skip, -list, -short, -failfast or -tags. It also refuses
+    -args.
   - It splits GOFLAGS at the characters that go splits it at (space, tab,
     newline, carriage return). go also accepts quoted fields there, so the
     guard refuses a GOFLAGS value with a quote character. It also refuses a
-    GOFLAGS field that is not an option, and a GOFLAGS -count with no =value.
+    GOFLAGS field that is not an option, and a GOFLAGS option with a value
+    that has no "=value" form, which go also refuses.
   - The command and GOFLAGS together must set the test count exactly once, to 1.
 Such a command is refused before it runs. The guard does not read other
 sources of go options, for example a GOFLAGS value in the go environment file
@@ -218,6 +222,12 @@ def markdown(rows, totals, problem, unfinished=(), problems=(), skips=(), fail_o
 # accept each one as -name, --name or -test.name, with "=value" or with the
 # value as the next word.
 SELECTION = frozenset({"run", "skip", "list", "short", "failfast", "tags"})
+# The only go test options that a run with --expect accepts: the options of
+# the CI commands (the unit run in check-docs.sh, the stack and Gherkin runs
+# in check-bdd.sh), of GOFLAGS=-p=2, and -race, which #312 adds to the stack
+# run. True marks an option with a value. Any other option, for example
+# -exec, -overlay or -toolexec, can change what runs, so it is refused.
+ALLOWED = {"json": False, "p": True, "count": True, "timeout": True, "race": False}
 # The characters at which go splits GOFLAGS (cmd/internal/quoted).
 GOFLAGS_SPACE = re.compile(r"[ \t\n\r]+")
 DEADLINE_STATUS = 124
@@ -248,10 +258,10 @@ def option_name(word):
 
 
 def filter_problem(command):
-    """Describe a test filter or a wrong test count in COMMAND or GOFLAGS.
+    """Describe a refused option or a wrong test count in COMMAND or GOFLAGS.
 
-    The command and GOFLAGS together must set the test count exactly once,
-    to 1, and must not select or filter tests. Return None when they pass.
+    The command and GOFLAGS together may use only the ALLOWED options, and
+    must set the test count exactly once, to 1. Return None when they pass.
     """
     counts = []
     goflags = os.environ.get("GOFLAGS", "")
@@ -270,16 +280,22 @@ def filter_problem(command):
             if word in ("-args", "--args"):
                 return f"the command passes options to the test binary with {word}"
             name, value = option_name(word)
+            if name is None:
+                index += 1
+                continue
             if name in SELECTION:
                 return f"the command selects or filters tests with {word.split('=')[0]}"
-            if name == "count" and value is None and in_goflags:
+            if name not in ALLOWED:
+                return (f"the command uses the option {word.split('=')[0]}, which is not "
+                        f"in the allow list (-json, -p, -count, -timeout, -race)")
+            if ALLOWED[name] and value is None and in_goflags:
                 return f"GOFLAGS has {word} with no =value"
+            if ALLOWED[name] and value is None:
+                index += 1
+                if index >= len(words):
+                    return f"the command has {word} with no value"
+                value = words[index]
             if name == "count":
-                if value is None:
-                    index += 1
-                    if index >= len(words):
-                        return f"the command has {word} with no value"
-                    value = words[index]
                 counts.append(value)
             index += 1
     if not counts:

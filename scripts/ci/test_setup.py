@@ -451,15 +451,31 @@ def go_event(action, package, test=None, **extra):
 class GoTestReport(unittest.TestCase):
     """Developer checks of scripts/ci/go-test-report.py with synthetic events."""
 
+    # The fake commands are script files, not "python -c CODE": with --expect,
+    # the reporter refuses each option that the CI commands do not use.
+    @classmethod
+    def setUpClass(cls):
+        cls.programs = tempfile.TemporaryDirectory()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.programs.cleanup()
+
+    def program(self, code):
+        """Return the command words that run the Python CODE from a file."""
+        path = Path(self.programs.name) / f"program-{len(os.listdir(self.programs.name))}.py"
+        path.write_text(code)
+        return [sys.executable, str(path)]
+
     def report(self, events, *options, exit_status=0, raw=None, expect=None, command=None,
                env=None):
         with tempfile.TemporaryDirectory() as directory:
             stream = Path(directory) / "events.json"
             stream.write_text(raw if raw is not None else "\n".join(events) + ("\n" if events else ""))
             summary = Path(directory) / "summary.md"
-            fake = command or [sys.executable, "-c",
-                               "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))",
-                               str(stream), str(exit_status), "-count=1"]
+            fake = command or [*self.program(
+                "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))"),
+                str(stream), str(exit_status), "-count=1"]
             if expect is not None:
                 expected = Path(directory) / "expected.txt"
                 expected.write_text("".join(f"{line}\n" for line in expect))
@@ -803,11 +819,11 @@ class GoTestReport(unittest.TestCase):
     def test_test_filters_are_refused(self):
         for options, env in ((["-run=TestOK"], None), (["-tags", "x"], None), ([], {"GOFLAGS": "-p=2 -short"})):
             with self.subTest(options=options, env=env):
-                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                command = [*self.program("raise SystemExit(0)"), "-count=1", *options]
                 result, _ = self.report([], expect=["m/a"], command=command, env=env)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("refused: the command selects or filters tests", result.stderr)
-        command = [sys.executable, "-c", "raise SystemExit(0)"]
+        command = self.program("raise SystemExit(0)")
         result, _ = self.report([], expect=["m/a"], command=command)
         self.assertEqual(result.returncode, 2)
         self.assertIn("refused: the command does not contain -count=1", result.stderr)
@@ -825,7 +841,7 @@ class GoTestReport(unittest.TestCase):
             os.mkfifo(hold)
             hold_end = os.open(hold, os.O_RDWR)
             try:
-                command = [sys.executable, "-c", self.HELD_CHILD, str(hold), "-count=1"]
+                command = [*self.program(self.HELD_CHILD), str(hold), "-count=1"]
                 return self.report([], *options, expect=expect, command=command)
             finally:
                 os.close(hold_end)
@@ -845,7 +861,7 @@ class GoTestReport(unittest.TestCase):
         ]
         for options, env in refused:
             with self.subTest(options=options, env=env):
-                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                command = [*self.program("raise SystemExit(0)"), "-count=1", *options]
                 result, _ = self.report([], expect=["m/a"], command=command, env=env)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("refused: the command", result.stderr)
@@ -853,7 +869,7 @@ class GoTestReport(unittest.TestCase):
         # fake command then prints no event, so the run fails later.
         for options, env in (([], {"GOFLAGS": "-p=2"}), (["-p", "1", "-timeout", "15m", "-json"], None)):
             with self.subTest(accepted=options, env=env):
-                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                command = [*self.program("raise SystemExit(0)"), "-count=1", *options]
                 result, _ = self.report([], expect=["m/a"], command=command, env=env)
                 self.assertNotIn("refused:", result.stderr)
                 self.assertIn("go test: the go test event stream is empty", result.stdout)
@@ -863,7 +879,7 @@ class GoTestReport(unittest.TestCase):
         # quotes. The guard refuses each quoted form, each field that is not
         # an option, and a GOFLAGS -count with no =value. -p=2 and -race stay
         # accepted.
-        program = [sys.executable, "-c", "raise SystemExit(0)", "-json", "-count=1"]
+        program = [*self.program("raise SystemExit(0)"), "-json", "-count=1"]
         for goflags in ("'-run=^$'", '"-run=^$"', "-p=2 '-run=^$'", "-p=2\t'-short'", "-p=2 '-p=2'",
                         "-p=2 x", "-p 2", "-timeout 10m", "-count"):
             with self.subTest(goflags=goflags):
@@ -874,6 +890,48 @@ class GoTestReport(unittest.TestCase):
             with self.subTest(accepted=goflags, extra=extra):
                 result, _ = self.report([], expect=["m/a"], command=[*program, *extra], env={"GOFLAGS": goflags})
                 self.assertNotIn("refused:", result.stderr)
+
+    def test_only_the_ci_go_test_options_pass_the_guard(self):
+        # crrao N1 at 958cd5e: `go test -exec /usr/bin/true` runs no test, and
+        # each package passes. With --expect, the reporter accepts only the
+        # options of the CI commands, and -race for #312.
+        module = self.load_reporter()
+
+        def command_words(path, marker):
+            text = path.read_text().replace("\\\n", " ")
+            line = next(line for line in text.splitlines() if marker in line)
+            words = shlex.split(line.split("||")[0])
+            # The command starts after the "--" that ends the reporter options.
+            return words[words.index("--", words.index("scripts/ci/go-test-report.py")) + 1:]
+
+        callers = {
+            "unit run": command_words(CHECK_DOCS, '"$py" -I -B scripts/ci/go-test-report.py'),
+            "stack run": command_words(CHECK_BDD, '--output "$RUNNER_TEMP/go-test-stack.json"'),
+            "Gherkin run": command_words(CHECK_BDD, '--output "$RUNNER_TEMP/go-test-bdd.json"'),
+        }
+        for name, words in callers.items():
+            self.assertIn("test", words)
+            self.assertIn("-count=1", words)
+            for goflags, extra in (("-p=2", []), ("-p=2", ["-race"]), ("-p=2 -race", [])):
+                with self.subTest(caller=name, goflags=goflags, extra=extra), \
+                        mock.patch.dict(os.environ, {"GOFLAGS": goflags}):
+                    self.assertIsNone(module.filter_problem([*words, *extra]), words)
+        base = [*self.program("raise SystemExit(0)"), "-json", "-count=1"]
+        refused = []
+        for option in ("exec", "overlay", "toolexec", "unknownoption"):
+            refused += [([f"-{option}=/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([f"-{option}", "/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([f"--{option}=/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([f"-test.{option}=/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([], {"GOFLAGS": f"-p=2 -{option}=/usr/bin/true"}, "refused: the command uses the option")]
+        # Every GOFLAGS option with a value needs "=value", as go reads it.
+        for goflags in ("-p", "-timeout", "-p=2 -timeout"):
+            refused.append(([], {"GOFLAGS": goflags}, "refused: GOFLAGS has"))
+        for options, env, message in refused:
+            with self.subTest(options=options, env=env):
+                result, _ = self.report([], expect=["m/a"], command=[*base, *options], env=env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
 
     def test_quoted_goflags_are_refused_for_a_real_go_package(self):
         # Deferred item (b), with a real Go package. go removes the quotes of
@@ -948,6 +1006,8 @@ class GoTestReport(unittest.TestCase):
             script = gated_background_script(
                 fifos["pid"], fifos["gate"], fifos["release"], 'cat < "%s"' % fifos["hold"],
                 "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+            command_file = Path(directory) / "command.sh"
+            command_file.write_text(script + "\n")
             # The test holds each FIFO open for reading and writing, so no open
             # blocks and no write meets a closed FIFO.
             ends = {name: os.open(path, os.O_RDWR) for name, path in fifos.items()}
@@ -955,7 +1015,7 @@ class GoTestReport(unittest.TestCase):
             try:
                 reporter = subprocess.Popen(
                     [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
-                     "--expect", str(expected), "--", "/bin/sh", "-c", script, "sh", "-count=1"],
+                     "--expect", str(expected), "--", "/bin/sh", str(command_file), "-count=1"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     # One bounded read of the process ID.
@@ -1261,7 +1321,7 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
             try:
                 reporter = subprocess.Popen(
                     [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
-                     "--expect", str(expected), "--", sys.executable, "-c", child, str(hold), str(ready),
+                     "--expect", str(expected), "--", *self.program(child), str(hold), str(ready),
                      "-count=1"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
@@ -1372,8 +1432,7 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
             child.wait(timeout=30)
 
     def test_command_stopped_by_a_signal_fails(self):
-        command = [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
-                   "-count=1"]
+        command = [*self.program("import os, signal; os.kill(os.getpid(), signal.SIGTERM)"), "-count=1"]
         result, _ = self.report([], expect=["m/a"], command=command)
         self.assertEqual(result.returncode, 143)
 
