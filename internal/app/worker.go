@@ -1582,6 +1582,241 @@ func workerProjectionCommit(run contract.RunRecord, projectionKey string) (store
 	}, nil
 }
 
+// unitActivityFailedReason is the public reason code of a run that the
+// workflow ended after a unit activity failed.
+const unitActivityFailedReason = "unit_activity_failed"
+
+const workerUnitFailureKeyPrefix = "unit-failure-v1-"
+
+// EndRunAfterUnitFailure ends the run after the workflow saw that a unit
+// activity failed and that Temporal will not run it again. It reads the
+// durable effect ledger and writes only the run record and its side records.
+// It resolves no handler, claims no task lease, takes no permit, records no
+// attempt and calls no provider.
+//
+// The ledger decides the end state. An unknown effect keeps the run
+// reconciling until a sound witness settles it. When no effect is unknown and
+// an effect is unsent, the run ends failed, or partial after a known success.
+// The run row lock orders this step and a fresh attempt, because prepare locks
+// the same row before it records the attempt.
+func (service *WorkerService) EndRunAfterUnitFailure(
+	ctx context.Context,
+	execution contract.WorkflowExecution,
+	request contract.WorkflowUnitRequest,
+) (contract.WorkflowProjectionResult, error) {
+	if service == nil || ctx == nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, nil)
+	}
+	if err := execution.Validate(); err != nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, err)
+	}
+	if err := request.Validate(); err != nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, err)
+	}
+	projectionKey, err := workerUnitFailureKey(request)
+	if err != nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, err)
+	}
+	var result contract.WorkflowProjectionResult
+	err = service.withinWorkerRun(ctx, execution, request.Run, func(
+		ctx context.Context,
+		tx *store.Transaction,
+		state workerRunState,
+	) error {
+		current, err := store.LoadWorkerRunForUpdate(ctx, tx, request.Run.RunID)
+		if err != nil {
+			return err
+		}
+		if receipt, found, err := store.LoadWorkerProjectionReceipt(
+			ctx, tx, request.Run.RunID, request.Run.Generation, projectionKey,
+		); err != nil {
+			return err
+		} else if found {
+			result = receipt.Result
+			return nil
+		}
+		if err := requireWorkerRunUnit(ctx, tx, request); err != nil {
+			return err
+		}
+		if workerTerminalState(current.State) {
+			result = contract.WorkflowProjectionResult{
+				RunID: current.Spec.RunID, Revision: current.Revision, State: current.State,
+			}
+			_, err := store.InsertWorkerProjectionReceipt(
+				ctx, tx, current.Spec.RunID, request.Run.Generation, projectionKey, result,
+			)
+			return err
+		}
+		now, err := store.ReadAuthenticationTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		projectedAt := now
+		if projectedAt.Before(current.ProjectionObservedAt) {
+			projectedAt = current.ProjectionObservedAt
+		}
+		// Only durable cancellation or the original deadline authorizes the
+		// closure of an unattempted retry. Without them, the retry keeps its
+		// effect unknown, so the run stays reconciling.
+		if current.CancelRequested || !now.Before(state.deadline) {
+			if err := store.CloseUnattemptedWorkerRetries(ctx, tx, current.Spec.RunID); err != nil {
+				return err
+			}
+		}
+		effects, err := store.ListWorkerRunEffects(ctx, tx, current.Spec.RunID)
+		if err != nil {
+			return err
+		}
+		var updated contract.RunRecord
+		switch {
+		case current.CancelRequested && (len(effects) == 0 || workerEffectsKnownUnsent(effects)):
+			updated, err = projectKnownUnsentWorkerCancellation(current, effects, projectedAt)
+		case len(effects) == 0:
+			return workerFailure(ErrWorkerCapabilityUnavailable, errors.New("run has no durable effect ledger to end"))
+		default:
+			updated, err = projectUnitFailureWorkerEnd(current, effects, projectedAt)
+		}
+		if err != nil {
+			return workerFailure(ErrWorkerConflict, err)
+		}
+		// The workflow fails with the unit error after this step, so Temporal
+		// reports the same orchestration condition.
+		updated.OrchestrationCondition = contract.OrchestrationFailed
+		if err := updated.Validate(); err != nil {
+			return workerFailure(ErrWorkerConflict, err)
+		}
+		if _, err := store.CommitRunTransition(
+			ctx, tx, workerUnitFailureEndCommit(updated, projectionKey, request.Unit.TaskID),
+		); err != nil {
+			return err
+		}
+		result = contract.WorkflowProjectionResult{
+			RunID: updated.Spec.RunID, Revision: updated.Revision, State: updated.State,
+		}
+		if err := result.Validate(); err != nil {
+			return err
+		}
+		_, err = store.InsertWorkerProjectionReceipt(
+			ctx, tx, updated.Spec.RunID, request.Run.Generation, projectionKey, result,
+		)
+		return err
+	})
+	if err != nil {
+		return contract.WorkflowProjectionResult{}, service.mapWorkerError(err)
+	}
+	return result, nil
+}
+
+// requireWorkerRunUnit refuses a failed unit that is not a task of this run
+// with a sealed dispatch.
+func requireWorkerRunUnit(ctx context.Context, tx *store.Transaction, request contract.WorkflowUnitRequest) error {
+	taskRef := store.TaskRef{RunID: request.Run.RunID, TaskID: request.Unit.TaskID}
+	if _, err := store.LoadTask(ctx, tx, taskRef); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return workerFailure(ErrWorkerConflict, errors.New("failed unit is not a task of this run"))
+		}
+		return err
+	}
+	var err error
+	if request.Unit.DispatchID == "" {
+		_, err = store.LoadInitialWorkerDispatch(ctx, tx, taskRef)
+	} else {
+		_, err = store.LoadDispatch(ctx, tx, taskRef, request.Unit.DispatchID)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return workerFailure(ErrWorkerConflict, errors.New("failed unit has no sealed dispatch in this run"))
+	}
+	return err
+}
+
+// projectUnitFailureWorkerEnd keeps the effect aggregate when an effect is
+// unknown or when no effect is unsent. Otherwise every unsent effect provably
+// had no attempt that could send, and the run ends failed, or partial after a
+// known success.
+func projectUnitFailureWorkerEnd(
+	current contract.RunRecord,
+	effects []contract.EffectRecord,
+	observedAt time.Time,
+) (contract.RunRecord, error) {
+	aggregate, err := current.ReconcileEffects(effects, false, "", observedAt)
+	if err != nil {
+		return contract.RunRecord{}, err
+	}
+	summary := aggregate.EffectSummary
+	if summary.Unknown != 0 || summary.Unsent == 0 {
+		return aggregate, nil
+	}
+	next := contract.RunStateFailed
+	if summary.Succeeded+summary.Unchanged != 0 {
+		next = contract.RunStatePartial
+	}
+	// One transition from the stored record keeps the revision step at one.
+	base := current
+	base.EffectSummary = summary
+	base.UnknownEffectCount = 0
+	ended, err := base.Transition(next, unitActivityFailedReason, observedAt)
+	if err != nil {
+		return contract.RunRecord{}, err
+	}
+	ended.ProjectionObservedAt = observedAt
+	if err := ended.Validate(); err != nil {
+		return contract.RunRecord{}, err
+	}
+	return ended, nil
+}
+
+func workerUnitFailureKey(request contract.WorkflowUnitRequest) (string, error) {
+	return workerRecordID(workerUnitFailureKeyPrefix, struct {
+		Scope        contract.Scope          `json:"scope"`
+		RunID        string                  `json:"run_id"`
+		Generation   uint64                  `json:"generation"`
+		IntentDigest contract.SemanticDigest `json:"intent_digest"`
+		TaskID       string                  `json:"task_id"`
+		DispatchID   contract.DispatchID     `json:"dispatch_id"`
+	}{
+		request.Run.Scope, request.Run.RunID, request.Run.Generation, request.Run.IntentDigest,
+		request.Unit.TaskID, request.Unit.DispatchID,
+	})
+}
+
+// workerUnitFailureEndCommit uses the side-record kinds of the final run
+// projection. Its record IDs derive from the unit failure key, so they never
+// match a final or repair projection.
+func workerUnitFailureEndCommit(run contract.RunRecord, projectionKey, taskID string) store.RunTransitionCommit {
+	base := strings.TrimPrefix(projectionKey, workerUnitFailureKeyPrefix)
+	payload := contract.SafePayload{
+		References: []contract.SafeReference{
+			{Name: "run", Ref: run.Spec.RunID},
+			{Name: "projection", Ref: projectionKey},
+			{Name: "task", Ref: taskID},
+		},
+		Counts: []contract.SafeCount{
+			{Name: "run_revision", Value: run.Revision},
+			{Name: "unknown", Value: run.UnknownEffectCount},
+		},
+		ReasonCodes: []string{"worker_projection", unitActivityFailedReason},
+	}
+	return store.RunTransitionCommit{
+		Run: run,
+		Receipt: store.Receipt{
+			ReceiptID: "worker-unit-failure-receipt-v1-" + base,
+			Kind:      "worker_projection", RunID: run.Spec.RunID, Payload: payload,
+		},
+		Audit: store.AuditEntry{
+			AuditID: "worker-unit-failure-audit-v1-" + base,
+			Action:  "worker_run_projected", TargetRef: run.Spec.RunID, Payload: payload,
+		},
+		Event: store.EventInput{
+			EventID: "worker-unit-failure-event-v1-" + base,
+			Type:    "worker_run_projected", Payload: payload,
+		},
+		Outbox: store.OutboxCommand{
+			CommandID: "worker-unit-failure-outbox-v1-" + base,
+			Kind:      "worker_projection_recorded", PayloadRef: run.Spec.RunID,
+		},
+	}
+}
+
 func (service *WorkerService) withinWorkerRun(
 	ctx context.Context,
 	execution contract.WorkflowExecution,

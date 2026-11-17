@@ -137,6 +137,33 @@ func executeProjection(
 	return result, nil
 }
 
+// executeUnitFailureEnd runs the activity that ends the run after a unit
+// activity failed. It refuses a result that is invalid or names another run.
+func executeUnitFailureEnd(
+	ctx workflow.Context,
+	request contract.WorkflowUnitRequest,
+	timeouts contract.ActivityTimeouts,
+) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	activityCtx, err := activityContext(ctx, timeouts)
+	if err != nil {
+		return err
+	}
+	var result contract.WorkflowProjectionResult
+	if err := workflow.ExecuteActivity(activityCtx, contract.UnitFailureActivityName, request).Get(activityCtx, &result); err != nil {
+		return err
+	}
+	if err := result.Validate(); err != nil {
+		return err
+	}
+	if result.RunID != request.Run.RunID {
+		return errors.New("unit failure activity returned a mismatched run identity")
+	}
+	return nil
+}
+
 func drainControlSignals(
 	ctx workflow.Context,
 	state *coordinatorState,

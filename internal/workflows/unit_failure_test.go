@@ -14,6 +14,7 @@ import (
 	enumspb "go.temporal.io/api/enums/v1"
 	"go.temporal.io/sdk/activity"
 	sdkclient "go.temporal.io/sdk/client"
+	sdklog "go.temporal.io/sdk/log"
 	sdktemporal "go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/testsuite"
 	sdkworker "go.temporal.io/sdk/worker"
@@ -240,6 +241,30 @@ func TestUnitActivityFailureCallsTheEndActivity(t *testing.T) {
 		assertUnitActivityFailure(t, environment.GetWorkflowError())
 	})
 
+	t.Run("a failed drain still ends the run once", func(t *testing.T) {
+		activities := newUnitFailureActivities(t, "drain-fails")
+		activities.executeErr = func() error {
+			return sdktemporal.NewApplicationError("worker operation is temporarily unavailable", "pm.worker.transient")
+		}
+		activities.commandErr = sdktemporal.NewNonRetryableApplicationError("worker state conflict", "pm.worker.conflict", nil)
+		logger := &capturedWorkflowLogger{}
+		environment := newUnitFailureEnvironmentWithLogger(t, activities, logger)
+		// The command arrives while the unit retries. executeUnits drains only
+		// before the first error, so the drain before the end applies it.
+		environment.RegisterDelayedCallback(func() {
+			environment.SignalWorkflow(contract.ControlSignalName, contract.WorkflowCommandRef{CommandID: "unit-failure-drain-command"})
+		}, 500*time.Millisecond)
+
+		environment.ExecuteWorkflow(contract.RunWorkflowType, activities.input)
+
+		if calls := activities.commandCalls.Load(); calls != 1 {
+			t.Fatalf("command activity calls = %d; want the one failed drain command", calls)
+		}
+		activities.assertEndedOnce(t)
+		assertUnitActivityFailure(t, environment.GetWorkflowError())
+		logger.requireDrainWarning(t, activities.input.RunID)
+	})
+
 	t.Run("a mismatched unit result does not end the run", func(t *testing.T) {
 		activities := newUnitFailureActivities(t, "mismatched-result")
 		activities.mismatchedResult = true
@@ -403,10 +428,12 @@ type unitFailureActivities struct {
 	unit             contract.WorkflowUnitRef
 	deadline         time.Time
 	executeErr       func() error
+	commandErr       error
 	endErr           error
 	mismatchedResult bool
 
 	executeAttempts atomic.Int32
+	commandCalls    atomic.Int32
 	mu              sync.Mutex
 	loads           int
 	ends            []contract.WorkflowUnitRequest
@@ -455,10 +482,14 @@ func (activities *unitFailureActivities) Execute(
 	return contract.WorkflowUnitResult{}, activities.executeErr()
 }
 
-func (*unitFailureActivities) Command(
+func (activities *unitFailureActivities) Command(
 	context.Context,
 	contract.WorkflowCommandRequest,
 ) (contract.WorkflowCommandResult, error) {
+	activities.commandCalls.Add(1)
+	if activities.commandErr != nil {
+		return contract.WorkflowCommandResult{}, activities.commandErr
+	}
 	return contract.WorkflowCommandResult{}, errors.New("unexpected command activity")
 }
 
@@ -510,11 +541,23 @@ func (activities *unitFailureActivities) assertEndedOnce(t *testing.T) {
 
 func newUnitFailureEnvironment(t *testing.T, activities *unitFailureActivities) *testsuite.TestWorkflowEnvironment {
 	t.Helper()
+	return newUnitFailureEnvironmentWithLogger(t, activities, nil)
+}
+
+func newUnitFailureEnvironmentWithLogger(
+	t *testing.T,
+	activities *unitFailureActivities,
+	logger sdklog.Logger,
+) *testsuite.TestWorkflowEnvironment {
+	t.Helper()
 	coordinator, err := pmworkflows.NewCoordinator(testActivityTimeouts())
 	if err != nil {
 		t.Fatal(err)
 	}
 	var suite testsuite.WorkflowTestSuite
+	if logger != nil {
+		suite.SetLogger(logger)
+	}
 	environment := suite.NewTestWorkflowEnvironment()
 	environment.SetStartTime(activities.deadline.Add(-time.Hour))
 	environment.RegisterWorkflowWithOptions(coordinator.PMRunWorkflow, workflow.RegisterOptions{Name: contract.RunWorkflowType})
@@ -536,5 +579,53 @@ func assertUnitActivityFailure(t *testing.T, err error) {
 	}
 	if name := activityErr.ActivityType().GetName(); name != contract.ExecuteActivityName {
 		t.Fatalf("workflow failed with activity %q; want %q", name, contract.ExecuteActivityName)
+	}
+}
+
+// capturedWorkflowLogger keeps the warnings that workflow code writes through
+// the SDK logger.
+type capturedWorkflowLogger struct {
+	mu       sync.Mutex
+	warnings []capturedWarning
+}
+
+type capturedWarning struct {
+	message string
+	keyvals []interface{}
+}
+
+func (*capturedWorkflowLogger) Debug(string, ...interface{}) {}
+
+func (*capturedWorkflowLogger) Info(string, ...interface{}) {}
+
+func (logger *capturedWorkflowLogger) Warn(message string, keyvals ...interface{}) {
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	logger.warnings = append(logger.warnings, capturedWarning{message: message, keyvals: slices.Clone(keyvals)})
+}
+
+func (*capturedWorkflowLogger) Error(string, ...interface{}) {}
+
+// requireDrainWarning requires one drain warning that names the run and holds
+// the drain error.
+func (logger *capturedWorkflowLogger) requireDrainWarning(t *testing.T, runID string) {
+	t.Helper()
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	var matching int
+	for _, warning := range logger.warnings {
+		if warning.message != "control drain failed before the run end after a unit activity failure" {
+			continue
+		}
+		fields := map[interface{}]interface{}{}
+		for index := 0; index+1 < len(warning.keyvals); index += 2 {
+			fields[warning.keyvals[index]] = warning.keyvals[index+1]
+		}
+		if fields["RunRef"] == runID && fields["Error"] != nil {
+			matching++
+		}
+	}
+	if matching != 1 {
+		t.Fatalf("drain warnings with RunRef %q and an error = %d; want one (warnings: %#v)", runID, matching, logger.warnings)
 	}
 }

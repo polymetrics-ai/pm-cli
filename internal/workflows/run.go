@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	"go.temporal.io/sdk/temporal"
 	"go.temporal.io/sdk/worker"
 	"go.temporal.io/sdk/workflow"
 
@@ -128,7 +129,9 @@ func (coordinator *Coordinator) CoordinateRun(
 		}
 
 		if !state.cancelRequested && len(snapshot.Units) != 0 {
-			if err := executeUnits(ctx, state, snapshot.Units, snapshot.Fanout); err != nil {
+			failedUnit, err := executeUnits(ctx, state, snapshot.Units, snapshot.Fanout)
+			if err != nil {
+				endRunAfterUnitFailure(ctx, state, failedUnit, err)
 				return contract.WorkflowProjectionResult{}, err
 			}
 		}
@@ -232,23 +235,26 @@ func applySnapshotCommands(
 	return nil
 }
 
+// executeUnits returns the first error. When that error comes from a unit
+// activity that failed, it also returns that unit.
 func executeUnits(
 	ctx workflow.Context,
 	state *coordinatorState,
 	units []contract.WorkflowUnitRef,
 	fanout uint32,
-) error {
+) (*contract.WorkflowUnitRef, error) {
 	if fanout == 0 || fanout > contract.MaxWorkflowFanout {
-		return errors.New("workflow fanout is outside the admitted bound")
+		return nil, errors.New("workflow fanout is outside the admitted bound")
 	}
 	activityCtx, err := executionActivityContext(ctx, state.timeouts)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	selector := workflow.NewSelector(ctx)
 	next := 0
 	active := 0
 	var firstErr error
+	var failedUnit *contract.WorkflowUnitRef
 	schedule := func(unit contract.WorkflowUnitRef) {
 		request := contract.WorkflowUnitRequest{Run: state.run, Unit: unit}
 		future := workflow.ExecuteActivity(activityCtx, contract.ExecuteActivityName, request)
@@ -259,6 +265,7 @@ func executeUnits(
 			if err := completed.Get(activityCtx, &result); err != nil {
 				if firstErr == nil {
 					firstErr = err
+					failedUnit = &unit
 				}
 				return
 			}
@@ -290,7 +297,49 @@ func executeUnits(
 			next++
 		}
 	}
-	return firstErr
+	return failedUnit, firstErr
+}
+
+// endRunAfterUnitFailure ends the durable run after a unit activity failed and
+// Temporal will not run that activity again. The end activity reads the effect
+// ledger and writes only the run record. It sends no provider request, and an
+// unknown effect keeps the run reconciling.
+//
+// The workflow still fails with the unit error, so the Temporal close status
+// does not change. A drain or end failure stays in the workflow history and
+// does not replace the unit error.
+func endRunAfterUnitFailure(
+	ctx workflow.Context,
+	state *coordinatorState,
+	failedUnit *contract.WorkflowUnitRef,
+	unitErr error,
+) {
+	var activityErr *temporal.ActivityError
+	if failedUnit == nil || !errors.As(unitErr, &activityErr) || ctx.Err() != nil {
+		return
+	}
+	// A history from before this step failed the workflow here. It replays
+	// without the step.
+	if workflow.GetVersion(
+		ctx, contract.WorkflowUnitFailureEndChangeID,
+		workflow.DefaultVersion, contract.WorkflowUnitFailureEndVersion,
+	) == workflow.DefaultVersion {
+		return
+	}
+	// Apply a pending cancellation first, as the other exits do. A failed drain
+	// does not stop the end: the end activity decides from the locked run row
+	// and the effect ledger, not from workflow memory. The log line gives an
+	// operator the drain error, also for a command that fails Validate.
+	if err := drainBeforeExit(ctx, state); err != nil {
+		workflow.GetLogger(ctx).Warn(
+			"control drain failed before the run end after a unit activity failure",
+			"RunRef", state.run.RunID, "Error", err,
+		)
+	}
+	if ctx.Err() != nil {
+		return
+	}
+	_ = executeUnitFailureEnd(ctx, contract.WorkflowUnitRequest{Run: state.run, Unit: *failedUnit}, state.timeouts)
 }
 
 func drainBeforeExit(ctx workflow.Context, state *coordinatorState) error {

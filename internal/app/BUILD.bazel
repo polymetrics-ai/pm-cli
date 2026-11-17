@@ -74,6 +74,7 @@ go_test(
         "worker_plan_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
+        "worker_unit_failure_test.go",
     ],
     data = [
         "//:connectors/github/lanes/direct_read.json",

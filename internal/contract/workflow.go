@@ -32,6 +32,12 @@ func QuantizedTemporalDuration(value time.Duration) time.Duration {
 const WorkflowRunDeadlineProjectionChangeID = "run-deadline-projection"
 const WorkflowRunDeadlineProjectionVersion = 1
 
+// The workflow records this marker only after a unit activity failed. A history
+// without it replays the earlier behaviour: the workflow failed and nothing
+// ended the run.
+const WorkflowUnitFailureEndChangeID = "run-unit-failure-end"
+const WorkflowUnitFailureEndVersion = 1
+
 type WorkflowObservation struct {
 	TemporalRunID string    `json:"temporal_run_id"`
 	ObservedAt    time.Time `json:"observed_at"`
@@ -225,6 +231,10 @@ const (
 	StartRunInputSchema   = "pm.workflow-start/v1"
 	ProjectionRetrySchema = "pm.projection-retry/v1"
 )
+
+// UnitFailureActivityName ends the run after a unit activity failed and
+// Temporal will not run that activity again.
+const UnitFailureActivityName = "pm.end-run-after-unit-failure.v1"
 
 const MaxWorkflowFanout uint32 = 32
 
