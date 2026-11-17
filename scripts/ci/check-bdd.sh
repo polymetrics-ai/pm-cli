@@ -221,12 +221,14 @@ fi
 # The Gherkin run starts on a fresh stack. The stack run's fixture is cleaned
 # up when its command ends, and its manifest stays as a cleaned receipt. Move
 # the receipt aside, so that the Gherkin fixture can own the manifest path that
-# the workflow's cleanup step reads. If the stack fixture is not clean, the
-# manifest stays for the cleanup step, and the Gherkin run cannot start.
+# the workflow's cleanup step reads. --check-receipt only reads the manifest
+# and checks the phase "cleaned"; it makes no Docker call and does not repeat
+# the cleanup. If the stack fixture is not clean, the manifest stays for the
+# cleanup step, and the Gherkin run does not start.
 gherkin_ready=true
 if [ -e "$manifest" ]; then
   step 'check the stack run fixture cleanup and keep its receipt'
-  if python3 scripts/ci/with-stack-fixture.py --cleanup "$manifest" &&
+  if python3 scripts/ci/with-stack-fixture.py --check-receipt "$manifest" &&
     mv "$manifest" "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.stack-run-receipt.json"; then
     :
   else

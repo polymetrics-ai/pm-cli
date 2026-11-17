@@ -864,6 +864,18 @@ class BddSignalPaths(unittest.TestCase):
                 self.assertNotIn("next:", result.stdout)
 
 
+class BddReceiptStep(unittest.TestCase):
+    """The receipt step of check-bdd.sh only reads the stack run manifest."""
+
+    def test_receipt_step_does_not_repeat_the_cleanup(self):
+        commands = [line for line in CHECK_BDD.read_text().splitlines()
+                    if not line.lstrip().startswith("#")]
+        self.assertEqual([line for line in commands if "--cleanup" in line], [])
+        self.assertEqual(
+            [line.strip() for line in commands if "--check-receipt" in line],
+            ['if python3 scripts/ci/with-stack-fixture.py --check-receipt "$manifest" &&'])
+
+
 class GoPackageSelection(unittest.TestCase):
     """Developer checks of the package rule in scripts/ci/go-packages.sh."""
 
