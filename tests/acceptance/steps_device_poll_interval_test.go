@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -174,7 +175,8 @@ func (s *devicePollIntervalScenario) statesPollInterval(want int) error {
 func loginStartPollInterval(stdout []byte) (int, bool) {
 	fields := map[string]json.RawMessage{}
 	if trimmed := bytes.TrimSpace(stdout); len(trimmed) > 0 && trimmed[0] == '{' {
-		if json.Unmarshal(trimmed, &fields) != nil {
+		var ok bool
+		if fields, ok = uniqueJSONObject(trimmed); !ok {
 			return 0, false
 		}
 	} else {
@@ -206,4 +208,37 @@ func loginStartPollInterval(stdout []byte) (int, bool) {
 		return 0, false
 	}
 	return interval, true
+}
+
+// uniqueJSONObject decodes one JSON object into its fields. It refuses a key
+// that occurs two times, after the decoding of escapes, and any data after
+// the object.
+func uniqueJSONObject(document []byte) (map[string]json.RawMessage, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	fields := map[string]json.RawMessage{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		key, isKey := token.(string)
+		if err != nil || !isKey {
+			return nil, false
+		}
+		if _, duplicate := fields[key]; duplicate {
+			return nil, false
+		}
+		var value json.RawMessage
+		if decoder.Decode(&value) != nil {
+			return nil, false
+		}
+		fields[key] = value
+	}
+	if token, err := decoder.Token(); err != nil || token != json.Delim('}') {
+		return nil, false
+	}
+	if _, err := decoder.Token(); err != io.EOF {
+		return nil, false
+	}
+	return fields, true
 }

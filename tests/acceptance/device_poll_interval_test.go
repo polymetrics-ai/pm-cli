@@ -147,6 +147,21 @@ func TestLoginStartPollIntervalParse(t *testing.T) {
 	}
 }
 
+// The D1 parser refuses a JSON answer that holds a key two times, as it
+// refuses a text answer with a repeated key. Developer check, not acceptance
+// proof (#373 review finding F2).
+func TestLoginStartPollIntervalRefusesDuplicateJSONKey(t *testing.T) {
+	for _, bad := range []string{
+		"{\"poll_interval_seconds\": 1, \"poll_interval_seconds\": 60}\n",
+		"{\"device_proof\": \"p1\", \"device_proof\": \"p2\", \"poll_interval_seconds\": 5}\n",
+		"{\"poll_interval_seconds\": 5, \"poll\\u005finterval_seconds\": 60}\n",
+	} {
+		if got, ok := loginStartPollInterval([]byte(bad)); ok {
+			t.Errorf("the parser accepts %q as %d", bad, got)
+		}
+	}
+}
+
 // The bootstrap stderr description shows only a complete known
 // configuration refusal line, and no other text. Developer check, not
 // acceptance proof.
