@@ -15,6 +15,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/credentials"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
 	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
+	"github.com/polymetrics-ai/pm-cli/internal/schema"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
@@ -637,6 +638,10 @@ func (service *WorkerService) prepareWorkerUnit(
 		if err != nil {
 			return err
 		}
+		selectedSchema, err := loadWorkerSchemaSnapshot(ctx, tx, state, selection, handler, discovery)
+		if err != nil {
+			return err
+		}
 		connection, err := store.LoadConnection(ctx, tx, state.input.ConnectionID)
 		if err != nil {
 			return err
@@ -864,7 +869,7 @@ func (service *WorkerService) prepareWorkerUnit(
 			AttemptNumber: dispatch.AttemptNumber,
 			Operation:     selection.Operation,
 			Input:         state.input.Input, Controls: state.input.ResultControls, Deadline: state.deadline,
-			discovery: discovery,
+			discovery: discovery, selectedSchema: selectedSchema,
 		}
 		if state.budget.Policy.HTTP != nil {
 			plan.request.HTTPPolicy = *state.budget.Policy.HTTP
@@ -1773,6 +1778,47 @@ func loadWorkerDiscovery(
 		return nil, workerFailure(ErrWorkerConflict, errors.New("discovery intent differs from the accepted run"))
 	}
 	return &discovery, nil
+}
+
+// loadWorkerSchemaSnapshot loads the schema snapshot that admission pinned in
+// the run spec of a PostgreSQL run that is not a discovery (ADR 0007). It
+// reads the stored candidate in the scoped transaction and decodes it through
+// the strict snapshot decoder. A spec that pins no single reference gives no
+// snapshot, and the SQL callback then refuses the run before any send. A
+// pinned candidate that is missing, corrupt or incomplete is a conflict. A
+// later selection does not change an accepted run.
+func loadWorkerSchemaSnapshot(
+	ctx context.Context,
+	tx *store.Transaction,
+	state workerRunState,
+	selection OperationSelection,
+	handler ResolvedHandler,
+	discovery *store.SchemaDiscovery,
+) (*schema.Snapshot, error) {
+	if discovery != nil || handler.Kind != HandlerSQL ||
+		selection.Operation.Transport.Kind != contract.TransportKindPostgreSQL {
+		return nil, nil
+	}
+	references := state.record.Spec.SchemaRefs
+	if len(references) != 1 {
+		return nil, nil
+	}
+	reference := contract.SemanticDigest(references[0])
+	if reference.Validate() != nil {
+		return nil, workerFailure(ErrWorkerConflict, errors.New("the pinned schema reference is not a content digest"))
+	}
+	candidate, err := store.LoadSchemaCandidate(ctx, tx, state.input.ConnectionID, string(reference))
+	if errors.Is(err, store.ErrNotFound) {
+		return nil, workerFailure(ErrWorkerConflict, errors.New("the pinned schema snapshot is not stored"))
+	}
+	if err != nil {
+		return nil, err
+	}
+	snapshot, err := schema.DecodeSnapshot(candidate.Document)
+	if err != nil || snapshot.Fingerprint != reference || !snapshot.Completeness.Complete {
+		return nil, workerFailure(ErrWorkerConflict, errors.New("the pinned schema snapshot is unusable"))
+	}
+	return &snapshot, nil
 }
 
 // requireCurrentDiscoveryAuthorization rechecks the connection.manage

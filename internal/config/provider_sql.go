@@ -64,7 +64,9 @@ type ProviderSQLBounds struct {
 // ProviderSQLConnection is one declared customer SQL connection. The credential
 // itself is never declared: PasswordRef names the exact credential reference the
 // connection's one-use material must be bound to, and TLSTrustRef names the
-// operator secret bundle that carries the declared trust anchor.
+// operator secret bundle that carries the declared trust anchor. StateDirectory
+// is a checked path for scratch data only. It holds no schema snapshot and no
+// selection: those live in PM PostgreSQL (ADR 0007).
 type ProviderSQLConnection struct {
 	ConnectorID    string
 	ConnectionID   string

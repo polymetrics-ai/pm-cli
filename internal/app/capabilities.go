@@ -46,6 +46,10 @@ type ExecutionRequest struct {
 	// discovery is the accepted intent of a schema discovery run. It is set
 	// only by the worker for a run that admission recorded as a discovery.
 	discovery *store.SchemaDiscovery
+	// selectedSchema is the schema snapshot that admission pinned for a
+	// PostgreSQL run that is not a discovery. The worker loads it from PM
+	// PostgreSQL in the activity. It is never workflow data.
+	selectedSchema *schema.Snapshot
 }
 
 // ExecutionObservation is the immediate typed observation returned by an

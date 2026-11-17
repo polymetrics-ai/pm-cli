@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
@@ -228,6 +229,78 @@ func declaredSnapshotBinding(scope contract.Scope, connectionID string, declared
 		Resource:           declared.Resource,
 		SourceRevision:     declared.SourceRevision,
 	}
+}
+
+// DeclaredRelation is one declared relation binding of a connection and the
+// snapshot binding that it reads.
+type DeclaredRelation struct {
+	ConnectorID        string
+	RelationBinding    string
+	Resource           string
+	ProviderAccountID  string
+	PermissionRevision string
+	SourceRevision     string
+}
+
+// RelationResolver resolves the declared relation binding of one connection
+// that a PostgreSQL operation names. It reports false when the connection
+// declares no such binding.
+type RelationResolver func(scope contract.Scope, connectionID, relationBinding string) (DeclaredRelation, bool)
+
+func schemaSelectionAbsentFailure() *Failure {
+	return &Failure{HTTPStatus: StatusConflict, Code: "schema_selection_absent", RetryAction: "after_capability_change"}
+}
+
+// selectedRelationSchema returns the schema reference that a run of one
+// PostgreSQL operation pins, in the admission transaction (ADR 0007, plan 285c
+// section 2.7). It returns nil for another transport, and for a relation
+// binding that the connection does not declare: then admission does not
+// change, and pm-worker refuses as before. A declared relation with no
+// selection, or with a selected candidate whose binding is not the current
+// declaration, is refused with schema_selection_absent before any run.
+func (service *AdmissionService) selectedRelationSchema(
+	ctx context.Context,
+	tx *store.Transaction,
+	scope contract.Scope,
+	connectionID string,
+	operation contract.Operation,
+) ([]string, error) {
+	if operation.Transport.Kind != contract.TransportKindPostgreSQL || service.resolveRelation == nil {
+		return nil, nil
+	}
+	declared, present := service.resolveRelation(scope, connectionID, operation.Transport.RelationBinding)
+	if !present {
+		return nil, nil
+	}
+	selection, err := store.LoadSchemaSelection(ctx, tx, connectionID, declared.Resource)
+	if err != nil {
+		return nil, err
+	}
+	if !selection.Present {
+		return nil, schemaSelectionAbsentFailure()
+	}
+	candidate, err := store.LoadSchemaCandidate(ctx, tx, connectionID, selection.SchemaRef)
+	if err != nil {
+		return nil, fmt.Errorf("load the selected candidate: %w", err)
+	}
+	if candidate.Resource != declared.Resource || candidate.ConnectorID != declared.ConnectorID ||
+		candidate.ProviderAccountID != declared.ProviderAccountID ||
+		candidate.PermissionRevision != declared.PermissionRevision ||
+		candidate.SourceRevision != declared.SourceRevision {
+		return nil, schemaSelectionAbsentFailure()
+	}
+	return []string{selection.SchemaRef}, nil
+}
+
+// mergeSchemaRefs adds the pinned references to the references of the
+// operation selection, as one sorted set.
+func mergeSchemaRefs(selected []string, pinned []string) []string {
+	if len(pinned) == 0 {
+		return selected
+	}
+	merged := append(slices.Clone(selected), pinned...)
+	slices.Sort(merged)
+	return slices.Compact(merged)
 }
 
 // InspectSchemaSelection reads the current selection of one resource of an

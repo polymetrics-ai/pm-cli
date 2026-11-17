@@ -319,6 +319,16 @@ Temporal owns eligibility timers and bounded recovery polling; it does not exten
 
 [Migration 18](../../internal/store/migrations/postgres/0018_worker_retries.sql) preserves legacy root ordinals and refuses downgrade while retry lineage remains. Native scoped foreign keys validate child membership at commit after application scope cleanup. Cancellation or deadline closure can derive known rejection from the canonical parent receipt without inventing a child attempt; unknown outcomes remain unknown. The [retry checks](testing.md#durable-http-retries) cover these shared foundations, not default registry activation or live connector certification.
 
+### Schema discovery and selection
+
+ADR 0007 (schema discovery and selection, issue #285) keeps each discovered metadata snapshot and each schema selection in PM PostgreSQL. pm-server and pm-worker read them only there. The order for one declared relation of a customer SQL connection is:
+
+1. `pm schema discover --connection <id> --resource <resource> --wait` stores one complete candidate. A discovery never selects.
+2. `pm schema show --connection <id> --resource <resource> --permission-revision <revision> --source-revision <revision>` reports the selection and its `selection_revision`. The revision is 1 before the first selection.
+3. `pm schema select --connection <id> --resource <resource> --schema-ref <digest> --revision <selection revision>` selects one stored complete candidate. Each selection adds 1 to the revision.
+
+Admission refuses a run of a declared PostgreSQL relation that has no usable selection with 409 `schema_selection_absent`, before any run starts. An accepted run pins the selected `schema_ref`, and pm-worker reads that exact snapshot from PM PostgreSQL. A later selection does not change an accepted run. `provider_sql.connections[].state_directory` stays a required, checked path for scratch data only. It holds no snapshot and no selection, and no server metadata root exists.
+
 ### Explicit dependency operator and physical qualification
 
 `scripts/pm-stack` invokes the selected Go toolchain and the dependency operator in `internal/stack`. It is not PM CLI auto-start and does not create a PM API or worker. `check` verifies actual PostgreSQL database/role/schema identities, the authenticated Temporal namespace, and authenticated S3 bucket access. `up` initializes and starts selected bundled dependencies; `migrate` serializes their schema tooling; `drain` stops only selected bundled services. Managed dependencies remain externally owned: lifecycle preflight rejects attempts to mutate or stop them.

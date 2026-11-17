@@ -74,6 +74,7 @@ go_test(
         "schema_discovery_internal_test.go",
         "schema_discovery_test.go",
         "schema_selection_test.go",
+        "sql_composition_bind_internal_test.go",
         "sql_composition_test.go",
         "unadmitted_recovery_test.go",
         "worker_callback_deadline_test.go",
@@ -164,6 +165,17 @@ go_test(
         "//internal/runtime",
         "//internal/schema",
         "//internal/store",
+    ],
+)
+
+go_test(
+    name = "sql_composition_bind_internal_test",
+    srcs = ["sql_composition_bind_internal_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/config",
+        "//internal/contract",
+        "//internal/schema",
     ],
 )
 
