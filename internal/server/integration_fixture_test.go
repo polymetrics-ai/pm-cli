@@ -639,11 +639,12 @@ func newServerIntegrationFixture(t *testing.T, options ...serverIntegrationOptio
 	serveContext, cancelServe := context.WithCancel(context.Background())
 	fixture.serveCancel = cancelServe
 	fixture.serveResult = make(chan error, 1)
+	ready := newIntegrationReadyHandle()
 	go func() {
-		fixture.serveResult <- fixture.application.Serve(serveContext, listener, nil)
+		fixture.serveResult <- fixture.application.Serve(serveContext, listener, ready)
 	}()
 	edge.StartTLS()
-	fixture.waitForLiveApplication(t)
+	fixture.waitForReadyApplication(t, ready)
 	return fixture
 }
 
@@ -1031,22 +1032,135 @@ func (fixture *serverIntegrationFixture) closeApplication(t *testing.T) {
 	clear(fixture.wrappingKey)
 }
 
-func (fixture *serverIntegrationFixture) waitForLiveApplication(t *testing.T) {
+// integrationReadyLimit is the one time limit of the wait for the ready
+// signal. The earlier health poll had the same limit.
+const integrationReadyLimit = 5 * time.Second
+
+// integrationReadyHandle is the ready handle that the fixture gives to
+// Application.Serve (ADR 0005). When the server serves, Serve writes ReadyLine
+// and then closes the handle. When the start fails, Serve closes the handle
+// with no line. So the close is one product event on every path.
+type integrationReadyHandle struct {
+	mu     sync.Mutex
+	line   []byte
+	once   sync.Once
+	closed chan struct{}
+}
+
+func newIntegrationReadyHandle() *integrationReadyHandle {
+	return &integrationReadyHandle{closed: make(chan struct{})}
+}
+
+func (handle *integrationReadyHandle) Write(payload []byte) (int, error) {
+	handle.mu.Lock()
+	defer handle.mu.Unlock()
+	handle.line = append(handle.line, payload...)
+	return len(payload), nil
+}
+
+func (handle *integrationReadyHandle) Close() error {
+	handle.once.Do(func() { close(handle.closed) })
+	return nil
+}
+
+func (handle *integrationReadyHandle) received() string {
+	handle.mu.Lock()
+	defer handle.mu.Unlock()
+	return string(handle.line)
+}
+
+// awaitIntegrationReady waits once, with one time limit, for Serve to close
+// the ready handle, and it requires the ready line. Then it makes one live
+// request and requires one 200 answer. It makes no request before the ready
+// signal, and it repeats nothing.
+func awaitIntegrationReady(ready *integrationReadyHandle, limit time.Duration, live func() (int, error)) error {
+	timer := time.NewTimer(limit)
+	defer timer.Stop()
+	select {
+	case <-ready.closed:
+	case <-timer.C:
+		return fmt.Errorf("no ready signal and no start failure in %s", limit)
+	}
+	if line := ready.received(); line != ReadyLine {
+		return fmt.Errorf("the ready handle closed with %d bytes and not the ready line", len(line))
+	}
+	status, err := live()
+	if err != nil {
+		return fmt.Errorf("live request after the ready signal: %T", err)
+	}
+	if status != http.StatusOK {
+		return fmt.Errorf("live request after the ready signal: status %d, want %d", status, http.StatusOK)
+	}
+	return nil
+}
+
+// waitForReadyApplication waits for the ready signal of the fixture
+// application, then makes one live request through the HTTPS edge. The
+// client has its own time limit for that one request.
+func (fixture *serverIntegrationFixture) waitForReadyApplication(t *testing.T, ready *integrationReadyHandle) {
 	t.Helper()
 	client := fixture.newHTTPClient(t, false)
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
+	err := awaitIntegrationReady(ready, integrationReadyLimit, func() (int, error) {
 		response, err := client.Get(fixture.origin + "/health/live")
-		if err == nil {
-			_, _ = io.Copy(io.Discard, response.Body)
-			response.Body.Close()
-			if response.StatusCode == http.StatusOK {
-				return
-			}
+		if err != nil {
+			return 0, err
 		}
-		time.Sleep(25 * time.Millisecond)
+		defer response.Body.Close()
+		_, _ = io.Copy(io.Discard, response.Body)
+		return response.StatusCode, nil
+	})
+	if err != nil {
+		t.Fatalf("server integration application did not become ready: %v", err)
 	}
-	t.Fatal("server integration application did not become live")
+}
+
+// Go developer check, not acceptance proof (#373 review finding F1). The
+// fixture waits for one product event, the close of the ready handle, with
+// one time limit. Then it makes exactly one live request. It makes no request
+// before the event, and it does not repeat a request after a failed answer.
+// Defect: a health poll comes back into the fixture, for example a loop that
+// sleeps and repeats the live request. Such a loop sends more than one
+// request, or a request before the ready signal.
+func TestIntegrationFixtureWaitsOnceForTheReadySignal(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		line     string
+		close    bool
+		status   int
+		wantErr  bool
+		requests int
+	}{
+		{name: "ready line, then one live answer", line: ReadyLine, close: true, status: http.StatusOK, requests: 1},
+		{name: "ready line, then one failed live answer", line: ReadyLine, close: true,
+			status: http.StatusServiceUnavailable, wantErr: true, requests: 1},
+		{name: "start failure closes the handle with no line", close: true, status: http.StatusOK, wantErr: true},
+		{name: "no ready signal in the limit", status: http.StatusOK, wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			ready := newIntegrationReadyHandle()
+			if test.line != "" {
+				if _, err := io.WriteString(ready, test.line); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if test.close {
+				if err := ready.Close(); err != nil {
+					t.Fatal(err)
+				}
+			}
+			var requests int
+			err := awaitIntegrationReady(ready, 50*time.Millisecond, func() (int, error) {
+				requests++
+				return test.status, nil
+			})
+			if (err != nil) != test.wantErr {
+				t.Fatalf("wait error = %v, want an error: %t", err, test.wantErr)
+			}
+			if requests != test.requests {
+				t.Fatalf("live requests = %d, want %d", requests, test.requests)
+			}
+		})
+	}
 }
 
 func (fixture *serverIntegrationFixture) newHTTPClient(t *testing.T, withCookies bool) *http.Client {
