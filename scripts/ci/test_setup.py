@@ -835,10 +835,11 @@ class GoTestReport(unittest.TestCase):
                            str(hold)]
                 with mock.patch.object(module.subprocess, "Popen", RecordingPopen), \
                         mock.patch.object(module.os, "killpg", recording_killpg):
-                    status, timed_out = module.run_command(command, Path(directory) / "out.json", None, None)
+                    status, timed_out, received = module.run_command(
+                        command, Path(directory) / "out.json", None, None)
             finally:
                 os.close(hold_end)
-        self.assertEqual((status, timed_out), (0, False))
+        self.assertEqual((status, timed_out, received), (0, False, None))
         reaped = [event for event in events if event[0] == "reaped"]
         self.assertEqual(len(reaped), 1, events)
         leader = reaped[0][1]
@@ -847,6 +848,48 @@ class GoTestReport(unittest.TestCase):
         self.assertIn(("killpg", leader, signal.SIGKILL), events)
         self.assertEqual([index for index in kills if index > reaped_at], [],
                          f"killpg after the command was reaped: {events}")
+
+    def test_signal_to_the_reporter_fails_the_run(self):
+        # The child prints a complete, passing stream, exits 0 on SIGTERM and
+        # else blocks on a FIFO that the test never writes. The test sends
+        # SIGTERM to the reporter, not to the child. The reporter forwards it,
+        # the child exits 0, and the run must still fail with 128 + 15.
+        child = ("import json, os, signal, sys\n"
+                 "signal.signal(signal.SIGTERM, lambda *_: os._exit(0))\n"
+                 "for event in ({'Action': 'run', 'Package': 'm/a', 'Test': 'TestOK'},\n"
+                 "              {'Action': 'pass', 'Package': 'm/a', 'Test': 'TestOK'},\n"
+                 "              {'Action': 'pass', 'Package': 'm/a', 'Elapsed': 0.1}):\n"
+                 "    print(json.dumps(event), flush=True)\n"
+                 "with open(sys.argv[2], 'w') as ready:\n"
+                 "    ready.write('ready\\n')\n"
+                 "open(sys.argv[1]).read()\n")
+        with tempfile.TemporaryDirectory() as directory:
+            hold, ready = Path(directory) / "hold", Path(directory) / "ready"
+            os.mkfifo(hold)
+            os.mkfifo(ready)
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("m/a\n")
+            hold_end, ready_end = os.open(hold, os.O_RDWR), os.open(ready, os.O_RDWR)
+            try:
+                reporter = subprocess.Popen(
+                    [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                     "--expect", str(expected), "--", sys.executable, "-c", child, str(hold), str(ready),
+                     "-count=1"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+                try:
+                    # One bounded wait: the child has printed its stream and
+                    # handles SIGTERM.
+                    is_ready, _, _ = select.select([ready_end], [], [], 30)
+                    self.assertTrue(is_ready, "the child did not report that it is ready")
+                    reporter.send_signal(signal.SIGTERM)
+                finally:
+                    stdout, stderr = reporter.communicate(timeout=60)
+            finally:
+                os.close(hold_end)
+                os.close(ready_end)
+        self.assertEqual(reporter.returncode, 143, stdout + stderr)
+        self.assertIn("go test: the reporter received SIGTERM and stopped the command (exit 143)\n", stdout)
+        self.assertIn("go test: intended set: 1 packages from go list; package results: 1", stdout)
 
     def test_new_tests_hold_processes_without_a_timed_pause(self):
         # Hard rule 5: no timed pause in a test. The tests and test children of this

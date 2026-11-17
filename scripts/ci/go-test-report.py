@@ -38,7 +38,10 @@ stops at TIME or SECONDS after its start, whichever comes first: the script
 sends SIGTERM to its process group, then SIGKILL after 30 seconds. The exit
 status is then 124, and the report still lists the results in the stream.
 The script runs COMMAND in its own process group and forwards SIGTERM, SIGINT
-and SIGHUP to it. When COMMAND exits, the script sends SIGKILL to the rest of
+and SIGHUP to it. A signal that the script itself receives fails the run: the
+script waits up to 30 seconds for COMMAND to stop, then sends SIGKILL, prints
+"the reporter received SIG... and stopped the command" and exits with 128 plus
+the signal number, also when COMMAND exits 0. When COMMAND exits, the script sends SIGKILL to the rest of
 that process group, so that no test process of the run stays alive. It sends
 that SIGKILL before it reaps COMMAND: until then, the process ID of COMMAND,
 which is also the ID of its process group, names no other process. The script
@@ -215,64 +218,105 @@ class ExitWatch:
             self.queue.close()
 
 
+class _ReceivedSignal(Exception):
+    """The script itself received SIGTERM, SIGINT or SIGHUP."""
+
+
 def run_command(command, output, deadline, limit):
-    """Run COMMAND with stdout in OUTPUT. Return (status, timed_out)."""
-    with output.open("wb") as stream:
+    """Run COMMAND with stdout in OUTPUT.
+
+    Return (status, timed_out, received). RECEIVED is the first signal that
+    the script itself received, or None. A received signal forces the status
+    128 plus its number, also when COMMAND then exits 0.
+    """
+    state = {"process": None, "watch": None, "waiting": False}
+    received = []
+
+    def forward(signum, _frame):
+        process = state["process"]
+        if process is None:
+            return
         try:
-            process = subprocess.Popen(command, stdout=stream, start_new_session=True)
-        except OSError as exc:
-            print(f"go test: cannot start the command: {exc}")
-            return 1, False
-        if limit is not None:
-            relative = time.time() + limit
-            deadline = relative if deadline is None else min(deadline, relative)
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # Darwin reports EPERM when the only member left in the group
+            # is the command that has exited and is not reaped yet. Then
+            # no process is left to signal. Any other EPERM is an error.
+            watch = state["watch"]
+            if watch is None or not watch.exited:
+                raise
 
-        watch = None
+    def on_signal(signum, frame):
+        # Only a signal that this script receives comes here. The deadline
+        # and the final kill call forward() directly.
+        received.append(signum)
+        forward(signum, frame)
+        if state["waiting"] and len(received) == 1:
+            raise _ReceivedSignal()
 
-        def forward(signum, _frame):
+    # The handlers are in place before the command starts, so a signal that
+    # comes before the wait is recorded too.
+    previous = {number: signal.signal(number, on_signal)
+                for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        with output.open("wb") as stream:
             try:
-                os.killpg(process.pid, signum)
-            except ProcessLookupError:
-                pass
-            except PermissionError:
-                # Darwin reports EPERM when the only member left in the group
-                # is the command that has exited and is not reaped yet. Then
-                # no process is left to signal. Any other EPERM is an error.
-                if watch is None or not watch.exited:
-                    raise
-
-        try:
-            watch = ExitWatch(process.pid)
-        except OSError as exc:
-            print(f"go test: cannot watch the command: {exc}")
-            forward(signal.SIGKILL, None)
-            process.wait()
-            return 1, False
-        previous = {number: signal.signal(number, forward)
-                    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
-        timed_out = False
-        try:
-            timeout = None if deadline is None else max(0.0, deadline - time.time())
-            if not watch.wait(timeout):
-                timed_out = True
-                forward(signal.SIGTERM, None)
-                if not watch.wait(KILL_GRACE):
-                    forward(signal.SIGKILL, None)
-                    watch.wait(None)
-        finally:
-            for number, handler in previous.items():
-                signal.signal(number, handler)
-            # A test process that outlives the command must not keep running.
-            # The command is not reaped yet, so its process group ID names no
-            # other group. Reap it only after this signal.
-            forward(signal.SIGKILL, None)
-            status = process.wait()
-            watch.close()
-        if timed_out:
-            status = DEADLINE_STATUS
+                process = subprocess.Popen(command, stdout=stream, start_new_session=True)
+            except OSError as exc:
+                print(f"go test: cannot start the command: {exc}")
+                return 1, False, received[0] if received else None
+            state["process"] = process
+            if limit is not None:
+                relative = time.time() + limit
+                deadline = relative if deadline is None else min(deadline, relative)
+            try:
+                watch = state["watch"] = ExitWatch(process.pid)
+            except OSError as exc:
+                print(f"go test: cannot watch the command: {exc}")
+                forward(signal.SIGKILL, None)
+                process.wait()
+                return 1, False, received[0] if received else None
+            timed_out = False
+            try:
+                try:
+                    state["waiting"] = True
+                    if received:
+                        raise _ReceivedSignal()
+                    timeout = None if deadline is None else max(0.0, deadline - time.time())
+                    if not watch.wait(timeout):
+                        timed_out = True
+                        forward(signal.SIGTERM, None)
+                        if not watch.wait(KILL_GRACE):
+                            forward(signal.SIGKILL, None)
+                            watch.wait(None)
+                except _ReceivedSignal:
+                    # The handler forwarded the signal to the group. Give the
+                    # command KILL_GRACE seconds to stop, then SIGKILL.
+                    forward(received[0], None)
+                    if not watch.wait(KILL_GRACE):
+                        forward(signal.SIGKILL, None)
+                        watch.wait(None)
+            finally:
+                state["waiting"] = False
+                # A test process that outlives the command must not keep
+                # running. The command is not reaped yet, so its process
+                # group ID names no other group. Reap it only after this
+                # signal.
+                forward(signal.SIGKILL, None)
+                status = process.wait()
+                watch.close()
+            if timed_out:
+                status = DEADLINE_STATUS
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
     if status < 0:
         status = 128 - status
-    return status, timed_out
+    if received:
+        status = 128 + received[0]
+    return status, timed_out, received[0] if received else None
 
 
 def expect_problems(expected, counts, events, malformed):
@@ -361,7 +405,7 @@ def main():
         refused = filter_problem(command)
         if refused:
             parser.error(f"refused: {refused}")
-    status, timed_out = run_command(command, args.output, args.deadline, args.timeout)
+    status, timed_out, received = run_command(command, args.output, args.deadline, args.timeout)
     packages, failures, output = {}, [], {}
     # started keeps the tests with a `run` event in first-seen order. A dict
     # keeps insertion order and checks membership in constant time.
@@ -400,6 +444,9 @@ def main():
     # test panicked and the test binary exited. Its output holds the cause.
     unfinished = [key for key in started if key not in results]
     problems = [f"a test started and has no result: {test_name(key)}" for key in unfinished]
+    if received is not None:
+        problems.append(f"the reporter received {signal.Signals(received).name} and stopped the "
+                        f"command (exit {status})")
     if timed_out:
         problems.append(f"the command did not end before its deadline and was stopped (exit {status})")
     if expected is not None:
