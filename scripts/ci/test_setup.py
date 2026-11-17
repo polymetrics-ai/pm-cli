@@ -431,6 +431,66 @@ class HeldProcess:
             self.queue.close()
 
 
+class FifoHold:
+    """The ownership and the release of a process that reads a FIFO that the test holds.
+
+    The command gets the arguments ARGS: the FIFO "hold" ($0), the FIFO
+    "ack" ($1) and the file "pid" ($2). The reader opens "hold" first,
+    writes its process ID to "pid" and then writes "opened" to "ack". The
+    test holds both FIFOs open for reading and writing, so no open blocks,
+    and it never writes "hold". So the reader blocks until the release.
+
+    The release takes the identity of the reader (HeldProcess) while it still
+    blocks, closes the FIFOs and waits once for its exit. It sends no signal.
+    Use it as a context manager, so that the release also runs when an
+    assertion fails. READER says whether the reader acknowledged, was alive
+    at the release and then ended.
+    """
+
+    # The reader steps of a command, in their order.
+    READER = 'exec 3<"$0"; echo $$ > "$2"; echo opened > "$1"'
+
+    def __init__(self, directory):
+        self.hold, self.ack, self.pid = (Path(directory) / name for name in ("hold", "ack", "pid"))
+        os.mkfifo(self.hold)
+        os.mkfifo(self.ack)
+        self.ends = [os.open(self.hold, os.O_RDWR), os.open(self.ack, os.O_RDWR)]
+        self.args = [str(self.hold), str(self.ack), str(self.pid)]
+        self.reader = {"acknowledged": False, "alive": False, "ended": False}
+        self.released = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+    def release(self):
+        if self.released:
+            return self.reader
+        self.released = True
+        handle = None
+        try:
+            if self.pid.exists() and self.pid.read_text().strip():
+                # The reader wrote its ID before its acknowledgement, and it
+                # blocks on the open FIFO, so its ID names no other process.
+                self.reader["acknowledged"] = True
+                handle = HeldProcess(int(self.pid.read_text().strip()))
+                self.reader["alive"] = not handle.exits_within(0)
+        finally:
+            # The reader reads the end of the FIFO and stops.
+            for end in self.ends:
+                os.close(end)
+            if handle is not None:
+                try:
+                    # One wait for the exit event of the held reader.
+                    self.reader["ended"] = handle.exits_within(30)
+                finally:
+                    handle.close()
+        return self.reader
+
+
 def gated_background_script(pid_fifo, gate_fifo, release_fifo, work, last):
     """The shell command of the process cleanup test.
 
@@ -1160,51 +1220,26 @@ class GoTestReport(unittest.TestCase):
     # its process ID to "$2", then acknowledges on the FIFO "$1". The command
     # exits only after that acknowledgement. So the reader cannot open the
     # FIFO after the test closes it (brahmagupta F2 at 333e804).
-    LIVE_MEMBER = ("sh -c 'exec 3<\"$0\"; echo $$ > \"$2\"; echo opened > \"$1\"; exec cat <&3 > /dev/null' "
-                   "\"$0\" \"$1\" \"$2\" & read ack < \"$1\"; echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+    LIVE_MEMBER = ("sh -c '" + FifoHold.READER + "; exec cat <&3 > /dev/null' \"$0\" \"$1\" \"$2\" & "
+                   "read ack < \"$1\"; echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
 
     def run_with_refused_group_signals(self, script):
         """Run run_command with a killpg that the system refuses (EPERM).
 
-        SCRIPT is a /bin/sh command. "$0" is a FIFO that the test holds open
-        and never writes, "$1" an acknowledgement FIFO and "$2" a file for the
-        process ID of a reader. Return (status, cleanup problem or None,
-        reader), where READER says whether a reader acknowledged before the
-        command exited, was alive then, and ended after the test closed the
-        FIFO.
+        SCRIPT is a /bin/sh command with the FifoHold arguments. Return
+        (status, cleanup problem or None, reader) with the FifoHold reader
+        result.
         """
         module = self.load_reporter()
 
         def refused_killpg(group, signum):
             raise PermissionError(1, "Operation not permitted")
 
-        reader = {"acknowledged": False, "alive": False, "ended": False}
-        with tempfile.TemporaryDirectory() as directory:
-            hold, ack, pid_file = (Path(directory) / name for name in ("hold", "ack", "pid"))
-            os.mkfifo(hold)
-            os.mkfifo(ack)
-            hold_end, ack_end = os.open(hold, os.O_RDWR), os.open(ack, os.O_RDWR)
-            handle = None
-            try:
-                with mock.patch.object(module.os, "killpg", refused_killpg):
-                    result = module.run_command(["/bin/sh", "-c", script, str(hold), str(ack), str(pid_file)],
-                                                Path(directory) / "out.json", None, None)
-                if pid_file.exists():
-                    # The reader wrote its ID before its acknowledgement, and the
-                    # command exited after it. The reader blocks on the open
-                    # FIFO, so it is alive and its ID names no other process.
-                    reader["acknowledged"] = True
-                    handle = HeldProcess(int(pid_file.read_text().strip()))
-                    reader["alive"] = not handle.exits_within(0)
-            finally:
-                # The reader reads the end of the FIFO and stops, so the test
-                # needs no signal.
-                os.close(hold_end)
-                os.close(ack_end)
-                if handle is not None:
-                    # One wait for the exit event of the held reader.
-                    reader["ended"] = handle.exits_within(30)
-                    handle.close()
+        with tempfile.TemporaryDirectory() as directory, FifoHold(directory) as fifo:
+            with mock.patch.object(module.os, "killpg", refused_killpg):
+                result = module.run_command(["/bin/sh", "-c", script, *fifo.args],
+                                            Path(directory) / "out.json", None, None)
+            reader = fifo.release()
         return result[0], (result[3] if len(result) > 3 else None), reader
 
     def test_refused_group_signal_with_a_live_member_fails_the_run(self):
@@ -1253,7 +1288,7 @@ class GoTestReport(unittest.TestCase):
     REFUSED_KILL_CHILD = """\
 import importlib.util, json, signal, subprocess, sys, time
 from pathlib import Path
-report, hold, out, case = sys.argv[1:5]
+report, out, case, command, hold, ack, pid = sys.argv[1:8]
 spec = importlib.util.spec_from_file_location("go_test_report", report)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
@@ -1266,6 +1301,10 @@ class Recording(subprocess.Popen):
     def __init__(self, *arguments, **options):
         super().__init__(*arguments, **options)
         started.append(self)
+        # The command acknowledges that it opened the FIFO before the
+        # reporter may stop it, so the release of the test finds it there.
+        with open(ack) as acknowledgement:
+            acknowledgement.readline()
         if case == "received":
             signal.raise_signal(signal.SIGTERM)
 module.subprocess.Popen = Recording
@@ -1274,44 +1313,55 @@ if case == "no exit watch":
         raise OSError("no watch")
     module.ExitWatch = no_watch
 deadline = time.time() - 1 if case == "deadline" else None
-result = module.run_command(["/bin/sh", "-c", 'read line < "$0"', hold], Path(out), deadline, None)
+result = module.run_command(["/bin/sh", "-c", command, hold, ack, pid], Path(out), deadline, None)
 print(json.dumps({"result": list(result), "reaped": started[0].returncode is not None}))
 """
+
+    # The command of the refused-kill test reads the hold FIFO itself, after
+    # the FifoHold reader steps.
+    REFUSED_KILL_COMMAND = FifoHold.READER + "; read line <&3"
 
     def test_refused_kill_of_a_live_command_has_a_bounded_wait(self):
         # The command blocks on a FIFO that the test holds open and never
         # writes, and each group signal is refused. The reporter must not wait
         # with no limit, must not reap the live command, and must fail with
-        # the cleanup text. One bounded wait for the child; the test then
-        # closes the FIFO, so the command reads its end and stops.
+        # the cleanup text. One bounded wait for the child; FifoHold then
+        # releases the command and waits once for its exit, also when an
+        # assertion fails (brahmagupta F4 at 3b6e71f).
+        steps = ['exec 3<"$0"', 'echo $$ > "$2"', 'echo opened > "$1"', "read line <&3"]
+        command = self.REFUSED_KILL_COMMAND
+        for step in steps:
+            self.assertIn(step, command, "the command must open, write its ID and acknowledge first")
+        self.assertEqual([command.index(step) for step in steps], sorted(command.index(step) for step in steps))
+        child_code = self.REFUSED_KILL_CHILD
+        self.assertIn("acknowledgement.readline()", child_code, "the child must wait for the acknowledgement")
+        self.assertLess(child_code.index("acknowledgement.readline()"), child_code.index("module.run_command("))
         expected = {"deadline": 124, "received": 128 + signal.SIGTERM, "no exit watch": 1}
         with tempfile.TemporaryDirectory() as directory:
             child = Path(directory) / "child.py"
-            child.write_text(self.REFUSED_KILL_CHILD)
+            child.write_text(child_code)
             for case, status in expected.items():
-                with self.subTest(case=case):
-                    hold = Path(directory) / ("hold-" + case.replace(" ", "-"))
+                case_directory = Path(directory) / case.replace(" ", "-")
+                case_directory.mkdir()
+                with self.subTest(case=case), FifoHold(case_directory) as fifo:
                     # The live command inherits the standard error of the child,
                     # so it goes to a file, not to a pipe that the wait reads.
-                    errors = Path(directory) / ("errors-" + case.replace(" ", "-"))
-                    os.mkfifo(hold)
-                    hold_end = os.open(hold, os.O_RDWR)
+                    errors = case_directory / "errors"
                     try:
                         with errors.open("w") as error_file:
                             result = subprocess.run(
-                                [sys.executable, "-I", "-B", str(child), str(REPORT), str(hold),
-                                 str(Path(directory) / "out.json"), case],
+                                [sys.executable, "-I", "-B", str(child), str(REPORT),
+                                 str(case_directory / "out.json"), case, command, *fifo.args],
                                 stdout=subprocess.PIPE, stderr=error_file, text=True, timeout=20)
                     except subprocess.TimeoutExpired:
                         self.fail(f"{case}: the reporter waited with no limit after a refused SIGKILL")
-                    finally:
-                        os.close(hold_end)
                     self.assertEqual(result.returncode, 0, result.stdout + errors.read_text())
                     report = json.loads(result.stdout.splitlines()[-1])
                     self.assertEqual(report["result"][0], status, report)
                     self.assertFalse(report["reaped"], "the reporter reaped a live command")
                     self.assertIn("refused to send SIGKILL", report["result"][3])
                     self.assertIn("after the last SIGKILL, so the reporter did not reap it", report["result"][3])
+                    self.assertEqual(fifo.release(), {"acknowledged": True, "alive": True, "ended": True})
 
     def test_signal_after_the_reap_is_recorded_and_not_forwarded(self):
         # Deferred item (a): after the real reap of the command, the
