@@ -13,6 +13,14 @@ not a test skip. The exit status is the command's status, or 1 when the
 stream records a failure the command did not report. A command that a signal
 stops gives 128 plus the signal number.
 
+A test or subtest that started (a `run` event) and has no result (no `pass`,
+`fail` or `skip` event) is a failure, also in a package that passes. An
+example is a test whose goroutine panics: the test binary exits, and the
+panic output belongs to that test. The log and the summary print the test
+as `FAIL (no result)` with its output, and the problem list names it. A test
+that pauses and continues (`pause`, `cont`) and then gets a result is not
+such a test.
+
 With --fail-on-skip, a skipped test (a test or subtest that calls t.Skip) is a
 failure: the exit status is 1, and the log and the summary name the test.
 
@@ -216,8 +224,8 @@ def expect_problems(expected, counts, events, malformed):
 
 
 def package_markdown(title, packages, failures, skips, fail_on_skip, status, problems,
-                     intended=None):
-    failed = bool(status or failures or problems or (fail_on_skip and skips))
+                     intended=None, unfinished=()):
+    failed = bool(status or failures or unfinished or problems or (fail_on_skip and skips))
     lines = [f"### {title}", "", f"Result: {'FAILED' if failed else 'PASSED'}.  "]
     if intended:
         lines.append(f"The {intended}.  ")
@@ -226,7 +234,7 @@ def package_markdown(title, packages, failures, skips, fail_on_skip, status, pro
         counts[action] = counts.get(action, 0) + 1
     lines.append(
         f"{len(packages)} packages: {counts.get('pass', 0)} passed, {counts.get('fail', 0)} failed, "
-        f"{counts.get('skip', 0)} with no test files. {len(failures)} failures. "
+        f"{counts.get('skip', 0)} with no test files. {len(failures) + len(unfinished)} failures. "
         f"{len(skips)} skipped tests{' (each one is a failure)' if fail_on_skip and skips else ''}. "
         f"Exit {status}.  ")
     lines.append("")
@@ -235,7 +243,9 @@ def package_markdown(title, packages, failures, skips, fail_on_skip, status, pro
         for package, (action, elapsed) in sorted(packages.items(), key=lambda item: -item[1][1]):
             lines.append(f"| {package_result(action)} | {elapsed:.1f}s | `{package}` |")
         lines.append("")
-    for heading, items in (("Failed", [f"`{test_name(key)}`" for key in failures]),
+    failed_items = [f"`{test_name(key)}`" for key in failures]
+    failed_items += [f"`{test_name(key)}` (no result)" for key in unfinished]
+    for heading, items in (("Failed", failed_items),
                            ("Skipped tests", [f"`{test_name(key)}`" for key in skips]),
                            ("Problems", problems)):
         if items:
@@ -279,7 +289,9 @@ def main():
             parser.error(f"refused: {refused}")
     status, timed_out = run_command(command, args.output, args.deadline, args.timeout)
     packages, failures, output = {}, [], {}
-    order, results, skips = [], {}, []
+    # started keeps the tests with a `run` event in first-seen order. A dict
+    # keeps insertion order and checks membership in constant time.
+    order, results, skips, started = [], {}, [], {}
     counts, events, malformed = {}, 0, 0
     for line in args.output.read_text(errors="replace").splitlines():
         try:
@@ -299,6 +311,8 @@ def main():
             output[key] = []
         if action in ("output", "build-output"):
             output[key].append(event.get("Output", ""))
+        elif action == "run" and key[1] is not None:
+            started.setdefault(key, None)
         elif action in ("pass", "fail", "skip") and key[1] is None:
             packages[key[0]] = (action, float(event.get("Elapsed") or 0))
             counts[key[0]] = counts.get(key[0], 0) + 1
@@ -308,7 +322,10 @@ def main():
             skips.append(key)
         if action in ("fail", "build-fail"):
             failures.append(key)
-    problems = []
+    # A test that started and has no result: for example, a goroutine of the
+    # test panicked and the test binary exited. Its output holds the cause.
+    unfinished = [key for key in started if key not in results]
+    problems = [f"a test started and has no result: {test_name(key)}" for key in unfinished]
     if timed_out:
         problems.append(f"the command did not end before its deadline and was stopped (exit {status})")
     if expected is not None:
@@ -321,6 +338,10 @@ def main():
         print(f"{action.upper():4} {elapsed:8.1f}s {package}" + (" (no test files)" if action == "skip" else ""))
     for key in failures:
         print(f"::group::FAIL {test_name(key)}")
+        sys.stdout.write("".join(output.get(key, [])))
+        print("::endgroup::")
+    for key in unfinished:
+        print(f"::group::FAIL (no result) {test_name(key)}")
         sys.stdout.write("".join(output.get(key, [])))
         print("::endgroup::")
     for key in skips:
@@ -338,7 +359,8 @@ def main():
         with args.summary_file.open("a", encoding="utf-8") as summary:
             summary.write(package_markdown(args.title, packages, failures, skips,
                                            args.fail_on_skip, status, problems,
-                                           intended if expected is not None else None))
+                                           intended if expected is not None else None,
+                                           unfinished))
     problem = None
     if args.scenarios:
         rows, totals = scenario_report(order, results, output)
@@ -353,7 +375,7 @@ def main():
         if args.summary_file:
             with args.summary_file.open("a", encoding="utf-8") as summary:
                 summary.write(markdown(rows, totals, problem))
-    print(f"go test: {len(packages)} packages, {len(failures)} failures, "
+    print(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
     return status or (1 if failures or problem or problems or skip_failure else 0)
 

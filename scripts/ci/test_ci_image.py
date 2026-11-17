@@ -31,9 +31,24 @@ class CheckCiImage(unittest.TestCase):
         self.directory = tempfile.TemporaryDirectory()
         self.root = Path(self.directory.name)
         self.output = io.StringIO()
+        self.restore = []
+        self.saved = {}
 
     def tearDown(self):
+        for path in self.restore:
+            path.chmod(0o700)
+        for name, value in self.saved.items():
+            setattr(check, name, value)
         self.directory.cleanup()
+
+    def setattr_check(self, name, value):
+        self.saved.setdefault(name, getattr(check, name))
+        setattr(check, name, value)
+
+    def lock(self, path, mode):
+        """Set a restrictive directory mode, and restore it before cleanup."""
+        self.restore.append(path)
+        path.chmod(mode)
 
     def run_check(self, function, *args, **kwargs):
         with contextlib.redirect_stdout(self.output):
@@ -159,6 +174,109 @@ class CheckCiImage(unittest.TestCase):
         self.assertTrue(any("package gnome-keyring is 46.1-2ubuntu0.1" in failure for failure in failures))
         self.assertTrue(any("package dbus-x11 is installed" in failure for failure in failures))
         self.assertTrue(any(failure.endswith("/usr/bin/dbus-launch exists") for failure in failures))
+
+
+    # Review #pr-333 brahmagupta F1 at 3786ed9: a directory that the job user
+    # can search but the walk cannot list hides files that the job user can run.
+    def test_a_search_only_directory_fails_also_when_recorded(self):
+        self.assertNotEqual(os.geteuid(), 0, "run the developer tests as a normal user")
+        extra = self.file("root/hidden/extra", 0o755)
+        extra.chmod(0o4755)
+        self.lock(self.root / "root", 0o311)
+        failures, output = self.run_check(check.check_privileges, {}, {"/root"},
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "/root: the job user can search it")
+
+    def test_a_recorded_closed_directory_that_others_can_search_fails(self):
+        recorded = self.root / "var/cache/ldconfig"
+        recorded.mkdir(parents=True)
+        recorded.chmod(0o701)
+        failures, output = self.run_check(check.check_privileges, {}, {"/var/cache/ldconfig"},
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "denies search to others")
+
+    # Review #pr-333 brahmagupta F2 at 3786ed9: dbus-launch in a directory on
+    # the image PATH that the fixed directory list did not name.
+    def test_dbus_launch_anywhere_in_the_walk_fails(self):
+        self.file("opt/pmcli/venv/bin/dbus-launch", 0o755)
+        failures, output = self.run_check(check.check_privileges, {}, set(),
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "/opt/pmcli/venv/bin/dbus-launch exists")
+
+    def test_the_launcher_search_covers_the_image_path(self):
+        dockerfile = (ROOT / "build/ci/Dockerfile").read_text()
+        line = next(line for line in dockerfile.splitlines() if line.startswith("ENV PATH="))
+        image_path = line.split("=", 1)[1].split()[0].split(":")
+        missing = [entry for entry in image_path if entry not in check.BINARY_DIRECTORIES]
+        self.assertEqual(missing, [], "BINARY_DIRECTORIES must cover the image PATH")
+
+    # Review #pr-333 brahmagupta F3 at 3786ed9: a symlinked service directory
+    # and an unreadable service directory.
+    def test_a_symlinked_service_directory_is_read(self):
+        target = self.root / "elsewhere"
+        target.mkdir()
+        (target / "a.service").write_text("[D-BUS Service]\nName=org.freedesktop.secrets\n")
+        (self.root / "dbus-1").mkdir()
+        (self.root / "dbus-1/services").symlink_to(target)
+        (target / "loop").symlink_to(target)
+        failures, output = self.run_check(check.check_activation, (str(self.root / "dbus-1"),))
+        self.assert_failed_without_pass(failures, output, "a.service activates org.freedesktop.secrets")
+        self.assertEqual(len(failures), 1, failures)
+
+    def test_an_unreadable_service_directory_fails(self):
+        services = self.root / "dbus-1/services"
+        services.mkdir(parents=True)
+        self.lock(services, 0o000)
+        failures, output = self.run_check(check.check_activation, (str(self.root / "dbus-1"),))
+        self.assert_failed_without_pass(failures, output, "dbus-1/services cannot be read")
+
+    def test_a_missing_service_root_is_not_a_failure(self):
+        failures, output = self.run_check(check.check_activation, (str(self.root / "absent"),))
+        self.assertEqual(failures, [])
+        self.assertIn("PASS 0 D-Bus service files", output)
+
+    # Review #pr-333 brahmagupta F4 at 3786ed9: the reported version must be
+    # exact, and a failed or stopped command fails.
+    def fake_daemon(self, text, code=0, wait=False):
+        path = self.root / "bin/dbus-daemon"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        body = f"printf '%s\\n' '{text}'\n"
+        if wait:
+            fifo = self.root / "never-written"
+            os.mkfifo(fifo)
+            body += f"exec cat '{fifo}'\n"
+        path.write_text(f"#!/bin/sh\n{body}exit {code}\n")
+        path.chmod(0o755)
+        self.setattr_check("BINARIES", {str(path): "dbus-daemon"})
+        return {"dbus-daemon": "1.14.10-4ubuntu4.1"}
+
+    def test_the_exact_version_passes(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.10")
+        failures, output = self.run_check(check.check_versions, record)
+        self.assertEqual(failures, [])
+        self.assertIn("PASS", output)
+
+    def test_a_longer_version_with_the_same_prefix_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.100")
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "--version")
+
+    def test_a_wrong_version_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.9")
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "--version")
+
+    def test_a_nonzero_exit_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.10", code=3)
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "exited with 3")
+
+    def test_a_version_command_that_does_not_end_fails(self):
+        record = self.fake_daemon("D-Bus Message Bus Daemon 1.14.10", wait=True)
+        if hasattr(check, "VERSION_TIMEOUT"):
+            self.setattr_check("VERSION_TIMEOUT", 1)
+        failures, output = self.run_check(check.check_versions, record)
+        self.assert_failed_without_pass(failures, output, "did not finish")
 
 
 if __name__ == "__main__":

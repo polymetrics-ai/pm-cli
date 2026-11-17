@@ -252,7 +252,7 @@ CHECK_DOCS = ROOT / "scripts/ci/check-docs.sh"
 HOOK_LIB = ROOT / "scripts/dev/hook-lib.sh"
 CHECK_NAMES = ["setup", "python", "generate", "gofmt", "boundaries", "tools", "image", "unit"]
 IMAGE_NOTICE = ("pre-push: the image check runs only inside the CI job image "
-                "(the checks job and the Linux hooks), not on this macOS host\n")
+                "(the checks and bdd jobs and the Linux pre-push hook), not on this macOS host\n")
 
 
 class HookCheckSelection(unittest.TestCase):
@@ -456,6 +456,78 @@ class GoTestReport(unittest.TestCase):
         result, _ = self.report(broken)
         self.assertEqual(result.returncode, 1)
         self.assertIn("::group::FAIL m/q [m/q.test]", result.stdout)
+
+    def test_test_without_result_prints_its_output_and_fails(self):
+        # The shape of a real `go test -json` stream (Go 1.27.1) when a
+        # goroutine of a test panics: output under the running test, no test
+        # result, and a package fail.
+        events = [go_event("start", "m/a"),
+                  go_event("run", "m/a", "TestFirst"),
+                  go_event("output", "m/a", "TestFirst", Output="=== RUN   TestFirst\n"),
+                  go_event("output", "m/a", "TestFirst", Output="--- PASS: TestFirst (0.00s)\n"),
+                  go_event("pass", "m/a", "TestFirst", Elapsed=0),
+                  go_event("run", "m/a", "TestHelperGoroutinePanics"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="=== RUN   TestHelperGoroutinePanics\n"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="panic: send on closed channel\n"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="goroutine 37 [running]:\n"),
+                  go_event("output", "m/a", "TestHelperGoroutinePanics",
+                           Output="m/a.TestHelperGoroutinePanics.func1()\n"),
+                  go_event("output", "m/a", Output="FAIL\tm/a\t0.583s\n"),
+                  go_event("fail", "m/a", Elapsed=0.583)]
+        result, summary = self.report(events, "--title", "Unit run", "--summary-file", "SUMMARY")
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("::group::FAIL (no result) m/a TestHelperGoroutinePanics\n"
+                      "=== RUN   TestHelperGoroutinePanics\n"
+                      "panic: send on closed channel\n"
+                      "goroutine 37 [running]:\n"
+                      "m/a.TestHelperGoroutinePanics.func1()\n"
+                      "::endgroup::\n", result.stdout)
+        self.assertIn("go test: a test started and has no result: m/a TestHelperGoroutinePanics\n",
+                      result.stdout)
+        self.assertIn("go test: 1 packages, 2 failures, 0 skipped tests", result.stdout)
+        self.assertNotIn("--- PASS: TestFirst", result.stdout)
+        self.assertIn("- `m/a TestHelperGoroutinePanics` (no result)", summary)
+        self.assertIn("- a test started and has no result: m/a TestHelperGoroutinePanics", summary)
+
+    def test_test_without_result_fails_a_passing_package(self):
+        events = [go_event("run", "m/p", "TestLost"),
+                  go_event("run", "m/p", "TestLost/sub"),
+                  go_event("output", "m/p", "TestLost/sub", Output="    p_test.go:4: last line\n"),
+                  go_event("pass", "m/p", "TestLost/sub"),
+                  go_event("pass", "m/p", Elapsed=0.3)]
+        result, summary = self.report(events, "--title", "Stack run", "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("PASS      0.3s m/p", result.stdout)
+        self.assertIn("::group::FAIL (no result) m/p TestLost\n", result.stdout)
+        self.assertIn("go test: a test started and has no result: m/p TestLost\n", result.stdout)
+        self.assertNotIn("no result: m/p TestLost/sub", result.stdout)
+        self.assertIn("go test: 1 packages, 1 failures, 0 skipped tests, exit 0", result.stdout)
+        self.assertIn("Result: FAILED.", summary)
+
+    def test_paused_parallel_tests_with_results_pass(self):
+        events = [go_event("run", "m/p", "TestA"),
+                  go_event("output", "m/p", "TestA", Output="=== RUN   TestA\n"),
+                  go_event("pause", "m/p", "TestA"),
+                  go_event("run", "m/p", "TestB"),
+                  go_event("output", "m/p", "TestB", Output="=== RUN   TestB\n"),
+                  go_event("pause", "m/p", "TestB"),
+                  go_event("cont", "m/p", "TestA"),
+                  go_event("cont", "m/p", "TestB"),
+                  go_event("output", "m/p", "TestB", Output="--- PASS: TestB (0.01s)\n"),
+                  go_event("pass", "m/p", "TestB", Elapsed=0.01),
+                  go_event("output", "m/p", "TestA", Output="--- PASS: TestA (0.02s)\n"),
+                  go_event("pass", "m/p", "TestA", Elapsed=0.02),
+                  go_event("pass", "m/p", Elapsed=0.1)]
+        result, summary = self.report(events, "--fail-on-skip", "--title", "Unit run",
+                                      "--summary-file", "SUMMARY")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertNotIn("no result", result.stdout)
+        self.assertNotIn("=== RUN", result.stdout)
+        self.assertIn("go test: 1 packages, 0 failures, 0 skipped tests, exit 0", result.stdout)
+        self.assertIn("Result: PASSED.", summary)
 
     def passing(self, *packages):
         events = []
