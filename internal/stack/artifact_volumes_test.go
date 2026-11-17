@@ -8,7 +8,9 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const (
@@ -137,6 +139,94 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit runs the grow step
+// against a fake master whose /vol/grow call never answers: the fake starts a
+// child that waits on a FIFO that no process writes, and the child keeps the
+// output of the call open. Defect it catches: a master call that has no time
+// limit of its own, or that waits for the output of a child after its limit,
+// blocks pm-stack up until the caller stops it. The step must end with an
+// error that does not say that no volume grew, after exactly one grow call.
+func TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit(t *testing.T) {
+	fake := installHungGrowMaster(t, freshMasterStatus)
+	// The limit leaves room for the status read of the fake, which ends at
+	// once, and ends the grow call, which never ends.
+	rt := &runtime{root: fake, project: "pm-artifact-volumes-test", stdout: io.Discard, stderr: io.Discard,
+		masterCallLimit: 3 * time.Second}
+	done := make(chan error, 1)
+	go func() {
+		done <- ensureArtifactVolumes(context.Background(), noRecreateTestConfiguration(t), rt, true)
+	}()
+	var err error
+	// The one guard: a call that never returns fails the test. It measures no
+	// time of the call.
+	select {
+	case err = <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("the grow step did not return: the hung master call has no effective time limit")
+	}
+	const want = "artifact bucket has no writable volume: the grow request did not complete"
+	if err == nil || err.Error() != want {
+		t.Fatalf("ensureArtifactVolumes error = %v, want %q", err, want)
+	}
+	if got := recordedMasterCalls(t, fake, "grow.log"); !slices.Equal(got, []string{bucketGrowCall}) {
+		t.Fatalf("grow calls = %q, want exactly %q", got, bucketGrowCall)
+	}
+}
+
+// installHungGrowMaster writes fake python3 and docker programs and puts them
+// first on PATH. /dir/status prints the status document. /vol/grow records
+// its URL and then runs cat on a FIFO that no process writes, so the call
+// never ends and cat keeps its output open. A cleanup opens the FIFO for
+// writing once, so a waiting cat ends with the test.
+func installHungGrowMaster(t *testing.T, status string) string {
+	t.Helper()
+	directory := t.TempDir()
+	bin := filepath.Join(directory, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(directory, "grow.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if writer, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+	})
+	writeTestFile(t, filepath.Join(directory, "status"), status, 0o600)
+	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
+for argument in "$@"; do
+  url=$argument
+done
+case "$url" in
+  */dir/status)
+    cat "$FAKE_MASTER_DIR/status"
+    ;;
+  */vol/grow\?*)
+    printf '%s\n' "$url" >> "$FAKE_MASTER_DIR/grow.log"
+    cat "$FAKE_MASTER_DIR/grow.fifo"
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	writeTestFile(t, filepath.Join(bin, "docker"), `#!/bin/sh
+case "$1" in
+  info)
+    printf '%s\n' '["name=seccomp,profile=builtin"]'
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	t.Setenv("FAKE_MASTER_DIR", directory)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
+	return directory
 }
 
 // TestCheckArtifactVolumeCapacity checks the read-only fact that the start-up

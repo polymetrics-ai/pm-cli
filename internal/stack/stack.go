@@ -73,6 +73,9 @@ type runtime struct {
 	gid               string
 	stdout            io.Writer
 	stderr            io.Writer
+	// masterCallLimit is the time limit of one SeaweedFS master call. Zero
+	// means defaultMasterCallLimit.
+	masterCallLimit time.Duration
 }
 
 type imageLock struct {
@@ -1664,6 +1667,24 @@ func ensureArtifactBucket(ctx context.Context, configuration config.Configuratio
 // the admin API is not published outside that network.
 const seaweedMasterOrigin = "http://seaweed-master:9333"
 
+const (
+	// defaultMasterCallLimit bounds one compose exec call to the SeaweedFS
+	// master, from its start to the end of the process.
+	defaultMasterCallLimit = 30 * time.Second
+	// masterCallWaitDelay bounds the wait for the output of a master call
+	// after its limit kills the process. A child that keeps the output open
+	// cannot block the call longer.
+	masterCallWaitDelay = 5 * time.Second
+)
+
+// masterLimit returns the time limit of one SeaweedFS master call.
+func (rt *runtime) masterLimit() time.Duration {
+	if rt.masterCallLimit > 0 {
+		return rt.masterCallLimit
+	}
+	return defaultMasterCallLimit
+}
+
 // seaweedTopology is the part of the master's /dir/status document that
 // pm-stack reads: the volume slots and the writable volumes of each layout.
 type seaweedTopology struct {
@@ -1690,8 +1711,11 @@ func (topology seaweedTopology) writable(collection string) int {
 // seaweedMaster calls one master endpoint with curl inside the master
 // container and returns the response body. A non-2xx response fails. The
 // Compose and curl diagnostics can name the private service address and the
-// bucket, so pm-stack does not show them.
+// bucket, so pm-stack does not show them. Each call ends within its own time
+// limit (masterLimit), or earlier at the deadline of ctx.
 func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Configuration, path string, query url.Values) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, rt.masterLimit())
+	defer cancel()
 	if err := rt.resolveContainerIdentity(ctx); err != nil {
 		return nil, err
 	}
@@ -1703,6 +1727,7 @@ func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Confi
 		"exec", "-T", "seaweed-master", "curl", "-fsS", "-m", "10", target)...)
 	command.Dir = rt.root
 	command.Env = rt.composeEnvironment()
+	command.WaitDelay = masterCallWaitDelay
 	return command.Output()
 }
 
@@ -1785,6 +1810,11 @@ func startArtifactStore(ctx context.Context, configuration config.Configuration,
 // pm-stack up holds the deployment lock, and a second up finds the volumes
 // and grows nothing. pm-stack up calls it with grow before seaweed-filer
 // starts (startArtifactStore). Without grow, it only reads.
+//
+// A grow request that fails or reaches its time limit can still have grown a
+// volume, so the error does not say that no volume grew. The same pm-stack up
+// does not repeat the grow. The next pm-stack up reads the status first and
+// grows only a layout that has no writable volume.
 func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
 	layouts := []struct {
 		collection string
@@ -1808,7 +1838,7 @@ func ensureArtifactVolumes(ctx context.Context, configuration config.Configurati
 				query.Set("collection", layout.collection)
 			}
 			if _, err := rt.seaweedMaster(ctx, configuration, "/vol/grow", query); err != nil {
-				return fmt.Errorf("%s: the master did not grow a volume", layout.missing)
+				return fmt.Errorf("%s: the grow request did not complete", layout.missing)
 			}
 			grown = true
 		}
