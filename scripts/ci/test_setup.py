@@ -352,7 +352,7 @@ CHECK_BDD = ROOT / "scripts/ci/check-bdd.sh"
 # The tests of test_stack_fixture.py that hold processes without a timed pause:
 # the receipt tests of #278 and the tests that #286 adds or changes.
 FIXTURE_TESTS_WITHOUT_PAUSE = ("test_receipt_check", "test_group_signal", "test_phase_deadline",
-                               "PhaseFixture", "test_cancellation_stops_descendant")
+                               "PhaseFixture", "test_cancellation_stops_descendant", "exited_leader")
 
 
 def gherkin_caller_options(values):

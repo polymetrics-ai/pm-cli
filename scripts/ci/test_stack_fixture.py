@@ -496,6 +496,79 @@ class FixtureOwnershipTests(unittest.TestCase):
         self.assertEqual([index for index in kills if index > reaped[0]], [],
                          f"killpg after the leader was reaped: {events}")
 
+    def exited_leader(self, directory, descendant):
+        """Start a leader that exits at once and is not reaped.
+
+        With DESCENDANT, the leader first starts a member of its group that
+        opens the FIFO "hold", writes its process ID to "pid" and then
+        acknowledges on the FIFO "ack". The leader exits only after that
+        acknowledgement. The member blocks on "hold" until the test closes it.
+        Return (process, held member or None, the FIFO ends to close).
+        """
+        hold, ack, pid_file = (Path(directory) / name for name in ("hold", "ack", "pid"))
+        os.mkfifo(hold)
+        os.mkfifo(ack)
+        ends = [os.open(hold, os.O_RDWR), os.open(ack, os.O_RDWR)]
+        script = "exit 0"
+        if descendant:
+            script = ("sh -c 'exec 3<\"$0\"; echo $$ > \"$2\"; echo opened > \"$1\"; exec cat <&3 > /dev/null' "
+                      "\"$0\" \"$1\" \"$2\" & read ack < \"$1\"")
+        process = subprocess.Popen(["/bin/sh", "-c", script, str(hold), str(ack), str(pid_file)],
+                                   stdin=subprocess.DEVNULL, start_new_session=True)
+        # One bounded wait for the exit of the leader, without a reap.
+        watch = FIXTURE.ExitWatch(process.pid)
+        try:
+            self.assertTrue(watch.wait(30), "the leader did not exit")
+        finally:
+            watch.close()
+        member = FIXTURE.ExitWatch(int(pid_file.read_text())) if descendant else None
+        return process, member, ends
+
+    def test_group_signal_refusal_needs_an_empty_group(self):
+        # brahmagupta F3 at 3b6e71f: the wrapper took any refused group signal
+        # as harmless once the leader had exited. Now only Darwin, with a
+        # member list that shows no live member, makes it harmless. killpg is
+        # refused in each case, so no real signal goes to the group.
+        def refused(group, signum):
+            raise PermissionError(1, "Operation not permitted")
+
+        cases = [
+            ("zombie-only group on Darwin", False, "darwin", [], None),
+            ("zombie-only group on Linux", False, "linux", None, "refused to send SIGKILL, SIGTERM"),
+            ("live member, native platform", True, None, None, "refused to send SIGKILL, SIGTERM"),
+            ("unreadable member list on Darwin", False, "darwin", "unknown", "refused to send SIGKILL, SIGTERM"),
+        ]
+        for name, descendant, system, members, message in cases:
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                process, member, ends = self.exited_leader(directory, descendant)
+                try:
+                    with contextlib.ExitStack() as stack:
+                        stack.enter_context(mock.patch.object(FIXTURE.os, "killpg", refused))
+                        if system:
+                            stack.enter_context(mock.patch.object(FIXTURE.sys, "platform", system))
+                        if members is not None:
+                            stack.enter_context(mock.patch.object(
+                                FIXTURE, "live_group_members", create=True,
+                                return_value=None if members == "unknown" else members))
+                        if message is None:
+                            FIXTURE.terminate_process_group(process)
+                        else:
+                            with self.assertRaisesRegex(FIXTURE.FixtureError, message):
+                                FIXTURE.terminate_process_group(process)
+                    self.assertIsNotNone(process.returncode, "the exited leader was not reaped")
+                finally:
+                    if process.returncode is None:
+                        process.wait()
+                    for end in ends:
+                        os.close(end)
+                    if member is not None:
+                        # One wait for the exit of the held member, which reads
+                        # the end of the closed FIFO.
+                        try:
+                            self.assertTrue(member.wait(30), "the group member did not exit")
+                        finally:
+                            member.close()
+
     def test_group_signal_refuses_a_reaped_leader(self):
         # The process group ID of a reaped leader can name another group, so
         # no signal goes to it.
