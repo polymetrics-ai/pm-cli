@@ -516,9 +516,24 @@ type serverIntegrationFixture struct {
 	foreignConnectionID string
 	providerAccountID   string
 	accountWitness      string
+
+	// devicePollInterval is the optional identity.device_poll_interval
+	// value of the configuration. The configuration has no such key when it
+	// is empty.
+	devicePollInterval string
 }
 
-func newServerIntegrationFixture(t *testing.T) *serverIntegrationFixture {
+// serverIntegrationOption sets one optional input of the fixture before the
+// fixture loads its configuration.
+type serverIntegrationOption func(*serverIntegrationFixture)
+
+// withDevicePollInterval adds identity.device_poll_interval with this string
+// value to the fixture configuration.
+func withDevicePollInterval(value string) serverIntegrationOption {
+	return func(fixture *serverIntegrationFixture) { fixture.devicePollInterval = value }
+}
+
+func newServerIntegrationFixture(t *testing.T, options ...serverIntegrationOption) *serverIntegrationFixture {
 	t.Helper()
 	oidcFixture := newIntegrationOIDCFixture(t)
 	runtimeDSN, migratorDSN := loadIntegrationStoreCredentials(t)
@@ -550,6 +565,9 @@ func newServerIntegrationFixture(t *testing.T) *serverIntegrationFixture {
 	fixture.operator = contract.Principal{OrgID: fixture.scope.OrgID, PrincipalID: "operator-" + suffix, Kind: contract.PrincipalUser}
 	fixture.foreignUser = contract.Principal{OrgID: fixture.scope.OrgID, PrincipalID: "foreign-user-" + suffix, Kind: contract.PrincipalUser}
 	fixture.grantTarget = contract.Principal{OrgID: fixture.scope.OrgID, PrincipalID: "grant-target-" + suffix, Kind: contract.PrincipalUser}
+	for _, option := range options {
+		option(fixture)
+	}
 
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -692,6 +710,16 @@ func (fixture *serverIntegrationFixture) materializeOperatorSecrets(t *testing.T
 
 func (fixture *serverIntegrationFixture) loadConfiguration(t *testing.T, listen string) config.Configuration {
 	t.Helper()
+	identity := map[string]any{
+		"issuer":              fixture.oidc.issuer,
+		"client_id":           integrationOIDCClientID,
+		"client_secret_ref":   integrationSecretReference,
+		"step_up_maximum_age": "2m",
+		"ca_ref":              integrationSecretReference,
+	}
+	if fixture.devicePollInterval != "" {
+		identity["device_poll_interval"] = fixture.devicePollInterval
+	}
 	documentBytes, err := json.Marshal(map[string]any{
 		"schema_version": "1",
 		"deployment_id":  fixture.deploymentID,
@@ -729,13 +757,7 @@ func (fixture *serverIntegrationFixture) loadConfiguration(t *testing.T, listen 
 			"credential_ref":     "secret://fixture/artifacts",
 			"attempt_key_policy": "unique_immutable",
 		},
-		"identity": map[string]any{
-			"issuer":              fixture.oidc.issuer,
-			"client_id":           integrationOIDCClientID,
-			"client_secret_ref":   integrationSecretReference,
-			"step_up_maximum_age": "2m",
-			"ca_ref":              integrationSecretReference,
-		},
+		"identity": identity,
 		"encryption": map[string]any{
 			"wrapping_key_ref": integrationSecretReference,
 		},

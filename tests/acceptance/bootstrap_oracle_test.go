@@ -8,11 +8,16 @@ package acceptance
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/polymetrics-ai/pm-cli/tests/keycloak"
 )
 
 // writeOracleSecrets writes the members into a new secrets directory and
@@ -206,6 +211,11 @@ func TestBootstrapFailureMessageShowsNoRawOutput(t *testing.T) {
 	}
 }
 
+// oracleAdminSubject is the admin subject of the oracle input: a fixed value
+// in the form of a Keycloak user ID. The scope check compares it only with
+// the oracle rows, so no Keycloak user has it.
+const oracleAdminSubject = "00000000-0000-4000-8000-0000000000a1"
+
 // oracleScope returns a run and the one-scope reading of a correct
 // bootstrap of that run. membership changes the membership row.
 func oracleScope(t *testing.T, membership func(map[string]any)) (*bootstrapRun, bootstrapState) {
@@ -215,7 +225,7 @@ func oracleScope(t *testing.T, membership func(map[string]any)) (*bootstrapRun, 
 		WorkspaceID:      "acceptance-workspace-oracle",
 		WorkspaceName:    "Acceptance workspace oracle",
 		AdminIssuer:      "https://issuer.invalid",
-		AdminSubject:     bootstrapAdminSubject,
+		AdminSubject:     oracleAdminSubject,
 		ProviderAccounts: []bootstrapProviderAccount{{ConnectorID: "postgres", DisplayName: "Acceptance postgres account"}},
 	}
 	run := &bootstrapRun{deployment: &deployment{deploymentID: "pm-acceptance-oracle"}, input: input}
@@ -293,14 +303,36 @@ func TestBootstrapScopeCheckRefusesNonAdminMembership(t *testing.T) {
 	}
 }
 
+// oracleNoNetwork refuses every request. The oracle Keycloak admin client
+// uses it, so the bundle checks cannot reach a Keycloak.
+type oracleNoNetwork struct{}
+
+func (oracleNoNetwork) RoundTrip(*http.Request) (*http.Response, error) {
+	return nil, errors.New("the bootstrap oracle sends no Keycloak request")
+}
+
 // oracleBundleScenario returns a bootstrap scenario with one deployment that
-// has not written its configuration. It starts no process and needs no
-// stack.
+// has not written its configuration. It starts no process, needs no stack and
+// sends no request. The configuration step reads only the issuer of the admin
+// client and the client ID of the deployment identity. The oracle admin
+// client has a fixed issuer with a reserved host name and a transport that
+// refuses every request. The deployment identity holds only a client ID. Both
+// exist only in these developer checks.
 func oracleBundleScenario(t *testing.T) (*bootstrapScenario, *deployment) {
 	t.Helper()
 	root, err := filepath.Abs(filepath.Join("..", ".."))
 	if err != nil {
 		t.Fatalf("resolve the repository root: %v", err)
+	}
+	admin, err := keycloak.New(keycloak.Config{
+		Issuer:       "https://issuer.invalid/realms/pm-oracle",
+		ClientID:     "pm-oracle-admin",
+		ClientSecret: "pm-oracle-unused",
+		RequestLimit: time.Second,
+		Transport:    oracleNoNetwork{},
+	})
+	if err != nil {
+		t.Fatalf("make the oracle Keycloak admin client: %v", err)
 	}
 	d := &deployment{
 		dir:          t.TempDir(),
@@ -308,11 +340,14 @@ func oracleBundleScenario(t *testing.T) (*bootstrapScenario, *deployment) {
 		listen:       "127.0.0.1:1",
 		origin:       "https://127.0.0.1:2",
 		namespace:    "oracle",
-		identity:     &laneIdentityProvider{issuer: "https://127.0.0.1:3"},
-		stack: stackInputs{document: map[string]json.RawMessage{
-			"postgres": json.RawMessage(`{"endpoint_ref":"secret://operator/postgres"}`),
-			"temporal": json.RawMessage(`{"namespace":"stack"}`),
-		}},
+		identity:     &keycloak.Identity{ClientID: "pm-acceptance-oracle"},
+		stack: stackInputs{
+			document: map[string]json.RawMessage{
+				"postgres": json.RawMessage(`{"endpoint_ref":"secret://operator/postgres"}`),
+				"temporal": json.RawMessage(`{"namespace":"stack"}`),
+			},
+			identity: stackIdentity{admin: admin},
+		},
 	}
 	s := &bootstrapScenario{shared: &stackScenario{harness: &stackHarness{bins: binaries{root: root}}, deployment: d}}
 	return s, d

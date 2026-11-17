@@ -168,6 +168,44 @@ func TestProvisionSendsOneClientAndOneUserInRequestBodies(t *testing.T) {
 	}
 }
 
+// Defect: a subject that is the client ID, a part of the Location other than
+// the user ID, or a subject that needs another admin request.
+func TestSubjectIsTheIDOfTheCreatedUser(t *testing.T) {
+	const clientID, userID = "6f0d2c1a-0000-4000-8000-00000000c11e", "3c9e5b7d-0000-4000-8000-0000000005e7"
+	answers := keycloakAnswers(nil)
+	r := &recorder{answer: func(method, target string) (int, http.Header, string) {
+		switch method + " " + target {
+		case "POST " + testAdmin + "/clients":
+			return 201, http.Header{"Location": {target + "/" + clientID}}, ""
+		case "POST " + testAdmin + "/users":
+			return 201, http.Header{"Location": {target + "/" + userID}}, ""
+		}
+		return answers(method, target)
+	}}
+	admin := newTestAdmin(t, r)
+	var unprovisioned *Identity
+	if subject := unprovisioned.Subject(); subject != "" {
+		t.Fatalf("the subject of no identity is %q, want empty", subject)
+	}
+	if subject := (&Identity{}).Subject(); subject != "" {
+		t.Fatalf("the subject of an identity with no user is %q, want empty", subject)
+	}
+	identity, err := admin.Provision(testCallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := len(r.requests)
+	if subject := identity.Subject(); subject != userID {
+		t.Fatalf("Subject() = %q, want the user ID %q", subject, userID)
+	}
+	if len(r.requests) != sent {
+		t.Fatalf("Subject sent %d requests, want none", len(r.requests)-sent)
+	}
+	if text := fmt.Sprint(identity); strings.Contains(text, identity.Password) || strings.Contains(text, identity.ClientSecret) {
+		t.Fatalf("the identity prints a secret: %q", text)
+	}
+}
+
 // Defect: a cleanup that stops at the first failed deletion, hides a failed
 // deletion, or prints a secret that the answer echoes (Part 5).
 func TestRemoveReportsEachFailedDeletion(t *testing.T) {
