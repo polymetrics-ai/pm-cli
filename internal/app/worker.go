@@ -2740,12 +2740,17 @@ func projectKnownUnsentWorkerCancellation(
 		aggregate.EffectSummary.Total() != aggregate.EffectSummary.Unsent {
 		return contract.RunRecord{}, errors.New("cancelled run contains an effect that is not known unsent")
 	}
-	cancelled, err := current.Transition(contract.RunStateCancelled, "cancel_requested", observedAt)
+	// The stored record can keep an unknown count from an earlier projection
+	// after a definitive-unsent settlement changed the ledger. Install the
+	// ledger summary first, because a terminal transition refuses a positive
+	// unknown count. One transition keeps the revision step at one.
+	base := current
+	base.EffectSummary = aggregate.EffectSummary
+	base.UnknownEffectCount = 0
+	cancelled, err := base.Transition(contract.RunStateCancelled, "cancel_requested", observedAt)
 	if err != nil {
 		return contract.RunRecord{}, err
 	}
-	cancelled.EffectSummary = aggregate.EffectSummary
-	cancelled.UnknownEffectCount = 0
 	cancelled.OrchestrationCondition = contract.OrchestrationCancelled
 	cancelled.ProjectionObservedAt = observedAt
 	if err := cancelled.Validate(); err != nil {
