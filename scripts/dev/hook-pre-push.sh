@@ -21,14 +21,19 @@ unit=$(CGO_ENABLED=1 pgo list ./... | sed "s#^$module#.#" | drop_stack_packages)
 printf '%s\n' 'pre-push: go test (packages that need no stack)'
 # shellcheck disable=SC2086
 CGO_ENABLED=1 pgo test -count=1 -timeout 20m $unit
-set --
 if [ "$(uname -s)" = Darwin ]; then
-  # The host runs every check. The names come from the script.
   pm_select_python pre-push || exit 1
-  checks=$(sh scripts/ci/check-docs.sh --list)
-  # Word splitting of the check names is intended.
-  # shellcheck disable=SC2046,SC2086
-  set -- $(pm_host_checks pre-push Darwin $checks)
 fi
+# The hook ran the packages of the `unit` check above, so pm_push_checks
+# leaves `unit` out on every OS.
+checks=$(pm_push_checks "$(uname -s)")
+# An empty list would make check-docs.sh run every check, `unit` too.
+if [ -z "$checks" ]; then
+  printf '%s\n' 'pre-push: check-docs.sh --list gave no check' >&2
+  exit 1
+fi
+# Word splitting of the check names is intended.
+# shellcheck disable=SC2086
+set -- $checks
 printf '%s\n' 'pre-push: check-docs.sh (the checks job)'
 sh scripts/ci/check-docs.sh "$@"
