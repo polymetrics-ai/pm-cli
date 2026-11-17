@@ -24,6 +24,7 @@ func TestFeatures(t *testing.T) {
 		Name: "pm",
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
 			registerCLISteps(sc, bins)
+			registerCanaryN2Steps(sc)
 		},
 		Options: &godog.Options{
 			Format:   "pretty",
