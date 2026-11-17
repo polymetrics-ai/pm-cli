@@ -35,7 +35,7 @@ On macOS, the hooks run on the host. The `pre-push` hook, and a `pre-commit` hoo
 
 The hooks select the Python interpreter for `check-docs.sh`. They try `python3`, `python3.13`, `python3.12` and `python3.11` on `PATH`, in that order. They select the first one that is Python 3.11 or later and imports the four modules. The hook prints the version of that interpreter and gives its name to `check-docs.sh` in `PMCLI_PYTHON`. If no interpreter qualifies, the hook prints the prerequisite and stops the commit or push. The hook does not skip the `python` check. Other Python commands still use the first `python3` on `PATH`. Examples are the secret scan, `generate.sh` and `check-boundaries.sh`. CI ignores `PMCLI_PYTHON` and uses `python3`.
 
-The macOS hooks skip one check: `image`. It checks the keyring layer of the job image, and a macOS host is not that image. The `pre-push` hook runs the unit packages and the other six checks of the CI `checks` job. It writes a notice to stderr that it left out `image`. The `checks` job and the Linux hooks run `image`.
+The macOS hooks skip one check: `image`. It checks the keyring layer of the job image, and a macOS host is not that image. The `pre-push` hook runs the unit packages and the other six checks of the CI `checks` job. It writes a notice to stderr that it left out `image`. The `checks` job, the `bdd` job and the Linux `pre-push` hook run `image`. The `pre-commit` hook selects only `setup`, so it does not run `image` on any OS.
 
 ## Required developer secret scans
 
@@ -66,38 +66,61 @@ The `bdd` workflow runs on every push to any branch of this repository by the ow
 The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci/check-bdd.sh) in the pinned job image. The script first runs `check-ci-image.py`, so the required job checks the keyring layer of its own image (see [The keyring layer](#the-keyring-layer)). A failure fails the job. The script then runs two Go test runs. Each run gets its own job-owned dependency stack:
 
 1. The stack run: the Go developer tests of the stack packages. The script starts a stack and runs `go test -json -p 1 -count=1 -timeout 15m` of these packages. The packages share one schema, its roles and one Temporal history, so they run one package at a time.
-2. The Gherkin run: the script starts a fresh stack and runs `go test ./tests/acceptance/...`. No stack-run test runs on this stack. Strict godog fails the run on an undefined or pending step. A failed suite is never retried.
+2. The Gherkin run: the script starts a fresh stack and runs `go test -json -p 1 -count=1 -timeout 40m ./tests/acceptance/...`. No stack-run test runs on this stack. Strict godog fails the run on an undefined or pending step. A failed suite is never retried. Before the stack run, the script takes the intended set of the Gherkin run from `go list ./tests/acceptance/...`. It uses the same pattern and the same environment as the run. The report checks the set with `--expect`. If that selection fails or selects no package, the Gherkin run does not run, the log says so, and the job fails.
 
-The Gherkin run also runs when the stack run fails, and the stack run does not stop for a Gherkin failure. The job fails when either run fails. The log shows two fixture starts, one for each run. The script compares the toolchain identity before the first run and after the last run.
+The Gherkin run also runs when the stack run fails, and the stack run does not stop for a Gherkin failure. The job fails when either run fails. A stack run command that ends on a signal (exit 129, 130 or 143) is a stack run failure. The log says so, and the receipt check and the Gherkin run still run. A job cancellation is different. The container init passes the signal to `check-bdd.sh`, which sets no trap, and `sh` in the CI image (dash) stops the script at once. So a cancelled script does not reach the Gherkin run. The log shows two fixture starts, one for each run. The script compares the toolchain identity before the first run and after the last run.
 
 The stack run is a developer check. It is not acceptance proof of PM behavior. A failed test fails the run. A test that calls `t.Skip` also fails the run, and the log and the job summary name it. Before the stack run, the script builds `.cache/bin/pm-api-generate` from the candidate and unsets `PM_API_GENERATE`, because the `internal/api` tests use the generator at that default path. Each step line of the log shows the seconds since the script started, so the log shows the order of the phases.
 
 ### Time budget of the `bdd` job
 
-The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops the go test command of each run at an absolute time, and the run still reports. The fixture start before that command and the fixture cleanup after it are outside the deadlines. `--timeout 1140` also stops each go test command 19 minutes after its start, before the 20-minute command limit of `with-stack-fixture.py`. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When a command ends, the reporter stops each process that is left in its process group. The allowances are upper bounds of the phases of `with-stack-fixture.py`:
+The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops the go test command of each run at an absolute time, and the run still reports. The fixture start before that command and the fixture cleanup after it are outside the deadlines. `--timeout 1140` also stops each go test command 19 minutes after its start, before the 20-minute command limit of `with-stack-fixture.py`. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When the reporter itself receives `SIGTERM`, `SIGINT` or `SIGHUP`, it passes the signal to the process group of the command. It waits up to 30 seconds for the command to stop, then sends `SIGKILL`. It prints `the reporter received SIG... and stopped the command` and exits with 128 plus the signal number. This also happens when the command exits 0. When a command ends, the reporter stops each process that is left in its process group. It sends that `SIGKILL` before it reaps the command, so the process group ID cannot name another group. It waits for the end of the command with a pidfd (Linux) or a kqueue process filter (macOS), which do not reap it. The allowances below are the expected times of the phases of `with-stack-fixture.py`. The fixture start and cleanup allowances are not hard bounds. Each Docker call has its own 30-second limit, but no phase has one deadline for all its calls (see "Slow Docker calls" below):
 
 | Phase | Allowance | Source of the bound |
 | --- | --- | --- |
 | Prelude: tool builds and package selection | 8 minutes or less (assumed) | none |
-| Fixture start | 12 minutes | generator 60 s, `pm-stack up` 600 s, 30-second Docker calls |
-| Fixture cleanup | 6 minutes | drain 120 s, container stop 75 s, cleanup helper 60 s, 30-second Docker calls |
-| Report, receipt move, toolchain check | 1 minute | none |
+| Fixture start | 12 minutes | generator 60 s, `pm-stack up` 600 s, 30-second Docker calls. Worst case with slow calls: 29 minutes |
+| Fixture cleanup | 6 minutes | drain 120 s, container stop 75 s, cleanup helper 60 s, 30-second Docker calls. Worst case with slow calls: 57 minutes 15 seconds |
+| Report, receipt check and move, toolchain check | 1 minute | none. The receipt check only reads the manifest and makes no Docker call |
 
 The stack go test command stops 20 minutes after the start. The Gherkin go test command stops 39.5 minutes after the start. On the longest path, the stack run ends by +20.5 minutes, its cleanup by +26.5, the receipt check by +27.5 and the Gherkin fixture start by +39.5. The Gherkin run ends by +40, its cleanup by +46 and the toolchain check by +47. So the script ends 47 minutes after the start in the worst case.
 
 The script keeps no reserve of Gherkin test time (`gherkin_minimum` is 0). On one path, the Gherkin run can get no test time: the stack run reaches its deadline, the stack cleanup uses its full 6 minutes and the Gherkin fixture start uses its full 12 minutes. The Gherkin run then reports that it stopped at its deadline, and the job fails. E4 is narrowed on that path. On a normal run, the Gherkin go test command keeps its own 19-minute limit (`--timeout 1140`).
 
+#### Slow Docker calls
+
+The bound of +47 minutes holds only while each fixture phase stays inside its allowance. In `with-stack-fixture.py`, each Docker call has its own 30-second limit, and the phases make their calls one after the other. So slow calls that each succeed inside 30 seconds can make a phase much longer than its allowance:
+
+- One resource discovery (`discover_resources`) makes 13 list calls and up to 12 inspect calls: up to 25 calls, or 750 seconds.
+- Fixture start, when each call succeeds just inside its limit: 1,740 seconds (29 minutes). The parts are:
+  - the daemon check, 30 s
+  - the generator, 60 s
+  - the discovery before the start, on an empty project: 13 calls, 390 s
+  - `pm-stack up`, 600 s
+  - the discovery after the start: 22 calls, 660 s
+- Fixture cleanup, when each call succeeds just inside its limit: 3,435 seconds (57 minutes 15 seconds). The parts are:
+  - the daemon check, 30 s
+  - five discoveries: 750, 750, 420, 390 and 390 s
+  - the helper stop and removal, 60 s
+  - the drain, 120 s
+  - the container stop, 75 s, and up to 10 container removals, 300 s
+  - the network removal, 30 s
+  - the PostgreSQL cleanup helper, 120 s
+- A call that reaches its limit ends the phase with a failure, after at most 20 more seconds to stop its process group.
+
+When a phase is slower than its allowance, the absolute deadlines still stop each go test command. The stack run or the Gherkin run can then get no test time, and it reports that it stopped at its deadline. The bdd step can also reach its 50-minute limit. Then the step fails, and so the job fails. A job whose step reaches the limit never passes. The frozen cleanup step (`if: always()`, 6 minutes) still runs and calls `with-stack-fixture.py --cleanup`. With the same slow calls, that cleanup can also need more than its 6 minutes, and fixture resources can then stay on the runner host. This is E4 exception 4. A shared deadline for each whole fixture phase is a required item of the #286 design.
+
 The log has one `starting a fresh job-owned stack` line before each fixture start. A cold image build happens in the same step before `check-bdd.sh` starts, and this budget does not include it. On that path, the worst case can pass the step limit, and the Gherkin run may not report. The frozen cleanup step then still removes the live fixture (see the next section).
 
 ### Cleanup after an abrupt stop
 
-The frozen cleanup step of `bdd.yml` stops the job container and runs `with-stack-fixture.py --cleanup` on one manifest path: `$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json`. The wrapper writes its manifest at that path before it lets Docker start anything. So each live fixture is always under that path, and the cleanup step removes it after an abrupt stop. The stack run uses the path first. When its fixture is clean, the manifest stays as a receipt in the phase `cleaned`. `check-bdd.sh` then moves the receipt to `pmcli-bdd-<run>-<attempt>.stack-run-receipt.json`. The rename is in one directory, so the path holds either the cleaned receipt or no file, and no fixture is live. The Gherkin run then writes a new manifest at the same path.
+The frozen cleanup step of `bdd.yml` stops the job container and runs `with-stack-fixture.py --cleanup` on one manifest path: `$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json`. The wrapper writes its manifest at that path before it lets Docker start anything. So each live fixture is always under that path, and the cleanup step removes it after an abrupt stop. The stack run uses the path first. When its fixture is clean, the manifest stays as a receipt in the phase `cleaned`. `check-bdd.sh` checks the receipt with `with-stack-fixture.py --check-receipt`, which only reads the manifest, checks the phase `cleaned` and makes no Docker call. It then moves the receipt to `pmcli-bdd-<run>-<attempt>.stack-run-receipt.json`. The rename is in one directory, so the path holds either the cleaned receipt or no file, and no fixture is live. The Gherkin run then writes a new manifest at the same path.
 
-If the stack fixture is not clean, its manifest stays at the path for the cleanup step. The Gherkin run does not run, the log says so with the reason, and the job fails. Both runs report only on the other paths.
+If the stack fixture is not clean, the receipt check fails, and the manifest stays at the path for the cleanup step. `check-bdd.sh` does not repeat the cleanup. The Gherkin run does not run, the log says so with the reason, and the job fails. Both runs report only on the other paths.
 
 [go-test-report.py](../../scripts/ci/go-test-report.py) `--scenarios` lists each scenario with its result and the godog totals (`N scenarios (...)`, `N steps (...)`). It does this also when the suite passes. The list is at the end of the `bdd` job log and in the job summary on the workflow run page. A passing run fails when the godog scenario total is missing or differs from the number of scenarios in the test stream.
 
-For the stack run and the unit run, `go-test-report.py --title` adds a separate section to the job summary. The section has the Go test totals, each package with its result and time, each failed or skipped test and each problem. `--expect` gives the import paths that the run selected from `go list ./...` before the run. The log and the summary give the size of this intended set and the number of package results. Each one must have exactly one package result. A missing, duplicated or unexpected package result, an empty stream or a line that is not a JSON event fails the run. The two runs use no `-run` and no build-tag filter. `--expect` refuses a command with a test filter (`-run`, `-skip`, `-list`, `-short`, `-failfast`, `-tags`, also in `GOFLAGS`) or without `-count=1`. A nonzero exit of the command, of the fixture wrapper or of its cleanup fails the run. The `bdd` job summary keeps this section apart from the Gherkin section with the godog totals. With `--fail-on-skip`, a skipped test fails the run. A package with no test files shows as `SKIP (no test files)`. That is not a test skip, and it does not fail the run.
+For the stack run and the unit run, `go-test-report.py --title` adds a separate section to the job summary. The section has the Go test totals, each package with its result and time, each failed or skipped test and each problem. The Gherkin run has no `--title`, so its scenario section lists each test with no result and each problem. `--expect` gives the import paths that the run selected from `go list` before the run. The log and the summary give the size of this intended set and the number of package results. Each one must have exactly one package result. A missing, duplicated or unexpected package result, an empty stream or a line that is not a JSON event fails the run. A test or subtest can start (a `run` event) and have no result (no `pass`, `fail` or `skip` event). Such a test also fails the run, also in a package that passes. An example is a test whose goroutine panics: the test binary exits, and the panic output belongs to that test. The log prints the test as `FAIL (no result)` with its output, the problem list names it, and the job summary lists it. A test that pauses and continues, and then gets a result, is not such a test. The two runs use no `-run` and no build-tag filter. `--expect` refuses a command with a test filter (`-run`, `-skip`, `-list`, `-short`, `-failfast`, `-tags`) in any spelling: `-name`, `--name` or `-test.name`, with `=value` or with the value as the next word, also in `GOFLAGS`. It also refuses `-args`. The command and `GOFLAGS` together must set the test count exactly once, to 1 (`-count=1`). A nonzero exit of the command, of the fixture wrapper or of its cleanup fails the run. The `bdd` job summary keeps this section apart from the Gherkin section with the godog totals. With `--fail-on-skip`, a skipped test fails the run. A package with no test files shows as `SKIP (no test files)`. That is not a test skip, and it does not fail the run.
 
 A new push to a working branch cancels the older run for that branch. Runs on `main` are never cancelled. A force-push is admitted on a working branch and refused on `main`.
 
@@ -202,27 +225,39 @@ snapshot, with no recommended packages: 72 packages, 113,958 KiB (about
 111 MiB) by their `Installed-Size` fields.
 [keyring-packages.txt](../../build/ci/keyring-packages.txt) records each
 package that the layer installs, with its version. The layer starts no
-process. A job harness starts `/usr/bin/dbus-daemon` with its own
+service for a job. During the image build, package scripts run install
+commands, for example `systemd-tmpfiles --create` in the postinst of
+`systemd`. A job harness starts `/usr/bin/dbus-daemon` with its own
 configuration and no service directory, and then `/usr/bin/gnome-keyring-daemon`.
 
 The layer gives these guarantees. The `image` check verifies each one in the
 image, in the `checks` job and at the start of the required `bdd` job:
 
-- `dbus-x11` is not installed, and no `dbus-launch` file is on a binary path.
+- `dbus-x11` is not installed. No file or link named `dbus-launch` is in a
+  directory of the image `PATH` or of the runtime `PATH`, or anywhere that the
+  privilege walk reads.
 - No D-Bus service file activates `org.freedesktop.secrets` or starts
   `gnome-keyring-daemon`. The layer removes the three service files of
-  `gnome-keyring`.
-- On the whole root file system of the image (one device, as `find -xdev`),
-  no file has a file capability. The setuid and setgid files are exactly the
+  `gnome-keyring`. The check follows symlinked service directories, and it
+  fails on a service directory that it cannot read.
+- The privilege walk reads the root file system of the image. It stops at a
+  directory on another device, as `find -xdev` does. It still scans regular
+  files that are mount points, and directory mounts on the same device. No
+  file that it reads has a file capability. The setuid and setgid files are exactly the
   12 files of the Ubuntu base in
   [privileged-files.txt](../../build/ci/privileged-files.txt), with their mode
   and owner. The `dbus` package makes `dbus-daemon-launch-helper` setuid root
   through `dpkg-statoverride`. The layer replaces that statoverride with mode
   `0754`. The check runs as the job user, so it cannot read some directories.
-  Each of them must be a recorded `closed` directory whose mode denies read or
-  search to others.
-- Each recorded package has its recorded version, and both daemons print
-  their version.
+  A directory that the job user can search but cannot list fails, because the
+  job user can run a file in it. Each directory that the job user cannot
+  search must be a recorded `closed` directory whose mode denies search to
+  others.
+- Each recorded package has its recorded version. An installed package that
+  is not in the record does not fail the check. The privilege walk covers such
+  a package only for its privileged files.
+- The first line of `dbus-daemon --version` and `gnome-keyring-daemon
+  --version` is exactly the version line of the recorded version.
 
 A change to the layer or to the snapshot changes the record and the native
 profile in the same commit.

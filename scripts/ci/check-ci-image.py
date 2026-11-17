@@ -4,25 +4,41 @@
 The `image` check of scripts/ci/check-docs.sh and scripts/ci/check-bdd.sh run
 this script inside the pinned job image (scripts/ci/in-ci-image.sh). Outside a
 container it fails, because the host is not the image. It starts no bus and no
-keyring daemon.
+keyring service. It runs only dpkg-query and `--version` of the two daemons.
 
 The check fails when one of these items is false:
 - Each package of build/ci/keyring-packages.txt is installed at its version.
-- dbus-x11 is not installed, and no dbus-launch file is on a binary path.
+- dbus-x11 is not installed. No file or link named dbus-launch is in a
+  binary directory, in a directory of the runtime PATH, or anywhere in the
+  whole-root walk below. The runtime PATH must be set and must have no empty
+  entry: each process reads an empty entry as its own current directory, so
+  the check cannot know which directory that entry names.
 - /usr/bin/dbus-daemon and /usr/bin/gnome-keyring-daemon are executable
   regular files of the packages dbus-daemon and gnome-keyring.
 - No D-Bus service file names org.freedesktop.secrets or starts
-  gnome-keyring-daemon.
+  gnome-keyring-daemon. The walk of the service directories follows directory
+  symlinks, reads each resolved directory once, and fails on a directory that
+  it cannot read.
 - On the root file system of the image (one device, as `find -xdev`), no file
   has a file capability (the security.capability extended attribute), and the
   setuid and setgid regular files are exactly the entries of
-  build/ci/privileged-files.txt, with their mode and owner. Each directory
-  that the job user cannot read or search is a recorded closed directory, and
-  each recorded closed directory denies read or search to others by its mode.
-  The mode test does not depend on the user ID of the job. Each difference is
+  build/ci/privileged-files.txt, with their mode and owner. A directory that
+  the job user can search but the walk cannot list fails, because the job user
+  can run a file in it by its name. Each directory that the job user cannot
+  search is a recorded closed directory, and each recorded closed directory
+  denies search to others by its mode. The job user must not be able to
+  restore access to a directory that the walk cannot read: the job user must
+  not own it, and the effective capability set (CapEff) of the job process
+  must be empty, because several capabilities can restore access. The access
+  tests use
+  the effective access of the job user (owner, group, other and ACLs), and the
+  mode test does not depend on the user ID of the job. Each difference is
   printed.
 - `dbus-daemon --version` and `gnome-keyring-daemon --version` exit with code 0
-  and print the upstream version of the recorded package.
+  within VERSION_TIMEOUT seconds, and the first line of their output is
+  exactly the version line with the upstream version of the recorded package.
+  The check runs the daemons only when every check above passed. A version
+  failure reports the exit status and fixed text, never the daemon output.
 
 scripts/ci/test_ci_image.py tests the fail paths with fixtures. That test is a
 developer check, not acceptance proof.
@@ -41,13 +57,23 @@ BINARIES = {"/usr/bin/dbus-daemon": "dbus-daemon",
             "/usr/bin/gnome-keyring-daemon": "gnome-keyring"}
 ABSENT_PACKAGES = ("dbus-x11",)
 ABSENT_FILE = "dbus-launch"
-BINARY_DIRECTORIES = ("/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin",
-                      "/bin", "/sbin", "/usr/libexec", "/opt/pmcli/bin")
+# The image PATH (build/ci/Dockerfile ENV PATH) and /usr/libexec. The runtime
+# PATH is added when the check runs.
+BINARY_DIRECTORIES = ("/opt/pmcli/venv/bin", "/opt/pmcli/bin", "/usr/local/sbin", "/usr/local/bin",
+                      "/usr/sbin", "/usr/bin", "/sbin", "/bin", "/usr/libexec")
 SERVICE_DIRECTORIES = ("/usr/share/dbus-1", "/usr/local/share/dbus-1", "/etc/dbus-1")
 SECRETS_NAME = "org.freedesktop.secrets"
 KEYRING_DAEMON = "gnome-keyring-daemon"
 CAPABILITY = "security.capability"
 COMMAND_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C"}
+# The first line that `--version` prints, from the format strings in the
+# binaries of the snapshot packages: "D-Bus Message Bus Daemon %s" in
+# dbus-daemon 1.14.10-4ubuntu4.1 and "gnome-keyring-daemon: %s" in
+# gnome-keyring 46.1-2ubuntu0.2.
+VERSION_LINES = {"dbus-daemon": "D-Bus Message Bus Daemon {}",
+                 "gnome-keyring": "gnome-keyring-daemon: {}"}
+VERSION_TIMEOUT = 10
+PROCESS_STATUS = "/proc/self/status"
 
 failures = []
 
@@ -92,7 +118,7 @@ def read_privileged(path=PRIVILEGED):
 
     A `setid MODE UID:GID PATH` line records a regular file with its octal mode
     (with the setuid and setgid bits) and its numeric owner. A `closed PATH`
-    line records a directory whose mode denies read or search to others.
+    line records a directory whose mode denies search to others.
     """
     files, closed = {}, set()
     for number, fields in content_lines(path):
@@ -119,8 +145,34 @@ def installed_packages():
     return packages
 
 
-def check_packages(record, installed, binary_directories=BINARY_DIRECTORIES):
+def launcher_directories():
+    """Return BINARY_DIRECTORIES and each non-empty entry of the runtime PATH.
+
+    check_runtime_path fails on an empty entry, so this list has no entry for it.
+    """
+    runtime = [entry for entry in os.environ.get("PATH", "").split(":") if entry]
+    return tuple(dict.fromkeys((*BINARY_DIRECTORIES, *runtime)))
+
+
+def check_runtime_path():
+    """Fail when the runtime PATH is not set or has an empty entry.
+
+    Each process reads an empty entry (leading, trailing or `::`) as its own
+    current directory when it runs, and an unset PATH gives the same result.
+    So the check cannot name the directory that such an entry searches.
+    """
+    path = os.environ.get("PATH")
+    if path is None:
+        fail("the runtime PATH is not set")
+    elif "" in path.split(":"):
+        fail("the runtime PATH has an empty entry")
+
+
+def check_packages(record, installed, binary_directories=None):
     start = len(failures)
+    if binary_directories is None:
+        check_runtime_path()
+        binary_directories = launcher_directories()
     for name, version in record.items():
         have = installed.get(name)
         if have is None:
@@ -157,8 +209,24 @@ def check_binaries():
 
 def check_activation(directories=SERVICE_DIRECTORIES):
     start, count = len(failures), 0
+    visited = set()
+
+    def unreadable(error):
+        fail(f"{error.filename} cannot be read: {error.strerror}")
+
     for directory in directories:
-        for current, _, names in os.walk(directory):
+        # A service root that does not exist holds no service file. A link
+        # that points nowhere is not skipped: the walk reports it.
+        if not os.path.lexists(directory):
+            continue
+        for current, subdirectories, names in os.walk(directory, onerror=unreadable, followlinks=True):
+            # Follow directory symlinks, so a symlinked service directory is
+            # read. Read each resolved directory once, so a symlink loop ends.
+            resolved = os.path.realpath(current)
+            if resolved in visited:
+                subdirectories[:] = []
+                continue
+            visited.add(resolved)
             for name in names:
                 if not name.endswith(".service"):
                     continue
@@ -190,34 +258,52 @@ def read_capability(path):
     return True
 
 
+def can_access(path, mode):
+    """Test the effective access of the job user: owner, group, other and ACLs."""
+    return os.access(path, mode, effective_ids=os.access in os.supports_effective_ids)
+
+
 def scan_privileges(root="/", capability=read_capability):
     """Walk the file system of root on its own device, as `find -xdev`.
 
-    Return (setid, closed, count): the setuid and setgid regular files as
-    {path: "MODE UID:GID"}, the directories that the walk cannot read, and the
-    number of regular files. A file with a capability, or with an unknown
-    capability state, is a failure. Paths are absolute in the image, so root
-    can be a fixture directory.
+    Return (setid, closed, searchable, launchers, count): the setuid and
+    setgid regular files as {path: "MODE UID:GID"}, the directories that the
+    job user cannot search, the directories that the job user can search but
+    the walk cannot list, each file, link or directory named dbus-launch, and
+    the number of regular files. A file with a capability, or with an
+    unknown capability state, is a failure. Paths are absolute in the image, so
+    root can be a fixture directory.
     """
     device = os.lstat(root).st_dev
-    setid, closed, count = {}, set(), 0
+    setid, closed, searchable, launchers, count = {}, set(), set(), set(), 0
 
     def image_path(path):
         relative = os.path.relpath(path, root)
         return "/" if relative == "." else "/" + relative
 
     def unreadable(error):
-        closed.add(image_path(error.filename))
+        if can_access(error.filename, os.X_OK):
+            searchable.add(image_path(error.filename))
+        else:
+            closed.add(image_path(error.filename))
 
     for current, directories, names in os.walk(root, onerror=unreadable):
+        for name in (*directories, *names):
+            if name == ABSENT_FILE:
+                launchers.add(image_path(os.path.join(current, name)))
         kept = []
         for name in directories:
             path = os.path.join(current, name)
             information = os.lstat(path)
             if information.st_dev != device:
                 continue
-            if not os.access(path, os.R_OK | os.X_OK) and not stat.S_ISLNK(information.st_mode):
-                closed.add(image_path(path))
+            if not stat.S_ISLNK(information.st_mode) and not can_access(path, os.R_OK | os.X_OK):
+                # The job user can run a file in a directory that it can search,
+                # also when it cannot list the directory.
+                if can_access(path, os.X_OK):
+                    searchable.add(image_path(path))
+                else:
+                    closed.add(image_path(path))
                 continue
             kept.append(name)
         directories[:] = kept
@@ -225,8 +311,11 @@ def scan_privileges(root="/", capability=read_capability):
             path = os.path.join(current, name)
             information = os.lstat(path)
             # No device test here: on overlay file systems a regular file can
-            # report the device of its lower layer. Mount points are
-            # directories, and the directory test above stops at them.
+            # report the device of its lower layer. So the walk also scans a
+            # regular file that is a mount point, for example /etc/hosts or a
+            # scanner binary that the developer entry mounts. The directory
+            # test above stops only at a directory on another device. A
+            # directory mount on the same device is scanned.
             if not stat.S_ISREG(information.st_mode):
                 continue
             count += 1
@@ -239,12 +328,51 @@ def scan_privileges(root="/", capability=read_capability):
                 continue
             if has_capability:
                 fail(f"{image_path(path)} has a file capability")
-    return setid, closed, count
+    return setid, closed, searchable, launchers, count
+
+
+def effective_capabilities(status=PROCESS_STATUS):
+    """Return the effective capability set (CapEff) of this process as a number.
+
+    Raise OSError or ValueError when the effective set cannot be read.
+    """
+    for line in Path(status).read_text().splitlines():
+        key, _, value = line.partition(":")
+        if key == "CapEff":
+            return int(value.strip(), 16)
+    raise ValueError(f"{status} has no CapEff line")
 
 
 def check_privileges(recorded, recorded_closed, root="/", capability=read_capability):
     start = len(failures)
-    setid, closed, count = scan_privileges(root, capability)
+    setid, closed, searchable, launchers, count = scan_privileges(root, capability)
+    # A closed directory hides its files from the walk. That is safe only when
+    # the job user cannot restore access: it must not own the directory (an
+    # owner can chmod it), and the process must have no effective capability.
+    # Several capabilities can restore access (for example CAP_DAC_OVERRIDE,
+    # CAP_FOWNER, CAP_CHOWN or CAP_SETUID), so any non-zero set fails.
+    if closed:
+        try:
+            mask = effective_capabilities()
+        except (OSError, ValueError):
+            fail(f"the effective capabilities of the job process cannot be read from {PROCESS_STATUS}")
+        else:
+            if mask:
+                fail(f"the job process has a non-zero effective capability set (CapEff {mask:016x}), "
+                     "so a closed directory does not stop it")
+    for path in sorted(closed):
+        try:
+            information = os.lstat(os.path.join(root, path.lstrip("/")))
+        except OSError as error:
+            fail(f"closed directory {path}: its owner cannot be read: {error.strerror}")
+            continue
+        if information.st_uid == os.geteuid():
+            fail(f"closed directory {path}: the job user owns it, so it can restore access")
+    for path in sorted(launchers):
+        fail(f"{path} exists")
+    for path in sorted(searchable):
+        fail(f"{path}: the job user can search it, but the walk cannot list it, "
+             "so a privileged file in it is not checked")
     for path in sorted(set(setid) | set(recorded)):
         if path not in recorded:
             fail(f"{path} is setuid or setgid ({setid[path]}) and not in {PRIVILEGED.name}")
@@ -260,12 +388,12 @@ def check_privileges(recorded, recorded_closed, root="/", capability=read_capabi
         except FileNotFoundError:
             fail(f"closed directory {path}: recorded in {PRIVILEGED.name}, but it does not exist")
             continue
-        if not stat.S_ISDIR(information.st_mode) or information.st_mode & 0o005 == 0o005:
+        if not stat.S_ISDIR(information.st_mode) or information.st_mode & 0o001:
             fail(f"closed directory {path}: recorded in {PRIVILEGED.name}, but it is not a directory "
-                 f"that denies read or search to others ({stat.filemode(information.st_mode)})")
-    passed(start, f"{count} regular files on the root file system checked: no file capability; "
+                 f"that denies search to others ({stat.filemode(information.st_mode)})")
+    passed(start, f"{count} regular files on the root file system checked: no file capability; no {ABSENT_FILE}; "
                   f"{len(setid)} setuid or setgid files match {PRIVILEGED.name}; "
-                  f"{len(closed)} directories the walk cannot read, all recorded closed")
+                  f"{len(closed)} directories the job user cannot search, all recorded closed")
 
 
 def check_versions(record):
@@ -273,15 +401,26 @@ def check_versions(record):
     found = []
     for path, package in BINARIES.items():
         upstream = record[package].split(":", 1)[-1].rsplit("-", 1)[0]
+        expected = VERSION_LINES[package].format(upstream)
         try:
             result = subprocess.run([path, "--version"], capture_output=True, text=True,
                                     stdin=subprocess.DEVNULL, env=COMMAND_ENVIRONMENT,
-                                    timeout=10, check=False)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            fail(f"{path} --version did not finish: {error}")
+                                    timeout=VERSION_TIMEOUT, check=False)
+        except subprocess.TimeoutExpired:
+            fail(f"{path} --version did not finish within {VERSION_TIMEOUT} seconds")
             continue
-        if result.returncode != 0 or upstream not in result.stdout + result.stderr:
-            fail(f"{path} --version exited with {result.returncode} and did not print {upstream}")
+        except OSError:
+            fail(f"{path} --version did not finish: the command could not start")
+            continue
+        lines = result.stdout.splitlines()
+        first = lines[0].strip() if lines else ""
+        # Report only the exit status and fixed text. The daemon output is
+        # not printed, so no unexpected output reaches the job log.
+        if result.returncode != 0:
+            fail(f"{path} --version exited with {result.returncode}")
+            continue
+        if first != expected:
+            fail(f"{path} --version: the first output line is not exactly {expected!r}")
             continue
         found.append(f"{path} --version prints {upstream}")
     passed(start, "; ".join(found))
@@ -297,6 +436,10 @@ def main():
     check_binaries()
     check_activation()
     check_privileges(recorded, recorded_closed)
+    # Run no daemon that a check above rejected.
+    if failures:
+        raise SystemExit(f"check-ci-image: {len(failures)} failures in the keyring layer; "
+                         "the daemons were not run")
     check_versions(record)
     if failures:
         raise SystemExit(f"check-ci-image: {len(failures)} failures in the keyring layer")
