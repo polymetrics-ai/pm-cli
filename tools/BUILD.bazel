@@ -49,6 +49,7 @@ go_test(
     name = "tools_test",
     size = "large",
     srcs = [
+        "api_generation_test.go",
         "dependency_policy_test.go",
         "traceability_test.go",
     ],
