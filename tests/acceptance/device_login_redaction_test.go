@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 )
 
 // These are Go developer checks of the device login step helpers (L-d RED,
@@ -101,6 +102,7 @@ func endedProcess(code int, stderr string, first firstLine) *exchangeProcess {
 		outputEnded: make(chan struct{}),
 		exited:      make(chan struct{}),
 		status:      processStatus{exited: true, code: code, text: "exit status"},
+		exitLimit:   time.Minute,
 	}
 	p.stderr.write([]byte(stderr))
 	p.first <- first
@@ -164,7 +166,7 @@ func TestDeviceLoginFailureMessagesHoldNoSecret(t *testing.T) {
 		{"notice: the notice names the other code", func(s *deviceLoginScenario) error {
 			s.exchange = endedProcess(0, pendingNotice+"\n"+leaky, firstLineOf(pendingNotice+"\n"))
 			return s.noticeLine(t.Context(), "device_poll_too_soon")
-		}, "five-second assumption"},
+		}, "before the first permitted poll time of the challenge"},
 		{"exit: wrong exit code", func(s *deviceLoginScenario) error {
 			s.exchange = endedProcess(5, leaky, firstLineOf(leaky))
 			return s.exitsWithCode(0)

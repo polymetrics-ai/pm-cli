@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -44,11 +45,12 @@ const (
 	// its default is 30 s (internal/cli/config.go:16). 60 s holds the process
 	// start, the stdin read and a full 30 s request.
 	deviceLoginNoticeLimit = laneCommandTimeout
-	// deviceLoginExitLimit bounds the wait for the exit of login-exchange
-	// after the notice line. --request-timeout bounds the whole wait of the
-	// command (D4-7), so the command ends at most 30 s after its first
-	// exchange request with the default. 60 s holds that.
-	deviceLoginExitLimit = laneCommandTimeout
+	// deviceLoginDefaultRequestTimeout is the --request-timeout default of
+	// the CLI (internal/cli/config.go:16).
+	deviceLoginDefaultRequestTimeout = 30 * time.Second
+	// deviceLoginExitMargin is added to the --request-timeout of the started
+	// command line for the exit limit (exchangeExitLimit).
+	deviceLoginExitMargin = 30 * time.Second
 	// deviceLoginOutputLimit bounds each output stream that the step keeps.
 	deviceLoginOutputLimit = laneOutputLimit
 
@@ -57,7 +59,8 @@ const (
 )
 
 // deviceLoginNoticeLine is the notice line N1 of L-d, without its line feed.
-var deviceLoginNoticeLine = regexp.MustCompile(`^notice: device login exchange received (device_authorization_pending|device_poll_too_soon)\. The CLI waits [1-9][0-9]*s before the next exchange request\.$`)
+// Group 1 is the answer code and group 2 is the wait in seconds.
+var deviceLoginNoticeLine = regexp.MustCompile(`^notice: device login exchange received (device_authorization_pending|device_poll_too_soon)\. The CLI waits ([1-9][0-9]*)s before the next exchange request\.$`)
 
 // deviceChallenge is the login-start output that the steps keep in memory.
 // The proof and the user code are secrets.
@@ -65,6 +68,9 @@ type deviceChallenge struct {
 	challengeID string
 	userCode    string
 	proof       string
+	// stdout is the whole login-start stdout, kept in memory for the step
+	// that reads its poll interval. It holds the proof. close clears it.
+	stdout []byte
 }
 
 func (deviceChallenge) String() string   { return "device challenge [REDACTED]" }
@@ -140,6 +146,9 @@ type exchangeProcess struct {
 	outputEnded chan struct{}
 	exited      chan struct{}
 	status      processStatus
+	// exitLimit bounds the wait of the exit step: the --request-timeout of
+	// the started command line plus deviceLoginExitMargin.
+	exitLimit time.Duration
 }
 
 // deviceLoginScenario is the state of the device login steps in one
@@ -167,6 +176,8 @@ func registerDeviceLoginSteps(sc *godog.ScenarioContext, shared *stackScenario) 
 	sc.Step(`^I run "([^"]*)" against the started pm-server and keep its stdout in memory$`, s.loginStart)
 	sc.Step(`^I start "([^"]*)" against the started pm-server with the device proof on stdin$`, s.startExchange)
 	sc.Step(`^the device login exchange writes the wait notice line(?: for (device_poll_too_soon))? to stderr$`, s.noticeLine)
+	sc.Step(`^the device login exchange writes the wait notice line for device_poll_too_soon with a wait of at least (\d+) seconds to stderr$`, s.noticeLineWithWait)
+	sc.Step(`^the device login challenge states a poll interval of (\d+) seconds$`, s.challengePollInterval)
 	sc.Step(`^the browser session (approves|denies) the device login$`, s.decide)
 	sc.Step(`^I send SIGINT to the device login exchange$`, s.sendSIGINT)
 	sc.Step(`^the device login exchange exits with code (\d+)$`, s.exitsWithCode)
@@ -672,6 +683,7 @@ func (s *deviceLoginScenario) loginStart(ctx context.Context, line string) error
 	if err != nil {
 		return err
 	}
+	challenge.stdout = []byte(stdout)
 	s.challenge = challenge
 	s.startedAt = time.Now()
 	return nil
@@ -762,6 +774,10 @@ func (s *deviceLoginScenario) startExchange(ctx context.Context, line string) er
 			return errors.New("the command line already has --challenge-id; the step adds it from the login-start output")
 		}
 	}
+	exitLimit, err := exchangeExitLimit(args)
+	if err != nil {
+		return err
+	}
 	environment, err := s.environment()
 	if err != nil {
 		return err
@@ -771,12 +787,50 @@ func (s *deviceLoginScenario) startExchange(ctx context.Context, line string) er
 	if err != nil {
 		return err
 	}
+	process.exitLimit = exitLimit
 	s.exchange = process
 	if err := process.writeStdin(s.challenge.proof); err != nil {
 		return fmt.Errorf("write the device proof to the login-exchange stdin pipe and close the pipe: %s", pipeCategory(err))
 	}
 	godog.Logf(ctx, "login-exchange started %s after login-start ended", time.Since(s.startedAt).Round(time.Millisecond))
 	return nil
+}
+
+// exchangeExitLimit derives the exit limit of the started command line: its
+// --request-timeout value plus deviceLoginExitMargin, or the CLI default plus
+// the margin when the flag is absent. The value must be a canonical Go
+// duration from 1 s to 5 min, as the CLI requires
+// (internal/cli/config.go, parseCanonicalDuration). A refusal has a fixed
+// message.
+func exchangeExitLimit(args []string) (time.Duration, error) {
+	const flag = "--request-timeout"
+	timeout := deviceLoginDefaultRequestTimeout
+	found := false
+	for index := 0; index < len(args); index++ {
+		var raw string
+		switch {
+		case args[index] == flag:
+			if index+1 >= len(args) {
+				return 0, errors.New("the command line has --request-timeout with no value")
+			}
+			index++
+			raw = args[index]
+		case strings.HasPrefix(args[index], flag+"="):
+			raw = strings.TrimPrefix(args[index], flag+"=")
+		default:
+			continue
+		}
+		if found {
+			return 0, errors.New("the command line has --request-timeout more than once")
+		}
+		found = true
+		value, err := time.ParseDuration(raw)
+		if err != nil || value.String() != raw || value < time.Second || value > 5*time.Minute {
+			return 0, errors.New("the --request-timeout value of the command line is not a canonical Go duration from 1s to 5m0s")
+		}
+		timeout = value
+	}
+	return timeout + deviceLoginExitMargin, nil
 }
 
 // startExchangeProcess starts the binary as a direct child, with three pipes.
@@ -949,9 +1003,24 @@ func (s *deviceLoginScenario) exchangeProcess() (*exchangeProcess, error) {
 
 // noticeLine is the step that waits for the first stderr line of
 // login-exchange, with one time limit. The line must be the notice line N1.
-// For scenario 1 it must name device_poll_too_soon. Any other first line,
-// end of file or the end of the process fails the step.
+// When the step names device_poll_too_soon, the line must name it. Any other
+// first line, end of file or the end of the process fails the step.
 func (s *deviceLoginScenario) noticeLine(ctx context.Context, code string) error {
+	return s.checkNoticeLine(ctx, code, 0)
+}
+
+// noticeLineWithWait is the step of scenario 1 (criteria v3, P5): the notice
+// line must name device_poll_too_soon and a wait of at least the given
+// seconds. A wait of 11 s or more is longer than the default 5 s interval can
+// give after a too-soon answer.
+func (s *deviceLoginScenario) noticeLineWithWait(ctx context.Context, minimum int) error {
+	return s.checkNoticeLine(ctx, "device_poll_too_soon", minimum)
+}
+
+// checkNoticeLine waits for the first stderr line and checks it. code is
+// empty for either code. minimum is 0 for no wait check. A failure shows the
+// line only by its form, and the wait that it found.
+func (s *deviceLoginScenario) checkNoticeLine(ctx context.Context, code string, minimum int) error {
 	p, err := s.exchangeProcess()
 	if err != nil {
 		return err
@@ -967,12 +1036,20 @@ func (s *deviceLoginScenario) noticeLine(ctx context.Context, code string) error
 	}
 	if first.found {
 		if match := deviceLoginNoticeLine.FindStringSubmatch(first.line); match != nil {
-			if code == "" || match[1] == code {
-				godog.Logf(ctx, "login-exchange notice line names %s", match[1])
-				return nil
+			if code != "" && match[1] != code {
+				return fmt.Errorf("the wait notice line names %s, want %s: the first exchange request did not reach pm-server before the first permitted poll time of the challenge\nfirst stderr line: %s",
+					match[1], code, describeSafeLine(first.line, true))
 			}
-			return fmt.Errorf("the wait notice line names %s, want %s: the first exchange request did not reach pm-server within 5 s of login-start (the five-second assumption of this scenario)\nfirst stderr line: %q",
-				match[1], code, first.line)
+			wait, err := strconv.Atoi(match[2])
+			if err != nil {
+				return fmt.Errorf("the wait of the notice line is not an integer that the step can read\nfirst stderr line: %s", describeSafeLine(first.line, true))
+			}
+			if wait < minimum {
+				return fmt.Errorf("the wait notice line names a wait of %d seconds, want at least %d\nfirst stderr line: %s",
+					wait, minimum, describeSafeLine(first.line, true))
+			}
+			godog.Logf(ctx, "login-exchange notice line names %s and a wait of %d seconds", match[1], wait)
+			return nil
 		}
 	}
 	// The failure path waits for the end of the process within the same
@@ -984,6 +1061,25 @@ func (s *deviceLoginScenario) noticeLine(ctx context.Context, code string) error
 	p.awaitEnd(timer.C)
 	return fmt.Errorf("the device login exchange wrote no wait notice line: %s; %s\n%s",
 		what, p.describeStatus(), describeOutputText("stderr", &p.stderr))
+}
+
+// challengePollInterval is the step "the device login challenge states a
+// poll interval of <n> seconds" (criteria v3, P5). It reads
+// poll_interval_seconds from the login-start stdout that the scenario keeps
+// in memory, with the parser of the #366 steps. A mismatch shows only the two
+// integers. A parse failure has a fixed message. It never shows stdout.
+func (s *deviceLoginScenario) challengePollInterval(want int) error {
+	if s.challenge == nil {
+		return errors.New("the scenario did not start a device login")
+	}
+	interval, ok := loginStartPollInterval(s.challenge.stdout)
+	if !ok {
+		return errors.New("the kept pm sessions login-start stdout does not parse as an answer with one integer poll_interval_seconds")
+	}
+	if interval != want {
+		return fmt.Errorf("the device login challenge states a poll interval of %d seconds, want %d", interval, want)
+	}
+	return nil
 }
 
 // decide is the step in which the browser session approves or denies the
@@ -1048,10 +1144,13 @@ func (s *deviceLoginScenario) exitsWithCode(want int) error {
 	if err != nil {
 		return err
 	}
-	timer := time.NewTimer(deviceLoginExitLimit)
+	if p.exitLimit <= 0 {
+		return errors.New("the device login exchange has no exit limit")
+	}
+	timer := time.NewTimer(p.exitLimit)
 	defer timer.Stop()
 	if !p.awaitEnd(timer.C) {
-		return fmt.Errorf("the device login exchange did not end within %s; %s\n%s", deviceLoginExitLimit, p.describeStatus(), describeOutputText("stderr", &p.stderr))
+		return fmt.Errorf("the device login exchange did not end within %s; %s\n%s", p.exitLimit, p.describeStatus(), describeOutputText("stderr", &p.stderr))
 	}
 	if !p.status.exited || p.status.code != want {
 		return fmt.Errorf("%s, want exit code %d\n%s", p.describeStatus(), want, describeOutputText("stderr", &p.stderr))
@@ -1158,6 +1257,9 @@ func (s *deviceLoginScenario) close() error {
 	}
 	if s.browser != nil && s.browser.client != nil {
 		s.browser.client.CloseIdleConnections()
+	}
+	if s.challenge != nil {
+		clear(s.challenge.stdout)
 	}
 	s.browser, s.challenge, s.exchange = nil, nil, nil
 	return errors.Join(errs...)

@@ -9,17 +9,17 @@ Feature: A device login exchange waits for the browser decision
   login-start output to the login-exchange command line.
   Plan item: L-d (device login wait). Issue: #325. Criteria: D4 of the login proposal.
 
-  # Row 1. D4-2, D4-4, D4-9. Slice L-d.
-  # Five-second assumption: pm-server sets the first poll time of a device
-  # challenge to its start time plus 5 s (internal/store/auth.go:633,
-  # internal/app/runtime.go:137). So the first exchange request must reach
-  # pm-server within 5 s of login-start. A late exchange makes the notice line
-  # name device_authorization_pending, and the notice step then fails. It
+  # Row 1. D4-2, D4-4, D4-9. Rule PI-5. Slice L-d.
+  # The deployment sets the device poll interval to 60 s. So the first poll
+  # time of the challenge is its insertion time plus 60 s. The wait check
+  # below needs the first exchange less than 55 s after the challenge
+  # insertion (proof limit 1). A late exchange fails the notice step. It
   # never passes falsely.
   @stack
   Scenario: A device login exchange waits after a too-soon answer and then succeeds
     Given a new PM deployment configuration on the job-owned stack
     And its secrets directory holds the bootstrap database credential
+    And the deployment configuration sets the device poll interval to 60 seconds
     And the deployment configuration declares the "postgres" connector bundle
     And the operator bootstrapped the deployment with a "postgres" provider account
     And a pm server profile for the started pm-server
@@ -27,8 +27,9 @@ Feature: A device login exchange waits for the browser decision
     And the starter received the pm-server ready signal
     And a PM browser session of the deployment's Keycloak user
     And I run "pm sessions login-start --device-id acceptance-device" against the started pm-server and keep its stdout in memory
-    When I start "pm sessions login-exchange --wait=true" against the started pm-server with the device proof on stdin
-    Then the device login exchange writes the wait notice line for device_poll_too_soon to stderr
+    And the device login challenge states a poll interval of 60 seconds
+    When I start "pm sessions login-exchange --wait=true --request-timeout=2m0s" against the started pm-server with the device proof on stdin
+    Then the device login exchange writes the wait notice line for device_poll_too_soon with a wait of at least 11 seconds to stderr
     When the browser session approves the device login
     Then the device login exchange exits with code 0
     When I run "pm sessions inspect" against the started pm-server with the stored PM session
