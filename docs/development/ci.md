@@ -74,18 +74,41 @@ The stack run is a developer check. It is not acceptance proof of PM behavior. A
 
 ### Time budget of the `bdd` job
 
-The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops the go test command of each run at an absolute time, and the run still reports. The fixture start before that command and the fixture cleanup after it are outside the deadlines. `--timeout 1140` also stops each go test command 19 minutes after its start, before the 20-minute command limit of `with-stack-fixture.py`. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When a command ends, the reporter stops each process that is left in its process group. The allowances are upper bounds of the phases of `with-stack-fixture.py`:
+The frozen step limit is 50 minutes. `check-bdd.sh` keeps 3 minutes for the start and stop of the job container, so its own work ends within 47 minutes of its start, also on the failure path. `go-test-report.py --deadline` stops the go test command of each run at an absolute time, and the run still reports. The fixture start before that command and the fixture cleanup after it are outside the deadlines. `--timeout 1140` also stops each go test command 19 minutes after its start, before the 20-minute command limit of `with-stack-fixture.py`. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When a command ends, the reporter stops each process that is left in its process group. The allowances below are the expected times of the phases of `with-stack-fixture.py`. The fixture start and cleanup allowances are not hard bounds. Each Docker call has its own 30-second limit, but no phase has one deadline for all its calls (see "Slow Docker calls" below):
 
 | Phase | Allowance | Source of the bound |
 | --- | --- | --- |
 | Prelude: tool builds and package selection | 8 minutes or less (assumed) | none |
-| Fixture start | 12 minutes | generator 60 s, `pm-stack up` 600 s, 30-second Docker calls |
-| Fixture cleanup | 6 minutes | drain 120 s, container stop 75 s, cleanup helper 60 s, 30-second Docker calls |
+| Fixture start | 12 minutes | generator 60 s, `pm-stack up` 600 s, 30-second Docker calls. Worst case with slow calls: 29 minutes |
+| Fixture cleanup | 6 minutes | drain 120 s, container stop 75 s, cleanup helper 60 s, 30-second Docker calls. Worst case with slow calls: 57 minutes 15 seconds |
 | Report, receipt check and move, toolchain check | 1 minute | none. The receipt check only reads the manifest and makes no Docker call |
 
 The stack go test command stops 20 minutes after the start. The Gherkin go test command stops 39.5 minutes after the start. On the longest path, the stack run ends by +20.5 minutes, its cleanup by +26.5, the receipt check by +27.5 and the Gherkin fixture start by +39.5. The Gherkin run ends by +40, its cleanup by +46 and the toolchain check by +47. So the script ends 47 minutes after the start in the worst case.
 
 The script keeps no reserve of Gherkin test time (`gherkin_minimum` is 0). On one path, the Gherkin run can get no test time: the stack run reaches its deadline, the stack cleanup uses its full 6 minutes and the Gherkin fixture start uses its full 12 minutes. The Gherkin run then reports that it stopped at its deadline, and the job fails. E4 is narrowed on that path. On a normal run, the Gherkin go test command keeps its own 19-minute limit (`--timeout 1140`).
+
+#### Slow Docker calls
+
+The bound of +47 minutes holds only while each fixture phase stays inside its allowance. In `with-stack-fixture.py`, each Docker call has its own 30-second limit, and the phases make their calls one after the other. So slow calls that each succeed inside 30 seconds can make a phase much longer than its allowance:
+
+- One resource discovery (`discover_resources`) makes 13 list calls and up to 12 inspect calls: up to 25 calls, or 750 seconds.
+- Fixture start, when each call succeeds just inside its limit: 1,740 seconds (29 minutes). The parts are:
+  - the daemon check, 30 s
+  - the generator, 60 s
+  - the discovery before the start, on an empty project: 13 calls, 390 s
+  - `pm-stack up`, 600 s
+  - the discovery after the start: 22 calls, 660 s
+- Fixture cleanup, when each call succeeds just inside its limit: 3,435 seconds (57 minutes 15 seconds). The parts are:
+  - the daemon check, 30 s
+  - five discoveries: 750, 750, 420, 390 and 390 s
+  - the helper stop and removal, 60 s
+  - the drain, 120 s
+  - the container stop, 75 s, and up to 10 container removals, 300 s
+  - the network removal, 30 s
+  - the PostgreSQL cleanup helper, 120 s
+- A call that reaches its limit ends the phase with a failure, after at most 20 more seconds to stop its process group.
+
+When a phase is slower than its allowance, the absolute deadlines still stop each go test command. The stack run or the Gherkin run can then get no test time, and it reports that it stopped at its deadline. The bdd step can also reach its 50-minute limit. Then the step fails, and so the job fails. A job whose step reaches the limit never passes. The frozen cleanup step (`if: always()`, 6 minutes) still runs and calls `with-stack-fixture.py --cleanup`. With the same slow calls, that cleanup can also need more than its 6 minutes, and fixture resources can then stay on the runner host. This is E4 exception 4. A shared deadline for each whole fixture phase is a required item of the #286 design.
 
 The log has one `starting a fresh job-owned stack` line before each fixture start. A cold image build happens in the same step before `check-bdd.sh` starts, and this budget does not include it. On that path, the worst case can pass the step limit, and the Gherkin run may not report. The frozen cleanup step then still removes the live fixture (see the next section).
 
