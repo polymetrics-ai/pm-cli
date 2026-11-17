@@ -326,6 +326,13 @@
           "default": "5m",
           "description": "Maximum age of a verified signed OIDC auth_time for privileged secret ingress; 1s through 15m. Login/session issuance time never qualifies."
         },
+        "device_poll_interval": {
+          "type": "string",
+          "maxLength": 64,
+          "pattern": "^(?:(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:ns|us|µs|μs|ms|s|m|h))+$",
+          "default": "5s",
+          "description": "The device login poll interval that pm-server gives each new device login challenge. Omission selects 5s. The value is a Go duration of at most 64 bytes in UTF-8 that does not start with a sign. maxLength counts characters, so the byte limit is stricter for a micro sign. The duration must be a whole number of seconds from 1s to 60s. A challenge keeps the interval that it got at its start."
+        },
         "ca_ref": {
           "$ref": "#/$defs/secretReference",
           "description": "Optional operator-owned certificate authority bundle for the identity provider connection, read once as the confined bundle member ca.pem under the same bounded regular-file rules as every other operator secret. Every entry in the bundle must be a CA certificate: an empty, oversized, unparsable, non-CA, or non-certificate body fails composition instead of degrading to a smaller root set. Absence keeps the process system root store, a declared reference never falls back to it, and certificate, hostname and token validation stay enabled, so no insecure TLS mode and no system or global trust store change is implied."
