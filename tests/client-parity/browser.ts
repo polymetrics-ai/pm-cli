@@ -2,11 +2,28 @@ import { test, expect, type Page } from "@playwright/test";
 import { lstatSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { BrowserClient as Client, BrowserAdmission as Admission, InvocationInput } from "../../sdk/browser/client.js";
-import type { paths as PublicPaths } from "../../sdk/browser/schema.js";
+import type { components, paths as PublicPaths } from "../../sdk/browser/schema.js";
 
 // @ts-expect-error A private credential route must never become a generated public path.
 const privateAdminPath: keyof PublicPaths = "/admin/v1/workspaces/{workspace_id}/connections/{connection_id}/credentials";
 void privateAdminPath;
+
+// The device exchange answers 409 and 429 carry Retry-After only for
+// device_authorization_pending and device_poll_too_soon. The answers
+// login_challenge_used (409) and authentication_rate_limited (429) have no
+// Retry-After, so the generated header set must allow its absence. A value
+// that is present stays a string.
+type DevicePoll409Headers = components["responses"]["DevicePoll409"]["headers"];
+type DevicePoll429Headers = components["responses"]["DevicePoll429"]["headers"];
+const usedChallengeHeaders: DevicePoll409Headers = {};
+const rateLimitedHeaders: DevicePoll429Headers = {};
+const pendingHeaders: DevicePoll409Headers = { "Retry-After": "5" };
+const tooSoonHeaders: DevicePoll429Headers = { "Retry-After": "60" };
+// @ts-expect-error The Retry-After value of a 409 answer is a string, never a number.
+const numericPendingHeaders: DevicePoll409Headers = { "Retry-After": 5 };
+// @ts-expect-error The Retry-After value of a 429 answer is a string, never a number.
+const numericTooSoonHeaders: DevicePoll429Headers = { "Retry-After": 60 };
+void [usedChallengeHeaders, rateLimitedHeaders, pendingHeaders, tooSoonHeaders, numericPendingHeaders, numericTooSoonHeaders];
 
 type Submission = { status: number; admission?: Admission; code?: string; request_key?: string };
 interface Configuration {
