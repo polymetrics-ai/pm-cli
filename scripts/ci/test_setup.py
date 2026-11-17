@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -362,40 +363,61 @@ def gherkin_caller_options(values):
     return [values.get(word, word) for word in options]
 
 
-def process_exits_within(pid, seconds):
-    """Wait one time for the exit event of process PID, for at most SECONDS.
+class HeldProcess:
+    """The identity of one live process, for one bounded exit wait.
 
-    Return True when the process has exited, also as a zombie that no parent
-    has reaped yet, or when no process has the ID. Return False when the time
-    limit ends first. Linux uses a pidfd, macOS a kqueue process filter. A
-    system with neither has no exit event, and the caller fails.
+    Open it only while the process cannot have exited, so that its process ID
+    names no other process. Linux holds a pidfd. macOS holds a kqueue process
+    filter registration: it reports the exit of the process that had the ID at
+    registration, but macOS has no signal through it, so kill() sends nothing
+    there. A system with neither interface fails the caller.
     """
-    if hasattr(os, "pidfd_open"):
-        try:
-            descriptor = os.pidfd_open(pid)
-        except ProcessLookupError:
-            return True
-        try:
-            poller = select.poll()
-            poller.register(descriptor, select.POLLIN)
-            return bool(poller.poll(int(seconds * 1000)))
-        finally:
-            os.close(descriptor)
-    if hasattr(select, "kqueue"):
-        queue = select.kqueue()
-        try:
+
+    def __init__(self, pid):
+        self.descriptor = self.queue = None
+        if hasattr(os, "pidfd_open"):
+            self.descriptor = os.pidfd_open(pid)
+        elif hasattr(select, "kqueue"):
+            self.queue = select.kqueue()
             change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
                                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
                                    fflags=select.KQ_NOTE_EXIT)
             try:
-                queue.control([change], 0, 0)
-            except ProcessLookupError:
-                return True
-            events = queue.control(None, 1, seconds)
-            return any(event.fflags & select.KQ_NOTE_EXIT for event in events)
-        finally:
-            queue.close()
-    raise AssertionError("this system has neither pidfd_open nor kqueue: no process exit event")
+                self.queue.control([change], 0, 0)
+            except BaseException:
+                self.queue.close()
+                raise
+        else:
+            raise AssertionError("this system has neither pidfd_open nor kqueue: no process identity")
+
+    def exits_within(self, seconds):
+        """Wait one time for the exit event, for at most SECONDS."""
+        if self.descriptor is not None:
+            poller = select.poll()
+            poller.register(self.descriptor, select.POLLIN)
+            return bool(poller.poll(int(seconds * 1000)))
+        events = self.queue.control(None, 1, seconds)
+        return any(event.fflags & select.KQ_NOTE_EXIT for event in events)
+
+    def kill(self):
+        """Send SIGKILL to the held process. Never signal a process ID.
+
+        Return True when the signal went to the held process. Return False
+        when it has exited, or on macOS, which has no identity-bound signal.
+        """
+        if self.descriptor is None:
+            return False
+        try:
+            signal.pidfd_send_signal(self.descriptor, signal.SIGKILL)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def close(self):
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+        if self.queue is not None:
+            self.queue.close()
 
 
 def go_event(action, package, test=None, **extra):
@@ -704,24 +726,82 @@ class GoTestReport(unittest.TestCase):
 
     def test_no_test_process_outlives_the_command(self):
         with tempfile.TemporaryDirectory() as directory:
-            pidfile = Path(directory) / "pid"
-            # The background process has its own standard streams, so the
-            # captured pipes of the reporter end when the reporter exits, not
-            # when this process exits.
-            script = (f'sleep 60 </dev/null >/dev/null 2>&1 & echo $! > "{pidfile}"; '
+            pid_fifo, release_fifo = Path(directory) / "pid", Path(directory) / "release"
+            os.mkfifo(pid_fifo)
+            os.mkfifo(release_fifo)
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("m/a\n")
+            # The command starts a background process with its own standard
+            # streams, hands its process ID over pid_fifo and blocks on
+            # release_fifo. The test holds both FIFOs open for reading and
+            # writing, so no open blocks and no write meets a closed FIFO.
+            script = (f'sleep 60 </dev/null >/dev/null 2>&1 & echo $! > "{pid_fifo}"; '
+                      f'read release < "{release_fifo}"; '
                       "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
-            command = ["/bin/sh", "-c", script, "sh", "-count=1"]
-            result, _ = self.report([], expect=["m/a"], command=command)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            pid = int(pidfile.read_text())
-            # One wait for the exit event, with one time limit. The reporter
-            # sends SIGKILL to the process group before it exits.
-            if not process_exits_within(pid, 5):
+            pid_end = os.open(pid_fifo, os.O_RDWR)
+            release_end = os.open(release_fifo, os.O_RDWR)
+            handle = None
+            try:
+                reporter = subprocess.Popen(
+                    [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                     "--expect", str(expected), "--", "/bin/sh", "-c", script, "sh", "-count=1"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                self.fail("the background process of the command is still alive")
+                    # One bounded read of the process ID.
+                    ready, _, _ = select.select([pid_end], [], [], 30)
+                    self.assertTrue(ready, "the command did not hand over its background process ID")
+                    pid = int(os.read(pid_end, 64).decode().strip())
+                    # The command is blocked on release_fifo, so the reporter has
+                    # not reached its process-group kill: the background process
+                    # is alive, and its ID names no other process.
+                    handle = HeldProcess(pid)
+                    self.assertIsNone(reporter.poll(), "the reporter ended before the handle was open")
+                finally:
+                    os.write(release_end, b"go\n")
+                    stdout, stderr = reporter.communicate(timeout=60)
+                self.assertEqual(reporter.returncode, 0, stdout + stderr)
+                # One wait for the exit event, with one time limit. The reporter
+                # sends SIGKILL to the process group before it exits.
+                if not handle.exits_within(5):
+                    handle.kill()
+                    self.fail("the background process of the command is still alive")
+            finally:
+                if handle is not None:
+                    handle.close()
+                os.close(pid_end)
+                os.close(release_end)
+
+    def test_held_process_never_signals_by_process_id(self):
+        # A deterministic identity check. The held process exits and is
+        # reaped, so its process ID is free for another process. kill() must
+        # not signal by process ID: os.kill fails the test if it runs.
+        child = subprocess.Popen(["cat"], stdin=subprocess.PIPE)
+        handle = HeldProcess(child.pid)
+        try:
+            child.stdin.close()
+            self.assertEqual(child.wait(timeout=30), 0)
+            self.assertTrue(handle.exits_within(5))
+            with mock.patch.object(os, "kill", side_effect=AssertionError("a signal by process ID")):
+                self.assertFalse(handle.kill())
+        finally:
+            handle.close()
+        # A live held process: Linux kills it through the pidfd. macOS sends
+        # nothing, and the test stops its own child.
+        child = subprocess.Popen(["cat"], stdin=subprocess.PIPE)
+        handle = HeldProcess(child.pid)
+        try:
+            with mock.patch.object(os, "kill", side_effect=AssertionError("a signal by process ID")):
+                killed = handle.kill()
+            if hasattr(os, "pidfd_open"):
+                self.assertTrue(killed)
+                self.assertEqual(child.wait(timeout=30), -signal.SIGKILL)
+            else:
+                self.assertFalse(killed)
+                self.assertIsNone(child.poll())
+        finally:
+            handle.close()
+            child.stdin.close()
+            child.wait(timeout=30)
 
     def test_command_stopped_by_a_signal_fails(self):
         command = [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
