@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import select
+import shlex
 import signal
 import subprocess
 import sys
@@ -339,6 +340,26 @@ class HookCheckSelection(unittest.TestCase):
 
 REPORT = ROOT / "scripts/ci/go-test-report.py"
 GO_PACKAGES = ROOT / "scripts/ci/go-packages.sh"
+CHECK_BDD = ROOT / "scripts/ci/check-bdd.sh"
+
+
+def gherkin_caller_options(values):
+    """The go-test-report.py options of the Gherkin run in check-bdd.sh.
+
+    VALUES maps each shell word of the caller, for example
+    "$gherkin_deadline", to its test value. An unknown shell word fails, so
+    that a new caller option needs a new test value.
+    """
+    text = CHECK_BDD.read_text().replace("\\\n", " ")
+    line = next(line for line in text.splitlines()
+                if '--output "$RUNNER_TEMP/go-test-bdd.json"' in line)
+    words = shlex.split(line)
+    start = words.index("--output") + 2
+    options = words[start:words.index("--", start)]
+    unknown = [word for word in options if "$" in word and word not in values]
+    if unknown:
+        raise AssertionError(f"no test value for the Gherkin caller words {unknown}")
+    return [values.get(word, word) for word in options]
 
 
 def process_exits_within(pid, seconds):
@@ -500,6 +521,37 @@ class GoTestReport(unittest.TestCase):
         self.assertNotIn("no result: m/p TestLost/sub", result.stdout)
         self.assertIn("go test: 1 packages, 1 failures, 0 skipped tests, exit 0", result.stdout)
         self.assertIn("Result: FAILED.", summary)
+
+    def test_gherkin_summary_names_tests_with_no_result(self):
+        # The Gherkin caller has --scenarios and no --title, so only the
+        # scenario section of the job summary can name these tests.
+        events = [go_event("run", "m/acc", "TestFeatures"),
+                  go_event("run", "m/acc", "TestFeatures/first"),
+                  go_event("output", "m/acc", "TestFeatures/first",
+                           Output="  Scenario: first # features/a.feature:3\n"),
+                  go_event("pass", "m/acc", "TestFeatures/first"),
+                  go_event("run", "m/acc", "TestFeatures/second"),
+                  go_event("output", "m/acc", "TestFeatures/second",
+                           Output="  Scenario: second # features/a.feature:9\n"),
+                  go_event("output", "m/acc", "TestFeatures/second", Output="panic: boom\n"),
+                  go_event("output", "m/acc", Output="FAIL\tm/acc\t1.0s\n"),
+                  go_event("fail", "m/acc", Elapsed=1.0)]
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("m/acc\n")
+            options = gherkin_caller_options({
+                "$gherkin_deadline": str(int(time.time()) + 600),
+                "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+            self.assertNotIn("--title", options)
+            result, summary = self.report(events, *options)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("### Gherkin scenarios", summary)
+        self.assertIn("No godog totals were found.", summary)
+        self.assertIn("Tests with no result:\n\n- `m/acc TestFeatures`\n- `m/acc TestFeatures/second`\n",
+                      summary)
+        self.assertIn("- a test started and has no result: m/acc TestFeatures/second\n", summary)
+        self.assertIn("Summary error: the godog scenario total is missing.", summary)
 
     def test_paused_parallel_tests_with_results_pass(self):
         events = [go_event("run", "m/p", "TestA"),
