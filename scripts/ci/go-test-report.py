@@ -380,6 +380,9 @@ class _ReceivedSignal(Exception):
 
 # The process list of Linux. The developer checks replace it.
 PROC = Path("/proc")
+# The limits of one ps run: its listing, and its collection after a kill.
+LIST_TIMEOUT = 10
+LIST_KILL_GRACE = 5
 # ps starts with this reference, so that a check that replaces
 # subprocess.Popen to watch the command does not see the ps process.
 PROCESS_LIST_POPEN = subprocess.Popen
@@ -390,7 +393,11 @@ def live_group_members(group):
 
     Return None when the process list cannot be read. Linux reads
     /proc/<pid>/stat, other systems read ps. A process that joins the group
-    after the call is not in the list.
+    after the call is not in the list. Only a confirmed disappearance
+    (ENOENT or ESRCH) counts as an exited process. Any other failure to read
+    a process record makes the list unknown, so the run fails. Each wait for
+    ps has a limit, also after a kill: a ps that does not end gives an
+    unknown list, with no further wait.
     """
     live = []
     if sys.platform.startswith("linux"):
@@ -401,26 +408,33 @@ def live_group_members(group):
         for entry in entries:
             try:
                 text = (entry / "stat").read_text()
-            except OSError:
+            except (FileNotFoundError, ProcessLookupError):
                 # The process exited after the directory listing.
                 continue
+            except OSError:
+                # A record that cannot be read is no proof of an exit.
+                return None
             # The fields after the command name: state, parent, group.
             fields = text[text.rfind(")") + 1:].split()
             if len(fields) >= 3 and fields[2] == str(group) and fields[0] not in ("Z", "X"):
                 live.append(int(entry.name))
         return live
     try:
-        with PROCESS_LIST_POPEN(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True) as lister:
-            try:
-                listing, _ = lister.communicate(timeout=10)
-            except subprocess.TimeoutExpired:
-                lister.kill()
-                lister.communicate()
-                return None
-            if lister.returncode != 0:
-                return None
+        lister = PROCESS_LIST_POPEN(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     except OSError:
+        return None
+    try:
+        listing, _ = lister.communicate(timeout=LIST_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        lister.kill()
+        try:
+            lister.communicate(timeout=LIST_KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            # ps did not end after SIGKILL. The script does not wait for it.
+            pass
+        return None
+    if lister.returncode != 0:
         return None
     for line in listing.splitlines():
         fields = line.split()

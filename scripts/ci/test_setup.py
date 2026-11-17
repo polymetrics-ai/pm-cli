@@ -1361,6 +1361,84 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                 self.assertEqual(received, signal.SIGTERM)
                 self.assertEqual(status, 128 + signal.SIGTERM)
 
+    def test_member_list_is_unknown_for_an_unreadable_record(self):
+        # brahmagupta F1 at 3b6e71f: a /proc/<pid>/stat that cannot be read is
+        # no proof that the process exited. Only ENOENT or ESRCH is. A fake
+        # /proc on the forced Linux path holds the group leader 4194001 and
+        # one more entry, 4194002, whose record fails to read in each case.
+        module = self.load_reporter()
+        group = 4194001
+        real_read_text = Path.read_text
+        cases = {"permission denied": PermissionError(13, "Permission denied"),
+                 "input/output error": OSError(5, "Input/output error"),
+                 "vanished (ENOENT)": FileNotFoundError(2, "No such file or directory"),
+                 "vanished (ESRCH)": ProcessLookupError(3, "No such process")}
+        for case, error in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                proc = Path(directory)
+                for pid in (group, 4194002):
+                    (proc / str(pid)).mkdir()
+                    (proc / str(pid) / "stat").write_text(f"{pid} (held name) S 1 {group} {group} 0\n")
+                broken = proc / "4194002" / "stat"
+
+                def read_text(path, *arguments, **options):
+                    if path == broken:
+                        raise error
+                    return real_read_text(path, *arguments, **options)
+
+                with mock.patch.object(module.sys, "platform", "linux"), \
+                        mock.patch.object(module, "PROC", proc, create=True), \
+                        mock.patch.object(type(proc), "read_text", read_text):
+                    members = module.live_group_members(group)
+                    unsignalled = module.unsignalled_members(group)
+                if case.startswith("vanished"):
+                    self.assertEqual(members, [group])
+                    self.assertEqual(unsignalled, 0)
+                else:
+                    self.assertIsNone(members, case)
+                    self.assertIsNone(unsignalled, case)
+
+    def test_member_list_ps_shutdown_has_a_limit(self):
+        # brahmagupta F2 at 3b6e71f: a ps that does not end, also after
+        # SIGKILL. Each wait for it must have a limit, and the list is then
+        # unknown, so the run fails. The fake raises when a wait has no limit.
+        module = self.load_reporter()
+        events = []
+
+        class StuckLister:
+            def __init__(self, *arguments, **options):
+                self.returncode = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                events.append("context exit")
+                raise AssertionError("the context exit waits for ps with no limit")
+
+            def communicate(self, timeout=None):
+                events.append(("communicate", timeout))
+                if timeout is None:
+                    raise AssertionError("communicate waits for ps with no limit")
+                raise subprocess.TimeoutExpired("ps", timeout)
+
+            def wait(self, timeout=None):
+                events.append(("wait", timeout))
+                if timeout is None:
+                    raise AssertionError("wait waits for ps with no limit")
+                raise subprocess.TimeoutExpired("ps", timeout)
+
+            def kill(self):
+                events.append("kill")
+
+        with mock.patch.object(module.sys, "platform", "darwin"), \
+                mock.patch.object(module, "PROCESS_LIST_POPEN", StuckLister):
+            self.assertIsNone(module.live_group_members(4194001))
+            self.assertIsNone(module.unsignalled_members(4194001))
+        self.assertIn("kill", events)
+        self.assertNotIn("context exit", events)
+        self.assertTrue(all(event == "kill" or event[1] is not None for event in events), events)
+
     def test_unsignalled_group_member_fails_the_run(self):
         # crrao R1: Linux reports success for a group signal when one member
         # gets it. Here the command leaves a real member that blocks on a FIFO,
