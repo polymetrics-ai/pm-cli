@@ -86,7 +86,7 @@ func TestSchemaSelectionControl(t *testing.T) {
 		response := harness.postSelection(t, selectionCall{
 			resource: sqlExecutionResource, schemaRef: candidate, revision: "1", ifMatch: "1", requestKey: "schema-selection-first",
 		})
-		if response.status != http.StatusOK || response.etag != `"2"` || response.result.ResultRevision != "2" ||
+		if response.status != http.StatusOK || response.etag != `"2"` || response.etags != 1 || response.result.ResultRevision != "2" ||
 			response.result.ResultDisposition != "created" || response.result.Replay ||
 			response.result.ResourceID != harness.fixture.Connection.ConnectionID ||
 			response.result.OutcomeReference.Kind != "connection" {
@@ -112,7 +112,7 @@ func TestSchemaSelectionControl(t *testing.T) {
 			resource: sqlExecutionResource, schemaRef: candidate, revision: "1", requestKey: "schema-selection-first",
 		})
 		if response.status != http.StatusOK || !response.result.Replay || response.result.ResultRevision != "2" ||
-			response.result.ResultDisposition != "prior_mutation_result" || response.etag != `"2"` {
+			response.result.ResultDisposition != "prior_mutation_result" || response.etag != `"2"` || response.etags != 1 {
 			t.Fatalf("replay with no If-Match = HTTP %d %q, ETag %q, %#v; want the stored result at revision 2",
 				response.status, response.problem.Code, response.etag, response.result)
 		}
@@ -164,8 +164,10 @@ type selectionResult struct {
 }
 
 type selectionResponse struct {
-	status  int
-	etag    string
+	status int
+	etag   string
+	// etags counts the ETag values of the answer. The route writes one.
+	etags   int
 	result  selectionResult
 	problem api.Problem
 }
@@ -211,7 +213,9 @@ func (harness *sqlExecutionHarness) postSelection(t *testing.T, call selectionCa
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := selectionResponse{status: response.StatusCode, etag: response.Header.Get("ETag")}
+	result := selectionResponse{
+		status: response.StatusCode, etag: response.Header.Get("ETag"), etags: len(response.Header.Values("ETag")),
+	}
 	if response.StatusCode == http.StatusOK {
 		err = json.Unmarshal(document, &result.result)
 	} else {

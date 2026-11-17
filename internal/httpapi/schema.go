@@ -146,8 +146,12 @@ func (service *Service) SelectConnectionSchema(
 	if err != nil {
 		return nil, err
 	}
-	setETag(ctx, result.SelectionRevision)
-	return SelectConnectionSchema200JSONResponse(body), nil
+	// The generated response writes the ETag once, from its declared header.
+	etag := revisionETag(result.SelectionRevision)
+	return SelectConnectionSchema200JSONResponse{
+		Body:    body,
+		Headers: SelectConnectionSchema200ResponseHeaders{ETag: &etag},
+	}, nil
 }
 
 func (r problemResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {

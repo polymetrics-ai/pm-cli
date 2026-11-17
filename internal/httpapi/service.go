@@ -483,8 +483,14 @@ func setETag(ctx context.Context, revision uint64) {
 		return
 	}
 	if state, ok := stateFromContext(ctx); ok && state.writer != nil {
-		state.writer.Header().Set("ETag", `"`+strconv.FormatUint(revision, 10)+`"`)
+		state.writer.Header().Set("ETag", revisionETag(revision))
 	}
+}
+
+// revisionETag is the ETag value of one positive revision: the decimal
+// revision in double quotes.
+func revisionETag(revision uint64) string {
+	return `"` + strconv.FormatUint(revision, 10) + `"`
 }
 
 func nullableTime(value *time.Time) nullable.Nullable[time.Time] {

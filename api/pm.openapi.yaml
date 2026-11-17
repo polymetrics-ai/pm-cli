@@ -1686,6 +1686,9 @@ paths:
       responses:
         "200":
           description: Original selection result, or exact safe replay
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
           content:
             application/json:
               schema:

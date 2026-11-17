@@ -5797,7 +5797,12 @@
                 }
               }
             },
-            "description": "Original selection result, or exact safe replay"
+            "description": "Original selection result, or exact safe replay",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/Problem400"

@@ -5153,15 +5153,25 @@ type SelectConnectionSchemaResponseObject interface {
 	VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error
 }
 
-type SelectConnectionSchema200JSONResponse SelectConnectionSchema200JSONResponseBody
+type SelectConnectionSchema200ResponseHeaders struct {
+	ETag *string
+}
+
+type SelectConnectionSchema200JSONResponse struct {
+	Body    SelectConnectionSchema200JSONResponseBody
+	Headers SelectConnectionSchema200ResponseHeaders
+}
 
 func (response SelectConnectionSchema200JSONResponse) VisitSelectConnectionSchemaResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(SelectConnectionSchema200JSONResponseBody(response)); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if response.Headers.ETag != nil {
+		w.Header().Set("ETag", fmt.Sprint(*response.Headers.ETag))
+	}
 	w.WriteHeader(200)
 	_, err := buf.WriteTo(w)
 	return err

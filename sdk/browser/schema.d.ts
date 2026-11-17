@@ -2673,6 +2673,7 @@ export interface operations {
             /** @description Original selection result, or exact safe replay */
             200: {
                 headers: {
+                    ETag: components["headers"]["ETag"];
                     [name: string]: unknown;
                 };
                 content: {

@@ -6686,6 +6686,11 @@ func (r DiscoverConnectionSchemaResponse) ContentType() string {
 	return ""
 }
 
+// SelectConnectionSchemaResponse200Headers the declared response headers of an HTTP 200 response for SelectConnectionSchema
+type SelectConnectionSchemaResponse200Headers struct {
+	ETag *string
+}
+
 type SelectConnectionSchemaResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6709,6 +6714,8 @@ type SelectConnectionSchemaResponse struct {
 	ApplicationproblemJSON428 *Problem428
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *Problem503
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SelectConnectionSchemaResponse200Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -11056,6 +11063,19 @@ func ParseSelectConnectionSchemaResponse(rsp *http.Response) (*SelectConnectionS
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SelectConnectionSchemaResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
 	}
 
 	return response, nil
