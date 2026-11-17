@@ -39,7 +39,7 @@ class CheckCiImage(unittest.TestCase):
         self.saved = {}
         # The fixtures run on any host, so they do not read /proc. Each test
         # that needs the effective capabilities sets them.
-        self.setattr_check("access_capabilities", lambda: set())
+        self.setattr_check("effective_capabilities", lambda: 0)
 
     def tearDown(self):
         for path in self.restore:
@@ -213,39 +213,55 @@ class CheckCiImage(unittest.TestCase):
                                           root=str(self.root), capability=no_capability)
         self.assert_failed_without_pass(failures, output, "/opt/pmcli/venv/bin/dbus-launch exists")
 
-    # Review #pr-333 brahmagupta F1 at 9d73f24 and security cross-review r1
-    # items 11 and 12: one check of the launcher search. It covers each entry
-    # of ENV PATH in the Dockerfile, each runtime PATH entry, and an empty
-    # entry as the current directory. It calls only the PATH check, not the
+    # Review #pr-333 brahmagupta F1 at 9d73f24, security cross-review r1
+    # items 11 and 12, and the T3-4 residual of the security delta at 90cfd64:
+    # one check of the launcher search. It covers each entry of ENV PATH in
+    # the Dockerfile and each runtime PATH entry. An empty entry or an unset
+    # PATH fails with fixed text. It calls only the PATH check, not the
     # privilege walk.
     def test_the_launcher_search_covers_the_image_and_runtime_path(self):
         dockerfile = (ROOT / "build/ci/Dockerfile").read_text()
         line = next(line for line in dockerfile.splitlines() if line.startswith("ENV PATH="))
         image_path = line.split("=", 1)[1].split()[0].split(":")
-        launcher = self.file("checkout/dbus-launch", 0o755)
+        self.assertNotIn("", image_path, "the image PATH must have no empty entry")
         extra = self.root / "extra-bin"
         extra.mkdir()
-        saved_directory, saved_path = os.getcwd(), os.environ.get("PATH")
-        self.addCleanup(os.chdir, saved_directory)
+        saved_path = os.environ.get("PATH")
         if saved_path is None:
             self.addCleanup(os.environ.pop, "PATH", None)
         else:
             self.addCleanup(os.environ.__setitem__, "PATH", saved_path)
-        os.chdir(launcher.parent)
-        current = os.getcwd()
-        expected = os.path.join(current, "dbus-launch")
-        for path in (f":{extra}:/usr/bin", f"{extra}:/usr/bin:", f"{extra}::/usr/bin"):
-            with self.subTest(path=path):
-                check.failures.clear()
-                self.output = io.StringIO()
+
+        def run(path):
+            check.failures.clear()
+            self.output = io.StringIO()
+            if path is None:
+                os.environ.pop("PATH", None)
+            else:
                 os.environ["PATH"] = path
-                directories = check.launcher_directories()
-                missing = [entry for entry in (*image_path, str(extra), current)
-                           if entry not in directories]
-                self.assertEqual(missing, [], "the launcher search must cover these directories")
-                failures, output = self.run_check(check.check_packages, {}, {})
-                self.assertEqual(failures, [f"{expected} exists"])
+            return self.run_check(check.check_packages, {}, {})
+
+        os.environ["PATH"] = f"{extra}:/usr/bin"
+        directories = check.launcher_directories()
+        missing = [entry for entry in (*image_path, str(extra)) if entry not in directories]
+        self.assertEqual(missing, [], "the launcher search must cover these directories")
+        failures, output = run(f"{extra}:/usr/bin")
+        self.assertEqual(failures, [])
+        self.assertIn("PASS", output)
+        (extra / "dbus-launch").write_text("fixture\n")
+        failures, output = run(f"{extra}:/usr/bin")
+        self.assertEqual(failures, [f"{extra}/dbus-launch exists"])
+        self.assertNotIn("PASS", output)
+        (extra / "dbus-launch").unlink()
+        for path in (f":{extra}:/usr/bin", f"{extra}:/usr/bin:", f"{extra}::/usr/bin", ""):
+            with self.subTest(path=path):
+                failures, output = run(path)
+                self.assertEqual(failures, ["the runtime PATH has an empty entry"])
                 self.assertNotIn("PASS", output)
+        with self.subTest(path="unset"):
+            failures, output = run(None)
+            self.assertEqual(failures, ["the runtime PATH is not set"])
+            self.assertNotIn("PASS", output)
 
     # Security cross-review r1 item 6: a check that fails stops the run before
     # any daemon starts.
@@ -301,22 +317,49 @@ class CheckCiImage(unittest.TestCase):
         self.assert_failed_without_pass(failures, output,
                                         "/var/lib/private: the job user owns it, so it can restore access")
 
-    def test_an_access_capability_with_a_closed_directory_fails(self):
+    # Security cross-review r1 item 9 and N2 of the security delta at
+    # 90cfd64: when a closed directory exists, any non-zero CapEff fails.
+    def test_a_nonzero_capeff_with_a_closed_directory_fails(self):
         closed = self.root / "root"
         closed.mkdir()
         self.lock(closed, 0o000)
-        self.setattr_check("access_capabilities", lambda: {"CAP_FOWNER"})
+        for mask, text in ((1 << 3, "CapEff 0000000000000008"), (1 << 21, "CapEff 0000000000200000")):
+            with self.subTest(mask=hex(mask)):
+                check.failures.clear()
+                self.output = io.StringIO()
+                self.setattr_check("effective_capabilities", lambda mask=mask: mask)
+                failures, output = self.run_check(check.check_privileges, {}, {"/root"},
+                                                  root=str(self.root), capability=no_capability)
+                self.assert_failed_without_pass(failures, output, text)
+
+    def test_a_nonzero_capeff_without_a_closed_directory_passes(self):
+        self.file("usr/bin/tool", 0o755)
+        self.setattr_check("effective_capabilities", lambda: 1 << 21)
+        failures, output = self.run_check(check.check_privileges, {}, set(),
+                                          root=str(self.root), capability=no_capability)
+        self.assertEqual(failures, [])
+        self.assertIn("PASS", output)
+
+    def test_an_unreadable_capeff_with_a_closed_directory_fails(self):
+        closed = self.root / "root"
+        closed.mkdir()
+        self.lock(closed, 0o000)
+
+        def unreadable():
+            raise OSError(errno.ENOENT, os.strerror(errno.ENOENT), "/proc/self/status")
+
+        self.setattr_check("effective_capabilities", unreadable)
         failures, output = self.run_check(check.check_privileges, {}, {"/root"},
                                           root=str(self.root), capability=no_capability)
-        self.assert_failed_without_pass(failures, output, "the job process has CAP_FOWNER")
+        self.assert_failed_without_pass(failures, output, "cannot be read from /proc/self/status")
 
     def test_the_effective_capabilities_are_read_from_capeff(self):
         status = self.root / "status"
-        read = self.saved["access_capabilities"]  # the real reader; setUp stubs it
-        status.write_text("Name:\tpython3\nCapEff:\t000000000000000e\n")
-        self.assertEqual(read(str(status)), {"CAP_DAC_OVERRIDE", "CAP_DAC_READ_SEARCH", "CAP_FOWNER"})
+        read = self.saved["effective_capabilities"]  # the real reader; setUp stubs it
+        status.write_text("Name:\tpython3\nCapEff:\t0000000000200008\n")
+        self.assertEqual(read(str(status)), (1 << 21) | (1 << 3))
         status.write_text("CapEff:\t0000000000000000\n")
-        self.assertEqual(read(str(status)), set())
+        self.assertEqual(read(str(status)), 0)
         status.write_text("Name:\tpython3\n")
         with self.assertRaises(ValueError):
             read(str(status))

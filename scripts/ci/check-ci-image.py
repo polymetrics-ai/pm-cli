@@ -10,7 +10,9 @@ The check fails when one of these items is false:
 - Each package of build/ci/keyring-packages.txt is installed at its version.
 - dbus-x11 is not installed. No file or link named dbus-launch is in a
   binary directory, in a directory of the runtime PATH, or anywhere in the
-  whole-root walk below.
+  whole-root walk below. The runtime PATH must be set and must have no empty
+  entry: each process reads an empty entry as its own current directory, so
+  the check cannot know which directory that entry names.
 - /usr/bin/dbus-daemon and /usr/bin/gnome-keyring-daemon are executable
   regular files of the packages dbus-daemon and gnome-keyring.
 - No D-Bus service file names org.freedesktop.secrets or starts
@@ -26,8 +28,9 @@ The check fails when one of these items is false:
   search is a recorded closed directory, and each recorded closed directory
   denies search to others by its mode. The job user must not be able to
   restore access to a directory that the walk cannot read: the job user must
-  not own it, and the job process must not have CAP_DAC_OVERRIDE,
-  CAP_DAC_READ_SEARCH or CAP_FOWNER in its effective set. The access tests use
+  not own it, and the effective capability set (CapEff) of the job process
+  must be empty, because several capabilities can restore access. The access
+  tests use
   the effective access of the job user (owner, group, other and ACLs), and the
   mode test does not depend on the user ID of the job. Each difference is
   printed.
@@ -70,9 +73,6 @@ COMMAND_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C"}
 VERSION_LINES = {"dbus-daemon": "D-Bus Message Bus Daemon {}",
                  "gnome-keyring": "gnome-keyring-daemon: {}"}
 VERSION_TIMEOUT = 10
-# Bits of the effective capability set that let a process read, search or
-# change the mode of a directory that it cannot search (capabilities(7)).
-ACCESS_CAPABILITIES = {1: "CAP_DAC_OVERRIDE", 2: "CAP_DAC_READ_SEARCH", 3: "CAP_FOWNER"}
 PROCESS_STATUS = "/proc/self/status"
 
 failures = []
@@ -146,19 +146,32 @@ def installed_packages():
 
 
 def launcher_directories():
-    """Return BINARY_DIRECTORIES and each directory of the runtime PATH.
+    """Return BINARY_DIRECTORIES and each non-empty entry of the runtime PATH.
 
-    An empty PATH entry (leading, trailing or `::`) is the current directory,
-    as the shell reads it. The check resolves it when it runs. In a job, that
-    is the checkout, which can be on another device than the privilege walk.
+    check_runtime_path fails on an empty entry, so this list has no entry for it.
     """
-    runtime = [entry or os.getcwd() for entry in os.environ.get("PATH", "").split(":")]
+    runtime = [entry for entry in os.environ.get("PATH", "").split(":") if entry]
     return tuple(dict.fromkeys((*BINARY_DIRECTORIES, *runtime)))
+
+
+def check_runtime_path():
+    """Fail when the runtime PATH is not set or has an empty entry.
+
+    Each process reads an empty entry (leading, trailing or `::`) as its own
+    current directory when it runs, and an unset PATH gives the same result.
+    So the check cannot name the directory that such an entry searches.
+    """
+    path = os.environ.get("PATH")
+    if path is None:
+        fail("the runtime PATH is not set")
+    elif "" in path.split(":"):
+        fail("the runtime PATH has an empty entry")
 
 
 def check_packages(record, installed, binary_directories=None):
     start = len(failures)
     if binary_directories is None:
+        check_runtime_path()
         binary_directories = launcher_directories()
     for name, version in record.items():
         have = installed.get(name)
@@ -318,16 +331,15 @@ def scan_privileges(root="/", capability=read_capability):
     return setid, closed, searchable, launchers, count
 
 
-def access_capabilities(status=PROCESS_STATUS):
-    """Return the names of ACCESS_CAPABILITIES in the effective set of this process.
+def effective_capabilities(status=PROCESS_STATUS):
+    """Return the effective capability set (CapEff) of this process as a number.
 
     Raise OSError or ValueError when the effective set cannot be read.
     """
     for line in Path(status).read_text().splitlines():
         key, _, value = line.partition(":")
         if key == "CapEff":
-            mask = int(value.strip(), 16)
-            return {name for bit, name in ACCESS_CAPABILITIES.items() if mask >> bit & 1}
+            return int(value.strip(), 16)
     raise ValueError(f"{status} has no CapEff line")
 
 
@@ -336,16 +348,18 @@ def check_privileges(recorded, recorded_closed, root="/", capability=read_capabi
     setid, closed, searchable, launchers, count = scan_privileges(root, capability)
     # A closed directory hides its files from the walk. That is safe only when
     # the job user cannot restore access: it must not own the directory (an
-    # owner can chmod it), and the process must not have a capability that
-    # bypasses the directory mode.
+    # owner can chmod it), and the process must have no effective capability.
+    # Several capabilities can restore access (for example CAP_DAC_OVERRIDE,
+    # CAP_FOWNER, CAP_CHOWN or CAP_SETUID), so any non-zero set fails.
     if closed:
         try:
-            held = access_capabilities()
+            mask = effective_capabilities()
         except (OSError, ValueError):
             fail(f"the effective capabilities of the job process cannot be read from {PROCESS_STATUS}")
         else:
-            for name in sorted(held):
-                fail(f"the job process has {name}, so a closed directory does not stop it")
+            if mask:
+                fail(f"the job process has a non-zero effective capability set (CapEff {mask:016x}), "
+                     "so a closed directory does not stop it")
     for path in sorted(closed):
         try:
             information = os.lstat(os.path.join(root, path.lstrip("/")))
