@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 """Exercise the public setup checker against isolated, real file inventories."""
+import ast
 import json
 import os
 from pathlib import Path
+import re
 import select
 import shlex
 import signal
@@ -710,14 +712,29 @@ class GoTestReport(unittest.TestCase):
         self.assertEqual(result.returncode, 2)
         self.assertIn("refused: the command does not contain -count=1", result.stderr)
 
-    def test_deadline_stops_the_command_and_still_reports(self):
-        script = ("import json, sys, time\n"
+    # A child that never ends by itself: it prints one event and then blocks
+    # on a FIFO that the test holds open and never writes. When the test
+    # closes the FIFO, a child that is still there reads its end and stops.
+    HELD_CHILD = ("import json, sys\n"
                   "print(json.dumps({'Action': 'pass', 'Package': 'm/a', 'Elapsed': 0.1}), flush=True)\n"
-                  "time.sleep(60)\n")
-        command = [sys.executable, "-c", script, "-count=1"]
+                  "open(sys.argv[1]).read()\n")
+
+    def held_child_report(self, *options, expect):
+        with tempfile.TemporaryDirectory() as directory:
+            hold = Path(directory) / "hold"
+            os.mkfifo(hold)
+            hold_end = os.open(hold, os.O_RDWR)
+            try:
+                command = [sys.executable, "-c", self.HELD_CHILD, str(hold), "-count=1"]
+                return self.report([], *options, expect=expect, command=command)
+            finally:
+                os.close(hold_end)
+
+    def test_deadline_stops_the_command_and_still_reports(self):
         started = time.monotonic()
-        result, summary = self.report([], "--deadline", str(int(time.time()) + 2), "--title", "Run",
-                                      "--summary-file", "SUMMARY", expect=["m/a", "m/b"], command=command)
+        result, summary = self.held_child_report(
+            "--deadline", str(int(time.time()) + 2), "--title", "Run", "--summary-file", "SUMMARY",
+            expect=["m/a", "m/b"])
         self.assertLess(time.monotonic() - started, 30)
         self.assertEqual(result.returncode, 124)
         self.assertIn("go test: the command did not end before its deadline and was stopped (exit 124)",
@@ -727,13 +744,9 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("Result: FAILED.", summary)
 
     def test_timeout_stops_the_command_and_still_reports(self):
-        script = ("import json, time\n"
-                  "print(json.dumps({'Action': 'pass', 'Package': 'm/a', 'Elapsed': 0.1}), flush=True)\n"
-                  "time.sleep(60)\n")
-        command = [sys.executable, "-c", script, "-count=1"]
         started = time.monotonic()
-        result, _ = self.report([], "--timeout", "2", "--deadline", str(int(time.time()) + 600),
-                                expect=["m/a"], command=command)
+        result, _ = self.held_child_report("--timeout", "2", "--deadline", str(int(time.time()) + 600),
+                                           expect=["m/a"])
         self.assertLess(time.monotonic() - started, 30)
         self.assertEqual(result.returncode, 124)
         self.assertIn("go test: the command did not end before its deadline", result.stdout)
@@ -741,13 +754,16 @@ class GoTestReport(unittest.TestCase):
 
     def test_no_test_process_outlives_the_command(self):
         with tempfile.TemporaryDirectory() as directory:
-            fifos = {name: Path(directory) / name for name in ("pid", "gate", "release")}
+            fifos = {name: Path(directory) / name for name in ("pid", "gate", "release", "hold")}
             for path in fifos.values():
                 os.mkfifo(path)
             expected = Path(directory) / "expected.txt"
             expected.write_text("m/a\n")
+            # After its gate, the background process blocks on a read of the
+            # hold FIFO, which the test never writes. So it never ends by
+            # itself. When the test closes the FIFO, it reads its end.
             script = gated_background_script(
-                fifos["pid"], fifos["gate"], fifos["release"], "sleep 60",
+                fifos["pid"], fifos["gate"], fifos["release"], 'cat < "%s"' % fifos["hold"],
                 "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
             # The test holds each FIFO open for reading and writing, so no open
             # blocks and no write meets a closed FIFO.
@@ -782,6 +798,26 @@ class GoTestReport(unittest.TestCase):
                     handle.close()
                 for end in ends.values():
                     os.close(end)
+
+    def test_new_tests_hold_processes_without_a_timed_pause(self):
+        # Hard rule 5: no timed pause in a test. The tests and test children of this
+        # file, and the receipt tests that #278 adds to test_stack_fixture.py,
+        # hold a process on a FIFO or a pipe, never on a timed pause. The
+        # word is built from two parts, so that this check does not match
+        # itself.
+        token = re.compile(r"\b" + "sl" + "eep" + r"\b")
+        texts = {"test_setup.py": Path(__file__).read_text()}
+        fixture_tests = ROOT / "scripts/ci/test_stack_fixture.py"
+        tree = ast.parse(fixture_tests.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and (
+                    node.name.startswith("test_receipt_check") or node.name == "receipt_manifest"):
+                texts[f"test_stack_fixture.py {node.name}"] = ast.get_source_segment(
+                    fixture_tests.read_text(), node)
+        self.assertGreaterEqual(len(texts), 5, texts.keys())
+        found = [f"{name}:{number}: {line.strip()}" for name, text in texts.items()
+                 for number, line in enumerate(text.splitlines(), 1) if token.search(line)]
+        self.assertEqual(found, [])
 
     def test_background_process_waits_for_its_gate(self):
         # The acquisition order of the process cleanup test. The background
