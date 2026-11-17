@@ -66,7 +66,12 @@ so no new process or process group can get that ID. After that SIGKILL, the
 script sends no more signals to the group: a signal that the script receives
 later is only recorded, and it still fails the run. The script waits for the
 exit of COMMAND with a pidfd (Linux) or a kqueue process filter (macOS), which
-do not reap it. Each wait after the last SIGKILL has a limit of 30 seconds,
+do not reap it. After the last SIGKILL and before the reap, the script lists
+the live members of the group (Linux: /proc, other systems: ps). Linux
+reports success for a group signal when one member gets it. So a live member
+that the script may not signal (permission denied) did not get the SIGKILL,
+and it fails the run with a fixed message. A member list that cannot be read
+also fails the run. Each wait after the last SIGKILL has a limit of 30 seconds,
 because the system can refuse that SIGKILL. When COMMAND has not ended by
 then, the script does not reap it, so its ID stays reserved, and the run fails
 with a cleanup problem.
@@ -356,24 +361,81 @@ class _ReceivedSignal(Exception):
     """The script itself received SIGTERM, SIGINT or SIGHUP."""
 
 
+# The process list of Linux. The developer checks replace it.
+PROC = Path("/proc")
+# ps starts with this reference, so that a check that replaces
+# subprocess.Popen to watch the command does not see the ps process.
+PROCESS_LIST_POPEN = subprocess.Popen
+
+
 def live_group_members(group):
     """Return the IDs of the processes in GROUP that have not exited.
 
-    Return None when the process list cannot be read. Only the Darwin path
-    of run_command uses it. It reads the list with ps, so a process that
-    joins the group after the call is not in it.
+    Return None when the process list cannot be read. Linux reads
+    /proc/<pid>/stat, other systems read ps. A process that joins the group
+    after the call is not in the list.
     """
-    try:
-        result = subprocess.run(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
-                                capture_output=True, text=True, timeout=10, check=True)
-    except (OSError, subprocess.SubprocessError):
-        return None
     live = []
-    for line in result.stdout.splitlines():
+    if sys.platform.startswith("linux"):
+        try:
+            entries = [entry for entry in PROC.iterdir() if entry.name.isdigit()]
+        except OSError:
+            return None
+        for entry in entries:
+            try:
+                text = (entry / "stat").read_text()
+            except OSError:
+                # The process exited after the directory listing.
+                continue
+            # The fields after the command name: state, parent, group.
+            fields = text[text.rfind(")") + 1:].split()
+            if len(fields) >= 3 and fields[2] == str(group) and fields[0] not in ("Z", "X"):
+                live.append(int(entry.name))
+        return live
+    try:
+        with PROCESS_LIST_POPEN(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True) as lister:
+            try:
+                listing, _ = lister.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                lister.kill()
+                lister.communicate()
+                return None
+            if lister.returncode != 0:
+                return None
+    except OSError:
+        return None
+    for line in listing.splitlines():
         fields = line.split()
         if len(fields) >= 3 and fields[1] == str(group) and not fields[2].startswith("Z"):
             live.append(int(fields[0]))
     return live
+
+
+def unsignalled_members(group):
+    """Count the live members of GROUP that this script may not signal.
+
+    Call it after the last SIGKILL to GROUP and before the reap. Linux
+    reports success for a group signal when one member gets it, so a member
+    without permission can stay alive with no error (crrao R1). A member
+    that the script may signal got the SIGKILL. The check sends signal 0,
+    which delivers nothing. The leader of GROUP is not counted. Return None
+    when the member list cannot be read.
+    """
+    members = live_group_members(group)
+    if members is None:
+        return None
+    count = 0
+    for pid in members:
+        if pid == group:
+            continue
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            count += 1
+        except ProcessLookupError:
+            pass
+    return count
 
 
 def run_command(command, output, deadline, limit):
@@ -390,7 +452,9 @@ def run_command(command, output, deadline, limit):
     shows no member of the group that has not exited, the refusal does not
     fail the run. CLEANUP also names a COMMAND that did not end KILL_GRACE
     seconds after the last SIGKILL. The script does not reap such a COMMAND,
-    and the run fails.
+    and the run fails. After the last SIGKILL and before the reap, CLEANUP
+    also names live members of the group that the script may not signal,
+    and a member list that cannot be read (crrao R1). They fail the run.
     """
     # forward is False after the last signal to the group, before the reap.
     state = {"process": None, "watch": None, "waiting": False, "forward": True}
@@ -400,6 +464,9 @@ def run_command(command, output, deadline, limit):
     # last SIGKILL (for example, the system refused that SIGKILL). The script
     # then does not reap it, so its ID stays reserved, and the run fails.
     alive = []
+    # unsignalled holds the result of unsignalled_members() after the last
+    # SIGKILL: a count, or None when the member list cannot be read.
+    unsignalled = []
 
     def refusal_is_harmless(group):
         watch = state["watch"]
@@ -428,6 +495,13 @@ def run_command(command, output, deadline, limit):
         if alive:
             parts.append(f"the command did not end {KILL_GRACE} seconds after the last SIGKILL, so "
                          f"the reporter did not reap it and a test process can still run")
+        if unsignalled and unsignalled[0] is None:
+            parts.append("the reporter could not list the process group of the command after its "
+                         "last SIGKILL, so a test process can still run")
+        elif unsignalled and unsignalled[0]:
+            parts.append(f"after the last SIGKILL, {unsignalled[0]} processes of the process group "
+                         f"of the command remain that the reporter may not signal (permission "
+                         f"denied), so a test process can still run")
         return ". ".join(parts) or None
 
     def reap(process, watch):
@@ -478,6 +552,7 @@ def run_command(command, output, deadline, limit):
                 print(f"go test: cannot watch the command: {exc}")
                 forward(signal.SIGKILL, None)
                 state["forward"] = False
+                unsignalled.append(unsignalled_members(process.pid))
                 reap(process, None)
                 return early_status(), False, received[0] if received else None, cleanup()
             timed_out = False
@@ -507,6 +582,9 @@ def run_command(command, output, deadline, limit):
                 # after the reap the ID can name a new group.
                 forward(signal.SIGKILL, None)
                 state["forward"] = False
+                # The group ID still names this group. List its live members
+                # before the reap (crrao R1).
+                unsignalled.append(unsignalled_members(process.pid))
                 # The wait for the end is bounded: a refused SIGKILL can leave
                 # the command alive.
                 status = reap(process, watch)
@@ -520,7 +598,7 @@ def run_command(command, output, deadline, limit):
         status = 128 - status
     if received:
         status = 128 + received[0]
-    if (denied or alive) and status == 0:
+    if (denied or alive or (unsignalled and unsignalled[0] != 0)) and status == 0:
         status = 1
     return status, timed_out, received[0] if received else None, cleanup()
 

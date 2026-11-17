@@ -1297,6 +1297,60 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                 self.assertEqual(received, signal.SIGTERM)
                 self.assertEqual(status, 128 + signal.SIGTERM)
 
+    def test_unsignalled_group_member_fails_the_run(self):
+        # crrao R1: Linux reports success for a group signal when one member
+        # gets it. Here the command leaves a real member that blocks on a FIFO,
+        # and the real SIGKILL stops it. A fake /proc (the Linux code path,
+        # forced with sys.platform) also lists a member that the reporter may
+        # not signal: signal 0 to it gives EPERM, as for a setuid process of
+        # another user ID. The run must fail with the fixed message. Only Linux
+        # CI can show the kernel side: a real member that refuses the group
+        # SIGKILL while killpg reports success.
+        module = self.load_reporter()
+        refusing = 4194000
+        real_kill = os.kill
+        message = {"refused": "remain that the reporter may not signal (permission denied)",
+                   "unreadable": "could not list the process group of the command"}
+        for case in ("refused", "signalled", "unreadable"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                proc = Path(directory) / "proc"
+                hold = Path(directory) / "hold"
+                os.mkfifo(hold)
+                hold_end = os.open(hold, os.O_RDWR)
+
+                class FakeProcPopen(subprocess.Popen):
+                    def __init__(self, *arguments, **options):
+                        super().__init__(*arguments, **options)
+                        if case == "unreadable":
+                            return
+                        for pid, state in ((self.pid, "Z"), (refusing, "S")):
+                            (proc / str(pid)).mkdir(parents=True)
+                            (proc / str(pid) / "stat").write_text(
+                                f"{pid} (held name) {state} 1 {self.pid} {self.pid} 0 -1 4194560\n")
+
+                def kill(pid, signum):
+                    if pid == refusing:
+                        if case == "refused":
+                            raise PermissionError(1, "Operation not permitted")
+                        return None
+                    return real_kill(pid, signum)
+
+                command = ["/bin/sh", "-c", 'cat < "$0" > /dev/null 2>&1 & echo \'{"Action":"pass","Package":"m/a"}\'',
+                           str(hold)]
+                try:
+                    with mock.patch.object(module.subprocess, "Popen", FakeProcPopen), \
+                            mock.patch.object(module.sys, "platform", "linux"), \
+                            mock.patch.object(module, "PROC", proc, create=True), \
+                            mock.patch.object(module.os, "kill", side_effect=kill):
+                        result = module.run_command(command, Path(directory) / "out.json", None, None)
+                finally:
+                    os.close(hold_end)
+                self.assertEqual(result[0], 0 if case == "signalled" else 1, result)
+                if case == "signalled":
+                    self.assertIsNone(result[3])
+                else:
+                    self.assertIn(message[case], result[3])
+
     def test_signal_to_the_reporter_fails_the_run(self):
         # The child prints a complete, passing stream, exits 0 on SIGTERM and
         # else blocks on a FIFO that the test never writes. The test sends
