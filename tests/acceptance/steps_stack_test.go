@@ -61,6 +61,10 @@ type commandResult struct {
 // starter, and the result steps of the shared result state.
 func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *lane) {
 	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}}
+	// godog runs the After hooks in the order of registration. The device
+	// login steps register their After hook first, so that it ends a running
+	// pm process before this hook stops pm-server and the private keyring.
+	registerDeviceLoginSteps(sc, scenario)
 	// godog keeps the step error. The hook returns only its own cleanup
 	// error, so the step error is reported once.
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
