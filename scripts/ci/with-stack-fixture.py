@@ -2630,19 +2630,23 @@ def parse_cli(arguments: Sequence[str]) -> tuple[str, str, list[str]]:
     if list(arguments) in (["-h"], ["--help"]):
         print(
             "usage: with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND [ARGS...]\n"
-            "       with-stack-fixture.py --cleanup ABSOLUTE_PATH"
+            "       with-stack-fixture.py --cleanup ABSOLUTE_PATH\n"
+            "       with-stack-fixture.py --check-receipt ABSOLUTE_PATH"
         )
         raise SystemExit(0)
     if len(arguments) == 2 and arguments[0] == "--cleanup":
         return "cleanup", arguments[1], []
+    if len(arguments) == 2 and arguments[0] == "--check-receipt":
+        return "receipt", arguments[1], []
     if len(arguments) >= 4 and arguments[0] == "--manifest" and arguments[2] == "--":
         command = list(arguments[3:])
         if not command or not command[0]:
             raise FixtureError("requested command is required after --")
         return "run", arguments[1], command
     raise FixtureError(
-        "usage: with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND [ARGS...] "
-        "or with-stack-fixture.py --cleanup ABSOLUTE_PATH"
+        "usage: with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND [ARGS...], "
+        "with-stack-fixture.py --cleanup ABSOLUTE_PATH "
+        "or with-stack-fixture.py --check-receipt ABSOLUTE_PATH"
     )
 
 def resolve_repo_root() -> Path:
@@ -2704,6 +2708,31 @@ def cleanup_mode(
     docker = resolve_docker(base_environment)
     image_refs = load_image_refs(repo_root)
     return 0 if cleanup_fixture(manifest, docker, image_refs, base_environment) else 1
+
+
+def receipt_mode(
+    manifest_path: Path,
+    runner_temp: Path,
+    repo_root: Path,
+    run_id: str,
+    run_attempt: str,
+) -> int:
+    """Check that the manifest is a cleaned receipt of this exact job.
+
+    The check only reads the manifest. It makes no Docker call and changes no
+    file, so its time does not depend on the engine. A missing manifest, or a
+    manifest in any phase other than "cleaned", fails: the caller then keeps
+    the manifest for the cleanup step of the workflow.
+    """
+    if not os.path.lexists(manifest_path):
+        safe_error("ownership manifest is missing, so there is no cleaned receipt")
+        return 1
+    manifest = OwnershipManifest.load(manifest_path, runner_temp, repo_root, run_id, run_attempt)
+    phase = manifest.document["phase"]
+    if phase != "cleaned":
+        safe_error(f"ownership manifest phase is {phase}, not cleaned: the fixture cleanup is incomplete")
+        return 1
+    return 0
 
 
 def run_mode(
@@ -2848,6 +2877,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         runner_temp = resolve_runner_temp()
         repo_root = resolve_repo_root()
         manifest_path, run_id, run_attempt = validate_manifest_path(raw_manifest, runner_temp)
+        if mode == "receipt":
+            return receipt_mode(manifest_path, runner_temp, repo_root, run_id, run_attempt)
         base_environment = sanitized_environment()
         SIGNALS.install()
         try:
