@@ -46,6 +46,28 @@ step() {
   printf 'check-bdd: [+%ss] %s\n' "$(($(date +%s) - started))" "$1"
 }
 
+# --- functions that scripts/ci/test_setup.py runs: begin ---
+# Job cancellation. The job container's init process passes SIGHUP, SIGINT
+# and SIGTERM to this script. The script sets no trap for them, so such a
+# signal stops it at once, also while a command runs: sh in the CI image is
+# dash, which keeps the default action. A trap would run only after that
+# command ends. So when the script reaches pm_stack_ended, the job is not
+# cancelled.
+#
+# pm_stack_ended STATUS reports the end of the stack run. A status of 129, 130
+# or 143 means that the stack run command ended on a signal that this script
+# did not get. That is a stack run failure: the receipt check and the Gherkin
+# run still run, and the job fails.
+pm_stack_ended() {
+  step "stack run ended with exit $1"
+  case "$1" in
+    129 | 130 | 143)
+      printf 'check-bdd: the stack run command ended on a signal (exit %s), and this script got no signal, so the job is not cancelled. This is a stack run failure; the receipt check and the Gherkin run still run\n' "$1" >&2
+      ;;
+  esac
+}
+# --- functions that scripts/ci/test_setup.py runs: end ---
+
 # The time budget. The workflow step has a frozen limit of 50 minutes
 # (bdd.yml). The script keeps 3 minutes of it for the start and stop of the
 # job container, so its own work ends within 47 minutes of its start, on the
@@ -190,13 +212,7 @@ if [ "$stack_status" -eq 0 ]; then
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 15m $(cat "$RUNNER_TEMP/bdd-stack-packages.txt") ||
     stack_status=$?
-  step "stack run ended with exit $stack_status"
-  case "$stack_status" in
-    129 | 130 | 143)
-      printf 'check-bdd: the stack run stopped on a signal (exit %s)\n' "$stack_status" >&2
-      exit "$stack_status"
-      ;;
-  esac
+  pm_stack_ended "$stack_status"
 else
   printf '%s\n' 'check-bdd: the stack run did not run: its package selection failed' >&2
   stack_ran=false

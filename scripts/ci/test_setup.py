@@ -815,6 +815,55 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("--summary-file requires --title or --scenarios", result.stderr)
 
 
+def check_bdd_functions():
+    """The function region of check-bdd.sh that this file runs."""
+    text = CHECK_BDD.read_text()
+    begin = "# --- functions that scripts/ci/test_setup.py runs: begin ---\n"
+    end = "# --- functions that scripts/ci/test_setup.py runs: end ---\n"
+    return text[text.index(begin):text.index(end) + len(end)]
+
+
+class BddSignalPaths(unittest.TestCase):
+    """Developer checks of the stack run signal paths in check-bdd.sh."""
+
+    # CI runs check-bdd.sh with sh in the CI image, which is dash. bash as sh
+    # (macOS /bin/sh) waits for the command after SIGINT, so the check runs
+    # with dash on every host. It fails when dash is missing.
+    DASH = "/bin/dash"
+
+    def run_script(self, child):
+        # The real function region of check-bdd.sh, then the stack run step as
+        # check-bdd.sh runs it, with CHILD as the stack run command.
+        self.assertTrue(os.access(self.DASH, os.X_OK), "dash is required for this check")
+        script = ("step() { printf 'step: %s\\n' \"$1\"; }\n" + check_bdd_functions()
+                  + "stack_status=0\n" + child + " || stack_status=$?\n"
+                  + 'pm_stack_ended "$stack_status"\n'
+                  + "printf '%s\\n' 'next: receipt check and Gherkin run'\n")
+        return subprocess.run([self.DASH, "-c", script], capture_output=True, text=True, timeout=60)
+
+    def test_child_signal_exit_is_a_stack_failure(self):
+        for name, status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+            with self.subTest(signal=name):
+                result = self.run_script(f"sh -c 'kill -{name} $$'")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"step: stack run ended with exit {status}\n", result.stdout)
+                self.assertIn("next: receipt check and Gherkin run\n", result.stdout)
+                self.assertIn(f"ended on a signal (exit {status})", result.stderr)
+
+    def test_job_cancellation_stops_the_script(self):
+        # The command sends the signal to the script itself, as the init
+        # process does on a job cancellation. The script stops at once.
+        self.assertNotRegex(CHECK_BDD.read_text(), r"(?m)^\s*trap\b",
+                            "check-bdd.sh must keep the default action of HUP, INT and TERM")
+        for name in ("HUP", "INT", "TERM"):
+            with self.subTest(signal=name):
+                result = self.run_script(f"sh -c 'kill -{name} \"$PPID\"'")
+                self.assertEqual(result.returncode, -getattr(signal, "SIG" + name),
+                                 result.stdout + result.stderr)
+                self.assertNotIn("stack run ended", result.stdout)
+                self.assertNotIn("next:", result.stdout)
+
+
 class GoPackageSelection(unittest.TestCase):
     """Developer checks of the package rule in scripts/ci/go-packages.sh."""
 
