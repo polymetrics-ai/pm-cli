@@ -363,28 +363,10 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyArtifacts] {
-		for _, services := range [][]string{
-			{"seaweed-master"},
-			{"seaweed-volume"},
-			{"seaweed-filer"},
-			{"seaweed-s3-a", "seaweed-s3-b", "caddy"},
-		} {
-			if err := rt.startServices(ctx, configuration, false, services...); err != nil {
-				return fmt.Errorf("start artifact services: %w", err)
-			}
-		}
-		// The start-up wait repeats only the bucket step and the read-only
-		// capacity fact. The volume grow runs after the wait, once.
-		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
-			if err := ensureArtifactBucket(checkCtx, configuration, rt, true); err != nil {
-				return err
-			}
-			return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
+		if err := startArtifactStore(ctx, configuration, rt, func(checkCtx context.Context) error {
+			return ensureArtifactBucket(checkCtx, configuration, rt, true)
 		}); err != nil {
-			return fmt.Errorf("initialize artifact bucket: %w", err)
-		}
-		if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
-			return fmt.Errorf("initialize artifact volumes: %w", err)
+			return err
 		}
 	}
 
@@ -1752,13 +1734,57 @@ func checkArtifactVolumeCapacity(ctx context.Context, configuration config.Confi
 	return nil
 }
 
+// startArtifactStore starts the bundled artifact store for pm-stack up.
+// ensureBucket is the bucket step.
+//
+// It grows the artifact volumes after the volume server joins the master and
+// before seaweed-filer starts (#381). The filer writes its metadata log to the
+// default collection about one minute after it starts. In SeaweedFS 4.46 that
+// write grows a default volume when the default collection has no writable
+// volume, and /vol/grow grows without a check. A grow by pm-stack after the
+// filer starts can read the status before that growth and grow after it. The
+// stack is then ready with two default volumes and one spare slot. Before the
+// filer starts, no SeaweedFS service writes to a volume.
+//
+// The bucket collection gets its volume before the bucket exists. A SeaweedFS
+// 4.46 bucket create decides from the bucket directory only, so it creates a
+// bucket whose collection already has a volume.
+func startArtifactStore(ctx context.Context, configuration config.Configuration, rt *runtime, ensureBucket func(context.Context) error) error {
+	for _, services := range [][]string{{"seaweed-master"}, {"seaweed-volume"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	// The start-up wait repeats only the read-only capacity fact. The volume
+	// grow runs after the wait, once.
+	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
+		return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
+	}); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	for _, services := range [][]string{{"seaweed-filer"}, {"seaweed-s3-a", "seaweed-s3-b", "caddy"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	// The start-up wait repeats only the bucket step.
+	if err := waitFor(ctx, readinessTimeout, ensureBucket); err != nil {
+		return fmt.Errorf("initialize artifact bucket: %w", err)
+	}
+	return nil
+}
+
 // ensureArtifactVolumes requires a writable volume for the artifact bucket
 // and for the default collection. Without one, the first object write of a
 // run waits for SeaweedFS to grow the volume. With grow, it reads the status,
 // asks the master once to grow one volume for each layout that has no
 // writable volume, and reads the status again. It never repeats a grow. Each
 // pm-stack up holds the deployment lock, and a second up finds the volumes
-// and grows nothing. Without grow, it only reads.
+// and grows nothing. pm-stack up calls it with grow before seaweed-filer
+// starts (startArtifactStore). Without grow, it only reads.
 func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
 	layouts := []struct {
 		collection string

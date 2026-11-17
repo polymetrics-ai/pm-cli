@@ -165,6 +165,149 @@ func TestCheckArtifactVolumeCapacity(t *testing.T) {
 	}
 }
 
+// TestStartArtifactStoreGrowsTheVolumesBeforeTheFilerStarts runs
+// startArtifactStore against fake python3 (docker compose through
+// tools/bootstrap.py) and docker programs on PATH. The fakes record each
+// compose up call, each /vol/grow call and the bucket step in one ordered
+// log. Defect it catches (#381): pm-stack up grows the artifact volumes after
+// seaweed-filer starts. The filer writes its metadata log to the default
+// collection about one minute after it starts. In SeaweedFS 4.46 that write
+// grows a default volume when the default collection has no writable volume.
+// When pm-stack reads the master status before that growth and grows after
+// it, the stack is ready with two default volumes and only one spare slot.
+func TestStartArtifactStoreGrowsTheVolumesBeforeTheFilerStarts(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		before string
+		after  string
+		want   []string
+	}{
+		{
+			name:   "a fresh master grows both volumes before the filer starts",
+			before: freshMasterStatus,
+			after:  readyMasterStatus,
+			want: []string{
+				"up seaweed-master",
+				"up seaweed-volume",
+				"grow " + bucketGrowCall,
+				"grow " + defaultGrowCall,
+				"up seaweed-filer",
+				"up seaweed-s3-a seaweed-s3-b caddy",
+				"bucket",
+			},
+		},
+		{
+			name:   "a second up with writable volumes grows nothing",
+			before: readyMasterStatus,
+			want: []string{
+				"up seaweed-master",
+				"up seaweed-volume",
+				"up seaweed-filer",
+				"up seaweed-s3-a seaweed-s3-b caddy",
+				"bucket",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := installFakeArtifactStore(t, test.before, test.after)
+			rt := &runtime{root: fake, project: "pm-artifact-store-test", stdout: io.Discard, stderr: io.Discard}
+			ensureBucket := func(context.Context) error {
+				return appendTestLine(filepath.Join(fake, "order.log"), "bucket")
+			}
+			if err := startArtifactStore(context.Background(), noRecreateTestConfiguration(t), rt, ensureBucket); err != nil {
+				t.Fatalf("startArtifactStore: %v", err)
+			}
+			if got := recordedMasterCalls(t, fake, "order.log"); !slices.Equal(got, test.want) {
+				t.Fatalf("artifact store start order = %q, want %q: each /vol/grow must come before seaweed-filer starts", got, test.want)
+			}
+		})
+	}
+}
+
+// installFakeArtifactStore writes fake python3 and docker programs and puts
+// them first on PATH. The fake python3 prints no Compose config hash, so each
+// service goes through the normal up, and it records each compose up call in
+// order.log. It answers each compose exec call to the master like
+// installFakeMaster: /dir/status prints the before document until a grow call
+// was made, and the after document then. /vol/grow records its URL in
+// order.log. The fake docker lists no service container. It returns the
+// directory that holds the documents and the log.
+func installFakeArtifactStore(t *testing.T, before, after string) string {
+	t.Helper()
+	directory := t.TempDir()
+	bin := filepath.Join(directory, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(directory, "status-before"), before, 0o600)
+	writeTestFile(t, filepath.Join(directory, "status-after"), after, 0o600)
+	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
+for argument in "$@"; do
+  if [ "$argument" = "--hash" ]; then
+    exit 0
+  fi
+  last=$argument
+done
+call=" $* "
+case "$call" in
+  *" exec -T seaweed-master curl -fsS -m 10 "*)
+    case "$last" in
+      */dir/status)
+        if [ -f "$FAKE_STORE_DIR/grown" ]; then
+          cat "$FAKE_STORE_DIR/status-after"
+        else
+          cat "$FAKE_STORE_DIR/status-before"
+        fi
+        ;;
+      */vol/grow\?*)
+        printf 'grow %s\n' "$last" >> "$FAKE_STORE_DIR/order.log"
+        : > "$FAKE_STORE_DIR/grown"
+        printf '%s\n' '{"count":1}'
+        ;;
+      *)
+        exit 64
+        ;;
+    esac
+    ;;
+  *" up -d "*)
+    services=${call#* up -d }
+    printf 'up %s\n' "${services% }" >> "$FAKE_STORE_DIR/order.log"
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	writeTestFile(t, filepath.Join(bin, "docker"), `#!/bin/sh
+case "$1" in
+  info)
+    printf '%s\n' '["name=seccomp,profile=builtin"]'
+    ;;
+  ps)
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	t.Setenv("FAKE_STORE_DIR", directory)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
+	return directory
+}
+
+// appendTestLine appends one line to a log of a fake.
+func appendTestLine(path, line string) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(line + "\n"); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
+}
+
 // installFakeMaster writes fake python3 and docker programs and puts them
 // first on PATH. The fake python3 answers each compose exec call to the
 // master: /dir/status prints the before document until a grow call was made,
