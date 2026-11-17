@@ -41,6 +41,12 @@ The script runs COMMAND in its own process group and forwards SIGTERM, SIGINT
 and SIGHUP to it. When COMMAND exits, the script sends SIGKILL to the rest of
 that process group, so that no test process of the run stays alive.
 
+The log also prints event times in seconds after the first event of the
+stream: the first event of each package, the `run` event and the last output
+of each test with no result, and the last event of the stream. It prints the
+time of the first event and the time when the command ended in UTC. These
+times show if a test stopped making progress or if the run used all its time.
+
 With --title, --summary-file appends a Markdown section with that title: the
 result, the totals, each package with its result and elapsed time, each failed
 or skipped test and each problem that --expect or --deadline found.
@@ -53,6 +59,7 @@ report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
 --summary-file requires --title, --scenarios or both.
 """
 import argparse
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -67,6 +74,8 @@ import time
 ANSI = re.compile(r"\x1b?\[[0-9;]*m")
 SCENARIO = re.compile(r"^\s*Scenario(?: Outline)?:\s*(.*?)\s+#\s+(\S+)\s*$")
 TOTAL = re.compile(r"^(\d+) (scenarios?|steps?) \(.*\)$|^No (scenarios|steps)$")
+# The Time of a go test event: RFC 3339 with up to nine fraction digits.
+EVENT_TIME = re.compile(r"^(\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$")
 
 
 def scenario_report(order, results, output):
@@ -152,6 +161,37 @@ def package_result(action):
 
 def test_name(key):
     return key[0] + (f" {key[1]}" if key[1] else "")
+
+
+def event_time(event):
+    """Return the Time of a go test event in UTC, or None."""
+    match = EVENT_TIME.match(str(event.get("Time") or ""))
+    if not match:
+        return None
+    fraction = (match.group(2) or "")[:6].ljust(6, "0")
+    zone = "+00:00" if match.group(3) == "Z" else match.group(3)
+    try:
+        return datetime.fromisoformat(f"{match.group(1)}.{fraction}{zone}").astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
+def time_lines(first, last, package_starts, unfinished, run_times, output_times, ended):
+    """Return the log lines with the event times, or no line for a stream without times."""
+    if first is None:
+        return []
+
+    def after(moment):
+        return "none" if moment is None else f"+{(moment - first).total_seconds():.1f}s"
+
+    lines = [f"event times are seconds after the first event at {first.isoformat()}"]
+    for package, moment in sorted(package_starts.items(), key=lambda item: (item[1], item[0])):
+        lines.append(f"package first event {after(moment)} {package}")
+    for key in unfinished:
+        lines.append(f"no result {test_name(key)}: run {after(run_times.get(key))}, "
+                     f"last output {after(output_times.get(key))}")
+    lines.append(f"last event {after(last)}, command end at {ended.isoformat()}")
+    return lines
 
 
 def filter_problem(command):
@@ -296,6 +336,8 @@ def main():
         if refused:
             parser.error(f"refused: {refused}")
     status, timed_out = run_command(command, args.output, args.deadline, args.timeout)
+    ended = datetime.now(timezone.utc)
+    first, last, package_starts, run_times, output_times = None, None, {}, {}, {}
     packages, failures, output = {}, [], {}
     # started keeps the tests with a `run` event in first-seen order. A dict
     # keeps insertion order and checks membership in constant time.
@@ -330,6 +372,16 @@ def main():
             skips.append(key)
         if action in ("fail", "build-fail"):
             failures.append(key)
+        moment = event_time(event)
+        if moment is not None:
+            first = moment if first is None else min(first, moment)
+            last = moment if last is None else max(last, moment)
+            if event.get("Package"):
+                package_starts[event["Package"]] = min(package_starts.get(event["Package"], moment), moment)
+            if action == "run" and key[1] is not None:
+                run_times.setdefault(key, moment)
+            if action == "output" and key[1] is not None:
+                output_times[key] = max(output_times.get(key, moment), moment)
     # A test that started and has no result: for example, a goroutine of the
     # test panicked and the test binary exited. Its output holds the cause.
     unfinished = [key for key in started if key not in results]
@@ -358,6 +410,8 @@ def main():
         print("::endgroup::")
         if args.fail_on_skip:
             print(f"go test: skipped test fails this run: {test_name(key)}")
+    for line in time_lines(first, last, package_starts, unfinished, run_times, output_times, ended):
+        print(f"go test: {line}")
     if expected is not None:
         print(f"go test: {intended}")
     for problem in problems:
