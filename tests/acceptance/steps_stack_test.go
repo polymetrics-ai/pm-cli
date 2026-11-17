@@ -35,6 +35,9 @@ type stackScenario struct {
 	keyring    *keyring.Keyring
 	workspace  string
 	result     commandResult
+	// profiles holds the names of the pm server profiles that the scenario
+	// added in its HOME.
+	profiles map[string]bool
 }
 
 // startedProcess is one process that the starter started, with the report of
@@ -60,7 +63,7 @@ type commandResult struct {
 // steps that start and observe pm-server and pm-worker through the shared
 // starter, and the result steps of the shared result state.
 func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *lane) {
-	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}}
+	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}, profiles: map[string]bool{}}
 	// godog runs the After hooks in the order of registration. The device
 	// login steps register their After hook first, so that it ends a running
 	// pm process before this hook stops pm-server and the private keyring.
@@ -84,8 +87,9 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *
 	sc.Step(`^the lane command stdout contains the lane deployment ID$`, scenario.result.stdoutHasDeploymentID)
 	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.result.stderrContains)
 	registerStartedServerSteps(sc, scenario)
-	registerBootstrapSteps(sc, scenario)
+	registerBootstrapSteps(sc, scenario, lane)
 	registerLaneSteps(sc, scenario, lane)
+	registerLoginSteps(sc, scenario, lane)
 	registerDevicePollIntervalSteps(sc, scenario)
 }
 
@@ -377,7 +381,13 @@ func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d 
 	if code != 0 || strings.TrimSpace(stdout) != profile {
 		return fmt.Errorf("pm server profiles add exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
+	s.profiles[profile] = true
 	return nil
+}
+
+// hasProfile reports whether the scenario added the pm server profile.
+func (s *stackScenario) hasProfile(profile string) bool {
+	return s.profiles[profile]
 }
 
 // runAgainst runs the command with the controls added at the end: the server

@@ -77,10 +77,15 @@ func (deviceChallenge) String() string   { return "device challenge [REDACTED]" 
 func (deviceChallenge) GoString() string { return "device challenge [REDACTED]" }
 
 // browserSession is the PM browser session of the deployment's Keycloak
-// user: one HTTP client with one cookie jar. It holds secrets.
+// user: one HTTP client with one cookie jar for PM and Keycloak, as a browser
+// has (D1-12). It holds secrets.
 type browserSession struct {
 	client   *http.Client
+	jar      http.CookieJar
+	recorder *providerRecorder
 	origin   string
+	issuer   string
+	username string
 	password string
 	code     string
 	state    string
@@ -295,9 +300,16 @@ func (s *deviceLoginScenario) runPM(parent context.Context, args []string) (int,
 	if err != nil {
 		return 0, "", "", err
 	}
+	return runPMProcess(parent, s.shared.harness.bins.pm, args, environment)
+}
+
+// runPMProcess runs one pm process with the environment and waits once for
+// its exit, with the limit of one lane command. An error never shows the
+// output.
+func runPMProcess(parent context.Context, binary string, args, environment []string) (int, string, string, error) {
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, s.shared.harness.bins.pm, args...)
+	command := exec.CommandContext(ctx, binary, args...)
 	command.Env = environment
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
@@ -334,11 +346,7 @@ func commandArguments(line string, subcommand ...string) ([]string, error) {
 
 // browserLogin is the step "a PM browser session of the deployment's
 // Keycloak user". It logs in the deployment user through PM with one HTTP
-// client and one cookie jar: POST /v1/sessions/browser/challenges, the
-// Keycloak login form, and POST /v1/sessions/browser with the code and the
-// state of the Keycloak redirect to the callback path. It sends no request
-// to the callback path itself. pm-server has no handler for it, and a
-// browser front end sends the code and the state to POST /v1/sessions/browser.
+// client and one cookie jar (login).
 func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	d := s.shared.deployment
 	if d == nil {
@@ -350,36 +358,72 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	if s.browser != nil {
 		return errors.New("the scenario already has a browser session")
 	}
+	b, err := newBrowserSession(d)
+	if err != nil {
+		return err
+	}
+	s.browser = b
+	if err := b.login(ctx, false); err != nil {
+		return err
+	}
+	godog.Logf(ctx, "browser session: the deployment's Keycloak user logged in through PM")
+	return nil
+}
+
+// newBrowserSession makes the browser of the deployment's Keycloak user: one
+// HTTP client with one cookie jar for PM and Keycloak, as a browser has
+// (D1-12). It trusts only the deployment CA and the Keycloak CA. Its
+// transport records every request to the Keycloak origin (providerRecorder).
+// It sends no request.
+func newBrowserSession(d *deployment) (*browserSession, error) {
 	if d.identity == nil || d.identity.Username == "" || d.identity.Password == "" || d.stack.identity.admin == nil {
-		return errors.New("the deployment has no user in the job Keycloak")
+		return nil, errors.New("the deployment has no user in the job Keycloak")
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(d.authority.pem) || !roots.AppendCertsFromPEM(d.stack.identity.ca) {
-		return errors.New("the browser cannot read the deployment CA or the Keycloak CA")
+		return nil, errors.New("the browser cannot read the deployment CA or the Keycloak CA")
 	}
 	jar, err := cookiejar.New(nil)
 	if err != nil {
-		return fmt.Errorf("create the browser cookie jar: %w", err)
+		return nil, fmt.Errorf("create the browser cookie jar: %w", err)
 	}
-	b := &browserSession{
+	issuer := d.stack.identity.admin.Issuer()
+	recorder, err := newProviderRecorder(issuer, &http.Transport{
+		TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
+		DisableKeepAlives: true,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &browserSession{
 		client: &http.Client{
-			Transport: &http.Transport{
-				TLSClientConfig:   &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS12},
-				DisableKeepAlives: true,
-			},
-			Jar: jar,
+			Transport: recorder,
+			Jar:       jar,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
+		jar:      jar,
+		recorder: recorder,
 		origin:   d.origin,
+		issuer:   issuer,
+		username: d.identity.Username,
 		password: d.identity.Password,
-	}
-	s.browser = b
-	issuer := d.stack.identity.admin.Issuer()
+	}, nil
+}
 
+// login logs the user in through PM: POST /v1/sessions/browser/challenges,
+// the Keycloak login form, and POST /v1/sessions/browser with the code and
+// the state of the Keycloak redirect to the callback path. It sends no
+// request to the callback path itself. pm-server has no handler for it, and a
+// browser front end sends the code and the state to POST /v1/sessions/browser.
+// With reauthenticate, PM asks Keycloak for a new login with max_age=0 and
+// prompt=login (internal/auth/oidc.go:113-119), so Keycloak shows its form
+// again, also when the jar holds a Keycloak session. Each request uses the
+// same jar.
+func (b *browserSession) login(ctx context.Context, reauthenticate bool) error {
 	// 1. PM starts the OIDC login and sets its challenge cookie.
-	start, err := json.Marshal(map[string]bool{"reauthenticate": false})
+	start, err := json.Marshal(map[string]bool{"reauthenticate": reauthenticate})
 	if err != nil {
 		return fmt.Errorf("encode the browser login start: %w", err)
 	}
@@ -393,7 +437,7 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	var challenge struct {
 		AuthorizationURL string `json:"authorization_url"`
 	}
-	if err := json.Unmarshal(body, &challenge); err != nil || !strings.HasPrefix(challenge.AuthorizationURL, issuer+"/protocol/openid-connect/auth?") {
+	if err := json.Unmarshal(body, &challenge); err != nil || !strings.HasPrefix(challenge.AuthorizationURL, b.issuer+"/protocol/openid-connect/auth?") {
 		return errors.New("the browser login challenge has no authorization URL of the job Keycloak")
 	}
 
@@ -405,16 +449,18 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	if status != http.StatusOK {
 		return fmt.Errorf("the %s request returned status %d, want 200 with the login form: %s", operationKeycloakForm, status, keycloakMessage(page))
 	}
-	action, err := loginFormAction(page, issuer)
+	action, err := loginFormAction(page, b.issuer)
 	if err != nil {
 		return fmt.Errorf("%w: %s", err, keycloakMessage(page))
 	}
 
 	// 3. The credentials of the deployment user. Keycloak redirects to the
 	// callback path with the code and the state.
-	form := url.Values{"username": {d.identity.Username}, "password": {d.identity.Password}}
-	status, header, page, err := b.send(ctx, operationKeycloakSubmit, http.MethodPost, action, []byte(form.Encode()),
+	form := url.Values{"username": {b.username}, "password": {b.password}}
+	encoded := []byte(form.Encode())
+	status, header, page, err := b.send(ctx, operationKeycloakSubmit, http.MethodPost, action, encoded,
 		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}})
+	clear(encoded)
 	if err != nil {
 		return err
 	}
@@ -442,7 +488,8 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	if err != nil {
 		return errors.New("the deployment origin is not a URL")
 	}
-	for _, cookie := range jar.Cookies(originURL) {
+	b.session, b.csrf = "", ""
+	for _, cookie := range b.jar.Cookies(originURL) {
 		switch cookie.Name {
 		case browserSessionCookieName:
 			b.session = cookie.Value
@@ -453,7 +500,6 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	if b.session == "" || b.csrf == "" {
 		return errors.New("the browser login did not set the PM session cookie and the CSRF cookie")
 	}
-	godog.Logf(ctx, "browser session: the deployment's Keycloak user logged in through PM")
 	return nil
 }
 
@@ -1086,23 +1132,29 @@ func (s *deviceLoginScenario) challengePollInterval(want int) error {
 // device login, with the browser cookies and the CSRF token
 // (api/pm.openapi.yaml:95-134). It needs status 204.
 func (s *deviceLoginScenario) decide(ctx context.Context, decision string) error {
-	if s.browser == nil || s.browser.csrf == "" {
+	return decideDeviceLogin(ctx, s.browser, s.challenge, decision)
+}
+
+// decideDeviceLogin sends the decision of the browser session on the device
+// login: "approves" or "denies".
+func decideDeviceLogin(ctx context.Context, browser *browserSession, challenge *deviceChallenge, decision string) error {
+	if browser == nil || browser.csrf == "" {
 		return errors.New("the scenario has no browser session")
 	}
-	if s.challenge == nil {
+	if challenge == nil {
 		return errors.New("the scenario did not start a device login")
 	}
 	path, operation := "/v1/sessions/device/approve", operationDeviceApprove
 	if decision == "denies" {
 		path, operation = "/v1/sessions/device/deny", operationDeviceDeny
 	}
-	body, err := json.Marshal(map[string]string{"challenge_id": s.challenge.challengeID, "user_code": s.challenge.userCode})
+	body, err := json.Marshal(map[string]string{"challenge_id": challenge.challengeID, "user_code": challenge.userCode})
 	if err != nil {
 		return fmt.Errorf("encode the device decision: %w", err)
 	}
-	header := jsonHeaders(s.browser.origin)
-	header.Set("X-CSRF-Token", s.browser.csrf)
-	status, _, answer, err := s.browser.send(ctx, operation, http.MethodPost, s.browser.origin+path, body, header)
+	header := jsonHeaders(browser.origin)
+	header.Set("X-CSRF-Token", browser.csrf)
+	status, _, answer, err := browser.send(ctx, operation, http.MethodPost, browser.origin+path, body, header)
 	clear(body)
 	if err != nil {
 		return err
@@ -1236,24 +1288,7 @@ func storedSessionResult(code int, stdout, stderr, deploymentID string) commandR
 func (s *deviceLoginScenario) close() error {
 	var errs []error
 	if p := s.exchange; p != nil {
-		if p.stdin != nil {
-			_ = p.stdin.Close()
-			p.stdin = nil
-		}
-		select {
-		case <-p.exited:
-		default:
-			if err := p.command.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
-				errs = append(errs, fmt.Errorf("end the device login exchange: %w", err))
-			}
-			timer := time.NewTimer(killLimit)
-			select {
-			case <-p.exited:
-			case <-timer.C:
-				errs = append(errs, fmt.Errorf("the device login exchange did not end within %s after SIGKILL", killLimit))
-			}
-			timer.Stop()
-		}
+		errs = append(errs, stopExchangeProcess(p))
 	}
 	if s.browser != nil && s.browser.client != nil {
 		s.browser.client.CloseIdleConnections()
