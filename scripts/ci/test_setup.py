@@ -761,6 +761,61 @@ class GoTestReport(unittest.TestCase):
                 self.assertNotIn("refused:", result.stderr)
                 self.assertIn("go test: the go test event stream is empty", result.stdout)
 
+    def test_goflags_forms_that_go_reads_differently_are_refused(self):
+        # Deferred item (b): go reads a quoted GOFLAGS field without its
+        # quotes. The guard refuses each quoted form, each field that is not
+        # an option, and a GOFLAGS -count with no =value. -p=2 and -race stay
+        # accepted.
+        program = [sys.executable, "-c", "raise SystemExit(0)", "-json", "-count=1"]
+        for goflags in ("'-run=^$'", '"-run=^$"', "-p=2 '-run=^$'", "-p=2\t'-short'", "-p=2 '-p=2'",
+                        "-p=2 x", "-p 2", "-timeout 10m", "-count"):
+            with self.subTest(goflags=goflags):
+                result, _ = self.report([], expect=["m/a"], command=program, env={"GOFLAGS": goflags})
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("refused: GOFLAGS has", result.stderr)
+        for goflags, extra in (("-p=2", []), ("-p=2 -race", []), ("-p=2\t-race", []), ("-p=2", ["-race"])):
+            with self.subTest(accepted=goflags, extra=extra):
+                result, _ = self.report([], expect=["m/a"], command=[*program, *extra], env={"GOFLAGS": goflags})
+                self.assertNotIn("refused:", result.stderr)
+
+    def test_quoted_goflags_are_refused_for_a_real_go_package(self):
+        # Deferred item (b), with a real Go package. go removes the quotes of
+        # a GOFLAGS field, so '-run=^$' selects no test, and the package still
+        # reports a pass. The reporter must refuse the run before go starts.
+        # GOFLAGS=-p=2 must still run the real test. The go command comes from
+        # the shared toolchain through tools/bootstrap.py, with GOPROXY=off,
+        # GOTOOLCHAIN=local and no module to download.
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "quoted"
+            package.mkdir()
+            (package / "go.mod").write_text("module example.com/quoted\n\ngo 1.22\n")
+            (package / "quoted_test.go").write_text(
+                'package quoted\n\nimport "testing"\n\nfunc TestRuns(t *testing.T) { t.Log("ran") }\n')
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("example.com/quoted\n")
+            go_test = [sys.executable, str(ROOT / "tools/bootstrap.py"), "exec", "go", "--",
+                       "test", "-json", "-count=1", "./..."]
+
+            def run(goflags):
+                env = dict(os.environ, CGO_ENABLED="0", GOPROXY="off", GOWORK="off",
+                           GOTOOLCHAIN="local", GOFLAGS=goflags)
+                return subprocess.run(
+                    [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                     "--expect", str(expected), "--", *go_test],
+                    cwd=package, env=env, capture_output=True, text=True, timeout=600)
+
+            for goflags in ("'-run=^$'", "-p=2 '-run=^$'", '"-run=^$"'):
+                with self.subTest(goflags=goflags):
+                    result = run(goflags)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("refused: GOFLAGS has a quote character", result.stderr)
+                    self.assertNotIn("PASS", result.stdout)
+            result = run("-p=2")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("go test: intended set: 1 packages from go list; package results: 1", result.stdout)
+            events = [json.loads(line) for line in (Path(directory) / "out.json").read_text().splitlines()]
+            self.assertIn({"pass"}, [{event["Action"]} for event in events if event.get("Test") == "TestRuns"])
+
     def test_deadline_stops_the_command_and_still_reports(self):
         started = time.monotonic()
         result, summary = self.held_child_report(

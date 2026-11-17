@@ -28,11 +28,23 @@ With --expect FILE, FILE lists one import path on each line. Each listed
 package must have exactly one package result in the stream. A missing,
 duplicated or unexpected package result, an empty stream or a line that is not
 a JSON event fails the run. The log and the summary give the size of the
-intended set and the number of package results. The command and GOFLAGS
-together must set the test count exactly once, to 1, and must not select or
-filter tests (-run, -skip, -list, -short, -failfast, -tags), in any spelling:
--name, --name or -test.name, with "=value" or a separate value. -args is also
-refused. Such a command is refused before it runs.
+intended set and the number of package results.
+
+With --expect, a guard checks the command words and the GOFLAGS environment
+variable before the command runs:
+  - A word that starts with "-" is an option. The guard reads the forms -name,
+    --name and -test.name, with "=value" or, in the command, with the value as
+    the next word.
+  - It refuses each option that selects or filters tests (-run, -skip, -list,
+    -short, -failfast, -tags), and -args.
+  - It splits GOFLAGS at the characters that go splits it at (space, tab,
+    newline, carriage return). go also accepts quoted fields there, so the
+    guard refuses a GOFLAGS value with a quote character. It also refuses a
+    GOFLAGS field that is not an option, and a GOFLAGS -count with no =value.
+  - The command and GOFLAGS together must set the test count exactly once, to 1.
+Such a command is refused before it runs. The guard does not read other
+sources of go options, for example a GOFLAGS value in the go environment file
+(go env -w).
 
 With --deadline TIME (Unix time in seconds) or --timeout SECONDS, the command
 stops at TIME or SECONDS after its start, whichever comes first: the script
@@ -155,6 +167,8 @@ def markdown(rows, totals, problem, unfinished=(), problems=()):
 # accept each one as -name, --name or -test.name, with "=value" or with the
 # value as the next word.
 SELECTION = frozenset({"run", "skip", "list", "short", "failfast", "tags"})
+# The characters at which go splits GOFLAGS (cmd/internal/quoted).
+GOFLAGS_SPACE = re.compile(r"[ \t\n\r]+")
 DEADLINE_STATUS = 124
 KILL_GRACE = 30
 
@@ -189,7 +203,16 @@ def filter_problem(command):
     to 1, and must not select or filter tests. Return None when they pass.
     """
     counts = []
-    for words in (list(command), os.environ.get("GOFLAGS", "").split()):
+    goflags = os.environ.get("GOFLAGS", "")
+    # go reads a field in quotes as one word without the quotes. The guard
+    # does not copy that, so it refuses each quoted form.
+    if "'" in goflags or '"' in goflags:
+        return "GOFLAGS has a quote character, which the guard refuses"
+    goflags_words = [word for word in GOFLAGS_SPACE.split(goflags) if word]
+    for word in goflags_words:
+        if option_name(word)[0] is None:
+            return f"GOFLAGS has the field {word!r}, which is not an option"
+    for words, in_goflags in ((list(command), False), (goflags_words, True)):
         index = 0
         while index < len(words):
             word = words[index]
@@ -198,6 +221,8 @@ def filter_problem(command):
             name, value = option_name(word)
             if name in SELECTION:
                 return f"the command selects or filters tests with {word.split('=')[0]}"
+            if name == "count" and value is None and in_goflags:
+                return f"GOFLAGS has {word} with no =value"
             if name == "count":
                 if value is None:
                     index += 1
