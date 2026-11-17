@@ -28,10 +28,11 @@ With --expect FILE, FILE lists one import path on each line. Each listed
 package must have exactly one package result in the stream. A missing,
 duplicated or unexpected package result, an empty stream or a line that is not
 a JSON event fails the run. The log and the summary give the size of the
-intended set and the number of package results. The command must contain
--count=1 and must not
-select or filter tests (-run, -skip, -list, -short, -failfast, -tags), also not
-through GOFLAGS. Such a command is refused before it runs.
+intended set and the number of package results. The command and GOFLAGS
+together must set the test count exactly once, to 1, and must not select or
+filter tests (-run, -skip, -list, -short, -failfast, -tags), in any spelling:
+-name, --name or -test.name, with "=value" or a separate value. -args is also
+refused. Such a command is refused before it runs.
 
 With --deadline TIME (Unix time in seconds) or --timeout SECONDS, the command
 stops at TIME or SECONDS after its start, whichever comes first: the script
@@ -147,8 +148,10 @@ def markdown(rows, totals, problem, unfinished=(), problems=()):
 
 
 # Options that select or filter tests. A run with --expect refuses them, so
-# that each listed package runs all of its tests.
-FILTER = re.compile(r"^--?(run|skip|list|short|failfast|tags)(=.*)?$")
+# that each listed package runs all of its tests. go test and the test binary
+# accept each one as -name, --name or -test.name, with "=value" or with the
+# value as the next word.
+SELECTION = frozenset({"run", "skip", "list", "short", "failfast", "tags"})
 DEADLINE_STATUS = 124
 KILL_GRACE = 30
 
@@ -162,14 +165,50 @@ def test_name(key):
     return key[0] + (f" {key[1]}" if key[1] else "")
 
 
+def option_name(word):
+    """Return (name, value) of an option word, or (None, None).
+
+    The name has no leading dashes and no "test." prefix. The value is None
+    when the word has no "=value" part.
+    """
+    if not word.startswith("-") or word.strip("-") == "":
+        return None, None
+    name, equals, value = word.lstrip("-").partition("=")
+    if name.startswith("test."):
+        name = name[len("test."):]
+    return name, (value if equals else None)
+
+
 def filter_problem(command):
-    """Describe a test filter in COMMAND or GOFLAGS, or return None."""
-    words = list(command) + os.environ.get("GOFLAGS", "").split()
-    for word in words:
-        if FILTER.match(word):
-            return f"the command selects or filters tests with {word.split('=')[0]}"
-    if "-count=1" not in command:
+    """Describe a test filter or a wrong test count in COMMAND or GOFLAGS.
+
+    The command and GOFLAGS together must set the test count exactly once,
+    to 1, and must not select or filter tests. Return None when they pass.
+    """
+    counts = []
+    for words in (list(command), os.environ.get("GOFLAGS", "").split()):
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if word in ("-args", "--args"):
+                return f"the command passes options to the test binary with {word}"
+            name, value = option_name(word)
+            if name in SELECTION:
+                return f"the command selects or filters tests with {word.split('=')[0]}"
+            if name == "count":
+                if value is None:
+                    index += 1
+                    if index >= len(words):
+                        return f"the command has {word} with no value"
+                    value = words[index]
+                counts.append(value)
+            index += 1
+    if not counts:
         return "the command does not contain -count=1"
+    if len(counts) > 1:
+        return f"the command sets the test count {len(counts)} times; it must set -count=1 once"
+    if counts[0] != "1":
+        return f"the command sets the test count to {counts[0]}; it must be -count=1"
     return None
 
 

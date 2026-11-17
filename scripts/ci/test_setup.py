@@ -731,6 +731,34 @@ class GoTestReport(unittest.TestCase):
             finally:
                 os.close(hold_end)
 
+    def test_each_spelling_of_a_filter_or_a_count_is_refused(self):
+        # The command already has -count=1. Each case adds one more option,
+        # in the command or in GOFLAGS, and the reporter must refuse it
+        # before the command runs.
+        refused = [
+            (["-test.run=X"], None), (["-run", "X"], None), (["--run=X"], None),
+            (["-test.skip=Y"], None), (["-test.list=."], None), (["-test.short"], None),
+            (["-test.failfast"], None), (["-tags", "x"], None),
+            (["-count=0"], None), (["-count", "0"], None), (["-test.count=0"], None),
+            (["-test.count=1"], None), (["-args", "-test.run=X"], None), (["-count"], None),
+            ([], {"GOFLAGS": "-test.run=X"}), ([], {"GOFLAGS": "-count=0"}),
+            ([], {"GOFLAGS": "-p=2 -test.count=2"}), ([], {"GOFLAGS": "-test.short"}),
+        ]
+        for options, env in refused:
+            with self.subTest(options=options, env=env):
+                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                result, _ = self.report([], expect=["m/a"], command=command, env=env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("refused: the command", result.stderr)
+        # One count, equal to 1, with other options, passes the guard. The
+        # fake command then prints no event, so the run fails later.
+        for options, env in (([], {"GOFLAGS": "-p=2"}), (["-p", "1", "-timeout", "15m", "-json"], None)):
+            with self.subTest(accepted=options, env=env):
+                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                result, _ = self.report([], expect=["m/a"], command=command, env=env)
+                self.assertNotIn("refused:", result.stderr)
+                self.assertIn("go test: the go test event stream is empty", result.stdout)
+
     def test_deadline_stops_the_command_and_still_reports(self):
         started = time.monotonic()
         result, summary = self.held_child_report(
