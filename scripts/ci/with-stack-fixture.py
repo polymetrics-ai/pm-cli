@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NoReturn, Sequence
 from urllib.parse import urlsplit
 
 
@@ -71,6 +71,14 @@ DRAIN_TIMEOUT = 2 * 60
 STOP_TIMEOUT = 75
 HELPER_TIMEOUT = 60
 PROCESS_TERM_GRACE = 10
+# One deadline for each whole fixture phase (issue #286): the fixture start,
+# the cleanup in the run step, and the cleanup of --cleanup in the workflow
+# cleanup step. Each call in a phase gets min(its own limit, the time left).
+START_PHASE_LIMIT = 12 * 60
+CLEANUP_PHASE_LIMIT = 6 * 60
+CLEANUP_STEP_PHASE_LIMIT = 5 * 60
+# The clock of the phase deadlines. The developer checks replace it.
+CLOCK = time.monotonic
 
 ENVIRONMENT_KEYS = frozenset(
     {
@@ -221,6 +229,73 @@ class CommandFailure(FixtureError):
         self.stage = stage
         self.returncode = returncode
         self.timed_out = timed_out
+        self.reported = False
+
+
+class PhaseDeadline(Exception):
+    """A whole fixture phase reached its deadline.
+
+    It is not a FixtureError, so no handler of one call failure takes it.
+    """
+
+    def __init__(self, phase: str, limit: int) -> None:
+        super().__init__(f"the fixture {phase} phase reached its deadline ({limit} s)")
+
+
+class Phase:
+    """The deadline of one whole fixture phase, while the phase is current."""
+
+    current: "Phase | None" = None
+
+    def __init__(self, name: str, limit: int) -> None:
+        self.name = name
+        self.limit = limit
+        self.end = 0.0
+        self.previous: Phase | None = None
+
+    def __enter__(self) -> "Phase":
+        self.end = CLOCK() + self.limit
+        self.previous, Phase.current = Phase.current, self
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        Phase.current = self.previous
+
+    def left(self) -> float:
+        return self.end - CLOCK()
+
+
+def call_limit(limit: int) -> tuple[float, bool]:
+    """Return the timeout of one call and whether the phase deadline set it.
+
+    The timeout is min(LIMIT, the time left in the current phase). A phase
+    with no time left raises PhaseDeadline before the call starts.
+    """
+    phase = Phase.current
+    if phase is None:
+        return limit, False
+    left = phase.left()
+    if left <= 0:
+        raise PhaseDeadline(phase.name, phase.limit)
+    return (left, True) if left < limit else (limit, False)
+
+
+def stop_timed_out_call(process: subprocess.Popen[bytes], stage: str, timeout: float, by_phase: bool) -> NoReturn:
+    """Stop a call that reached its timeout, and raise the cause.
+
+    In a phase, the stop grace is also limited to the time left. A call that
+    the phase deadline stopped raises PhaseDeadline. A call that reached its
+    own limit gets its own message.
+    """
+    phase = Phase.current
+    grace = None if phase is None else min(PROCESS_TERM_GRACE, max(0.0, phase.left()))
+    terminate_process_group(process, grace)
+    if by_phase and phase is not None:
+        raise PhaseDeadline(phase.name, phase.limit)
+    safe_error(f"{stage} timed out: the call reached its own limit of {timeout:g} s")
+    failure = CommandFailure(stage, timed_out=True)
+    failure.reported = True
+    raise failure
 
 
 class SignalController:
@@ -453,6 +528,7 @@ def run_capture(
     max_output: int = MAX_JSON_BYTES,
     check: bool = True,
 ) -> tuple[int, bytes, bytes]:
+    timeout, by_phase = call_limit(timeout)
     try:
         process = subprocess.Popen(
             list(arguments),
@@ -467,9 +543,8 @@ def run_capture(
         raise FixtureError(f"cannot start {stage}: {exc.strerror or exc}") from exc
     try:
         stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        terminate_process_group(process)
-        raise CommandFailure(stage, timed_out=True) from exc
+    except subprocess.TimeoutExpired:
+        stop_timed_out_call(process, stage, timeout, by_phase)
     except Cancellation:
         terminate_process_group(process)
         raise
@@ -489,6 +564,7 @@ def run_quiet(
     stage: str,
     check: bool = True,
 ) -> int:
+    timeout, by_phase = call_limit(timeout)
     try:
         process = subprocess.Popen(
             list(arguments),
@@ -503,9 +579,8 @@ def run_quiet(
         raise FixtureError(f"cannot start {stage}: {exc.strerror or exc}") from exc
     try:
         returncode = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        terminate_process_group(process)
-        raise CommandFailure(stage, timed_out=True) from exc
+    except subprocess.TimeoutExpired:
+        stop_timed_out_call(process, stage, timeout, by_phase)
     except Cancellation:
         terminate_process_group(process)
         raise
@@ -2665,6 +2740,14 @@ def cleanup_fixture(
             diagnostic=None,
         )
         return True
+    except PhaseDeadline as exc:
+        # The manifest stays for the workflow cleanup step.
+        safe_error(str(exc))
+        try:
+            manifest.update("cleanup_failed", diagnostic=safe_diagnostic("cleanup-phase-deadline"))
+        except FixtureError:
+            pass
+        return False
     except FixtureError:
         try:
             manifest.update("cleanup_failed", diagnostic=safe_diagnostic("cleanup-failed"))
@@ -2757,7 +2840,8 @@ def cleanup_mode(
         return 0
     docker = resolve_docker(base_environment)
     image_refs = load_image_refs(repo_root)
-    return 0 if cleanup_fixture(manifest, docker, image_refs, base_environment) else 1
+    with Phase("cleanup", CLEANUP_STEP_PHASE_LIMIT):
+        return 0 if cleanup_fixture(manifest, docker, image_refs, base_environment) else 1
 
 
 def receipt_mode(
@@ -2811,93 +2895,100 @@ def run_mode(
     reservations: list[socket.socket] = []
     result = 1
     try:
-        created_parent_identity = create_private_parent(parent)
-        create_docker_config(docker_config)
-        docker_env = docker_environment(base_environment, docker_config, endpoint)
-        daemon = inspect_daemon(docker, docker_config, endpoint, docker_env, repo_root, socket_identity)
-        manifest = OwnershipManifest.create(
-            manifest_path,
-            runner_temp,
-            repo_root,
-            run_id,
-            run_attempt,
-            token,
-            parent,
-            fixture_root,
-            project,
-            daemon,
-        )
-        generator_code, stdout, _ = run_capture(
-            [
-                str(generator),
-                "--root",
-                str(fixture_root),
-                "--project",
+        # The fixture start phase: every call until the fixture runs.
+        with Phase("start", START_PHASE_LIMIT):
+            created_parent_identity = create_private_parent(parent)
+            create_docker_config(docker_config)
+            docker_env = docker_environment(base_environment, docker_config, endpoint)
+            daemon = inspect_daemon(docker, docker_config, endpoint, docker_env, repo_root, socket_identity)
+            manifest = OwnershipManifest.create(
+                manifest_path,
+                runner_temp,
+                repo_root,
+                run_id,
+                run_attempt,
+                token,
+                parent,
+                fixture_root,
                 project,
-                "--repo-root",
-                str(repo_root),
-            ],
-            env=base_environment,
-            cwd=repo_root,
-            timeout=GENERATOR_TIMEOUT,
-            stage="generate private stack fixture",
-            max_output=MAX_GENERATOR_OUTPUT,
-            check=False,
-        )
-        if generator_code != 0:
-            raise CommandFailure("generate private stack fixture", generator_code)
-        environment, environment_digest, config_digest, dynamic_config_digest = validate_generated_environment(
-            stdout,
-            fixture_root,
-            repo_root,
-            project,
-        )
-        record = fixture_record(
-            fixture_root,
-            environment,
-            environment_digest,
-            config_digest,
-            dynamic_config_digest,
-        )
-        manifest.update("generated", fixture=record)
-        reservations = reserve_ports(environment)
-        require_empty_before_start(
-            manifest,
-            environment,
-            image_refs,
-            docker,
-            docker_config,
-            endpoint,
-            docker_env,
-            repo_root,
-        )
-        manifest.update("starting", fixture=record, authorize_docker=True)
-        close_reservations(reservations)
-        stack_env = fixture_environment(base_environment, environment, docker_config, endpoint)
-        run_quiet(
-            [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]],
-            env=stack_env,
-            cwd=repo_root,
-            timeout=STARTUP_TIMEOUT,
-            stage="start owned fixture",
-        )
-        resources = discover_resources(
-            manifest,
-            environment,
-            image_refs,
-            docker,
-            docker_config,
-            endpoint,
-            docker_env,
-            repo_root,
-        )
-        verify_running_resources(resources)
-        manifest.update("running", resources=resource_manifest(resources), diagnostic=None)
+                daemon,
+            )
+            generator_code, stdout, _ = run_capture(
+                [
+                    str(generator),
+                    "--root",
+                    str(fixture_root),
+                    "--project",
+                    project,
+                    "--repo-root",
+                    str(repo_root),
+                ],
+                env=base_environment,
+                cwd=repo_root,
+                timeout=GENERATOR_TIMEOUT,
+                stage="generate private stack fixture",
+                max_output=MAX_GENERATOR_OUTPUT,
+                check=False,
+            )
+            if generator_code != 0:
+                raise CommandFailure("generate private stack fixture", generator_code)
+            environment, environment_digest, config_digest, dynamic_config_digest = validate_generated_environment(
+                stdout,
+                fixture_root,
+                repo_root,
+                project,
+            )
+            record = fixture_record(
+                fixture_root,
+                environment,
+                environment_digest,
+                config_digest,
+                dynamic_config_digest,
+            )
+            manifest.update("generated", fixture=record)
+            reservations = reserve_ports(environment)
+            require_empty_before_start(
+                manifest,
+                environment,
+                image_refs,
+                docker,
+                docker_config,
+                endpoint,
+                docker_env,
+                repo_root,
+            )
+            manifest.update("starting", fixture=record, authorize_docker=True)
+            close_reservations(reservations)
+            stack_env = fixture_environment(base_environment, environment, docker_config, endpoint)
+            run_quiet(
+                [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]],
+                env=stack_env,
+                cwd=repo_root,
+                timeout=STARTUP_TIMEOUT,
+                stage="start owned fixture",
+            )
+            resources = discover_resources(
+                manifest,
+                environment,
+                image_refs,
+                docker,
+                docker_config,
+                endpoint,
+                docker_env,
+                repo_root,
+            )
+            verify_running_resources(resources)
+            manifest.update("running", resources=resource_manifest(resources), diagnostic=None)
         result = run_child(command, env=stack_env, cwd=repo_root)
     except Cancellation as cancelled:
         result = 128 + cancelled.signum
-    except FixtureError as exc:
+    except PhaseDeadline as exc:
+        # No command starts on this fixture. Its manifest stays.
         safe_error(str(exc))
+        result = 1
+    except FixtureError as exc:
+        if not getattr(exc, "reported", False):
+            safe_error(str(exc))
         result = 1
     finally:
         SIGNALS.enter_cleanup()
@@ -2911,7 +3002,8 @@ def run_mode(
                     safe_error("pre-manifest fixture cleanup refused or failed")
                     result = 1
         else:
-            cleaned = cleanup_fixture(manifest, docker, image_refs, base_environment)
+            with Phase("cleanup", CLEANUP_PHASE_LIMIT):
+                cleaned = cleanup_fixture(manifest, docker, image_refs, base_environment)
             if not cleaned:
                 safe_error(f"cleanup incomplete; safe ownership diagnostic retained at {manifest.path}")
                 if result == 0:

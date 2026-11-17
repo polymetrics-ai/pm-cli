@@ -506,5 +506,230 @@ class FixtureOwnershipTests(unittest.TestCase):
                 FIXTURE.terminate_process_group(process)
 
 
+class PhaseFixture:
+    """Fake processes on a fake monotonic clock, for the phase deadline checks.
+
+    Each process ends after DURATION(arguments) seconds of fake time, or never
+    when DURATION returns None. A wait with a smaller timeout moves the clock by
+    the timeout and raises TimeoutExpired. No real process starts and no test
+    waits: the clock moves only when a fake process is waited for.
+    """
+
+    DAEMON_INFO = {"id": "QJ4M:ABCD:EFGH", "os": "linux", "architecture": "x86_64",
+                   "server_version": "5.0.0", "security_options": ["name=rootless"],
+                   "product_license": "Community Engine", "root_dir": "/var/lib/docker"}
+    SOCKET = {"device": 1, "inode": 2, "uid": os.getuid(), "mode": 0o140600}
+    ENVIRONMENT = {"PM_STACK_TEST_CONFIG": "/unused/server.json",
+                   "PM_STACK_TEST_ROLLOVER_NAMESPACE": "unused-rollover"}
+    RECORD = {"root_identity": {"device": 1, "inode": 3, "uid": os.getuid(), "mode": 0o700},
+              "environment": ENVIRONMENT, "environment_sha256": "a" * 64, "config_sha256": "b" * 64,
+              "rollover_namespace": "unused-rollover", "temporal_dynamic_config_sha256": "c" * 64}
+    COMMAND = "requested-command"
+
+    def __init__(self, duration):
+        self.duration = duration
+        self.now = 1000.0
+        self.calls = []
+        self.command_started = False
+        self.stopped = []
+
+    def clock(self):
+        return self.now
+
+    def popen(self, arguments, **_options):
+        fixture = self
+        arguments = list(arguments)
+        if arguments == [self.COMMAND]:
+            self.command_started = True
+
+        class Process:
+            pid = None
+            returncode = None
+
+            def finish(self, timeout):
+                fixture.calls.append((arguments, timeout))
+                seconds = fixture.duration(arguments)
+                if seconds is None or (timeout is not None and seconds > timeout):
+                    fixture.now += timeout
+                    raise subprocess.TimeoutExpired(arguments, timeout)
+                fixture.now += seconds
+                self.returncode = 0
+
+            def communicate(self, timeout=None):
+                self.finish(timeout)
+                info = json.dumps(fixture.DAEMON_INFO).encode()
+                return (info if "info" in arguments else b""), b""
+
+            def wait(self, timeout=None):
+                self.finish(timeout)
+                return 0
+
+            def poll(self):
+                return self.returncode
+
+        return Process()
+
+    def stop(self, process, *_arguments, **_options):
+        self.stopped.append(process)
+        process.returncode = -signal.SIGKILL
+
+    def patches(self, stack, token):
+        values = {
+            "resolve_docker": Path("/unused/docker"),
+            "validate_compose_cache": None,
+            "load_image_refs": {},
+            "choose_docker_socket": (Path("/unused/docker.sock"), self.SOCKET),
+            "validate_generated_environment": (self.ENVIRONMENT, "a" * 64, "b" * 64, "c" * 64),
+            "fixture_record": self.RECORD,
+            "reserve_ports": [],
+            "verify_running_resources": None,
+            "validate_fixture_record": self.ENVIRONMENT,
+            "verify_immutable_fixture_files": None,
+            "verify_daemon_identity": None,
+        }
+        for name, value in values.items():
+            stack.enter_context(mock.patch.object(FIXTURE, name, return_value=value))
+        stack.enter_context(mock.patch.object(FIXTURE, "regular_executable", side_effect=lambda path, _: path))
+        stack.enter_context(mock.patch.object(FIXTURE.secrets, "token_hex", return_value=token))
+        stack.enter_context(mock.patch.object(FIXTURE, "SIGNALS", FIXTURE.SignalController()))
+        stack.enter_context(mock.patch.object(FIXTURE, "terminate_process_group", side_effect=self.stop))
+        # The fake clock. With create=True, the patch also applies to a
+        # wrapper that has no CLOCK, so that the check fails there on its
+        # assertions.
+        stack.enter_context(mock.patch.object(FIXTURE, "CLOCK", self.clock, create=True))
+        stack.enter_context(mock.patch.object(FIXTURE.subprocess, "Popen", side_effect=self.popen))
+
+    def run(self, runner_temp, token="6" * 20):
+        """Run run_mode. Return its result, its stderr and the manifest path."""
+        path = runner_temp / "pmcli-bdd-90001-1.json"
+        errors = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            self.patches(stack, token)
+            stack.enter_context(contextlib.redirect_stderr(errors))
+            result = FIXTURE.run_mode(path, runner_temp, ROOT, "90001", "1", [self.COMMAND], {})
+        return result, errors.getvalue(), path
+
+    def cleanup_step(self, runner_temp, token="7" * 20):
+        """Run cleanup_mode on a live fixture manifest. Return its result, stderr and path."""
+        parent = runner_temp / (FIXTURE.PARENT_PREFIX + token)
+        parent.mkdir(mode=0o700)
+        path = runner_temp / "pmcli-bdd-90001-1.json"
+        daemon = dict(json.loads(json.dumps(self.DAEMON_INFO)), rootless=True,
+                      endpoint="unix:///unused/docker.sock", socket=self.SOCKET)
+        for name in ("security_options", "product_license", "root_dir"):
+            daemon.pop(name)
+        manifest = FIXTURE.OwnershipManifest.create(
+            path, runner_temp, ROOT, "90001", "1", token, parent, parent / "fixture",
+            FIXTURE.PROJECT_PREFIX + token, daemon)
+        manifest.update("generated", fixture=self.RECORD)
+        manifest.update("starting", fixture=self.RECORD, authorize_docker=True)
+        manifest.update("running")
+        errors = io.StringIO()
+        with contextlib.ExitStack() as stack:
+            self.patches(stack, token)
+            stack.enter_context(contextlib.redirect_stderr(errors))
+            result = FIXTURE.cleanup_mode(path, runner_temp, ROOT, "90001", "1", {})
+        return result, errors.getvalue(), path
+
+
+class PhaseDeadlineTests(unittest.TestCase):
+    """Issue #286: one deadline for each whole fixture phase (design v3, 4.5)."""
+
+    START = "the fixture start phase reached its deadline (720 s)"
+
+    @staticmethod
+    def manifest(path):
+        return json.loads(path.read_text())
+
+    def test_phase_deadline_ends_the_start_phase(self):
+        # Each call ends after 25 s, inside its own 30 s limit. Together the
+        # calls pass 720 s in the discovery after `pm-stack up`.
+        fixture = PhaseFixture(lambda _arguments: 25)
+        with tempfile.TemporaryDirectory() as temporary:
+            result, errors, path = fixture.run(Path(temporary).resolve())
+            self.assertEqual(result, 1, errors)
+            self.assertIn(self.START, errors)
+            self.assertNotIn("reached its own limit", errors)
+            self.assertFalse(fixture.command_started, "a command started on the fixture")
+            self.assertTrue(path.exists(), "the manifest did not stay")
+            self.assertNotEqual(self.manifest(path)["phase"], "running")
+
+    def test_phase_deadline_reduces_the_call_timeouts(self):
+        fixture = PhaseFixture(lambda _arguments: 25)
+        with tempfile.TemporaryDirectory() as temporary:
+            fixture.run(Path(temporary).resolve())
+        start = fixture.calls[:fixture.calls.index(next(call for call in fixture.calls
+                                                          if call[1] != 30 and call[1] != 60
+                                                          and "up" not in call[0])) + 1]
+        timeouts = [timeout for _, timeout in start]
+        # docker info 30, the generator 60, 13 discovery calls 30, `pm-stack
+        # up` with 345 s left, then discovery calls with 30 s until 20 s are left.
+        self.assertEqual(timeouts[:2], [30, 60])
+        self.assertEqual(timeouts[2:15], [30] * 13)
+        self.assertEqual(start[15][0][-3:-2], ["up"])
+        self.assertEqual(timeouts[15], 345)
+        self.assertEqual(timeouts[16:], [30] * 12 + [20])
+        # The 20 s call is stopped at the start deadline. The cleanup in the
+        # run step then reaches its own deadline and stops one more call.
+        self.assertEqual(len(fixture.stopped), 2)
+
+    def test_phase_deadline_ends_the_cleanup_in_the_run_step(self):
+        # The start and the command are quick. Each cleanup call ends after
+        # 25 s. Together they pass the 360 s of the cleanup phase.
+        fixture = PhaseFixture(lambda _arguments: 25 if fixture.command_started else 1)
+        with tempfile.TemporaryDirectory() as temporary:
+            result, errors, path = fixture.run(Path(temporary).resolve())
+            self.assertEqual(result, 1, errors)
+            self.assertTrue(fixture.command_started)
+            self.assertIn("the fixture cleanup phase reached its deadline (360 s)", errors)
+            self.assertNotIn("reached its own limit", errors)
+            document = self.manifest(path)
+            self.assertEqual(document["phase"], "cleanup_failed")
+            self.assertEqual(document["diagnostic"]["code"], "cleanup-phase-deadline")
+        cleanup = fixture.calls[fixture.calls.index(([PhaseFixture.COMMAND], FIXTURE.CHILD_TIMEOUT)) + 1:]
+        self.assertEqual([timeout for _, timeout in cleanup], [30] * 14 + [10])
+
+    def test_phase_deadline_ends_the_cleanup_step(self):
+        # --cleanup in the workflow cleanup step: 300 s. The 12th call gets the
+        # 25 s that are left. Then no time is left, and no 13th call starts.
+        fixture = PhaseFixture(lambda _arguments: 25)
+        with tempfile.TemporaryDirectory() as temporary:
+            result, errors, path = fixture.cleanup_step(Path(temporary).resolve())
+            self.assertEqual(result, 1, errors)
+            self.assertIn("the fixture cleanup phase reached its deadline (300 s)", errors)
+            document = self.manifest(path)
+            self.assertEqual(document["phase"], "cleanup_failed")
+            self.assertEqual(document["diagnostic"]["code"], "cleanup-phase-deadline")
+        self.assertEqual([timeout for _, timeout in fixture.calls], [30] * 11 + [25])
+
+    def test_phase_deadline_differs_from_a_slow_call(self):
+        # One call that reaches its own 30 s limit gets the per-call message,
+        # not the phase message: in the start phase and in --cleanup.
+        def first_never_ends(arguments):
+            return None if len(fixture.calls) == 1 else 1
+
+        fixture = PhaseFixture(first_never_ends)
+        with tempfile.TemporaryDirectory() as temporary:
+            result, errors, _ = fixture.run(Path(temporary).resolve())
+        self.assertEqual(result, 1, errors)
+        self.assertIn("inspect Docker engine timed out: the call reached its own limit of 30 s", errors)
+        self.assertNotIn("phase reached its deadline", errors)
+        self.assertFalse(fixture.command_started)
+        fixture = PhaseFixture(first_never_ends)
+        with tempfile.TemporaryDirectory() as temporary:
+            result, errors, path = fixture.cleanup_step(Path(temporary).resolve())
+            self.assertEqual(result, 1, errors)
+            self.assertIn("list fixture containers timed out: the call reached its own limit of 30 s", errors)
+            self.assertNotIn("phase reached its deadline", errors)
+            self.assertEqual(self.manifest(path)["phase"], "cleanup_failed")
+
+    def test_phase_deadline_limits_match_the_bdd_budget(self):
+        # check-bdd.sh plans with the same start and cleanup times.
+        script = (ROOT / "scripts/ci/check-bdd.sh").read_text()
+        self.assertIn(f"\nstart_allowance={FIXTURE.START_PHASE_LIMIT}\n", script)
+        self.assertIn(f"\ncleanup_allowance={FIXTURE.CLEANUP_PHASE_LIMIT}\n", script)
+        self.assertEqual(FIXTURE.CLEANUP_STEP_PHASE_LIMIT, 300)
+
+
 if __name__ == "__main__":
     unittest.main()

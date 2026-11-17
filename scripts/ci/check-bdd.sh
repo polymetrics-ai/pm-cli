@@ -76,7 +76,8 @@ pm_stack_ended() {
 #
 # The two deadlines stop only the go test command of each run, inside
 # go-test-report.py (--deadline). The fixture start before that command and
-# the fixture cleanup after it are outside the deadlines. A stopped command
+# the fixture cleanup after it have their own phase deadlines in
+# with-stack-fixture.py (issue #286). A stopped command
 # gets SIGTERM, then SIGKILL after 30 seconds (the stop grace), and the run
 # still reports. --timeout also stops each go test command after its start:
 # 3600 s (60 minutes) for the stack run and 1140 s (19 minutes) for the
@@ -86,12 +87,13 @@ pm_stack_ended() {
 # the stack command before its deadline, because that command starts after
 # the script.
 #
-# The allowances are upper bounds of the phases of with-stack-fixture.py: a
-# fixture start (generator 60 s, `pm-stack up` 600 s and its 30-second Docker
-# calls) and a fixture cleanup (drain 120 s, container stop 75 s, cleanup
-# helper 60 s and its 30-second Docker calls). The prelude (tool builds and
-# package selection) must take 8 minutes or less. Then, in minutes after the
-# start, on the longest path:
+# The start and cleanup allowances are the phase deadlines of
+# with-stack-fixture.py: each fixture start ends within 720 s and each fixture
+# cleanup within 360 s. Each call in a phase gets min(its own limit, the time
+# left), and a phase that reaches its deadline fails with its own message.
+# The prelude (tool builds and package selection) has no enforced limit and
+# must take 8 minutes or less. Then, in minutes after the start, on the
+# longest path:
 #   stack go test stop  <= +60   (stack deadline)
 #   stack run end       <= +60.5 (stop grace)
 #   stack cleanup end   <= +66.5 (cleanup allowance)
@@ -122,7 +124,7 @@ stop_grace=30
 gherkin_minimum=0
 gherkin_deadline=$((started + budget - finish_allowance - cleanup_allowance - stop_grace))
 stack_deadline=$((gherkin_deadline - gherkin_minimum - start_allowance - finish_allowance - cleanup_allowance - stop_grace))
-step "budget: the stack go test command stops at +$((stack_deadline - started))s, the Gherkin go test command at +$((gherkin_deadline - started))s, the script ends by +${budget}s. Fixture starts and cleanups are outside these deadlines."
+step "budget: the stack go test command stops at +$((stack_deadline - started))s, the Gherkin go test command at +$((gherkin_deadline - started))s, the script ends by +${budget}s. Each fixture start has a ${start_allowance}s phase deadline and each fixture cleanup a ${cleanup_allowance}s one."
 
 step 'build pm-stack, pm-stack-fixture and pm-api-generate from the candidate'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain.json"
