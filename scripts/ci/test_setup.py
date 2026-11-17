@@ -349,6 +349,12 @@ GO_PACKAGES = ROOT / "scripts/ci/go-packages.sh"
 CHECK_BDD = ROOT / "scripts/ci/check-bdd.sh"
 
 
+# The tests of test_stack_fixture.py that hold processes without a timed pause:
+# the receipt tests of #278 and the tests that #286 adds or changes.
+FIXTURE_TESTS_WITHOUT_PAUSE = ("test_receipt_check", "test_group_signal", "test_phase_deadline",
+                               "PhaseFixture", "test_cancellation_stops_descendant")
+
+
 def gherkin_caller_options(values):
     """The go-test-report.py options of the Gherkin run in check-bdd.sh.
 
@@ -1395,20 +1401,20 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
 
     def test_new_tests_hold_processes_without_a_timed_pause(self):
         # Hard rule 5: no timed pause in a test. The tests and test children of this
-        # file, and the receipt tests that #278 adds to test_stack_fixture.py,
-        # hold a process on a FIFO or a pipe, never on a timed pause. The
-        # word is built from two parts, so that this check does not match
-        # itself.
+        # file, the receipt tests that #278 adds to test_stack_fixture.py and
+        # the tests that #286 adds or changes there hold a process on a FIFO
+        # or a pipe, never on a timed pause. The word is built from two parts,
+        # so that this check does not match itself.
         token = re.compile(r"\b" + "sl" + "eep" + r"\b")
         texts = {"test_setup.py": Path(__file__).read_text()}
         fixture_tests = ROOT / "scripts/ci/test_stack_fixture.py"
         tree = ast.parse(fixture_tests.read_text())
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and (
-                    node.name.startswith("test_receipt_check") or node.name == "receipt_manifest"):
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and (
+                    node.name.startswith(FIXTURE_TESTS_WITHOUT_PAUSE) or node.name == "receipt_manifest"):
                 texts[f"test_stack_fixture.py {node.name}"] = ast.get_source_segment(
                     fixture_tests.read_text(), node)
-        self.assertGreaterEqual(len(texts), 5, texts.keys())
+        self.assertGreaterEqual(len(texts), 8, texts.keys())
         found = [f"{name}:{number}: {line.strip()}" for name, text in texts.items()
                  for number, line in enumerate(text.splitlines(), 1) if token.search(line)]
         self.assertEqual(found, [])

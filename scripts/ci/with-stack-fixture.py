@@ -11,6 +11,7 @@ from pathlib import Path
 import platform
 import re
 import secrets
+import select
 import shutil
 import signal
 import socket
@@ -354,43 +355,92 @@ def regular_executable(path: Path, context: str) -> Path:
     return path
 
 
-def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
-    def signal_group(signum: int) -> bool:
+class ExitWatch:
+    """Waits for the exit of one child process without reaping it.
+
+    While the child is not reaped, its process ID, and so the ID of its
+    process group, names no other process. Linux uses a pidfd, macOS a
+    kqueue process filter. This is the method of ExitWatch in
+    go-test-report.py.
+    """
+
+    def __init__(self, pid: int) -> None:
+        self.descriptor: int | None = None
+        self.queue: Any = None
+        self.exited = False
+        if hasattr(os, "pidfd_open"):
+            self.descriptor = os.pidfd_open(pid)
+        elif hasattr(select, "kqueue"):
+            self.queue = select.kqueue()
+            change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                   flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                   fflags=select.KQ_NOTE_EXIT)
+            try:
+                self.queue.control([change], 0, 0)
+            except ProcessLookupError:
+                # The child has already exited. This script has not reaped it.
+                self.exited = True
+        else:
+            raise OSError("no process exit event: the system has neither pidfd_open nor kqueue")
+
+    def wait(self, timeout: float | None) -> bool:
+        """Wait for the exit for at most TIMEOUT seconds (None: no limit)."""
+        if not self.exited:
+            if self.descriptor is not None:
+                poller = select.poll()
+                poller.register(self.descriptor, select.POLLIN)
+                ready = poller.poll(None if timeout is None else int(timeout * 1000))
+            else:
+                ready = self.queue.control(None, 1, timeout)
+            self.exited = bool(ready)
+        return self.exited
+
+    def close(self) -> None:
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+        if self.queue is not None:
+            self.queue.close()
+
+
+def terminate_process_group(process: subprocess.Popen[bytes], grace: float | None = None) -> None:
+    """Stop the process group of PROCESS, a child that this script has not reaped.
+
+    While the child is not reaped, its process ID names no other process, so
+    its process group ID names no other group. The function sends SIGTERM to
+    the group, waits up to GRACE seconds (default PROCESS_TERM_GRACE) for the
+    exit of the child without reaping it, and sends SIGKILL to the group. It
+    reaps the child only after that. A child that is already reaped is
+    refused: its process group ID can name another group.
+    """
+    if process.returncode is not None:
+        raise FixtureError("owned process was reaped before its process group was stopped")
+    try:
+        watch = ExitWatch(process.pid)
+    except OSError as exc:
+        raise FixtureError("cannot watch the owned process") from exc
+
+    def signal_group(signum: int) -> None:
         try:
             os.killpg(process.pid, signum)
-            return True
         except ProcessLookupError:
-            return False
-        except PermissionError as denied:
-            # Darwin can report EPERM while the owned leader becomes a zombie.
-            # Reap that exact child before retrying; never waive a live denial.
-            try:
-                process.wait(timeout=PROCESS_TERM_GRACE)
-            except subprocess.TimeoutExpired:
-                raise denied
-            try:
-                os.killpg(process.pid, signum)
-                return True
-            except ProcessLookupError:
-                return False
+            pass
+        except PermissionError:
+            # Darwin reports EPERM when the only member left in the group is
+            # the child that has exited and is not reaped yet. Then no process
+            # is left to signal. Any other EPERM is an error.
+            if not watch.wait(0):
+                raise
 
-    process.poll()
-    signal_group(signal.SIGTERM)
-    deadline = time.monotonic() + PROCESS_TERM_GRACE
-    while True:
-        process.poll()
-        if not signal_group(0):
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            # A reaped leader does not prove its descendants have stopped.
-            signal_group(signal.SIGKILL)
-            break
-        time.sleep(min(0.05, remaining))
     try:
-        process.wait(timeout=PROCESS_TERM_GRACE)
-    except subprocess.TimeoutExpired as exc:
-        raise FixtureError("owned process group did not terminate") from exc
+        signal_group(signal.SIGTERM)
+        watch.wait(PROCESS_TERM_GRACE if grace is None else max(0.0, grace))
+        # Also when the child exited: a member of its group can still run.
+        signal_group(signal.SIGKILL)
+        if not watch.wait(PROCESS_TERM_GRACE):
+            raise FixtureError("owned process group did not terminate")
+    finally:
+        watch.close()
+    process.wait()
 
 
 def run_capture(

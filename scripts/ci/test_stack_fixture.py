@@ -393,38 +393,117 @@ class FixtureOwnershipTests(unittest.TestCase):
             process.communicate(timeout=5)
 
     def test_cancellation_stops_descendant_that_ignores_term(self):
+        # The leader stops on SIGTERM. Its descendant ignores SIGTERM and holds
+        # the process output open. Both block on a FIFO that the test holds
+        # open and never writes. The group SIGKILL after the grace must stop
+        # the descendant. The leader is not reaped before the call, so its
+        # process group ID names no other group (issue #286).
         descendant = (
-            "import signal,time; "
+            "import signal,sys; "
             "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
-            "print('ready',flush=True); time.sleep(30)"
+            "print('ready',flush=True); open(sys.argv[1]).read()"
         )
         leader = (
-            "import subprocess,sys,time; "
-            f"subprocess.Popen([sys.executable,'-c',{descendant!r}]); time.sleep(30)"
+            "import subprocess,sys; "
+            f"subprocess.Popen([sys.executable,'-c',{descendant!r},sys.argv[1]]); open(sys.argv[1]).read()"
         )
-        process = subprocess.Popen(
-            [sys.executable, "-I", "-B", "-c", leader],
-            stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
-        )
-        try:
-            with selectors.DefaultSelector() as selector:
-                selector.register(process.stdout, selectors.EVENT_READ)
-                self.assertTrue(selector.select(timeout=5), "descendant did not become ready")
-            self.assertEqual(process.stdout.readline(), b"ready\n")
-            process.terminate()
-            process.wait(timeout=2)
-            with mock.patch.object(FIXTURE, "PROCESS_TERM_GRACE", 0.1):
+        with tempfile.TemporaryDirectory() as directory:
+            hold = Path(directory) / "hold"
+            os.mkfifo(hold)
+            hold_end = os.open(hold, os.O_RDWR)
+            process = subprocess.Popen(
+                [sys.executable, "-I", "-B", "-c", leader, str(hold)],
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE, start_new_session=True,
+            )
+            try:
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    self.assertTrue(selector.select(timeout=5), "descendant did not become ready")
+                self.assertEqual(process.stdout.readline(), b"ready\n")
+                with mock.patch.object(FIXTURE, "PROCESS_TERM_GRACE", 0.1):
+                    FIXTURE.terminate_process_group(process)
+                self.assertEqual(process.returncode, -signal.SIGTERM)
+                try:
+                    process.communicate(timeout=2)
+                except subprocess.TimeoutExpired:
+                    self.fail("cancellation left a live descendant holding the process output open")
+            finally:
+                if process.returncode is None:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except (ProcessLookupError, PermissionError):
+                        pass
+                process.communicate(timeout=5)
+                os.close(hold_end)
+
+    def test_group_signal_precedes_any_reap(self):
+        # E6 lines 357-394 at 8fc2bd3: terminate_process_group called
+        # process.poll(), which can reap the exited leader, and then signalled
+        # the group by the leader's process ID. After the reap, that ID can
+        # name another group. Here the leader has exited and is not reaped,
+        # and a member of its group blocks on a FIFO that the test holds open
+        # and never writes. Each killpg must come before the reap.
+        events = []
+        real_killpg = os.killpg
+
+        class RecordingPopen(subprocess.Popen):
+            def poll(self):
+                before = self.returncode
+                status = super().poll()
+                if before is None and status is not None:
+                    events.append(("reaped", self.pid))
+                return status
+
+            def wait(self, timeout=None):
+                before = self.returncode
+                status = super().wait(timeout)
+                if before is None:
+                    events.append(("reaped", self.pid))
+                return status
+
+        def recording_killpg(group, signum):
+            events.append(("killpg", group, signum))
+            return real_killpg(group, signum)
+
+        with tempfile.TemporaryDirectory() as directory:
+            hold = Path(directory) / "hold"
+            os.mkfifo(hold)
+            hold_end = os.open(hold, os.O_RDWR)
+            process = RecordingPopen(
+                ["/bin/sh", "-c", 'cat < "$0" > /dev/null 2>&1 &', str(hold)],
+                stdout=subprocess.PIPE, start_new_session=True)
+            try:
+                # One bounded wait: end of file on the leader's output means
+                # that the leader has exited. Nothing has reaped it.
+                with selectors.DefaultSelector() as selector:
+                    selector.register(process.stdout, selectors.EVENT_READ)
+                    self.assertTrue(selector.select(timeout=30), "the leader did not exit")
+                self.assertEqual(os.read(process.stdout.fileno(), 64), b"")
+                self.assertIsNone(process.returncode)
+                with mock.patch.object(FIXTURE.os, "killpg", recording_killpg):
+                    FIXTURE.terminate_process_group(process)
+            finally:
+                if process.returncode is None:
+                    process.kill()
+                    process.wait()
+                process.stdout.close()
+                os.close(hold_end)
+        reaped = [index for index, event in enumerate(events) if event[0] == "reaped"]
+        kills = [index for index, event in enumerate(events) if event[0] == "killpg"]
+        self.assertEqual(len(reaped), 1, events)
+        self.assertIn(("killpg", process.pid, signal.SIGTERM), events)
+        self.assertIn(("killpg", process.pid, signal.SIGKILL), events)
+        self.assertEqual([index for index in kills if index > reaped[0]], [],
+                         f"killpg after the leader was reaped: {events}")
+
+    def test_group_signal_refuses_a_reaped_leader(self):
+        # The process group ID of a reaped leader can name another group, so
+        # no signal goes to it.
+        process = subprocess.Popen([sys.executable, "-I", "-B", "-c", "pass"], start_new_session=True)
+        process.wait(timeout=30)
+        with mock.patch.object(FIXTURE.os, "killpg", side_effect=AssertionError("killpg called")):
+            with self.assertRaisesRegex(FIXTURE.FixtureError, "reaped before its process group was stopped"):
                 FIXTURE.terminate_process_group(process)
-            try:
-                process.communicate(timeout=2)
-            except subprocess.TimeoutExpired:
-                self.fail("cancellation left a live descendant holding the process output open")
-        finally:
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.communicate(timeout=5)
 
 
 if __name__ == "__main__":
