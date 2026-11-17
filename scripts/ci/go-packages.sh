@@ -9,14 +9,17 @@
 # Each root-module package that `go list ./...` prints goes to one place:
 #   - the unit run (checks job): every package that is not in the stack list
 #     and not excluded;
-#   - the stack run (bdd job): every stack list entry except tests/acceptance
-#     and the excluded packages;
-#   - the Gherkin run (bdd job): tests/acceptance;
+#   - the stack run (jobs stack-1, stack-2 and stack-3): every stack list
+#     entry except tests/acceptance and the excluded packages. This is the
+#     derived set D. scripts/ci/stack-shards.txt puts each path of D in one
+#     shard;
+#   - the Gherkin run (job stack-3): tests/acceptance;
 #   - the exclusion list below.
 # The selection is a rule, so a new package goes to the unit run without an
 # edit here. See docs/development/ci.md.
 
 pm_stack_list=scripts/ci/stack-packages.txt
+pm_shard_list=scripts/ci/stack-shards.txt
 pm_gherkin_package=./tests/acceptance
 
 # pm_stack_entries prints the entries of the stack list, one ./relative package
@@ -69,4 +72,59 @@ pm_stack_run_packages() {
   fi
   rm -f "$pm_drop_list"
   return 1
+}
+
+# pm_check_shards checks scripts/ci/stack-shards.txt against the derived set
+# D (pm_stack_entries | pm_stack_run_packages). The file is valid only when:
+#   - each line is "<shard-id> <path>";
+#   - each shard ID is 1, 2 or 3, and each of the three shards has a path;
+#   - each path of D is in the file exactly once;
+#   - no line names a path outside D: not the Gherkin package, not an
+#     excluded package and not an unknown path.
+# It prints each problem on stderr and returns 1 when it finds one. The checks
+# job (check-docs.sh setup) and the start of each shard (check-bdd.sh) run it.
+pm_check_shards() {
+  if [ ! -f "$pm_shard_list" ]; then
+    printf 'go-packages: %s is missing\n' "$pm_shard_list" >&2
+    return 1
+  fi
+  pm_shard_set=$(mktemp) || return 1
+  pm_shard_status=0
+  { pm_stack_entries | pm_stack_run_packages; } > "$pm_shard_set" || pm_shard_status=1
+  if [ ! -s "$pm_shard_set" ]; then
+    printf 'go-packages: the stack run has no package, so %s cannot be checked\n' "$pm_shard_list" >&2
+    pm_shard_status=1
+  fi
+  if [ "$pm_shard_status" -eq 0 ]; then
+    pm_shard_excluded=$(pm_excluded_packages | cut -d ' ' -f 1 | tr '\n' ' ')
+    awk -v list="$pm_shard_list" -v gherkin="$pm_gherkin_package" -v excluded=" $pm_shard_excluded" '
+      FNR == NR { order[++count] = $0; derived[$0] = 1; next }
+      /^#/ || /^$/ { next }
+      {
+        where = "go-packages: " list ":" FNR ": "
+        if (NF != 2) { print where "a line must be \"<shard-id> <path>\": " $0; bad = 1; next }
+        if ($1 != "1" && $1 != "2" && $1 != "3") { print where "the shard ID " $1 " is not 1, 2 or 3"; bad = 1 }
+        else size[$1]++
+        if ($2 == gherkin) { print where $2 " is the Gherkin package, which no shard runs"; bad = 1 }
+        else if (index(excluded, " " $2 " ")) { print where $2 " is an excluded package, which no shard runs"; bad = 1 }
+        else if (!($2 in derived)) { print where $2 " is not a stack run package"; bad = 1 }
+        if ($2 in seen) { print where $2 " is also on line " seen[$2]; bad = 1 }
+        else seen[$2] = FNR
+      }
+      END {
+        for (i = 1; i <= count; i++)
+          if (!(order[i] in seen)) { print "go-packages: " list ": the stack run package " order[i] " is in no shard"; bad = 1 }
+        for (id = 1; id <= 3; id++)
+          if (!(id in size)) { print "go-packages: " list ": shard " id " has no package"; bad = 1 }
+        exit bad
+      }' "$pm_shard_set" "$pm_shard_list" >&2 || pm_shard_status=1
+  fi
+  rm -f "$pm_shard_set"
+  return "$pm_shard_status"
+}
+
+# pm_shard_packages ID prints the paths of shard ID in file order. Call it
+# only after pm_check_shards passed.
+pm_shard_packages() {
+  sed -e '/^#/d' -e '/^$/d' "$pm_shard_list" | awk -v id="$1" '$1 == id { print $2 }'
 }

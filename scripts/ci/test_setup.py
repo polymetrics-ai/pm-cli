@@ -185,7 +185,7 @@ class SetupContracts(unittest.TestCase):
                 lambda s: s.replace("    timeout-minutes: 100\n",
                                     "    timeout-minutes: 100\n    container: ubuntu:24.04\n")),
             "suite outside the CI image": lambda r, _: text(r, WORKFLOW,
-                lambda s: s.replace("run: sh scripts/ci/in-ci-image.sh run bdd -- ", "run: ")),
+                lambda s: s.replace("run: sh scripts/ci/in-ci-image.sh run stack-3 -- ", "run: ")),
             "renamed required check": lambda r, _: text(r, WORKFLOW,
                 lambda s: s.replace("\n  bdd:\n", "\n  bdd-check:\n")),
             "extra job": lambda r, _: text(r, WORKFLOW,
@@ -198,7 +198,7 @@ class SetupContracts(unittest.TestCase):
                 lambda s: s.replace("if: always()", "if: success()")),
             "cleanup selects another job": lambda r, _: text(r, WORKFLOW,
                 lambda s: s.replace(
-                    "pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json",
+                    "pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-s3.json",
                     "pmcli-bdd-unrelated-job.json")),
             "invalid agent PR workflow": lambda r, _: text(r, ".github/workflows/agent-pr.yml",
                 lambda s: s.replace("runs-on: ubuntu-24.04", "runs-on: [self-hosted, Linux, X64, undeclared-label]")),
@@ -235,6 +235,73 @@ class SetupContracts(unittest.TestCase):
                 "      - name: Clean up the job container\n        if: always()",
                 "      - name: Clean up the job container\n        if: success()"),
                 "unapproved checks cleanup step"),
+        }
+        for name, (mutate, message) in cases.items():
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                root, inventory = self.fixture(directory)
+                path = root / WORKFLOW
+                original = path.read_text()
+                changed = mutate(original)
+                self.assertNotEqual(changed, original, name + " did not change the workflow")
+                path.write_text(changed)
+                result = self.check(root, inventory)
+                self.assertNotEqual(result.returncode, 0, name + " was accepted")
+                self.assertIn(message, result.stderr, name + " failed for another reason")
+
+    def test_stack_jobs_and_the_bdd_aggregate_are_frozen(self):
+        def job(s, name):
+            start = s.index(f"\n  {name}:\n") + 1
+            end = s.index("\n\n", start)
+            return start, end
+
+        def in_job(name, old, new):
+            def mutate(s):
+                start, end = job(s, name)
+                return s[:start] + s[start:end].replace(old, new) + s[end:]
+            return mutate
+
+        def drop_job(name):
+            def mutate(s):
+                start, end = job(s, name)
+                return s[:start] + s[end + 2:]
+            return mutate
+
+        checkout = ("      - name: Check out the exact pushed revision\n"
+                    "        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1\n")
+        cases = {
+            "aggregate without always()": (in_job("bdd", "    if: always() && ", "    if: "),
+                                           "unapproved bdd condition"),
+            "aggregate without the trust guard": (
+                in_job("bdd", "    if: always() && github.repository", "    if: always() || github.repository"),
+                "unapproved bdd condition"),
+            "aggregate passes on a cancellation": (
+                in_job("bdd", '[ "${job#* }" = success ] || status=1', '[ "${job#* }" != failure ] || status=1'),
+                "unapproved bdd step"),
+            "aggregate ignores a stack job": (
+                in_job("bdd", '"stack-2 $STACK_2" ', ""), "unapproved bdd step"),
+            "aggregate checks out code": (
+                in_job("bdd", "    steps:\n", "    steps:\n" + checkout), "unapproved bdd step"),
+            "aggregate runs repository code": (
+                in_job("bdd", 'exit "$status"', 'sh scripts/ci/check-bdd.sh --shard 1\n          exit "$status"'),
+                "unapproved bdd step"),
+            "aggregate misses a shard": (in_job("bdd", "needs: [stack-1, stack-2, stack-3]",
+                                                "needs: [stack-1, stack-2]"), "unapproved bdd needs"),
+            "aggregate time limit": (in_job("bdd", "timeout-minutes: 5", "timeout-minutes: 30"),
+                                     "bdd job timeout changed"),
+            "missing shard job": (drop_job("stack-3"), "unapproved job membership"),
+            "shard runs another shard": (in_job("stack-2", "check-bdd.sh --shard 2", "check-bdd.sh --shard 1"),
+                                         "unapproved stack-2 executable step"),
+            "shard cleans another manifest": (in_job("stack-2", "-s2.json", "-s1.json"),
+                                              "unapproved stack-2 cleanup step"),
+            "shard run step limit": (in_job("stack-1", "timeout-minutes: 90", "timeout-minutes: 95"),
+                                     "unapproved stack-1 executable step"),
+            "shard job limit": (in_job("stack-3", "    timeout-minutes: 100\n", "    timeout-minutes: 120\n"),
+                                "stack-3 job timeout changed"),
+            "shard waits for another job": (in_job("stack-1", "    timeout-minutes: 100\n",
+                                                   "    needs: stack-2\n    timeout-minutes: 100\n"),
+                                            "unapproved stack-1 job capability"),
+            "shard cleanup step limit": (in_job("stack-2", "timeout-minutes: 6\n", "timeout-minutes: 7\n"),
+                                         "unapproved stack-2 cleanup step"),
         }
         for name, (mutate, message) in cases.items():
             with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
@@ -1654,18 +1721,27 @@ class BddTimeBudget(unittest.TestCase):
         # The reporter, not the wrapper, ends each run.
         self.assertLess(stack_timeout + kill_grace, child_timeout)
         self.assertLess(gherkin_timeout + kill_grace, child_timeout)
+        # Each stack job (issue #286) has the limits of the one-hour stop: the
+        # step keeps 3 minutes for the job container; the job keeps the
+        # cleanup step and 4 minutes for the checkout and the runner. The
+        # aggregate bdd job only reads the results of the three.
         workflow = (ROOT / WORKFLOW).read_text()
-        bdd = workflow[workflow.index("\n  bdd:\n"):workflow.index("\n  checks:\n")]
-        job = int(re.search(r"\n    timeout-minutes: (\d+)\n", bdd).group(1))
-        step = int(re.search(r"- name: Run the Gherkin acceptance suite\n        timeout-minutes: (\d+)\n",
-                             bdd).group(1))
-        cleanup = int(re.search(r"- name: Clean up the job container and dependency fixture\n"
-                                r"        if: always\(\)\n        timeout-minutes: (\d+)\n", bdd).group(1))
-        self.assertEqual((step, job, cleanup), (90, 100, 6))
-        # The step keeps 3 minutes for the job container; the job keeps the
-        # cleanup step and 4 minutes for the checkout and the runner.
-        self.assertEqual(step * 60, budget + 3 * 60)
-        self.assertEqual(job, step + cleanup + 4)
+        names = {"1": "Run stack shard 1", "2": "Run stack shard 2",
+                 "3": "Run stack shard 3 and the Gherkin acceptance suite"}
+        for shard, name in names.items():
+            with self.subTest(shard=shard):
+                start = workflow.index(f"\n  stack-{shard}:\n")
+                block = workflow[start:workflow.index("\n\n", start)]
+                job = int(re.search(r"\n    timeout-minutes: (\d+)\n", block).group(1))
+                step = int(re.search(re.escape(f"- name: {name}") + r"\n        timeout-minutes: (\d+)\n",
+                                     block).group(1))
+                cleanup = int(re.search(r"- name: Clean up the job container and dependency fixture\n"
+                                        r"        if: always\(\)\n        timeout-minutes: (\d+)\n", block).group(1))
+                self.assertEqual((step, job, cleanup), (90, 100, 6))
+                self.assertEqual(step * 60, budget + 3 * 60)
+                self.assertEqual(job, step + cleanup + 4)
+        aggregate = workflow[workflow.index("\n  bdd:\n"):workflow.index("\n  checks:\n")]
+        self.assertEqual(int(re.search(r"\n    timeout-minutes: (\d+)\n", aggregate).group(1)), 5)
 
 
 class GoPackageSelection(unittest.TestCase):
@@ -1714,6 +1790,88 @@ class GoPackageSelection(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("scripts/ci/stack-packages.txt is missing", result.stderr)
         self.assertEqual(result.stdout, "")
+
+    # The option C shard sets of the #286 design v3, section 3.
+    OPTION_C = {
+        "1": ["./internal/warehouse", "./internal/store", "./internal/sync", "./internal/temporal",
+              "./internal/server", "./internal/httpapi", "./internal/testfixture"],
+        "2": ["./internal/app", "./internal/credentials", "./internal/runtime"],
+        "3": ["./internal/workflows", "./tests/stack", "./internal/cli", "./internal/activities",
+              "./internal/api", "./internal/auth", "./internal/objects"],
+    }
+
+    def shard_check(self, shards):
+        """Run pm_check_shards on the real stack list and the shard file SHARDS."""
+        with tempfile.TemporaryDirectory() as directory:
+            ci = Path(directory) / "scripts/ci"
+            ci.mkdir(parents=True)
+            (ci / "stack-packages.txt").write_bytes((ROOT / "scripts/ci/stack-packages.txt").read_bytes())
+            (ci / "stack-shards.txt").write_text(shards)
+            return self.sh("pm_check_shards", cwd=directory)
+
+    def option_c_lines(self):
+        return [f"{shard} {path}" for shard, paths in self.OPTION_C.items() for path in paths]
+
+    def test_shard_file_is_option_c(self):
+        result = self.sh("pm_check_shards")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        derived = self.lines("pm_stack_entries | pm_stack_run_packages")
+        self.assertEqual(len(derived), 17)
+        self.assertEqual(sorted(path for paths in self.OPTION_C.values() for path in paths), sorted(derived))
+        for shard, paths in self.OPTION_C.items():
+            with self.subTest(shard=shard):
+                self.assertEqual(self.lines(f"pm_shard_packages {shard}"), paths)
+
+    def test_invalid_shard_files_fail_with_the_named_problem(self):
+        lines = self.option_c_lines()
+        cases = {
+            "missing entry": ([line for line in lines if line != "2 ./internal/app"],
+                              "the stack run package ./internal/app is in no shard"),
+            "entry in two shards": (lines + ["1 ./internal/app"], "./internal/app is also on line"),
+            "Gherkin package": (lines + ["3 ./tests/acceptance"],
+                                "./tests/acceptance is the Gherkin package, which no shard runs"),
+            "excluded package": (lines + ["2 ./tests/client-parity"],
+                                 "./tests/client-parity is an excluded package, which no shard runs"),
+            "unknown path": (lines + ["1 ./internal/unknown"], "./internal/unknown is not a stack run package"),
+            "shard ID 4": ([line.replace("3 ./internal/objects", "4 ./internal/objects") for line in lines],
+                           "the shard ID 4 is not 1, 2 or 3"),
+            "shard ID 0": ([line.replace("1 ./internal/sync", "0 ./internal/sync") for line in lines],
+                           "the shard ID 0 is not 1, 2 or 3"),
+            "line with three fields": ([line.replace("1 ./internal/sync", "1 ./internal/sync extra")
+                                        for line in lines], 'a line must be "<shard-id> <path>"'),
+            "line with one field": (lines + ["./internal/sync"], 'a line must be "<shard-id> <path>"'),
+            "empty shard": ([line.replace("2 ", "1 ", 1) if line.startswith("2 ") else line for line in lines],
+                            "shard 2 has no package"),
+        }
+        valid = self.shard_check("# comment\n\n" + "\n".join(lines) + "\n")
+        self.assertEqual(valid.returncode, 0, valid.stderr)
+        for name, (case_lines, message) in cases.items():
+            with self.subTest(case=name):
+                result = self.shard_check("\n".join(case_lines) + "\n")
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn(message, result.stderr)
+                self.assertIn("go-packages: scripts/ci/stack-shards.txt", result.stderr)
+
+    def test_missing_shard_file_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            ci = Path(directory) / "scripts/ci"
+            ci.mkdir(parents=True)
+            (ci / "stack-packages.txt").write_bytes((ROOT / "scripts/ci/stack-packages.txt").read_bytes())
+            result = self.sh("pm_check_shards", cwd=directory)
+        self.assertEqual(result.returncode, 1)
+        self.assertIn("scripts/ci/stack-shards.txt is missing", result.stderr)
+
+    def test_checks_job_and_each_shard_check_the_partition(self):
+        # The checks job runs pm_check_shards in its setup check. Each shard
+        # runs it before it selects its packages, and stops when it fails.
+        setup = CHECK_DOCS.read_text().split("check_setup() {", 1)[1].split("\n}\n", 1)[0] + "\n"
+        self.assertIn("\n  pm_check_shards\n", setup)
+        script = CHECK_BDD.read_text()
+        check = script.index("if ! pm_check_shards; then")
+        self.assertLess(check, script.index('pm_shard_packages "$shard"'))
+        self.assertLess(check, script.index("starting a fresh job-owned stack"))
+        self.assertIn("exit 1", script[check:script.index("fi\n", check)])
 
 
 if __name__ == "__main__":
