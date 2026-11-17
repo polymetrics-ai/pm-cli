@@ -28,18 +28,26 @@ With --expect FILE, FILE lists one import path on each line. Each listed
 package must have exactly one package result in the stream. A missing,
 duplicated or unexpected package result, an empty stream or a line that is not
 a JSON event fails the run. The log and the summary give the size of the
-intended set and the number of package results. The command must contain
--count=1 and must not
-select or filter tests (-run, -skip, -list, -short, -failfast, -tags), also not
-through GOFLAGS. Such a command is refused before it runs.
+intended set and the number of package results. The command and GOFLAGS
+together must set the test count exactly once, to 1, and must not select or
+filter tests (-run, -skip, -list, -short, -failfast, -tags), in any spelling:
+-name, --name or -test.name, with "=value" or a separate value. -args is also
+refused. Such a command is refused before it runs.
 
 With --deadline TIME (Unix time in seconds) or --timeout SECONDS, the command
 stops at TIME or SECONDS after its start, whichever comes first: the script
 sends SIGTERM to its process group, then SIGKILL after 30 seconds. The exit
 status is then 124, and the report still lists the results in the stream.
 The script runs COMMAND in its own process group and forwards SIGTERM, SIGINT
-and SIGHUP to it. When COMMAND exits, the script sends SIGKILL to the rest of
-that process group, so that no test process of the run stays alive.
+and SIGHUP to it. A signal that the script itself receives fails the run: the
+script waits up to 30 seconds for COMMAND to stop, then sends SIGKILL, prints
+"the reporter received SIG... and stopped the command" and exits with 128 plus
+the signal number, also when COMMAND exits 0. When COMMAND exits, the script sends SIGKILL to the rest of
+that process group, so that no test process of the run stays alive. It sends
+that SIGKILL before it reaps COMMAND: until then, the process ID of COMMAND,
+which is also the ID of its process group, names no other process. The script
+waits for the exit of COMMAND with a pidfd (Linux) or a kqueue process filter
+(macOS), which do not reap it.
 
 The log also prints event times in seconds after the first event of the
 stream: the first event of each package, the `run` event and the last output
@@ -64,6 +72,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -148,8 +157,10 @@ def markdown(rows, totals, problem, unfinished=(), problems=()):
 
 
 # Options that select or filter tests. A run with --expect refuses them, so
-# that each listed package runs all of its tests.
-FILTER = re.compile(r"^--?(run|skip|list|short|failfast|tags)(=.*)?$")
+# that each listed package runs all of its tests. go test and the test binary
+# accept each one as -name, --name or -test.name, with "=value" or with the
+# value as the next word.
+SELECTION = frozenset({"run", "skip", "list", "short", "failfast", "tags"})
 DEADLINE_STATUS = 124
 KILL_GRACE = 30
 
@@ -194,59 +205,197 @@ def time_lines(first, last, package_starts, unfinished, run_times, output_times,
     return lines
 
 
+def option_name(word):
+    """Return (name, value) of an option word, or (None, None).
+
+    The name has no leading dashes and no "test." prefix. The value is None
+    when the word has no "=value" part.
+    """
+    if not word.startswith("-") or word.strip("-") == "":
+        return None, None
+    name, equals, value = word.lstrip("-").partition("=")
+    if name.startswith("test."):
+        name = name[len("test."):]
+    return name, (value if equals else None)
+
+
 def filter_problem(command):
-    """Describe a test filter in COMMAND or GOFLAGS, or return None."""
-    words = list(command) + os.environ.get("GOFLAGS", "").split()
-    for word in words:
-        if FILTER.match(word):
-            return f"the command selects or filters tests with {word.split('=')[0]}"
-    if "-count=1" not in command:
+    """Describe a test filter or a wrong test count in COMMAND or GOFLAGS.
+
+    The command and GOFLAGS together must set the test count exactly once,
+    to 1, and must not select or filter tests. Return None when they pass.
+    """
+    counts = []
+    for words in (list(command), os.environ.get("GOFLAGS", "").split()):
+        index = 0
+        while index < len(words):
+            word = words[index]
+            if word in ("-args", "--args"):
+                return f"the command passes options to the test binary with {word}"
+            name, value = option_name(word)
+            if name in SELECTION:
+                return f"the command selects or filters tests with {word.split('=')[0]}"
+            if name == "count":
+                if value is None:
+                    index += 1
+                    if index >= len(words):
+                        return f"the command has {word} with no value"
+                    value = words[index]
+                counts.append(value)
+            index += 1
+    if not counts:
         return "the command does not contain -count=1"
+    if len(counts) > 1:
+        return f"the command sets the test count {len(counts)} times; it must set -count=1 once"
+    if counts[0] != "1":
+        return f"the command sets the test count to {counts[0]}; it must be -count=1"
     return None
 
 
-def run_command(command, output, deadline, limit):
-    """Run COMMAND with stdout in OUTPUT. Return (status, timed_out)."""
-    with output.open("wb") as stream:
-        try:
-            process = subprocess.Popen(command, stdout=stream, start_new_session=True)
-        except OSError as exc:
-            print(f"go test: cannot start the command: {exc}")
-            return 1, False
-        if limit is not None:
-            relative = time.time() + limit
-            deadline = relative if deadline is None else min(deadline, relative)
+class ExitWatch:
+    """Waits for the exit of one child process without reaping it.
 
-        def forward(signum, _frame):
+    While the child is not reaped, its process ID, and so the ID of its
+    process group, names no other process. Linux uses a pidfd, macOS a
+    kqueue process filter.
+    """
+
+    def __init__(self, pid):
+        self.descriptor = self.queue = None
+        self.exited = False
+        if hasattr(os, "pidfd_open"):
+            self.descriptor = os.pidfd_open(pid)
+        elif hasattr(select, "kqueue"):
+            self.queue = select.kqueue()
+            change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                   flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                   fflags=select.KQ_NOTE_EXIT)
             try:
-                os.killpg(process.pid, signum)
+                self.queue.control([change], 0, 0)
             except ProcessLookupError:
-                pass
+                # The child has already exited. This script has not reaped it.
+                self.exited = True
+        else:
+            raise OSError("no process exit event: the system has neither pidfd_open nor kqueue")
 
-        previous = {number: signal.signal(number, forward)
-                    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
-        timed_out = False
+    def wait(self, timeout):
+        """Wait for the exit for at most TIMEOUT seconds (None: no limit)."""
+        if not self.exited:
+            if self.descriptor is not None:
+                poller = select.poll()
+                poller.register(self.descriptor, select.POLLIN)
+                ready = poller.poll(None if timeout is None else int(timeout * 1000))
+            else:
+                ready = self.queue.control(None, 1, timeout)
+            self.exited = bool(ready)
+        return self.exited
+
+    def close(self):
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+        if self.queue is not None:
+            self.queue.close()
+
+
+class _ReceivedSignal(Exception):
+    """The script itself received SIGTERM, SIGINT or SIGHUP."""
+
+
+def run_command(command, output, deadline, limit):
+    """Run COMMAND with stdout in OUTPUT.
+
+    Return (status, timed_out, received). RECEIVED is the first signal that
+    the script itself received, or None. A received signal forces the status
+    128 plus its number, also when COMMAND then exits 0.
+    """
+    state = {"process": None, "watch": None, "waiting": False}
+    received = []
+
+    def forward(signum, _frame):
+        process = state["process"]
+        if process is None:
+            return
         try:
+            os.killpg(process.pid, signum)
+        except ProcessLookupError:
+            pass
+        except PermissionError:
+            # Darwin reports EPERM when the only member left in the group
+            # is the command that has exited and is not reaped yet. Then
+            # no process is left to signal. Any other EPERM is an error.
+            watch = state["watch"]
+            if watch is None or not watch.exited:
+                raise
+
+    def on_signal(signum, frame):
+        # Only a signal that this script receives comes here. The deadline
+        # and the final kill call forward() directly.
+        received.append(signum)
+        forward(signum, frame)
+        if state["waiting"] and len(received) == 1:
+            raise _ReceivedSignal()
+
+    # The handlers are in place before the command starts, so a signal that
+    # comes before the wait is recorded too.
+    previous = {number: signal.signal(number, on_signal)
+                for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+    try:
+        with output.open("wb") as stream:
             try:
-                timeout = None if deadline is None else max(0.0, deadline - time.time())
-                status = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
-                timed_out = True
-                forward(signal.SIGTERM, None)
+                process = subprocess.Popen(command, stdout=stream, start_new_session=True)
+            except OSError as exc:
+                print(f"go test: cannot start the command: {exc}")
+                return 1, False, received[0] if received else None
+            state["process"] = process
+            if limit is not None:
+                relative = time.time() + limit
+                deadline = relative if deadline is None else min(deadline, relative)
+            try:
+                watch = state["watch"] = ExitWatch(process.pid)
+            except OSError as exc:
+                print(f"go test: cannot watch the command: {exc}")
+                forward(signal.SIGKILL, None)
+                process.wait()
+                return 1, False, received[0] if received else None
+            timed_out = False
+            try:
                 try:
-                    process.wait(timeout=KILL_GRACE)
-                except subprocess.TimeoutExpired:
-                    forward(signal.SIGKILL, None)
-                    process.wait()
+                    state["waiting"] = True
+                    if received:
+                        raise _ReceivedSignal()
+                    timeout = None if deadline is None else max(0.0, deadline - time.time())
+                    if not watch.wait(timeout):
+                        timed_out = True
+                        forward(signal.SIGTERM, None)
+                        if not watch.wait(KILL_GRACE):
+                            forward(signal.SIGKILL, None)
+                            watch.wait(None)
+                except _ReceivedSignal:
+                    # The handler forwarded the signal to the group. Give the
+                    # command KILL_GRACE seconds to stop, then SIGKILL.
+                    forward(received[0], None)
+                    if not watch.wait(KILL_GRACE):
+                        forward(signal.SIGKILL, None)
+                        watch.wait(None)
+            finally:
+                state["waiting"] = False
+                # A test process that outlives the command must not keep
+                # running. The command is not reaped yet, so its process
+                # group ID names no other group. Reap it only after this
+                # signal.
+                forward(signal.SIGKILL, None)
+                status = process.wait()
+                watch.close()
+            if timed_out:
                 status = DEADLINE_STATUS
-        finally:
-            for number, handler in previous.items():
-                signal.signal(number, handler)
-            # A test process that outlives the command must not keep running.
-            forward(signal.SIGKILL, None)
+    finally:
+        for number, handler in previous.items():
+            signal.signal(number, handler)
     if status < 0:
         status = 128 - status
-    return status, timed_out
+    if received:
+        status = 128 + received[0]
+    return status, timed_out, received[0] if received else None
 
 
 def expect_problems(expected, counts, events, malformed):
@@ -335,7 +484,7 @@ def main():
         refused = filter_problem(command)
         if refused:
             parser.error(f"refused: {refused}")
-    status, timed_out = run_command(command, args.output, args.deadline, args.timeout)
+    status, timed_out, received = run_command(command, args.output, args.deadline, args.timeout)
     ended = datetime.now(timezone.utc)
     first, last, package_starts, run_times, output_times = None, None, {}, {}, {}
     packages, failures, output = {}, [], {}
@@ -386,6 +535,9 @@ def main():
     # test panicked and the test binary exited. Its output holds the cause.
     unfinished = [key for key in started if key not in results]
     problems = [f"a test started and has no result: {test_name(key)}" for key in unfinished]
+    if received is not None:
+        problems.append(f"the reporter received {signal.Signals(received).name} and stopped the "
+                        f"command (exit {status})")
     if timed_out:
         problems.append(f"the command did not end before its deadline and was stopped (exit {status})")
     if expected is not None:
