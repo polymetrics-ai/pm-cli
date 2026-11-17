@@ -261,15 +261,49 @@ class _ReceivedSignal(Exception):
     """The script itself received SIGTERM, SIGINT or SIGHUP."""
 
 
+def live_group_members(group):
+    """Return the IDs of the processes in GROUP that have not exited.
+
+    Return None when the process list cannot be read. Only the Darwin path
+    of run_command uses it. It reads the list with ps, so a process that
+    joins the group after the call is not in it.
+    """
+    try:
+        result = subprocess.run(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=10, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    live = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[1] == str(group) and not fields[2].startswith("Z"):
+            live.append(int(fields[0]))
+    return live
+
+
 def run_command(command, output, deadline, limit):
     """Run COMMAND with stdout in OUTPUT.
 
-    Return (status, timed_out, received). RECEIVED is the first signal that
-    the script itself received, or None. A received signal forces the status
-    128 plus its number, also when COMMAND then exits 0.
+    Return (status, timed_out, received, cleanup). RECEIVED is the first
+    signal that the script itself received, or None. A received signal forces
+    the status 128 plus its number, also when COMMAND then exits 0. CLEANUP
+    names a signal to the process group of COMMAND that the system refused
+    (EPERM), or is None. A refused signal fails the run: a test process can
+    still run. On Linux each refusal fails the run. On Darwin, the system
+    also refuses a signal to a group whose only member is COMMAND after it
+    has exited and before the script reaps it. Only then, and only when ps
+    shows no member of the group that has not exited, the refusal does not
+    fail the run.
     """
     state = {"process": None, "watch": None, "waiting": False}
     received = []
+    denied = []
+
+    def refusal_is_harmless(group):
+        watch = state["watch"]
+        if sys.platform != "darwin" or watch is None or not watch.exited:
+            return False
+        return live_group_members(group) == []
 
     def forward(signum, _frame):
         process = state["process"]
@@ -280,12 +314,15 @@ def run_command(command, output, deadline, limit):
         except ProcessLookupError:
             pass
         except PermissionError:
-            # Darwin reports EPERM when the only member left in the group
-            # is the command that has exited and is not reaped yet. Then
-            # no process is left to signal. Any other EPERM is an error.
-            watch = state["watch"]
-            if watch is None or not watch.exited:
-                raise
+            if not refusal_is_harmless(process.pid):
+                denied.append(signum)
+
+    def cleanup():
+        if not denied:
+            return None
+        names = ", ".join(sorted({signal.Signals(number).name for number in denied}))
+        return (f"the system refused to send {names} to the process group of the command "
+                f"(permission denied), so a test process can still run")
 
     def on_signal(signum, frame):
         # Only a signal that this script receives comes here. The deadline
@@ -305,7 +342,7 @@ def run_command(command, output, deadline, limit):
                 process = subprocess.Popen(command, stdout=stream, start_new_session=True)
             except OSError as exc:
                 print(f"go test: cannot start the command: {exc}")
-                return 1, False, received[0] if received else None
+                return 1, False, received[0] if received else None, None
             state["process"] = process
             if limit is not None:
                 relative = time.time() + limit
@@ -316,7 +353,7 @@ def run_command(command, output, deadline, limit):
                 print(f"go test: cannot watch the command: {exc}")
                 forward(signal.SIGKILL, None)
                 process.wait()
-                return 1, False, received[0] if received else None
+                return 1, False, received[0] if received else None, cleanup()
             timed_out = False
             try:
                 try:
@@ -355,7 +392,9 @@ def run_command(command, output, deadline, limit):
         status = 128 - status
     if received:
         status = 128 + received[0]
-    return status, timed_out, received[0] if received else None
+    if denied and status == 0:
+        status = 1
+    return status, timed_out, received[0] if received else None, cleanup()
 
 
 def expect_problems(expected, counts, events, malformed):
@@ -444,7 +483,7 @@ def main():
         refused = filter_problem(command)
         if refused:
             parser.error(f"refused: {refused}")
-    status, timed_out, received = run_command(command, args.output, args.deadline, args.timeout)
+    status, timed_out, received, cleanup = run_command(command, args.output, args.deadline, args.timeout)
     packages, failures, output = {}, [], {}
     # started keeps the tests with a `run` event in first-seen order. A dict
     # keeps insertion order and checks membership in constant time.
@@ -483,6 +522,8 @@ def main():
     # test panicked and the test binary exited. Its output holds the cause.
     unfinished = [key for key in started if key not in results]
     problems = [f"a test started and has no result: {test_name(key)}" for key in unfinished]
+    if cleanup is not None:
+        problems.append(cleanup)
     if received is not None:
         problems.append(f"the reporter received {signal.Signals(received).name} and stopped the "
                         f"command (exit {status})")

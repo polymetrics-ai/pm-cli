@@ -863,11 +863,11 @@ class GoTestReport(unittest.TestCase):
                            str(hold)]
                 with mock.patch.object(module.subprocess, "Popen", RecordingPopen), \
                         mock.patch.object(module.os, "killpg", recording_killpg):
-                    status, timed_out, received = module.run_command(
+                    status, timed_out, received, cleanup = module.run_command(
                         command, Path(directory) / "out.json", None, None)
             finally:
                 os.close(hold_end)
-        self.assertEqual((status, timed_out, received), (0, False, None))
+        self.assertEqual((status, timed_out, received, cleanup), (0, False, None, None))
         reaped = [event for event in events if event[0] == "reaped"]
         self.assertEqual(len(reaped), 1, events)
         leader = reaped[0][1]
@@ -876,6 +876,54 @@ class GoTestReport(unittest.TestCase):
         self.assertIn(("killpg", leader, signal.SIGKILL), events)
         self.assertEqual([index for index in kills if index > reaped_at], [],
                          f"killpg after the command was reaped: {events}")
+
+    def run_with_refused_group_signals(self, script):
+        """Run run_command with a killpg that the system refuses (EPERM).
+
+        SCRIPT is a /bin/sh command. "$0" is a FIFO that the test holds open
+        and never writes. Return (status, cleanup problem or None).
+        """
+        module = self.load_reporter()
+
+        def refused_killpg(group, signum):
+            raise PermissionError(1, "Operation not permitted")
+
+        with tempfile.TemporaryDirectory() as directory:
+            hold = Path(directory) / "hold"
+            os.mkfifo(hold)
+            hold_end = os.open(hold, os.O_RDWR)
+            try:
+                with mock.patch.object(module.os, "killpg", refused_killpg):
+                    result = module.run_command(["/bin/sh", "-c", script, str(hold)],
+                                                Path(directory) / "out.json", None, None)
+            finally:
+                # A group member that is still there reads the end of the
+                # FIFO and stops, so the test needs no signal.
+                os.close(hold_end)
+        return result[0], (result[3] if len(result) > 3 else None)
+
+    def test_refused_group_signal_with_a_live_member_fails_the_run(self):
+        # security cross-review r2 N-R2-1: the command exits 0, a member of its
+        # group still runs, and the system refuses the group signal. The exit
+        # of the command does not make the refusal harmless, so the run fails
+        # and names the refused signal, on every platform.
+        status, cleanup = self.run_with_refused_group_signals(
+            'cat < "$0" & echo \'{"Action":"pass","Package":"m/a"}\'')
+        self.assertNotEqual(status, 0)
+        self.assertIsNotNone(cleanup)
+        self.assertIn("refused to send SIGKILL to the process group of the command", cleanup)
+
+    def test_refused_group_signal_after_the_group_is_empty(self):
+        # The command exits 0 and leaves no member. Only on Darwin does the
+        # system refuse a signal to a group whose only member is the exited,
+        # unreaped command; ps then shows no live member, so the run passes.
+        # On Linux each refusal fails the run.
+        status, cleanup = self.run_with_refused_group_signals("echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+        if sys.platform == "darwin":
+            self.assertEqual((status, cleanup), (0, None))
+        else:
+            self.assertNotEqual(status, 0)
+            self.assertIn("refused to send SIGKILL", cleanup)
 
     def test_signal_to_the_reporter_fails_the_run(self):
         # The child prints a complete, passing stream, exits 0 on SIGTERM and
