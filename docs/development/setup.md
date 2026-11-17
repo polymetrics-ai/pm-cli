@@ -287,6 +287,52 @@ These are placeholder paths, not a runnable deployment. The complete server conf
 
 The worker opens the configured application PostgreSQL endpoint and authenticated Temporal client from the confined operator secret bundles. It uses `pm-app-endpoint` and Temporal `ca.pem`, `client.pem`, and `client-key.pem`; it does not provision dependencies, migrate the store, or perform OIDC discovery. Workflow and activity polling share one SDK client. Shutdown stops the worker before closing the client and application resources, without cancelling accepted durable runs.
 
+#### Ready signal of `pm-worker`
+
+A starter can ask `pm-worker` for one ready signal on an inherited descriptor. [Decision 0005](../decisions/0005-process-ready-signal.md) is the contract. The `--help` line is:
+
+```text
+--ready-fd fd   write one ready line to inherited descriptor fd (3 or more), then close it
+```
+
+The value of `--ready-fd` has only the ASCII digits 0-9 and no leading zero. It fits in a 32-bit signed int and is 3 or more. "The int maximum" in the refusal text is 2147483647. The flag may appear once. Without the flag, `pm-worker` sends no signal.
+
+`pm-worker` is ready only while its context is not done. It is ready when these steps passed, in this order:
+
+1. After the dial, `pm-worker` called GetSystemInfo once and DescribeNamespace once for the configured namespace, with no retry options. Only a success answer passes. The DescribeNamespace answer must name the configured namespace.
+2. `pm-worker` registered its workflows and activities in its own SDK worker.
+3. The Temporal worker start returned without an error.
+
+Then `pm-worker` writes `pm-worker ready` and one line feed in one write, and it closes the descriptor. The write runs apart from the work and the stop. It has no time limit, so the signal waits until the starter reads. The signal does not say that Temporal lists the poller or answered a poll. When the write fails, `pm-worker` writes `pm-worker: the ready signal write failed. The process continues.` on stderr once. It continues, and its exit code does not change.
+
+Each refusal stops `pm-worker` with exit code 1, one stderr line and no signal, before it opens the configuration. The checks come in this order:
+
+| Order | Case | Stderr line |
+| --- | --- | --- |
+| 1, while `pm-worker` reads its flags | `--ready-fd` is the last argument and has no value | `pm-worker: flag needs an argument: --ready-fd` |
+| 1, while `pm-worker` reads its flags | A second `--ready-fd` | `pm-worker: invalid argument "<value>" for "--ready-fd" flag: --ready-fd may be supplied exactly once` |
+| 1, while `pm-worker` reads its flags | A value that breaks the value rule | `pm-worker: invalid argument "<value>" for "--ready-fd" flag: --ready-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | A descriptor that is not open for writing, or that has close-on-exec set at the check | `pm-worker: --ready-fd requires an inherited descriptor that is open for writing` |
+
+The flag parser owns the missing-value text and the `invalid argument` prefix. A parser upgrade can change them.
+
+Ready step 1 has its own failure texts. The text depends on the call, not on the status code:
+
+- A failed dial or a failed GetSystemInfo call: `pm-worker: Temporal worker dependency is unavailable`.
+- A failed DescribeNamespace call, or an answer that names another namespace: `pm-worker: Temporal namespace is unavailable`. A namespace that does not exist takes this path.
+
+Each other result, also "not implemented", stops the start with exit code 1 and no signal. The dial and the two calls finish within `worker.dial_timeout`, counted from the start of the dial. `pm-worker` does not retry them, so a short transient error stops the start. A `pm-worker` that its starter stops before it is ready sends no signal, and its exit code does not change.
+
+The starter must do these steps:
+
+- Give `pm-worker` only the write end of a pipe as the descriptor.
+- Make sure that no other process that it starts holds that write end.
+- Close its own copy of the write end after the start. Otherwise it never reads end of file.
+- Read the pipe until the line or end of file comes, with one time limit that the starter owns.
+- Read each pipe that it gives as stdout or stderr, or give a destination that cannot fill, for example a file.
+
+A supervisor of `pm-worker` has a minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM, and its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
+
 At each new physical-unit boundary, the worker checks the accepted durable grant against current connection, principal and grant authority. Login-session expiry alone does not revoke accepted work. PostgreSQL account permits are shared across worker instances and connection aliases; authorization checks database-time expiry before committing a new attempt. An expired reservation is not renewed and dispatched in the same acquisition. Workspace admission budgets remain independent. These are the bounded [grant and permit checks](testing.md#current-grants-and-shared-account-permits-m4), not a measured fairness guarantee.
 
 The provider registry and operation resolver are composed from the declared generated bundles; a deployment that declares no bundle resolves no provider operation. Registered orchestration is not permission to execute an undeclared provider operation, and schedule admission remains unavailable without its admitted authority. The [worker checks](testing.md#bounded-workflow-and-worker-execution-m4) exercise controlled capabilities through real PostgreSQL and TLS Temporal, including the actual compiled worker's polling and graceful stop; they are not connector certification.

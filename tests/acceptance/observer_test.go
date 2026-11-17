@@ -25,9 +25,9 @@ const stackAdminRole = "pm_stack_admin"
 // information through the observer HTTPS client of steps 29 and 30
 // (readServerInstanceID).
 //
-// The stack has no observer role, so the lane makes one with the stack
-// administrator account and drops it when the suite ends. The role has
-// BYPASSRLS, so row-level security cannot hide a row from a count.
+// The stack has no observer role, so the lane of each scenario makes one with
+// the stack administrator account and drops it when the scenario ends. The
+// role has BYPASSRLS, so row-level security cannot hide a row from a count.
 type observer struct {
 	adminDSN string
 	role     string

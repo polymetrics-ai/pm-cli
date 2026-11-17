@@ -31,6 +31,7 @@ func registerLaneSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane
 	sc.Step(`^I run "([^"]*)" against the lane server$`, scenario.runAgainstLane)
 	sc.Step(`^the observer reads the lane server information through its own HTTPS client, and its instance ID equals the instance ID in the lane command stdout$`, scenario.observerReadsLaneInstanceID)
 	sc.Step(`^the observer sees no new row in the PM run and audit tables$`, scenario.observerSeesNoNewRow)
+	registerLaneProcessSteps(sc, scenario)
 }
 
 func (s *laneScenario) laneRuns(ctx context.Context) error {
