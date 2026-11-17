@@ -85,6 +85,7 @@ go_test(
     data = [
         "//:connectors/github/lanes/direct_read.json",
         "//internal/connectors:data/github.bundle.json",
+        "//internal/connectors:data/postgres.bundle.json",
     ],
     embed = [":app"],
     env_inherit = [
@@ -171,9 +172,11 @@ go_test(
 go_test(
     name = "sql_composition_bind_internal_test",
     srcs = ["sql_composition_bind_internal_test.go"],
+    data = ["//internal/connectors:data/postgres.bundle.json"],
     embed = [":app"],
     deps = [
         "//internal/config",
+        "//internal/connectors",
         "//internal/contract",
         "//internal/schema",
     ],

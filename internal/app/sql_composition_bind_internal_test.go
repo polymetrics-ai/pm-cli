@@ -1,13 +1,64 @@
 package app
 
 import (
+	"bytes"
 	"errors"
+	"os"
+	"path/filepath"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/polymetrics-ai/pm-cli/internal/config"
+	"github.com/polymetrics-ai/pm-cli/internal/connectors"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
 )
+
+// Check (285c-2 review): admission pins exactly one schema reference for each
+// PostgreSQL operation of the generated postgres bundle. pm-worker uses a
+// snapshot only when the run spec pins exactly one reference
+// (loadWorkerSchemaSnapshot). AcceptRun adds the selected reference to the
+// references that the operation resolver gives (mergeSchemaRefs). This check
+// does the same steps with the production resolver. Defect it catches: the
+// resolver gives a PostgreSQL operation a schema reference of its own, so
+// admission pins two references and pm-worker refuses every accepted SQL run.
+func TestAdmissionPinsOneSchemaReferenceForEachPostgreSQLOperation(t *testing.T) {
+	document, err := os.ReadFile(filepath.Join("..", "connectors", "data", "postgres.bundle.json"))
+	if err != nil {
+		t.Fatalf("read the generated postgres bundle: %v", err)
+	}
+	bundle, err := connectors.LoadBundle(bytes.NewReader(document))
+	if err != nil {
+		t.Fatalf("load the generated postgres bundle: %v", err)
+	}
+	registry, err := connectors.NewRegistry(bundle)
+	if err != nil {
+		t.Fatalf("build the connector registry: %v", err)
+	}
+	pinned := "sha256:" + strings.Repeat("a", 64)
+	checked := 0
+	for _, operation := range bundle.Operations {
+		if operation.Transport.Kind != contract.TransportKindPostgreSQL {
+			continue
+		}
+		selection, err := ResolveBundledOperation(registry, bundle.ConnectorID, operation.OperationID)
+		if err != nil {
+			t.Fatalf("resolve %q: %v", operation.OperationID, err)
+		}
+		selection, err = normalizeOperationSelection(selection)
+		if err != nil {
+			t.Fatalf("normalize %q: %v", operation.OperationID, err)
+		}
+		if got := mergeSchemaRefs(slices.Clone(selection.SchemaRefs), []string{pinned}); !slices.Equal(got, []string{pinned}) {
+			t.Errorf("operation %q: admission pins %q; want exactly [%q]", operation.OperationID, got, pinned)
+		}
+		checked++
+	}
+	if checked == 0 {
+		t.Fatal("the generated postgres bundle declares no PostgreSQL operation")
+	}
+}
 
 // Check (plan 285c, check 13): the SQL callback binds a run only with the
 // schema snapshot that admission pinned for it. A run that pins no snapshot,
