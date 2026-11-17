@@ -28,11 +28,23 @@ With --expect FILE, FILE lists one import path on each line. Each listed
 package must have exactly one package result in the stream. A missing,
 duplicated or unexpected package result, an empty stream or a line that is not
 a JSON event fails the run. The log and the summary give the size of the
-intended set and the number of package results. The command and GOFLAGS
-together must set the test count exactly once, to 1, and must not select or
-filter tests (-run, -skip, -list, -short, -failfast, -tags), in any spelling:
--name, --name or -test.name, with "=value" or a separate value. -args is also
-refused. Such a command is refused before it runs.
+intended set and the number of package results.
+
+With --expect, a guard checks the command words and the GOFLAGS environment
+variable before the command runs:
+  - A word that starts with "-" is an option. The guard reads the forms -name,
+    --name and -test.name, with "=value" or, in the command, with the value as
+    the next word.
+  - It refuses each option that selects or filters tests (-run, -skip, -list,
+    -short, -failfast, -tags), and -args.
+  - It splits GOFLAGS at the characters that go splits it at (space, tab,
+    newline, carriage return). go also accepts quoted fields there, so the
+    guard refuses a GOFLAGS value with a quote character. It also refuses a
+    GOFLAGS field that is not an option, and a GOFLAGS -count with no =value.
+  - The command and GOFLAGS together must set the test count exactly once, to 1.
+Such a command is refused before it runs. The guard does not read other
+sources of go options, for example a GOFLAGS value in the go environment file
+(go env -w).
 
 With --deadline TIME (Unix time in seconds) or --timeout SECONDS, the command
 stops at TIME or SECONDS after its start, whichever comes first: the script
@@ -44,10 +56,13 @@ script waits up to 30 seconds for COMMAND to stop, then sends SIGKILL, prints
 "the reporter received SIG... and stopped the command" and exits with 128 plus
 the signal number, also when COMMAND exits 0. When COMMAND exits, the script sends SIGKILL to the rest of
 that process group, so that no test process of the run stays alive. It sends
-that SIGKILL before it reaps COMMAND: until then, the process ID of COMMAND,
-which is also the ID of its process group, names no other process. The script
-waits for the exit of COMMAND with a pidfd (Linux) or a kqueue process filter
-(macOS), which do not reap it.
+that SIGKILL before it reaps COMMAND. Until the reap, the system keeps the
+process ID of COMMAND, which is also the ID of its process group, for COMMAND,
+so no new process or process group can get that ID. After that SIGKILL, the
+script sends no more signals to the group: a signal that the script receives
+later is only recorded, and it still fails the run. The script waits for the
+exit of COMMAND with a pidfd (Linux) or a kqueue process filter (macOS), which
+do not reap it.
 
 With --title, --summary-file appends a Markdown section with that title: the
 result, the totals, each package with its result and elapsed time, each failed
@@ -152,6 +167,8 @@ def markdown(rows, totals, problem, unfinished=(), problems=()):
 # accept each one as -name, --name or -test.name, with "=value" or with the
 # value as the next word.
 SELECTION = frozenset({"run", "skip", "list", "short", "failfast", "tags"})
+# The characters at which go splits GOFLAGS (cmd/internal/quoted).
+GOFLAGS_SPACE = re.compile(r"[ \t\n\r]+")
 DEADLINE_STATUS = 124
 KILL_GRACE = 30
 
@@ -186,7 +203,16 @@ def filter_problem(command):
     to 1, and must not select or filter tests. Return None when they pass.
     """
     counts = []
-    for words in (list(command), os.environ.get("GOFLAGS", "").split()):
+    goflags = os.environ.get("GOFLAGS", "")
+    # go reads a field in quotes as one word without the quotes. The guard
+    # does not copy that, so it refuses each quoted form.
+    if "'" in goflags or '"' in goflags:
+        return "GOFLAGS has a quote character, which the guard refuses"
+    goflags_words = [word for word in GOFLAGS_SPACE.split(goflags) if word]
+    for word in goflags_words:
+        if option_name(word)[0] is None:
+            return f"GOFLAGS has the field {word!r}, which is not an option"
+    for words, in_goflags in ((list(command), False), (goflags_words, True)):
         index = 0
         while index < len(words):
             word = words[index]
@@ -195,6 +221,8 @@ def filter_problem(command):
             name, value = option_name(word)
             if name in SELECTION:
                 return f"the command selects or filters tests with {word.split('=')[0]}"
+            if name == "count" and value is None and in_goflags:
+                return f"GOFLAGS has {word} with no =value"
             if name == "count":
                 if value is None:
                     index += 1
@@ -261,35 +289,78 @@ class _ReceivedSignal(Exception):
     """The script itself received SIGTERM, SIGINT or SIGHUP."""
 
 
+def live_group_members(group):
+    """Return the IDs of the processes in GROUP that have not exited.
+
+    Return None when the process list cannot be read. Only the Darwin path
+    of run_command uses it. It reads the list with ps, so a process that
+    joins the group after the call is not in it.
+    """
+    try:
+        result = subprocess.run(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
+                                capture_output=True, text=True, timeout=10, check=True)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    live = []
+    for line in result.stdout.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[1] == str(group) and not fields[2].startswith("Z"):
+            live.append(int(fields[0]))
+    return live
+
+
 def run_command(command, output, deadline, limit):
     """Run COMMAND with stdout in OUTPUT.
 
-    Return (status, timed_out, received). RECEIVED is the first signal that
-    the script itself received, or None. A received signal forces the status
-    128 plus its number, also when COMMAND then exits 0.
+    Return (status, timed_out, received, cleanup). RECEIVED is the first
+    signal that the script itself received, or None. A received signal forces
+    the status 128 plus its number, also when COMMAND then exits 0. CLEANUP
+    names a signal to the process group of COMMAND that the system refused
+    (EPERM), or is None. A refused signal fails the run: a test process can
+    still run. On Linux each refusal fails the run. On Darwin, the system
+    also refuses a signal to a group whose only member is COMMAND after it
+    has exited and before the script reaps it. Only then, and only when ps
+    shows no member of the group that has not exited, the refusal does not
+    fail the run.
     """
-    state = {"process": None, "watch": None, "waiting": False}
+    # forward is False after the last signal to the group, before the reap.
+    state = {"process": None, "watch": None, "waiting": False, "forward": True}
     received = []
+    denied = []
+
+    def refusal_is_harmless(group):
+        watch = state["watch"]
+        if sys.platform != "darwin" or watch is None or not watch.exited:
+            return False
+        return live_group_members(group) == []
 
     def forward(signum, _frame):
         process = state["process"]
-        if process is None:
+        if process is None or not state["forward"]:
             return
         try:
             os.killpg(process.pid, signum)
         except ProcessLookupError:
             pass
         except PermissionError:
-            # Darwin reports EPERM when the only member left in the group
-            # is the command that has exited and is not reaped yet. Then
-            # no process is left to signal. Any other EPERM is an error.
-            watch = state["watch"]
-            if watch is None or not watch.exited:
-                raise
+            if not refusal_is_harmless(process.pid):
+                denied.append(signum)
+
+    def cleanup():
+        if not denied:
+            return None
+        names = ", ".join(sorted({signal.Signals(number).name for number in denied}))
+        return (f"the system refused to send {names} to the process group of the command "
+                f"(permission denied), so a test process can still run")
+
+    def early_status():
+        # A received signal forces 128 plus its number on each path.
+        return 128 + received[0] if received else 1
 
     def on_signal(signum, frame):
         # Only a signal that this script receives comes here. The deadline
-        # and the final kill call forward() directly.
+        # and the final kill call forward() directly. The signal is always
+        # recorded, also after forwarding ended, so that it fails the run.
         received.append(signum)
         forward(signum, frame)
         if state["waiting"] and len(received) == 1:
@@ -305,7 +376,7 @@ def run_command(command, output, deadline, limit):
                 process = subprocess.Popen(command, stdout=stream, start_new_session=True)
             except OSError as exc:
                 print(f"go test: cannot start the command: {exc}")
-                return 1, False, received[0] if received else None
+                return early_status(), False, received[0] if received else None, None
             state["process"] = process
             if limit is not None:
                 relative = time.time() + limit
@@ -315,8 +386,9 @@ def run_command(command, output, deadline, limit):
             except OSError as exc:
                 print(f"go test: cannot watch the command: {exc}")
                 forward(signal.SIGKILL, None)
+                state["forward"] = False
                 process.wait()
-                return 1, False, received[0] if received else None
+                return early_status(), False, received[0] if received else None, cleanup()
             timed_out = False
             try:
                 try:
@@ -340,10 +412,12 @@ def run_command(command, output, deadline, limit):
             finally:
                 state["waiting"] = False
                 # A test process that outlives the command must not keep
-                # running. The command is not reaped yet, so its process
-                # group ID names no other group. Reap it only after this
-                # signal.
+                # running. The command is not reaped yet, so no new process
+                # or process group can have its ID. This is the last signal
+                # to the group: forwarding ends before the reap, because
+                # after the reap the ID can name a new group.
                 forward(signal.SIGKILL, None)
+                state["forward"] = False
                 status = process.wait()
                 watch.close()
             if timed_out:
@@ -355,7 +429,9 @@ def run_command(command, output, deadline, limit):
         status = 128 - status
     if received:
         status = 128 + received[0]
-    return status, timed_out, received[0] if received else None
+    if denied and status == 0:
+        status = 1
+    return status, timed_out, received[0] if received else None, cleanup()
 
 
 def expect_problems(expected, counts, events, malformed):
@@ -444,7 +520,7 @@ def main():
         refused = filter_problem(command)
         if refused:
             parser.error(f"refused: {refused}")
-    status, timed_out, received = run_command(command, args.output, args.deadline, args.timeout)
+    status, timed_out, received, cleanup = run_command(command, args.output, args.deadline, args.timeout)
     packages, failures, output = {}, [], {}
     # started keeps the tests with a `run` event in first-seen order. A dict
     # keeps insertion order and checks membership in constant time.
@@ -483,6 +559,8 @@ def main():
     # test panicked and the test binary exited. Its output holds the cause.
     unfinished = [key for key in started if key not in results]
     problems = [f"a test started and has no result: {test_name(key)}" for key in unfinished]
+    if cleanup is not None:
+        problems.append(cleanup)
     if received is not None:
         problems.append(f"the reporter received {signal.Signals(received).name} and stopped the "
                         f"command (exit {status})")

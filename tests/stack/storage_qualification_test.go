@@ -108,6 +108,9 @@ func TestSelectedPostgresTemporalQualification(t *testing.T) {
 	t.Run("a second up keeps each running service container", func(t *testing.T) {
 		assertSameServiceContainers(t, beforeSecondUp, fixtureServiceContainers(t, ctx))
 	})
+	t.Run("up leaves writable artifact volumes and spare volume slots", func(t *testing.T) {
+		assertArtifactVolumeCapacity(t, ctx, fixture)
+	})
 	t.Run("cancelled changed-config contender preserves fenced deployment inputs", func(t *testing.T) {
 		qualifyDeploymentInputFence(t, fixture)
 	})
@@ -227,6 +230,63 @@ func assertSameServiceContainers(t *testing.T, before, after map[string]serviceC
 	}
 	if len(changed) > 0 {
 		t.Fatalf("a second pm-stack up of the unchanged running deployment changed service containers: %s", strings.Join(changed, "; "))
+	}
+}
+
+// seaweedMasterStatusURL is the status endpoint of the SeaweedFS master on
+// the private stack network. The test reads it inside the master container.
+const seaweedMasterStatusURL = "http://seaweed-master:9333/dir/status"
+
+// assertArtifactVolumeCapacity reads the SeaweedFS master status inside the
+// master container. The artifact bucket and the default collection must each
+// have at least 1 writable volume. The master must have at least 2 free
+// volume slots, so that a later growth gets a slot. Failure messages give
+// counts only, never the bucket name.
+func assertArtifactVolumeCapacity(t *testing.T, ctx context.Context, fixture selectedStackFixture) {
+	t.Helper()
+	project := requiredEnvironment(t, "PM_STACK_PROJECT")
+	list, err := exec.CommandContext(ctx, "docker", "ps", "--quiet", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+project,
+		"--filter", "label=com.docker.compose.service=seaweed-master",
+		"--filter", "label=com.docker.compose.oneoff=False").Output()
+	if err != nil {
+		t.Fatalf("list the SeaweedFS master container: %v", err)
+	}
+	ids := strings.Fields(string(list))
+	if len(ids) != 1 {
+		t.Fatalf("the fixture has %d SeaweedFS master containers, want 1", len(ids))
+	}
+	output, err := exec.CommandContext(ctx, "docker", "exec", ids[0],
+		"curl", "-fsS", "-m", "10", seaweedMasterStatusURL).Output()
+	if err != nil {
+		t.Fatalf("read the SeaweedFS master status: %v", err)
+	}
+	var status struct {
+		Topology *struct {
+			Free    *int64 `json:"Free"`
+			Layouts []struct {
+				Collection string   `json:"collection"`
+				Writables  []uint32 `json:"writables"`
+			} `json:"Layouts"`
+		} `json:"Topology"`
+	}
+	if err := json.Unmarshal(output, &status); err != nil || status.Topology == nil || status.Topology.Free == nil {
+		t.Fatal("the SeaweedFS master status is not a topology document with free volume slots")
+	}
+	bucket := fixture.configuration.Artifacts().Bucket
+	var bucketWritable, defaultWritable int
+	for _, layout := range status.Topology.Layouts {
+		switch layout.Collection {
+		case bucket:
+			bucketWritable += len(layout.Writables)
+		case "":
+			defaultWritable += len(layout.Writables)
+		}
+	}
+	free := *status.Topology.Free
+	if bucketWritable < 1 || defaultWritable < 1 || free < 2 {
+		t.Fatalf("after pm-stack up: bucket_writable=%d default_writable=%d free=%d, want at least 1, 1 and 2",
+			bucketWritable, defaultWritable, free)
 	}
 }
 
