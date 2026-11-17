@@ -1734,14 +1734,14 @@ func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Confi
 func (rt *runtime) artifactVolumeStatus(ctx context.Context, configuration config.Configuration) (seaweedTopology, error) {
 	output, err := rt.seaweedMaster(ctx, configuration, "/dir/status", nil)
 	if err != nil {
-		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
 	}
 	var status struct {
 		Topology *seaweedTopology `json:"Topology"`
 	}
 	if err := json.Unmarshal(output, &status); err != nil || status.Topology == nil ||
 		status.Topology.Max == nil || status.Topology.Free == nil {
-		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
 	}
 	return *status.Topology, nil
 }

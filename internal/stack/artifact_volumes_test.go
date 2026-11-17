@@ -85,19 +85,19 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 			name:      "an unreadable status fails",
 			grow:      true,
 			statusErr: true,
-			wantError: "read the artifact volume status",
+			wantError: "cannot read the artifact volume status",
 		},
 		{
 			name:      "a status that is not JSON fails",
 			grow:      true,
 			before:    "not json",
-			wantError: "read the artifact volume status",
+			wantError: "cannot read the artifact volume status",
 		},
 		{
 			name:      "a status without a topology fails",
 			grow:      true,
 			before:    `{"Version":"4.46"}`,
-			wantError: "read the artifact volume status",
+			wantError: "cannot read the artifact volume status",
 		},
 		{
 			name: "only the exact collection names the bucket layout",
