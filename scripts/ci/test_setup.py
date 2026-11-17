@@ -522,6 +522,44 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("go test: 1 packages, 1 failures, 0 skipped tests, exit 0", result.stdout)
         self.assertIn("Result: FAILED.", summary)
 
+    def test_gherkin_run_fails_without_a_package_result(self):
+        # Valid scenario rows and godog totals, but the stream has no package
+        # result for the Gherkin package. The Gherkin caller in check-bdd.sh
+        # passes --expect, so the run fails and names the package.
+        suite = [go_event("run", "m/acc", "TestFeatures"),
+                 go_event("run", "m/acc", "TestFeatures/first"),
+                 go_event("output", "m/acc", "TestFeatures/first",
+                          Output="  Scenario: first # features/a.feature:3\n"),
+                 go_event("pass", "m/acc", "TestFeatures/first"),
+                 go_event("output", "m/acc", "TestFeatures", Output="1 scenarios (1 passed)\n"),
+                 go_event("output", "m/acc", "TestFeatures", Output="3 steps (3 passed)\n"),
+                 go_event("pass", "m/acc", "TestFeatures")]
+        # The intended set comes from go list with the same pattern as the
+        # go test command of the Gherkin run.
+        script = CHECK_BDD.read_text()
+        self.assertIn('exec go -- list "$pm_gherkin_package/..."', script)
+        self.assertIn('-timeout 40m "$pm_gherkin_package/..."', script)
+        for name, events, status in (("no package result", suite, 1),
+                                     ("package result", suite + [go_event("pass", "m/acc", Elapsed=1.0)], 0)):
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                expected = Path(directory) / "expected.txt"
+                expected.write_text("m/acc\n")
+                options = gherkin_caller_options({
+                    "$gherkin_deadline": str(int(time.time()) + 600),
+                    "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                    "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+                result, summary = self.report(events, *options)
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertIn("go test: intended set: 1 packages from go list; package results: "
+                              + ("0" if status else "1"), result.stdout)
+                self.assertIn("| PASS | first | `features/a.feature:3` |", summary)
+                self.assertIn("1 scenarios (1 passed)", summary)
+                if status:
+                    self.assertIn("go test: no package result for m/acc", result.stdout)
+                    self.assertIn("- no package result for m/acc\n", summary)
+                else:
+                    self.assertNotIn("Problems:", summary)
+
     def test_gherkin_summary_names_tests_with_no_result(self):
         # The Gherkin caller has --scenarios and no --title, so only the
         # scenario section of the job summary can name these tests.

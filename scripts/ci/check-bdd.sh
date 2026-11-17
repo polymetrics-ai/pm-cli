@@ -148,6 +148,22 @@ else
   printf '%s\n' 'check-bdd: the package selection failed' >&2
   stack_status=1
 fi
+# The intended set of the Gherkin run: the packages that its go test pattern
+# selects, from go list in the same environment, before the run. The Gherkin
+# run passes it to go-test-report.py --expect, so a package with no result, a
+# second result or an unexpected result fails the run. A failed or empty
+# selection means that the Gherkin run does not run, and the job fails.
+gherkin_selected=false
+# go-packages.sh sets pm_gherkin_package.
+# shellcheck disable=SC2154
+if CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- list "$pm_gherkin_package/..." \
+  > "$RUNNER_TEMP/bdd-gherkin-expected.txt" && [ -s "$RUNNER_TEMP/bdd-gherkin-expected.txt" ]; then
+  gherkin_selected=true
+  printf 'check-bdd: Gherkin run packages (%s):\n' "$(wc -l < "$RUNNER_TEMP/bdd-gherkin-expected.txt" | tr -d ' ')"
+  sed 's/^/  /' "$RUNNER_TEMP/bdd-gherkin-expected.txt"
+else
+  printf '%s\n' 'check-bdd: the Gherkin run package selection failed or selected no package' >&2
+fi
 # shellcheck disable=SC2154
 printf 'check-bdd: Gherkin run package: %s\n' "$pm_gherkin_package"
 pm_excluded_packages | while IFS=' ' read -r package reason; do
@@ -208,14 +224,20 @@ fi
 # Scenarios get the job-owned stack. Strict godog fails on undefined or pending
 # steps; a failed suite is never retried. The report lists each scenario and
 # the godog totals in the log and in the job summary, also on success.
+# --expect checks one package result for each package of the intended set.
 # --deadline bounds the whole run.
 gherkin_status=1
-if "$gherkin_ready"; then
+gherkin_ran=false
+if ! "$gherkin_selected"; then
+  printf '%s\n' 'check-bdd: the Gherkin run did not run: its package selection failed' >&2
+elif "$gherkin_ready"; then
   step 'starting a fresh job-owned stack for the Gherkin run (acceptance suite)'
   gherkin_status=0
+  gherkin_ran=true
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-bdd.json" \
-    --scenarios --deadline "$gherkin_deadline" --timeout 1140 \
+    --scenarios --expect "$RUNNER_TEMP/bdd-gherkin-expected.txt" \
+    --deadline "$gherkin_deadline" --timeout 1140 \
     --summary-file "$GITHUB_STEP_SUMMARY" -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 40m "$pm_gherkin_package/..." ||
@@ -226,7 +248,7 @@ fi
 step 'compare the toolchain identity'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain-after.json"
 if "$stack_ran"; then stack_result="exit $stack_status"; else stack_result='did not run'; fi
-if "$gherkin_ready"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
+if "$gherkin_ran"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
 printf 'check-bdd: stack run (Go developer tests) %s; Gherkin run (acceptance suite) %s\n' \
   "$stack_result" "$gherkin_result"
 if ! cmp -s "$RUNNER_TEMP/bdd-toolchain.json" "$RUNNER_TEMP/bdd-toolchain-after.json"; then
