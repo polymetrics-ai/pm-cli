@@ -32,6 +32,7 @@ go_test(
         "artifacts_test.go",
         "events_test.go",
         "protocol_test.go",
+        "schema_selection_problem_test.go",
         "session_test.go",
         "version_test.go",
     ],

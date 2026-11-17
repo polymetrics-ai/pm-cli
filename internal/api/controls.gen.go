@@ -30,6 +30,7 @@ var ProblemRules = [...]ProblemRule{
 	{Status: 404, Code: "resource_not_found", SafeRetryAction: "correct_scope", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 404, Code: "schema_relation_unknown", SafeRetryAction: "correct_input", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 409, Code: "foundation_incompatible", SafeRetryAction: "after_capability_change", Disposition: ProblemDisposition("confirmed_refusal")},
+	{Status: 409, Code: "schema_selection_absent", SafeRetryAction: "after_capability_change", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 409, Code: "idempotency_conflict", SafeRetryAction: "new_key_for_new_intent", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 409, Code: "resume_unavailable", SafeRetryAction: "refresh_run_state", Disposition: ProblemDisposition("confirmed_refusal")},
 	{Status: 409, Code: "specification_stale", SafeRetryAction: "refresh_specification", Disposition: ProblemDisposition("confirmed_refusal")},

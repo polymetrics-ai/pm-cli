@@ -94,6 +94,12 @@
     },
     {
       "status": 409,
+      "code": "schema_selection_absent",
+      "safe_retry_action": "after_capability_change",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
       "code": "idempotency_conflict",
       "safe_retry_action": "new_key_for_new_intent",
       "disposition": "confirmed_refusal"
