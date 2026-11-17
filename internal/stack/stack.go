@@ -1768,8 +1768,10 @@ func checkArtifactVolumeCapacity(ctx context.Context, configuration config.Confi
 // write grows a default volume when the default collection has no writable
 // volume, and /vol/grow grows without a check. A grow by pm-stack after the
 // filer starts can read the status before that growth and grow after it. The
-// stack is then ready with two default volumes and one spare slot. Before the
-// filer starts, no SeaweedFS service writes to a volume.
+// stack is then ready with two default volumes and one spare slot. On a fresh
+// or stopped stack, no SeaweedFS service writes to a volume before the filer
+// starts. On a running stack, the filer already runs and can write while
+// pm-stack up grows.
 //
 // The bucket collection gets its volume before the bucket exists. A SeaweedFS
 // 4.46 bucket create decides from the bucket directory only, so it creates a
@@ -1808,8 +1810,10 @@ func startArtifactStore(ctx context.Context, configuration config.Configuration,
 // asks the master once to grow one volume for each layout that has no
 // writable volume, and reads the status again. It never repeats a grow. Each
 // pm-stack up holds the deployment lock, and a second up finds the volumes
-// and grows nothing. pm-stack up calls it with grow before seaweed-filer
-// starts (startArtifactStore). Without grow, it only reads.
+// and grows nothing. pm-stack up calls it with grow before it starts
+// seaweed-filer (startArtifactStore). So on a fresh or stopped stack, the
+// filer does not run during the grow. On a running stack, it does. Without
+// grow, it only reads.
 //
 // A grow request that fails or reaches its time limit can still have grown a
 // volume, so the error does not say that no volume grew. The same pm-stack up
