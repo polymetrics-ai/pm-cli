@@ -39,7 +39,11 @@ sends SIGTERM to its process group, then SIGKILL after 30 seconds. The exit
 status is then 124, and the report still lists the results in the stream.
 The script runs COMMAND in its own process group and forwards SIGTERM, SIGINT
 and SIGHUP to it. When COMMAND exits, the script sends SIGKILL to the rest of
-that process group, so that no test process of the run stays alive.
+that process group, so that no test process of the run stays alive. It sends
+that SIGKILL before it reaps COMMAND: until then, the process ID of COMMAND,
+which is also the ID of its process group, names no other process. The script
+waits for the exit of COMMAND with a pidfd (Linux) or a kqueue process filter
+(macOS), which do not reap it.
 
 With --title, --summary-file appends a Markdown section with that title: the
 result, the totals, each package with its result and elapsed time, each failed
@@ -57,6 +61,7 @@ import json
 import os
 from pathlib import Path
 import re
+import select
 import signal
 import subprocess
 import sys
@@ -165,6 +170,51 @@ def filter_problem(command):
     return None
 
 
+class ExitWatch:
+    """Waits for the exit of one child process without reaping it.
+
+    While the child is not reaped, its process ID, and so the ID of its
+    process group, names no other process. Linux uses a pidfd, macOS a
+    kqueue process filter.
+    """
+
+    def __init__(self, pid):
+        self.descriptor = self.queue = None
+        self.exited = False
+        if hasattr(os, "pidfd_open"):
+            self.descriptor = os.pidfd_open(pid)
+        elif hasattr(select, "kqueue"):
+            self.queue = select.kqueue()
+            change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                   flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                   fflags=select.KQ_NOTE_EXIT)
+            try:
+                self.queue.control([change], 0, 0)
+            except ProcessLookupError:
+                # The child has already exited. This script has not reaped it.
+                self.exited = True
+        else:
+            raise OSError("no process exit event: the system has neither pidfd_open nor kqueue")
+
+    def wait(self, timeout):
+        """Wait for the exit for at most TIMEOUT seconds (None: no limit)."""
+        if not self.exited:
+            if self.descriptor is not None:
+                poller = select.poll()
+                poller.register(self.descriptor, select.POLLIN)
+                ready = poller.poll(None if timeout is None else int(timeout * 1000))
+            else:
+                ready = self.queue.control(None, 1, timeout)
+            self.exited = bool(ready)
+        return self.exited
+
+    def close(self):
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+        if self.queue is not None:
+            self.queue.close()
+
+
 def run_command(command, output, deadline, limit):
     """Run COMMAND with stdout in OUTPUT. Return (status, timed_out)."""
     with output.open("wb") as stream:
@@ -177,33 +227,49 @@ def run_command(command, output, deadline, limit):
             relative = time.time() + limit
             deadline = relative if deadline is None else min(deadline, relative)
 
+        watch = None
+
         def forward(signum, _frame):
             try:
                 os.killpg(process.pid, signum)
             except ProcessLookupError:
                 pass
+            except PermissionError:
+                # Darwin reports EPERM when the only member left in the group
+                # is the command that has exited and is not reaped yet. Then
+                # no process is left to signal. Any other EPERM is an error.
+                if watch is None or not watch.exited:
+                    raise
 
+        try:
+            watch = ExitWatch(process.pid)
+        except OSError as exc:
+            print(f"go test: cannot watch the command: {exc}")
+            forward(signal.SIGKILL, None)
+            process.wait()
+            return 1, False
         previous = {number: signal.signal(number, forward)
                     for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
         timed_out = False
         try:
-            try:
-                timeout = None if deadline is None else max(0.0, deadline - time.time())
-                status = process.wait(timeout=timeout)
-            except subprocess.TimeoutExpired:
+            timeout = None if deadline is None else max(0.0, deadline - time.time())
+            if not watch.wait(timeout):
                 timed_out = True
                 forward(signal.SIGTERM, None)
-                try:
-                    process.wait(timeout=KILL_GRACE)
-                except subprocess.TimeoutExpired:
+                if not watch.wait(KILL_GRACE):
                     forward(signal.SIGKILL, None)
-                    process.wait()
-                status = DEADLINE_STATUS
+                    watch.wait(None)
         finally:
             for number, handler in previous.items():
                 signal.signal(number, handler)
             # A test process that outlives the command must not keep running.
+            # The command is not reaped yet, so its process group ID names no
+            # other group. Reap it only after this signal.
             forward(signal.SIGKILL, None)
+            status = process.wait()
+            watch.close()
+        if timed_out:
+            status = DEADLINE_STATUS
     if status < 0:
         status = 128 - status
     return status, timed_out

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Exercise the public setup checker against isolated, real file inventories."""
 import ast
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -798,6 +799,54 @@ class GoTestReport(unittest.TestCase):
                     handle.close()
                 for end in ends.values():
                     os.close(end)
+
+    def load_reporter(self):
+        spec = importlib.util.spec_from_file_location("go_test_report", REPORT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_group_is_killed_before_the_command_is_reaped(self):
+        # The command exits and leaves a group member that never ends by
+        # itself: cat on a FIFO that the test holds open and never writes.
+        # The reporter must send its process-group SIGKILL while the command
+        # is not reaped yet, so that the group ID names no other group. The
+        # check records each killpg call and the reap of the command.
+        module = self.load_reporter()
+        events = []
+        real_killpg = os.killpg
+
+        class RecordingPopen(subprocess.Popen):
+            def wait(self, timeout=None):
+                status = super().wait(timeout)
+                events.append(("reaped", self.pid))
+                return status
+
+        def recording_killpg(group, signum):
+            events.append(("killpg", group, signum))
+            return real_killpg(group, signum)
+
+        with tempfile.TemporaryDirectory() as directory:
+            hold = Path(directory) / "hold"
+            os.mkfifo(hold)
+            hold_end = os.open(hold, os.O_RDWR)
+            try:
+                command = ["/bin/sh", "-c", 'cat < "$0" & echo \'{"Action":"pass","Package":"m/a"}\'',
+                           str(hold)]
+                with mock.patch.object(module.subprocess, "Popen", RecordingPopen), \
+                        mock.patch.object(module.os, "killpg", recording_killpg):
+                    status, timed_out = module.run_command(command, Path(directory) / "out.json", None, None)
+            finally:
+                os.close(hold_end)
+        self.assertEqual((status, timed_out), (0, False))
+        reaped = [event for event in events if event[0] == "reaped"]
+        self.assertEqual(len(reaped), 1, events)
+        leader = reaped[0][1]
+        reaped_at = events.index(("reaped", leader))
+        kills = [index for index, event in enumerate(events) if event[0] == "killpg" and event[1] == leader]
+        self.assertIn(("killpg", leader, signal.SIGKILL), events)
+        self.assertEqual([index for index in kills if index > reaped_at], [],
+                         f"killpg after the command was reaped: {events}")
 
     def test_new_tests_hold_processes_without_a_timed_pause(self):
         # Hard rule 5: no timed pause in a test. The tests and test children of this
