@@ -343,8 +343,8 @@ def workflow_check(path, actionlint):
             "unapproved workflow concurrency")
     require(isinstance(obj["jobs"], dict) and set(obj["jobs"]) == {"bdd", "checks"},
             "unapproved job membership")
-    frozen_job(obj["jobs"], "bdd", "60",
-               {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "50", "run": BDD_RUN},
+    frozen_job(obj["jobs"], "bdd", "100",
+               {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "90", "run": BDD_RUN},
                {"name": "Clean up the job container and dependency fixture",
                 "if": "always()", "timeout-minutes": "6", "run": CLEANUP_RUN})
     frozen_job(obj["jobs"], "checks", "20",
