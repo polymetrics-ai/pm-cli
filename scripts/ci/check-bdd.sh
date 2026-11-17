@@ -68,18 +68,23 @@ pm_stack_ended() {
 }
 # --- functions that scripts/ci/test_setup.py runs: end ---
 
-# The time budget. The workflow step has a frozen limit of 50 minutes
+# The time budget. The workflow step has a frozen limit of 90 minutes
 # (bdd.yml). The script keeps 3 minutes of it for the start and stop of the
-# job container, so its own work ends within 47 minutes of its start, on the
-# failure path too.
+# job container, so its own work ends within 87 minutes of its start, on the
+# failure path too. Owner decision of 2026-11-17: the stack go test command
+# stops one hour after the start (it stopped after 20 minutes before).
 #
 # The two deadlines stop only the go test command of each run, inside
 # go-test-report.py (--deadline). The fixture start before that command and
 # the fixture cleanup after it are outside the deadlines. A stopped command
 # gets SIGTERM, then SIGKILL after 30 seconds (the stop grace), and the run
-# still reports. --timeout 1140 also stops each go test command 19 minutes
-# after its start, before the 20-minute command limit of with-stack-fixture.py
-# (CHILD_TIMEOUT), so that the reporter, not the wrapper, ends the run.
+# still reports. --timeout also stops each go test command after its start:
+# 3600 s (60 minutes) for the stack run and 1140 s (19 minutes) for the
+# Gherkin run. Each one plus the 30-second stop grace ends before the
+# 61-minute command limit of with-stack-fixture.py (CHILD_TIMEOUT), so that
+# the reporter, not the wrapper, ends the run. The stack --timeout cannot stop
+# the stack command before its deadline, because that command starts after
+# the script.
 #
 # The allowances are upper bounds of the phases of with-stack-fixture.py: a
 # fixture start (generator 60 s, `pm-stack up` 600 s and its 30-second Docker
@@ -87,15 +92,15 @@ pm_stack_ended() {
 # helper 60 s and its 30-second Docker calls). The prelude (tool builds and
 # package selection) must take 8 minutes or less. Then, in minutes after the
 # start, on the longest path:
-#   stack go test stop  <= +20   (stack deadline)
-#   stack run end       <= +20.5 (stop grace)
-#   stack cleanup end   <= +26.5 (cleanup allowance)
-#   receipt check end   <= +27.5 (finish allowance)
-#   Gherkin start end   <= +39.5 (start allowance; this is the Gherkin deadline)
-#   Gherkin run end     <= +40   (stop grace)
-#   Gherkin cleanup end <= +46   (cleanup allowance)
-#   toolchain check end <= +47   (finish allowance)
-# If the prelude and the stack fixture start end after +20, the stack go test
+#   stack go test stop  <= +60   (stack deadline)
+#   stack run end       <= +60.5 (stop grace)
+#   stack cleanup end   <= +66.5 (cleanup allowance)
+#   receipt check end   <= +67.5 (finish allowance)
+#   Gherkin start end   <= +79.5 (start allowance; this is the Gherkin deadline)
+#   Gherkin run end     <= +80   (stop grace)
+#   Gherkin cleanup end <= +86   (cleanup allowance)
+#   toolchain check end <= +87   (finish allowance)
+# If the prelude and the stack fixture start end after +60, the stack go test
 # command stops at once. The end bound holds for a prelude of 8 minutes or less.
 #
 # gherkin_minimum is 0. A Gherkin reserve counts only on the path where the
@@ -109,7 +114,7 @@ pm_stack_ended() {
 # Each live fixture stays under the one manifest path that the frozen cleanup
 # step of bdd.yml reads ($manifest below). See "Cleanup after an abrupt stop"
 # in docs/development/ci.md.
-budget=2820
+budget=5220
 start_allowance=720
 cleanup_allowance=360
 finish_allowance=60
@@ -212,7 +217,7 @@ if [ "$stack_status" -eq 0 ]; then
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-stack.json" \
     --fail-on-skip --expect "$RUNNER_TEMP/bdd-stack-expected.txt" \
-    --deadline "$stack_deadline" --timeout 1140 \
+    --deadline "$stack_deadline" --timeout 3600 \
     --summary-file "$GITHUB_STEP_SUMMARY" \
     --title 'Go developer tests: stack run (bdd job). Developer checks, not acceptance proof.' -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
