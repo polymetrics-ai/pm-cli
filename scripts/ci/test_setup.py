@@ -420,6 +420,21 @@ class HeldProcess:
             self.queue.close()
 
 
+def gated_background_script(pid_fifo, gate_fifo, release_fifo, work, last):
+    """The shell command of the process cleanup test.
+
+    The command starts one background process with its own standard streams.
+    That process blocks on GATE_FIFO before it does any work, and then runs
+    WORK with exec, so its process ID does not change. The command hands the
+    ID over PID_FIFO, blocks on RELEASE_FIFO and then runs LAST. The test
+    opens the gate only after it holds the identity handle. So the
+    background process cannot end, and no parent can reap it, before the
+    handle exists.
+    """
+    return (f'( read gate < "{gate_fifo}"; exec {work} ) </dev/null >/dev/null 2>&1 & '
+            f'echo $! > "{pid_fifo}"; read release < "{release_fifo}"; {last}')
+
+
 def go_event(action, package, test=None, **extra):
     event = {"Action": action, "Package": package}
     if test:
@@ -726,20 +741,17 @@ class GoTestReport(unittest.TestCase):
 
     def test_no_test_process_outlives_the_command(self):
         with tempfile.TemporaryDirectory() as directory:
-            pid_fifo, release_fifo = Path(directory) / "pid", Path(directory) / "release"
-            os.mkfifo(pid_fifo)
-            os.mkfifo(release_fifo)
+            fifos = {name: Path(directory) / name for name in ("pid", "gate", "release")}
+            for path in fifos.values():
+                os.mkfifo(path)
             expected = Path(directory) / "expected.txt"
             expected.write_text("m/a\n")
-            # The command starts a background process with its own standard
-            # streams, hands its process ID over pid_fifo and blocks on
-            # release_fifo. The test holds both FIFOs open for reading and
-            # writing, so no open blocks and no write meets a closed FIFO.
-            script = (f'sleep 60 </dev/null >/dev/null 2>&1 & echo $! > "{pid_fifo}"; '
-                      f'read release < "{release_fifo}"; '
-                      "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
-            pid_end = os.open(pid_fifo, os.O_RDWR)
-            release_end = os.open(release_fifo, os.O_RDWR)
+            script = gated_background_script(
+                fifos["pid"], fifos["gate"], fifos["release"], "sleep 60",
+                "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+            # The test holds each FIFO open for reading and writing, so no open
+            # blocks and no write meets a closed FIFO.
+            ends = {name: os.open(path, os.O_RDWR) for name, path in fifos.items()}
             handle = None
             try:
                 reporter = subprocess.Popen(
@@ -748,16 +760,16 @@ class GoTestReport(unittest.TestCase):
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     # One bounded read of the process ID.
-                    ready, _, _ = select.select([pid_end], [], [], 30)
+                    ready, _, _ = select.select([ends["pid"]], [], [], 30)
                     self.assertTrue(ready, "the command did not hand over its background process ID")
-                    pid = int(os.read(pid_end, 64).decode().strip())
-                    # The command is blocked on release_fifo, so the reporter has
-                    # not reached its process-group kill: the background process
-                    # is alive, and its ID names no other process.
+                    pid = int(os.read(ends["pid"], 64).decode().strip())
+                    # The background process waits at its gate, so it is alive
+                    # and its ID names no other process.
                     handle = HeldProcess(pid)
                     self.assertIsNone(reporter.poll(), "the reporter ended before the handle was open")
                 finally:
-                    os.write(release_end, b"go\n")
+                    os.write(ends["gate"], b"go\n")
+                    os.write(ends["release"], b"go\n")
                     stdout, stderr = reporter.communicate(timeout=60)
                 self.assertEqual(reporter.returncode, 0, stdout + stderr)
                 # One wait for the exit event, with one time limit. The reporter
@@ -768,8 +780,48 @@ class GoTestReport(unittest.TestCase):
             finally:
                 if handle is not None:
                     handle.close()
-                os.close(pid_end)
-                os.close(release_end)
+                for end in ends.values():
+                    os.close(end)
+
+    def test_background_process_waits_for_its_gate(self):
+        # The acquisition order of the process cleanup test. The background
+        # process must not start its work before the test opens its gate, so
+        # the test can hold its identity first. Here the work only writes
+        # "done" to a FIFO and ends.
+        with tempfile.TemporaryDirectory() as directory:
+            fifos = {name: Path(directory) / name for name in ("pid", "gate", "release", "done")}
+            for path in fifos.values():
+                os.mkfifo(path)
+            script = gated_background_script(
+                fifos["pid"], fifos["gate"], fifos["release"],
+                f"sh -c 'echo done > \"{fifos['done']}\"'", "true")
+            ends = {name: os.open(path, os.O_RDWR) for name, path in fifos.items()}
+            handle = None
+            command = subprocess.Popen(["/bin/sh", "-c", script])
+            try:
+                ready, _, _ = select.select([ends["pid"]], [], [], 30)
+                self.assertTrue(ready, "the command did not hand over its background process ID")
+                pid = int(os.read(ends["pid"], 64).decode().strip())
+                # One wait, with one time limit, for an event that must not
+                # come: the work must not run before the gate opens.
+                early, _, _ = select.select([ends["done"]], [], [], 2)
+                self.assertFalse(early, "the background process did its work before its gate opened")
+                handle = HeldProcess(pid)
+                self.assertFalse(handle.exits_within(0), "the background process ended before its gate opened")
+                os.write(ends["gate"], b"go\n")
+                # The work runs only now: one wait for its event, then one wait
+                # for the exit event of the same, held process.
+                done, _, _ = select.select([ends["done"]], [], [], 30)
+                self.assertTrue(done, "the background process did not do its work after its gate opened")
+                self.assertTrue(handle.exits_within(5), "the held process did not end after its work")
+            finally:
+                os.write(ends["gate"], b"go\n")
+                os.write(ends["release"], b"go\n")
+                command.wait(timeout=30)
+                if handle is not None:
+                    handle.close()
+                for end in ends.values():
+                    os.close(end)
 
     def test_held_process_never_signals_by_process_id(self):
         # A deterministic identity check. The held process exits and is
