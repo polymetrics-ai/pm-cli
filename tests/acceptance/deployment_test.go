@@ -39,6 +39,11 @@ type deployment struct {
 	authority     *laneAuthority
 	identity      *keycloak.Identity
 	edge          *httptest.Server
+
+	// devicePollInterval is the JSON token that a device poll interval step
+	// supplied, or nil. The configuration writer writes it unchanged as
+	// identity.device_poll_interval.
+	devicePollInterval json.RawMessage
 }
 
 // newDeployment makes the deployment directory, the CA, the HTTPS edge, the
@@ -197,8 +202,10 @@ func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 // The copy keeps the stack PostgreSQL, Temporal, artifact, admission and
 // limit settings. It changes the deployment identity, the public origin, the
 // identity client, the wrapping key reference and the Temporal namespace,
-// and adds the server and worker controls. The stack configuration file does
-// not change.
+// and adds the server and worker controls. It adds
+// identity.device_poll_interval only when a device poll interval step
+// supplied a JSON token, and then it writes that token unchanged. The stack
+// configuration file does not change.
 func (d *deployment) writeConfiguration(stack stackInputs, backend string) (string, error) {
 	document := maps.Clone(stack.document)
 	temporal := map[string]json.RawMessage{}
@@ -210,6 +217,17 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 		return "", fmt.Errorf("encode the deployment Temporal namespace: %w", err)
 	}
 	temporal["namespace"] = namespace
+	identity := map[string]any{
+		"issuer":            stack.identity.admin.Issuer(),
+		"client_id":         d.identity.ClientID,
+		"client_secret_ref": laneIdentityRef,
+		"ca_ref":            laneIdentityRef,
+	}
+	// A device poll interval step supplied a JSON token. The writer keeps it
+	// as raw JSON, null included. Without a token, the key is absent.
+	if d.devicePollInterval != nil {
+		identity["device_poll_interval"] = d.devicePollInterval
+	}
 	values := map[string]any{
 		"deployment_id": d.deploymentID,
 		"public_origin": d.origin,
@@ -218,12 +236,7 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 			"trusted_proxies": []string{"127.0.0.1/32"},
 			"drain_timeout":   "5s",
 		},
-		"identity": map[string]any{
-			"issuer":            stack.identity.admin.Issuer(),
-			"client_id":         d.identity.ClientID,
-			"client_secret_ref": laneIdentityRef,
-			"ca_ref":            laneIdentityRef,
-		},
+		"identity":   identity,
 		"encryption": map[string]any{"wrapping_key_ref": laneEncryptionRef},
 		"worker":     laneWorkerControls,
 		"temporal":   temporal,

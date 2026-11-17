@@ -82,6 +82,7 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *
 	registerStartedServerSteps(sc, scenario)
 	registerBootstrapSteps(sc, scenario)
 	registerLaneSteps(sc, scenario, lane)
+	registerDevicePollIntervalSteps(sc, scenario)
 }
 
 // newConfiguration is step 1. It runs the shared build and migration step,
