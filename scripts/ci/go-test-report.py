@@ -113,7 +113,9 @@ def scenario_problem(rows, totals):
     return None
 
 
-def markdown(rows, totals, problem):
+def markdown(rows, totals, problem, unfinished=(), problems=()):
+    """The scenario section. A caller without --title also passes the tests
+    with no result and the problems, because no package section lists them."""
     lines = ["### Gherkin scenarios", ""]
     lines += [f"{line}  " for line in totals] or ["No godog totals were found.  "]
     if problem:
@@ -126,6 +128,12 @@ def markdown(rows, totals, problem):
             lines.append(f"| {action.upper()} | {cell} | `{location}` |" if location
                          else f"| {action.upper()} | {cell} | |")
         lines.append("")
+    for heading, items in (("Tests with no result", [f"`{test_name(key)}`" for key in unfinished]),
+                           ("Problems", list(problems))):
+        if items:
+            lines += [f"{heading}:", ""]
+            lines += [f"- {item}" for item in items]
+            lines.append("")
     return "\n".join(lines) + "\n"
 
 
@@ -374,7 +382,11 @@ def main():
             print(f"go test: scenario summary error: {problem}")
         if args.summary_file:
             with args.summary_file.open("a", encoding="utf-8") as summary:
-                summary.write(markdown(rows, totals, problem))
+                # Without --title, no package section names the tests with no
+                # result or the problems, so this section names them.
+                summary.write(markdown(rows, totals, problem,
+                                       () if args.title else unfinished,
+                                       () if args.title else problems))
     print(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
     return status or (1 if failures or problem or problems or skip_failure else 0)
