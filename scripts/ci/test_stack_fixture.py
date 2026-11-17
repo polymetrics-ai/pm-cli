@@ -174,6 +174,59 @@ class FixtureOwnershipTests(unittest.TestCase):
                 runner_temp, ROOT, "90001", "1", ["never-execute"], {},
             )
 
+    def receipt_manifest(self, runner_temp, phase):
+        """A real ownership manifest of job 90001, attempt 1, in PHASE."""
+        token = "3" * 20
+        parent = runner_temp / (FIXTURE.PARENT_PREFIX + token)
+        parent.mkdir(mode=0o700)
+        path = runner_temp / "pmcli-bdd-90001-1.json"
+        daemon = {"id": "engine", "os": "linux", "architecture": "x86_64", "server_version": "5.0.0",
+                  "rootless": True, "endpoint": "unix:///run/podman/podman.sock",
+                  "socket": {"device": 1, "inode": 2, "uid": os.getuid(), "mode": 0o140600}}
+        manifest = FIXTURE.OwnershipManifest.create(
+            path, runner_temp, ROOT, "90001", "1", token, parent, parent / "fixture",
+            FIXTURE.PROJECT_PREFIX + token, daemon)
+        if phase != "prepared":
+            manifest.update(phase)
+        return path
+
+    def test_receipt_check_only_reads_the_manifest(self):
+        # The receipt check makes no Docker call and changes no file. Only a
+        # manifest in the phase "cleaned" passes.
+        for phase, expected in (("cleaned", 0), ("cleanup_failed", 1), ("cleaning", 1), ("prepared", 1)):
+            with self.subTest(phase=phase), tempfile.TemporaryDirectory() as temporary:
+                runner_temp = Path(temporary).resolve()
+                path = self.receipt_manifest(runner_temp, phase)
+                before = path.read_bytes()
+                errors = io.StringIO()
+                with contextlib.ExitStack() as stack:
+                    for name in ("resolve_docker", "load_image_refs", "cleanup_fixture",
+                                 "docker_json", "docker_lines"):
+                        stack.enter_context(mock.patch.object(
+                            FIXTURE, name, side_effect=AssertionError(f"{name} called")))
+                    stack.enter_context(mock.patch.object(
+                        FIXTURE.subprocess, "Popen", side_effect=AssertionError("a process started")))
+                    stack.enter_context(contextlib.redirect_stderr(errors))
+                    status = FIXTURE.receipt_mode(path, runner_temp, ROOT, "90001", "1")
+                self.assertEqual(status, expected, errors.getvalue())
+                self.assertEqual(path.read_bytes(), before)
+                if expected:
+                    self.assertIn(f"ownership manifest phase is {phase}, not cleaned", errors.getvalue())
+
+    def test_receipt_check_fails_without_a_manifest(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            runner_temp = Path(temporary).resolve()
+            errors = io.StringIO()
+            with contextlib.redirect_stderr(errors):
+                status = FIXTURE.receipt_mode(runner_temp / "pmcli-bdd-90001-1.json",
+                                              runner_temp, ROOT, "90001", "1")
+            self.assertEqual(status, 1)
+            self.assertIn("ownership manifest is missing", errors.getvalue())
+
+    def test_receipt_check_option(self):
+        self.assertEqual(FIXTURE.parse_cli(["--check-receipt", "/tmp/m.json"]),
+                         ("receipt", "/tmp/m.json", []))
+
     def test_manifest_name_binds_the_job_and_run_attempt(self):
         with tempfile.TemporaryDirectory() as temporary:
             runner_temp = Path(temporary).resolve()

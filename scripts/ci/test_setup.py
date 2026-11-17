@@ -4,12 +4,14 @@ import json
 import os
 from pathlib import Path
 import select
+import shlex
 import signal
 import subprocess
 import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -345,42 +347,83 @@ class HookCheckSelection(unittest.TestCase):
 
 REPORT = ROOT / "scripts/ci/go-test-report.py"
 GO_PACKAGES = ROOT / "scripts/ci/go-packages.sh"
+CHECK_BDD = ROOT / "scripts/ci/check-bdd.sh"
 
 
-def process_exits_within(pid, seconds):
-    """Wait one time for the exit event of process PID, for at most SECONDS.
+def gherkin_caller_options(values):
+    """The go-test-report.py options of the Gherkin run in check-bdd.sh.
 
-    Return True when the process has exited, also as a zombie that no parent
-    has reaped yet, or when no process has the ID. Return False when the time
-    limit ends first. Linux uses a pidfd, macOS a kqueue process filter. A
-    system with neither has no exit event, and the caller fails.
+    VALUES maps each shell word of the caller, for example
+    "$gherkin_deadline", to its test value. An unknown shell word fails, so
+    that a new caller option needs a new test value.
     """
-    if hasattr(os, "pidfd_open"):
-        try:
-            descriptor = os.pidfd_open(pid)
-        except ProcessLookupError:
-            return True
-        try:
-            poller = select.poll()
-            poller.register(descriptor, select.POLLIN)
-            return bool(poller.poll(int(seconds * 1000)))
-        finally:
-            os.close(descriptor)
-    if hasattr(select, "kqueue"):
-        queue = select.kqueue()
-        try:
+    text = CHECK_BDD.read_text().replace("\\\n", " ")
+    line = next(line for line in text.splitlines()
+                if '--output "$RUNNER_TEMP/go-test-bdd.json"' in line)
+    words = shlex.split(line)
+    start = words.index("--output") + 2
+    options = words[start:words.index("--", start)]
+    unknown = [word for word in options if "$" in word and word not in values]
+    if unknown:
+        raise AssertionError(f"no test value for the Gherkin caller words {unknown}")
+    return [values.get(word, word) for word in options]
+
+
+class HeldProcess:
+    """The identity of one live process, for one bounded exit wait.
+
+    Open it only while the process cannot have exited, so that its process ID
+    names no other process. Linux holds a pidfd. macOS holds a kqueue process
+    filter registration: it reports the exit of the process that had the ID at
+    registration, but macOS has no signal through it, so kill() sends nothing
+    there. A system with neither interface fails the caller.
+    """
+
+    def __init__(self, pid):
+        self.descriptor = self.queue = None
+        if hasattr(os, "pidfd_open"):
+            self.descriptor = os.pidfd_open(pid)
+        elif hasattr(select, "kqueue"):
+            self.queue = select.kqueue()
             change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
                                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
                                    fflags=select.KQ_NOTE_EXIT)
             try:
-                queue.control([change], 0, 0)
-            except ProcessLookupError:
-                return True
-            events = queue.control(None, 1, seconds)
-            return any(event.fflags & select.KQ_NOTE_EXIT for event in events)
-        finally:
-            queue.close()
-    raise AssertionError("this system has neither pidfd_open nor kqueue: no process exit event")
+                self.queue.control([change], 0, 0)
+            except BaseException:
+                self.queue.close()
+                raise
+        else:
+            raise AssertionError("this system has neither pidfd_open nor kqueue: no process identity")
+
+    def exits_within(self, seconds):
+        """Wait one time for the exit event, for at most SECONDS."""
+        if self.descriptor is not None:
+            poller = select.poll()
+            poller.register(self.descriptor, select.POLLIN)
+            return bool(poller.poll(int(seconds * 1000)))
+        events = self.queue.control(None, 1, seconds)
+        return any(event.fflags & select.KQ_NOTE_EXIT for event in events)
+
+    def kill(self):
+        """Send SIGKILL to the held process. Never signal a process ID.
+
+        Return True when the signal went to the held process. Return False
+        when it has exited, or on macOS, which has no identity-bound signal.
+        """
+        if self.descriptor is None:
+            return False
+        try:
+            signal.pidfd_send_signal(self.descriptor, signal.SIGKILL)
+        except ProcessLookupError:
+            return False
+        return True
+
+    def close(self):
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+        if self.queue is not None:
+            self.queue.close()
 
 
 def go_event(action, package, test=None, **extra):
@@ -507,6 +550,75 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("go test: 1 packages, 1 failures, 0 skipped tests, exit 0", result.stdout)
         self.assertIn("Result: FAILED.", summary)
 
+    def test_gherkin_run_fails_without_a_package_result(self):
+        # Valid scenario rows and godog totals, but the stream has no package
+        # result for the Gherkin package. The Gherkin caller in check-bdd.sh
+        # passes --expect, so the run fails and names the package.
+        suite = [go_event("run", "m/acc", "TestFeatures"),
+                 go_event("run", "m/acc", "TestFeatures/first"),
+                 go_event("output", "m/acc", "TestFeatures/first",
+                          Output="  Scenario: first # features/a.feature:3\n"),
+                 go_event("pass", "m/acc", "TestFeatures/first"),
+                 go_event("output", "m/acc", "TestFeatures", Output="1 scenarios (1 passed)\n"),
+                 go_event("output", "m/acc", "TestFeatures", Output="3 steps (3 passed)\n"),
+                 go_event("pass", "m/acc", "TestFeatures")]
+        # The intended set comes from go list with the same pattern as the
+        # go test command of the Gherkin run.
+        script = CHECK_BDD.read_text()
+        self.assertIn('exec go -- list "$pm_gherkin_package/..."', script)
+        self.assertIn('-timeout 40m "$pm_gherkin_package/..."', script)
+        for name, events, status in (("no package result", suite, 1),
+                                     ("package result", suite + [go_event("pass", "m/acc", Elapsed=1.0)], 0)):
+            with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
+                expected = Path(directory) / "expected.txt"
+                expected.write_text("m/acc\n")
+                options = gherkin_caller_options({
+                    "$gherkin_deadline": str(int(time.time()) + 600),
+                    "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                    "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+                result, summary = self.report(events, *options)
+                self.assertEqual(result.returncode, status, result.stdout + result.stderr)
+                self.assertIn("go test: intended set: 1 packages from go list; package results: "
+                              + ("0" if status else "1"), result.stdout)
+                self.assertIn("| PASS | first | `features/a.feature:3` |", summary)
+                self.assertIn("1 scenarios (1 passed)", summary)
+                if status:
+                    self.assertIn("go test: no package result for m/acc", result.stdout)
+                    self.assertIn("- no package result for m/acc\n", summary)
+                else:
+                    self.assertNotIn("Problems:", summary)
+
+    def test_gherkin_summary_names_tests_with_no_result(self):
+        # The Gherkin caller has --scenarios and no --title, so only the
+        # scenario section of the job summary can name these tests.
+        events = [go_event("run", "m/acc", "TestFeatures"),
+                  go_event("run", "m/acc", "TestFeatures/first"),
+                  go_event("output", "m/acc", "TestFeatures/first",
+                           Output="  Scenario: first # features/a.feature:3\n"),
+                  go_event("pass", "m/acc", "TestFeatures/first"),
+                  go_event("run", "m/acc", "TestFeatures/second"),
+                  go_event("output", "m/acc", "TestFeatures/second",
+                           Output="  Scenario: second # features/a.feature:9\n"),
+                  go_event("output", "m/acc", "TestFeatures/second", Output="panic: boom\n"),
+                  go_event("output", "m/acc", Output="FAIL\tm/acc\t1.0s\n"),
+                  go_event("fail", "m/acc", Elapsed=1.0)]
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("m/acc\n")
+            options = gherkin_caller_options({
+                "$gherkin_deadline": str(int(time.time()) + 600),
+                "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+            self.assertNotIn("--title", options)
+            result, summary = self.report(events, *options)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("### Gherkin scenarios", summary)
+        self.assertIn("No godog totals were found.", summary)
+        self.assertIn("Tests with no result:\n\n- `m/acc TestFeatures`\n- `m/acc TestFeatures/second`\n",
+                      summary)
+        self.assertIn("- a test started and has no result: m/acc TestFeatures/second\n", summary)
+        self.assertIn("Summary error: the godog scenario total is missing.", summary)
+
     def test_paused_parallel_tests_with_results_pass(self):
         events = [go_event("run", "m/p", "TestA"),
                   go_event("output", "m/p", "TestA", Output="=== RUN   TestA\n"),
@@ -620,24 +732,82 @@ class GoTestReport(unittest.TestCase):
 
     def test_no_test_process_outlives_the_command(self):
         with tempfile.TemporaryDirectory() as directory:
-            pidfile = Path(directory) / "pid"
-            # The background process has its own standard streams, so the
-            # captured pipes of the reporter end when the reporter exits, not
-            # when this process exits.
-            script = (f'sleep 60 </dev/null >/dev/null 2>&1 & echo $! > "{pidfile}"; '
+            pid_fifo, release_fifo = Path(directory) / "pid", Path(directory) / "release"
+            os.mkfifo(pid_fifo)
+            os.mkfifo(release_fifo)
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("m/a\n")
+            # The command starts a background process with its own standard
+            # streams, hands its process ID over pid_fifo and blocks on
+            # release_fifo. The test holds both FIFOs open for reading and
+            # writing, so no open blocks and no write meets a closed FIFO.
+            script = (f'sleep 60 </dev/null >/dev/null 2>&1 & echo $! > "{pid_fifo}"; '
+                      f'read release < "{release_fifo}"; '
                       "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
-            command = ["/bin/sh", "-c", script, "sh", "-count=1"]
-            result, _ = self.report([], expect=["m/a"], command=command)
-            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            pid = int(pidfile.read_text())
-            # One wait for the exit event, with one time limit. The reporter
-            # sends SIGKILL to the process group before it exits.
-            if not process_exits_within(pid, 5):
+            pid_end = os.open(pid_fifo, os.O_RDWR)
+            release_end = os.open(release_fifo, os.O_RDWR)
+            handle = None
+            try:
+                reporter = subprocess.Popen(
+                    [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                     "--expect", str(expected), "--", "/bin/sh", "-c", script, "sh", "-count=1"],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
-                    os.kill(pid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
-                self.fail("the background process of the command is still alive")
+                    # One bounded read of the process ID.
+                    ready, _, _ = select.select([pid_end], [], [], 30)
+                    self.assertTrue(ready, "the command did not hand over its background process ID")
+                    pid = int(os.read(pid_end, 64).decode().strip())
+                    # The command is blocked on release_fifo, so the reporter has
+                    # not reached its process-group kill: the background process
+                    # is alive, and its ID names no other process.
+                    handle = HeldProcess(pid)
+                    self.assertIsNone(reporter.poll(), "the reporter ended before the handle was open")
+                finally:
+                    os.write(release_end, b"go\n")
+                    stdout, stderr = reporter.communicate(timeout=60)
+                self.assertEqual(reporter.returncode, 0, stdout + stderr)
+                # One wait for the exit event, with one time limit. The reporter
+                # sends SIGKILL to the process group before it exits.
+                if not handle.exits_within(5):
+                    handle.kill()
+                    self.fail("the background process of the command is still alive")
+            finally:
+                if handle is not None:
+                    handle.close()
+                os.close(pid_end)
+                os.close(release_end)
+
+    def test_held_process_never_signals_by_process_id(self):
+        # A deterministic identity check. The held process exits and is
+        # reaped, so its process ID is free for another process. kill() must
+        # not signal by process ID: os.kill fails the test if it runs.
+        child = subprocess.Popen(["cat"], stdin=subprocess.PIPE)
+        handle = HeldProcess(child.pid)
+        try:
+            child.stdin.close()
+            self.assertEqual(child.wait(timeout=30), 0)
+            self.assertTrue(handle.exits_within(5))
+            with mock.patch.object(os, "kill", side_effect=AssertionError("a signal by process ID")):
+                self.assertFalse(handle.kill())
+        finally:
+            handle.close()
+        # A live held process: Linux kills it through the pidfd. macOS sends
+        # nothing, and the test stops its own child.
+        child = subprocess.Popen(["cat"], stdin=subprocess.PIPE)
+        handle = HeldProcess(child.pid)
+        try:
+            with mock.patch.object(os, "kill", side_effect=AssertionError("a signal by process ID")):
+                killed = handle.kill()
+            if hasattr(os, "pidfd_open"):
+                self.assertTrue(killed)
+                self.assertEqual(child.wait(timeout=30), -signal.SIGKILL)
+            else:
+                self.assertFalse(killed)
+                self.assertIsNone(child.poll())
+        finally:
+            handle.close()
+            child.stdin.close()
+            child.wait(timeout=30)
 
     def test_command_stopped_by_a_signal_fails(self):
         command = [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
@@ -649,6 +819,67 @@ class GoTestReport(unittest.TestCase):
         result, _ = self.report([], "--summary-file", "SUMMARY")
         self.assertEqual(result.returncode, 2)
         self.assertIn("--summary-file requires --title or --scenarios", result.stderr)
+
+
+def check_bdd_functions():
+    """The function region of check-bdd.sh that this file runs."""
+    text = CHECK_BDD.read_text()
+    begin = "# --- functions that scripts/ci/test_setup.py runs: begin ---\n"
+    end = "# --- functions that scripts/ci/test_setup.py runs: end ---\n"
+    return text[text.index(begin):text.index(end) + len(end)]
+
+
+class BddSignalPaths(unittest.TestCase):
+    """Developer checks of the stack run signal paths in check-bdd.sh."""
+
+    # CI runs check-bdd.sh with sh in the CI image, which is dash. bash as sh
+    # (macOS /bin/sh) waits for the command after SIGINT, so the check runs
+    # with dash on every host. It fails when dash is missing.
+    DASH = "/bin/dash"
+
+    def run_script(self, child):
+        # The real function region of check-bdd.sh, then the stack run step as
+        # check-bdd.sh runs it, with CHILD as the stack run command.
+        self.assertTrue(os.access(self.DASH, os.X_OK), "dash is required for this check")
+        script = ("step() { printf 'step: %s\\n' \"$1\"; }\n" + check_bdd_functions()
+                  + "stack_status=0\n" + child + " || stack_status=$?\n"
+                  + 'pm_stack_ended "$stack_status"\n'
+                  + "printf '%s\\n' 'next: receipt check and Gherkin run'\n")
+        return subprocess.run([self.DASH, "-c", script], capture_output=True, text=True, timeout=60)
+
+    def test_child_signal_exit_is_a_stack_failure(self):
+        for name, status in (("HUP", 129), ("INT", 130), ("TERM", 143)):
+            with self.subTest(signal=name):
+                result = self.run_script(f"sh -c 'kill -{name} $$'")
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                self.assertIn(f"step: stack run ended with exit {status}\n", result.stdout)
+                self.assertIn("next: receipt check and Gherkin run\n", result.stdout)
+                self.assertIn(f"ended on a signal (exit {status})", result.stderr)
+
+    def test_job_cancellation_stops_the_script(self):
+        # The command sends the signal to the script itself, as the init
+        # process does on a job cancellation. The script stops at once.
+        self.assertNotRegex(CHECK_BDD.read_text(), r"(?m)^\s*trap\b",
+                            "check-bdd.sh must keep the default action of HUP, INT and TERM")
+        for name in ("HUP", "INT", "TERM"):
+            with self.subTest(signal=name):
+                result = self.run_script(f"sh -c 'kill -{name} \"$PPID\"'")
+                self.assertEqual(result.returncode, -getattr(signal, "SIG" + name),
+                                 result.stdout + result.stderr)
+                self.assertNotIn("stack run ended", result.stdout)
+                self.assertNotIn("next:", result.stdout)
+
+
+class BddReceiptStep(unittest.TestCase):
+    """The receipt step of check-bdd.sh only reads the stack run manifest."""
+
+    def test_receipt_step_does_not_repeat_the_cleanup(self):
+        commands = [line for line in CHECK_BDD.read_text().splitlines()
+                    if not line.lstrip().startswith("#")]
+        self.assertEqual([line for line in commands if "--cleanup" in line], [])
+        self.assertEqual(
+            [line.strip() for line in commands if "--check-receipt" in line],
+            ['if python3 scripts/ci/with-stack-fixture.py --check-receipt "$manifest" &&'])
 
 
 class GoPackageSelection(unittest.TestCase):

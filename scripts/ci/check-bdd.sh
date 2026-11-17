@@ -46,6 +46,28 @@ step() {
   printf 'check-bdd: [+%ss] %s\n' "$(($(date +%s) - started))" "$1"
 }
 
+# --- functions that scripts/ci/test_setup.py runs: begin ---
+# Job cancellation. The job container's init process passes SIGHUP, SIGINT
+# and SIGTERM to this script. The script sets no trap for them, so such a
+# signal stops it at once, also while a command runs: sh in the CI image is
+# dash, which keeps the default action. A trap would run only after that
+# command ends. So when the script reaches pm_stack_ended, the job is not
+# cancelled.
+#
+# pm_stack_ended STATUS reports the end of the stack run. A status of 129, 130
+# or 143 means that the stack run command ended on a signal that this script
+# did not get. That is a stack run failure: the receipt check and the Gherkin
+# run still run, and the job fails.
+pm_stack_ended() {
+  step "stack run ended with exit $1"
+  case "$1" in
+    129 | 130 | 143)
+      printf 'check-bdd: the stack run command ended on a signal (exit %s), and this script got no signal, so the job is not cancelled. This is a stack run failure; the receipt check and the Gherkin run still run\n' "$1" >&2
+      ;;
+  esac
+}
+# --- functions that scripts/ci/test_setup.py runs: end ---
+
 # The time budget. The workflow step has a frozen limit of 50 minutes
 # (bdd.yml). The script keeps 3 minutes of it for the start and stop of the
 # job container, so its own work ends within 47 minutes of its start, on the
@@ -154,6 +176,22 @@ else
   printf '%s\n' 'check-bdd: the package selection failed' >&2
   stack_status=1
 fi
+# The intended set of the Gherkin run: the packages that its go test pattern
+# selects, from go list in the same environment, before the run. The Gherkin
+# run passes it to go-test-report.py --expect, so a package with no result, a
+# second result or an unexpected result fails the run. A failed or empty
+# selection means that the Gherkin run does not run, and the job fails.
+gherkin_selected=false
+# go-packages.sh sets pm_gherkin_package.
+# shellcheck disable=SC2154
+if CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- list "$pm_gherkin_package/..." \
+  > "$RUNNER_TEMP/bdd-gherkin-expected.txt" && [ -s "$RUNNER_TEMP/bdd-gherkin-expected.txt" ]; then
+  gherkin_selected=true
+  printf 'check-bdd: Gherkin run packages (%s):\n' "$(wc -l < "$RUNNER_TEMP/bdd-gherkin-expected.txt" | tr -d ' ')"
+  sed 's/^/  /' "$RUNNER_TEMP/bdd-gherkin-expected.txt"
+else
+  printf '%s\n' 'check-bdd: the Gherkin run package selection failed or selected no package' >&2
+fi
 # shellcheck disable=SC2154
 printf 'check-bdd: Gherkin run package: %s\n' "$pm_gherkin_package"
 pm_excluded_packages | while IFS=' ' read -r package reason; do
@@ -180,13 +218,7 @@ if [ "$stack_status" -eq 0 ]; then
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 15m $(cat "$RUNNER_TEMP/bdd-stack-packages.txt") ||
     stack_status=$?
-  step "stack run ended with exit $stack_status"
-  case "$stack_status" in
-    129 | 130 | 143)
-      printf 'check-bdd: the stack run stopped on a signal (exit %s)\n' "$stack_status" >&2
-      exit "$stack_status"
-      ;;
-  esac
+  pm_stack_ended "$stack_status"
 else
   printf '%s\n' 'check-bdd: the stack run did not run: its package selection failed' >&2
   stack_ran=false
@@ -195,12 +227,14 @@ fi
 # The Gherkin run starts on a fresh stack. The stack run's fixture is cleaned
 # up when its command ends, and its manifest stays as a cleaned receipt. Move
 # the receipt aside, so that the Gherkin fixture can own the manifest path that
-# the workflow's cleanup step reads. If the stack fixture is not clean, the
-# manifest stays for the cleanup step, and the Gherkin run cannot start.
+# the workflow's cleanup step reads. --check-receipt only reads the manifest
+# and checks the phase "cleaned"; it makes no Docker call and does not repeat
+# the cleanup. If the stack fixture is not clean, the manifest stays for the
+# cleanup step, and the Gherkin run does not start.
 gherkin_ready=true
 if [ -e "$manifest" ]; then
   step 'check the stack run fixture cleanup and keep its receipt'
-  if python3 scripts/ci/with-stack-fixture.py --cleanup "$manifest" &&
+  if python3 scripts/ci/with-stack-fixture.py --check-receipt "$manifest" &&
     mv "$manifest" "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.stack-run-receipt.json"; then
     :
   else
@@ -214,14 +248,20 @@ fi
 # Scenarios get the job-owned stack. Strict godog fails on undefined or pending
 # steps; a failed suite is never retried. The report lists each scenario and
 # the godog totals in the log and in the job summary, also on success.
+# --expect checks one package result for each package of the intended set.
 # --deadline bounds the whole run.
 gherkin_status=1
-if "$gherkin_ready"; then
+gherkin_ran=false
+if ! "$gherkin_selected"; then
+  printf '%s\n' 'check-bdd: the Gherkin run did not run: its package selection failed' >&2
+elif "$gherkin_ready"; then
   step 'starting a fresh job-owned stack for the Gherkin run (acceptance suite)'
   gherkin_status=0
+  gherkin_ran=true
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-bdd.json" \
-    --scenarios --deadline "$gherkin_deadline" --timeout 1140 \
+    --scenarios --expect "$RUNNER_TEMP/bdd-gherkin-expected.txt" \
+    --deadline "$gherkin_deadline" --timeout 1140 \
     --summary-file "$GITHUB_STEP_SUMMARY" -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 40m "$pm_gherkin_package/..." ||
@@ -232,7 +272,7 @@ fi
 step 'compare the toolchain identity'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain-after.json"
 if "$stack_ran"; then stack_result="exit $stack_status"; else stack_result='did not run'; fi
-if "$gherkin_ready"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
+if "$gherkin_ran"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
 printf 'check-bdd: stack run (Go developer tests) %s; Gherkin run (acceptance suite) %s\n' \
   "$stack_result" "$gherkin_result"
 if ! cmp -s "$RUNNER_TEMP/bdd-toolchain.json" "$RUNNER_TEMP/bdd-toolchain-after.json"; then
