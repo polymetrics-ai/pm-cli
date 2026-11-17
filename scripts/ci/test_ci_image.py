@@ -12,6 +12,7 @@ import io
 import os
 from pathlib import Path
 import stat
+import sys
 import tempfile
 import unittest
 
@@ -19,6 +20,9 @@ ROOT = Path(__file__).resolve().parents[2]
 SPEC = importlib.util.spec_from_file_location("check_ci_image", ROOT / "scripts/ci/check-ci-image.py")
 check = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(check)
+
+
+MISSING = object()
 
 
 def no_capability(path):
@@ -33,16 +37,22 @@ class CheckCiImage(unittest.TestCase):
         self.output = io.StringIO()
         self.restore = []
         self.saved = {}
+        # The fixtures run on any host, so they do not read /proc. Each test
+        # that needs the effective capabilities sets them.
+        self.setattr_check("effective_capabilities", lambda: 0)
 
     def tearDown(self):
         for path in self.restore:
             path.chmod(0o700)
         for name, value in self.saved.items():
-            setattr(check, name, value)
+            if value is MISSING:
+                delattr(check, name)
+            else:
+                setattr(check, name, value)
         self.directory.cleanup()
 
     def setattr_check(self, name, value):
-        self.saved.setdefault(name, getattr(check, name))
+        self.saved.setdefault(name, getattr(check, name, MISSING))
         setattr(check, name, value)
 
     def lock(self, path, mode):
@@ -203,12 +213,156 @@ class CheckCiImage(unittest.TestCase):
                                           root=str(self.root), capability=no_capability)
         self.assert_failed_without_pass(failures, output, "/opt/pmcli/venv/bin/dbus-launch exists")
 
-    def test_the_launcher_search_covers_the_image_path(self):
+    # Review #pr-333 brahmagupta F1 at 9d73f24, security cross-review r1
+    # items 11 and 12, and the T3-4 residual of the security delta at 90cfd64:
+    # one check of the launcher search. It covers each entry of ENV PATH in
+    # the Dockerfile and each runtime PATH entry. An empty entry or an unset
+    # PATH fails with fixed text. It calls only the PATH check, not the
+    # privilege walk.
+    def test_the_launcher_search_covers_the_image_and_runtime_path(self):
         dockerfile = (ROOT / "build/ci/Dockerfile").read_text()
         line = next(line for line in dockerfile.splitlines() if line.startswith("ENV PATH="))
         image_path = line.split("=", 1)[1].split()[0].split(":")
-        missing = [entry for entry in image_path if entry not in check.BINARY_DIRECTORIES]
-        self.assertEqual(missing, [], "BINARY_DIRECTORIES must cover the image PATH")
+        self.assertNotIn("", image_path, "the image PATH must have no empty entry")
+        extra = self.root / "extra-bin"
+        extra.mkdir()
+        saved_path = os.environ.get("PATH")
+        if saved_path is None:
+            self.addCleanup(os.environ.pop, "PATH", None)
+        else:
+            self.addCleanup(os.environ.__setitem__, "PATH", saved_path)
+
+        def run(path):
+            check.failures.clear()
+            self.output = io.StringIO()
+            if path is None:
+                os.environ.pop("PATH", None)
+            else:
+                os.environ["PATH"] = path
+            return self.run_check(check.check_packages, {}, {})
+
+        os.environ["PATH"] = f"{extra}:/usr/bin"
+        directories = check.launcher_directories()
+        missing = [entry for entry in (*image_path, str(extra)) if entry not in directories]
+        self.assertEqual(missing, [], "the launcher search must cover these directories")
+        failures, output = run(f"{extra}:/usr/bin")
+        self.assertEqual(failures, [])
+        self.assertIn("PASS", output)
+        (extra / "dbus-launch").write_text("fixture\n")
+        failures, output = run(f"{extra}:/usr/bin")
+        self.assertEqual(failures, [f"{extra}/dbus-launch exists"])
+        self.assertNotIn("PASS", output)
+        (extra / "dbus-launch").unlink()
+        for path in (f":{extra}:/usr/bin", f"{extra}:/usr/bin:", f"{extra}::/usr/bin", ""):
+            with self.subTest(path=path):
+                failures, output = run(path)
+                self.assertEqual(failures, ["the runtime PATH has an empty entry"])
+                self.assertNotIn("PASS", output)
+        with self.subTest(path="unset"):
+            failures, output = run(None)
+            self.assertEqual(failures, ["the runtime PATH is not set"])
+            self.assertNotIn("PASS", output)
+
+    # Security cross-review r1 item 6: a check that fails stops the run before
+    # any daemon starts.
+    def test_a_failed_check_stops_before_any_daemon_runs(self):
+        marker = self.root / "daemon-started"
+        daemon = self.root / "bin/dbus-daemon"
+        daemon.parent.mkdir(parents=True)
+        daemon.write_text(f"#!/bin/sh\n: > '{marker}'\nprintf '%s\\n' 'D-Bus Message Bus Daemon 1.14.10'\n")
+        daemon.chmod(0o755)
+        self.setattr_check("BINARIES", {str(daemon): "dbus-daemon"})
+        self.setattr_check("read_record", lambda: {"dbus-daemon": "1.14.10-4ubuntu4.1"})
+        self.setattr_check("read_privileged", lambda: ({}, set()))
+        self.setattr_check("installed_packages", lambda: {})
+        self.setattr_check("check_packages", lambda record, installed: None)
+        self.setattr_check("check_binaries", lambda: check.fail(f"{daemon} has mode -rwsr-xr-x"))
+        self.setattr_check("check_activation", lambda: None)
+        self.setattr_check("check_privileges", lambda recorded, recorded_closed: None)
+        real_exists, real_platform = os.path.exists, sys.platform
+        self.addCleanup(setattr, os.path, "exists", real_exists)
+        self.addCleanup(setattr, sys, "platform", real_platform)
+        os.path.exists = lambda path: path == "/run/.containerenv" or real_exists(path)
+        sys.platform = "linux"
+        with self.assertRaises(SystemExit) as stopped:
+            self.run_check(check.main)
+        self.assertNotEqual(stopped.exception.code, 0)
+        self.assertFalse(marker.exists(), "the rejected daemon ran")
+
+    # Security cross-review r1 item 8: a version failure prints fixed text,
+    # never the daemon output.
+    def test_version_output_is_not_printed(self):
+        marker = "PMCI-MARKER-0001"
+        daemon = self.root / "bin/dbus-daemon"
+        daemon.parent.mkdir(parents=True)
+        daemon.write_text(f"#!/bin/sh\nprintf '%s\\n' '{marker}'\nprintf '%s\\n' '{marker}' >&2\n")
+        daemon.chmod(0o755)
+        self.setattr_check("BINARIES", {str(daemon): "dbus-daemon"})
+        errors = io.StringIO()
+        with contextlib.redirect_stderr(errors):
+            failures, output = self.run_check(check.check_versions, {"dbus-daemon": "1.14.10-4ubuntu4.1"})
+        self.assert_failed_without_pass(failures, output, "is not exactly")
+        for text in (output, errors.getvalue(), *failures):
+            self.assertNotIn(marker, text)
+
+    # Security cross-review r1 item 9: the job user must not be able to
+    # restore access to a closed directory.
+    def test_a_closed_directory_that_the_job_user_owns_fails(self):
+        self.assertNotEqual(os.geteuid(), 0, "run the developer tests as a normal user")
+        hidden = self.file("var/lib/private/extra", 0o755)
+        hidden.chmod(0o4755)
+        self.lock(self.root / "var/lib/private", 0o000)
+        failures, output = self.run_check(check.check_privileges, {}, {"/var/lib/private"},
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output,
+                                        "/var/lib/private: the job user owns it, so it can restore access")
+
+    # Security cross-review r1 item 9 and N2 of the security delta at
+    # 90cfd64: when a closed directory exists, any non-zero CapEff fails.
+    def test_a_nonzero_capeff_with_a_closed_directory_fails(self):
+        closed = self.root / "root"
+        closed.mkdir()
+        self.lock(closed, 0o000)
+        for mask, text in ((1 << 3, "CapEff 0000000000000008"), (1 << 21, "CapEff 0000000000200000")):
+            with self.subTest(mask=hex(mask)):
+                check.failures.clear()
+                self.output = io.StringIO()
+                self.setattr_check("effective_capabilities", lambda mask=mask: mask)
+                failures, output = self.run_check(check.check_privileges, {}, {"/root"},
+                                                  root=str(self.root), capability=no_capability)
+                self.assert_failed_without_pass(failures, output, text)
+
+    def test_a_nonzero_capeff_without_a_closed_directory_passes(self):
+        self.file("usr/bin/tool", 0o755)
+        self.setattr_check("effective_capabilities", lambda: 1 << 21)
+        failures, output = self.run_check(check.check_privileges, {}, set(),
+                                          root=str(self.root), capability=no_capability)
+        self.assertEqual(failures, [])
+        self.assertIn("PASS", output)
+
+    def test_an_unreadable_capeff_with_a_closed_directory_fails(self):
+        closed = self.root / "root"
+        closed.mkdir()
+        self.lock(closed, 0o000)
+
+        def unreadable():
+            raise OSError(errno.ENOENT, os.strerror(errno.ENOENT), "/proc/self/status")
+
+        self.setattr_check("effective_capabilities", unreadable)
+        failures, output = self.run_check(check.check_privileges, {}, {"/root"},
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "cannot be read from /proc/self/status")
+
+    def test_the_effective_capabilities_are_read_from_capeff(self):
+        status = self.root / "status"
+        read = self.saved["effective_capabilities"]  # the real reader; setUp stubs it
+        status.write_text("Name:\tpython3\nCapEff:\t0000000000200008\n")
+        self.assertEqual(read(str(status)), (1 << 21) | (1 << 3))
+        status.write_text("CapEff:\t0000000000000000\n")
+        self.assertEqual(read(str(status)), 0)
+        status.write_text("Name:\tpython3\n")
+        with self.assertRaises(ValueError):
+            read(str(status))
 
     # Review #pr-333 brahmagupta F3 at 3786ed9: a symlinked service directory
     # and an unreadable service directory.
