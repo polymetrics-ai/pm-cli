@@ -5,19 +5,19 @@ import (
 	"context"
 	"crypto/tls"
 	"crypto/x509"
-	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
 	"io"
+	"net"
 	"net/http"
 	"net/http/cookiejar"
 	"net/url"
 	"os"
 	"os/exec"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -33,8 +33,10 @@ import (
 //
 // The device proof, the user code, the browser cookies, the CSRF token and
 // the Keycloak password stay in memory. No step writes them to a file, an
-// argument, an environment variable or the log. Every failure message
-// redacts them (D4-10, D4-11).
+// argument, an environment variable or the log (D4-10, D4-11). A failure
+// message shows process output and answers only by their form, so it can
+// hold no secret, host or address that the step does not know (review
+// findings F2 and F3).
 const (
 	// deviceLoginNoticeLimit bounds the wait for the first stderr line of
 	// login-exchange. The command writes the notice line after the answer to
@@ -49,8 +51,6 @@ const (
 	deviceLoginExitLimit = laneCommandTimeout
 	// deviceLoginOutputLimit bounds each output stream that the step keeps.
 	deviceLoginOutputLimit = laneOutputLimit
-	// deviceLoginMessageLimit bounds the output text in a failure message.
-	deviceLoginMessageLimit = 2048
 
 	browserSessionCookieName = "__Host-pm_session"
 	browserCSRFCookieName    = "__Host-pm_csrf"
@@ -198,68 +198,83 @@ func (s *deviceLoginScenario) environment() ([]string, error) {
 	return environment, nil
 }
 
-// secrets lists each secret that the scenario holds, for the redaction of a
-// failure message.
-func (s *deviceLoginScenario) secrets() []string {
-	var values []string
-	if s.challenge != nil {
-		values = append(values, s.challenge.proof, s.challenge.userCode)
-	}
-	if s.browser != nil {
-		values = append(values, s.browser.password, s.browser.code, s.browser.state, s.browser.csrf, s.browser.session)
-	}
-	return values
+// knownDeviceLoginLines are the stderr lines that a failure message can show
+// whole. Each is a fixed text of L-d (the texts E1 to E6 of the L-d PR text)
+// or of the CLI, with no value in it.
+var knownDeviceLoginLines = []string{
+	"error: device login wait stopped. The server answer did not have exactly one Retry-After value from 1 to 60 seconds.",
+	"error: device login exchange outcome is unknown. The exchange request may have reached the server, but the CLI received no valid answer. Start a new device login with pm sessions login-start.",
+	"error: device login exchange succeeded, but the CLI did not store the PM session. Start a new device login with pm sessions login-start.",
+	"error: device login was cancelled before the next exchange request. The CLI sent no request after the cancellation.",
+	"error: device login was cancelled while the CLI read the proof from stdin. The CLI sent no exchange request.",
+	"error: device login wait stopped. The next exchange request does not fit in the --request-timeout limit. Run the command again with a longer --request-timeout.",
+	"error: view deadline exceeded",
 }
 
-// redact returns the text for a failure message: each form of each secret
-// replaced, at most deviceLoginMessageLimit bytes, quoted.
-func (s *deviceLoginScenario) redact(text string) string {
-	return redactSecrets(text, s.secrets()...)
-}
+// problemLine is the form of a CLI problem line:
+// "error: <code>: <detail> (incident <id>)". A failure message shows only
+// its code and its incident ID, never the detail. The code has only
+// lowercase letters and underscores. The incident ID is "pm-" and 26 base32
+// characters (internal/api/protocol.go:714). The device proof starts with
+// "pm_device_" and the user code with "PM-", and each holds base64url
+// characters (internal/auth/device.go:56-61). So neither can have the form
+// of the incident ID, and describeSafeLine refuses a code that starts with
+// "pm_device_".
+var problemLine = regexp.MustCompile(`^error: ([a-z_]{1,64}): .*\(incident (pm-[A-Z2-7]{26})\)$`)
 
-func redactSecrets(text string, secrets ...string) string {
-	for _, secret := range secrets {
-		for _, form := range deviceLoginSecretForms(secret) {
-			text = strings.ReplaceAll(text, form, "[REDACTED]")
-		}
-	}
-	if len(text) > deviceLoginMessageLimit {
-		text = text[:deviceLoginMessageLimit] + "..."
-	}
-	return fmt.Sprintf("%q", text)
-}
+// describedLineLimit is the number of lines that a failure message
+// describes for one output stream.
+const describedLineLimit = 16
 
-// deviceLoginSecretForms returns the forms of a secret that the redaction
-// replaces: exact, JSON string content, base64, base64url with and without
-// padding, URL-encoded and hex.
-func deviceLoginSecretForms(secret string) []string {
-	if secret == "" {
-		return nil
-	}
-	value := []byte(secret)
-	encoded, _ := json.Marshal(secret)
-	return []string{
-		secret,
-		strings.TrimSuffix(strings.TrimPrefix(string(encoded), `"`), `"`),
-		base64.StdEncoding.EncodeToString(value),
-		base64.RawStdEncoding.EncodeToString(value),
-		base64.URLEncoding.EncodeToString(value),
-		base64.RawURLEncoding.EncodeToString(value),
-		url.QueryEscape(secret),
-		url.PathEscape(secret),
-		hex.EncodeToString(value),
-	}
-}
-
-// describeOutputText describes one output stream for a failure message. A
-// stream that was longer than its bound is not shown, because the bound can
-// cut a secret, and then the redaction cannot find it.
-func (s *deviceLoginScenario) describeOutputText(name string, output *boundedOutput) string {
-	text, whole := output.text()
+// describeSafeLines describes one process output stream for a failure
+// message. It shows a line only by its form: the notice line N1 and the
+// fixed lines whole, a problem line as its code and incident ID, and every
+// other line as its byte count. So the message cannot hold a secret that the
+// step does not know, such as a proof that login-start printed before the
+// step read it, or a PM session credential. A stream that was longer than
+// its bound is not described.
+func describeSafeLines(name, text string, whole bool) string {
 	if !whole {
 		return fmt.Sprintf("%s: more than %d bytes, not shown", name, deviceLoginOutputLimit)
 	}
-	return fmt.Sprintf("%s (redacted, %d bytes): %s", name, len(text), s.redact(text))
+	if text == "" {
+		return name + ": 0 bytes"
+	}
+	lines := strings.SplitAfter(text, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	parts := make([]string, 0, min(len(lines), describedLineLimit+1))
+	for index, raw := range lines {
+		if index == describedLineLimit {
+			parts = append(parts, fmt.Sprintf("%d more lines, not shown", len(lines)-index))
+			break
+		}
+		line, complete := strings.CutSuffix(raw, "\n")
+		parts = append(parts, describeSafeLine(line, complete))
+	}
+	return fmt.Sprintf("%s (%d bytes, line count %d, shown by form only):\n  %s", name, len(text), len(lines), strings.Join(parts, "\n  "))
+}
+
+// describeSafeLine describes one output line by its form.
+func describeSafeLine(line string, complete bool) string {
+	suffix := ""
+	if !complete {
+		suffix = " (no line feed)"
+	}
+	if deviceLoginNoticeLine.MatchString(line) || slices.Contains(knownDeviceLoginLines, line) {
+		return fmt.Sprintf("%q%s", line, suffix)
+	}
+	if match := problemLine.FindStringSubmatch(line); match != nil && !strings.HasPrefix(match[1], "pm_device_") {
+		return fmt.Sprintf("a problem line with code %s and incident %s%s", match[1], match[2], suffix)
+	}
+	return fmt.Sprintf("a line of %d bytes, not shown%s", len(line), suffix)
+}
+
+// describeOutputText describes the kept text of one output stream by form.
+func describeOutputText(name string, output *boundedOutput) string {
+	text, whole := output.text()
+	return describeSafeLines(name, text, whole)
 }
 
 // runPM runs one pm process with the environment of these steps and waits
@@ -287,7 +302,7 @@ func (s *deviceLoginScenario) runPM(parent context.Context, args []string) (int,
 	case errors.As(runErr, &exitErr):
 		return exitErr.ExitCode(), stdout.String(), stderr.String(), nil
 	default:
-		return 0, "", "", fmt.Errorf("start pm: %w", runErr)
+		return 0, "", "", errors.New("start pm: the pm binary did not start")
 	}
 }
 
@@ -357,12 +372,12 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encode the browser login start: %w", err)
 	}
-	status, _, body, err := b.send(ctx, http.MethodPost, b.origin+"/v1/sessions/browser/challenges", start, jsonHeaders(b.origin))
+	status, _, body, err := b.send(ctx, operationBrowserChallenge, http.MethodPost, b.origin+"/v1/sessions/browser/challenges", start, jsonHeaders(b.origin))
 	if err != nil {
 		return err
 	}
 	if status != http.StatusCreated {
-		return fmt.Errorf("POST /v1/sessions/browser/challenges returned status %d, want 201: %s", status, describeProblem(body))
+		return fmt.Errorf("the %s request returned status %d, want 201: %s", operationBrowserChallenge, status, describeProblem(body))
 	}
 	var challenge struct {
 		AuthorizationURL string `json:"authorization_url"`
@@ -372,40 +387,31 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	}
 
 	// 2. The Keycloak login form.
-	status, _, page, err := b.send(ctx, http.MethodGet, challenge.AuthorizationURL, nil, nil)
+	status, _, page, err := b.send(ctx, operationKeycloakForm, http.MethodGet, challenge.AuthorizationURL, nil, nil)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusOK {
-		return fmt.Errorf("the Keycloak authorization request returned status %d, want 200 with the login form: %s", status, s.keycloakMessage(page))
+		return fmt.Errorf("the %s request returned status %d, want 200 with the login form: %s", operationKeycloakForm, status, keycloakMessage(page))
 	}
 	action, err := loginFormAction(page, issuer)
 	if err != nil {
-		return fmt.Errorf("%w: %s", err, s.keycloakMessage(page))
+		return fmt.Errorf("%w: %s", err, keycloakMessage(page))
 	}
 
 	// 3. The credentials of the deployment user. Keycloak redirects to the
 	// callback path with the code and the state.
 	form := url.Values{"username": {d.identity.Username}, "password": {d.identity.Password}}
-	status, header, page, err := b.send(ctx, http.MethodPost, action, []byte(form.Encode()),
+	status, header, page, err := b.send(ctx, operationKeycloakSubmit, http.MethodPost, action, []byte(form.Encode()),
 		http.Header{"Content-Type": {"application/x-www-form-urlencoded"}})
 	if err != nil {
 		return err
 	}
 	if status != http.StatusFound && status != http.StatusSeeOther {
-		return fmt.Errorf("the Keycloak login returned status %d, want a redirect to the PM callback: %s", status, s.keycloakMessage(page))
+		return fmt.Errorf("the %s request returned status %d, want a redirect to the PM callback: %s", operationKeycloakSubmit, status, keycloakMessage(page))
 	}
-	callback, err := url.Parse(header.Get("Location"))
-	if err != nil || callback.Scheme+"://"+callback.Host+callback.Path != b.origin+browserCallbackPath {
-		return errors.New("the Keycloak login did not redirect to the PM callback path of the deployment")
-	}
-	query := callback.Query()
-	if problem := query.Get("error"); problem != "" {
-		return fmt.Errorf("the Keycloak login redirected with the error %s: %s", s.redact(problem), s.redact(query.Get("error_description")))
-	}
-	b.code, b.state = query.Get("code"), query.Get("state")
-	if b.code == "" || b.state == "" {
-		return errors.New("the Keycloak redirect to the PM callback has no code or no state")
+	if b.code, b.state, err = callbackCodeAndState(header.Get("Location"), b.origin); err != nil {
+		return err
 	}
 
 	// 4. PM completes the login and sets the session and CSRF cookies.
@@ -413,17 +419,17 @@ func (s *deviceLoginScenario) browserLogin(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("encode the browser login completion: %w", err)
 	}
-	status, _, body, err = b.send(ctx, http.MethodPost, b.origin+"/v1/sessions/browser", complete, jsonHeaders(b.origin))
+	status, _, body, err = b.send(ctx, operationBrowserSession, http.MethodPost, b.origin+"/v1/sessions/browser", complete, jsonHeaders(b.origin))
 	clear(complete)
 	if err != nil {
 		return err
 	}
 	if status != http.StatusNoContent {
-		return fmt.Errorf("POST /v1/sessions/browser returned status %d, want 204: %s", status, describeProblem(body))
+		return fmt.Errorf("the %s request returned status %d, want 204: %s", operationBrowserSession, status, describeProblem(body))
 	}
 	originURL, err := url.Parse(b.origin)
 	if err != nil {
-		return fmt.Errorf("parse the deployment origin: %w", err)
+		return errors.New("the deployment origin is not a URL")
 	}
 	for _, cookie := range jar.Cookies(originURL) {
 		switch cookie.Name {
@@ -445,47 +451,115 @@ func jsonHeaders(origin string) http.Header {
 	return http.Header{"Content-Type": {"application/json"}, "Origin": {origin}}
 }
 
+// The fixed names of the browser requests. A failure message names a request
+// only by its name, and a PM request also by its API path: never by a
+// scheme, a host, a port or a query (review finding F3).
+const (
+	operationBrowserChallenge = "PM browser challenge (POST /v1/sessions/browser/challenges)"
+	operationKeycloakForm     = "Keycloak login form"
+	operationKeycloakSubmit   = "Keycloak login submit"
+	operationBrowserSession   = "PM browser session (POST /v1/sessions/browser)"
+	operationDeviceApprove    = "device approve (POST /v1/sessions/device/approve)"
+	operationDeviceDeny       = "device deny (POST /v1/sessions/device/deny)"
+)
+
+// errAnswerTooLarge is the failure of an answer that is larger than its
+// bound.
+var errAnswerTooLarge = errors.New("answer too large")
+
 // send sends one request with the browser client, with one limit and no
 // redirect, and reads at most laneFileLimit bytes of the answer. An error
-// names the method and the path, never the query.
-func (b *browserSession) send(parent context.Context, method, target string, body []byte, header http.Header) (int, http.Header, []byte, error) {
+// names the operation and a fixed transport category, never the target or
+// the raw transport error, which can hold a host or an address.
+func (b *browserSession) send(parent context.Context, operation, method, target string, body []byte, header http.Header) (int, http.Header, []byte, error) {
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
-	place := method + " " + targetPath(target)
 	request, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, nil, fmt.Errorf("make the browser request %s", place)
+		return 0, nil, nil, fmt.Errorf("the %s request could not be made", operation)
 	}
 	for name, values := range header {
 		request.Header[name] = values
 	}
 	response, err := b.client.Do(request)
 	if err != nil {
-		var urlErr *url.Error
-		if errors.As(err, &urlErr) {
-			err = urlErr.Err
-		}
-		return 0, nil, nil, fmt.Errorf("the browser request %s failed within %s: %v", place, laneCommandTimeout, err)
+		return 0, nil, nil, fmt.Errorf("the %s request failed (limit %s): %s", operation, laneCommandTimeout, transportCategory(err))
 	}
 	defer response.Body.Close()
 	data, err := io.ReadAll(io.LimitReader(response.Body, laneFileLimit+1))
-	if err != nil {
-		return 0, nil, nil, fmt.Errorf("read the answer to the browser request %s: %v", place, err)
+	if err == nil && len(data) > laneFileLimit {
+		err = errAnswerTooLarge
 	}
-	if len(data) > laneFileLimit {
-		return 0, nil, nil, fmt.Errorf("the answer to the browser request %s is larger than %d bytes", place, laneFileLimit)
+	if err != nil {
+		return 0, nil, nil, fmt.Errorf("the answer to the %s request failed: %s", operation, transportCategory(err))
 	}
 	return response.StatusCode, response.Header, data, nil
 }
 
-// targetPath returns the origin and the path of a URL, with no query.
-func targetPath(target string) string {
-	parsed, err := url.Parse(target)
-	if err != nil {
-		return "(an invalid URL)"
+// transportCategory maps a transport error to a fixed category. It never
+// returns the error text.
+func transportCategory(err error) string {
+	var (
+		netErr          net.Error
+		dnsErr          *net.DNSError
+		verifyErr       *tls.CertificateVerificationError
+		recordErr       tls.RecordHeaderError
+		alertErr        tls.AlertError
+		unknownAuthErr  x509.UnknownAuthorityError
+		hostnameErr     x509.HostnameError
+		invalidCertErr  x509.CertificateInvalidError
+		systemRootsErr  x509.SystemRootsError
+		insecureAlgoErr x509.InsecureAlgorithmError
+	)
+	switch {
+	case errors.Is(err, errAnswerTooLarge):
+		return fmt.Sprintf("answer too large (more than %d bytes)", laneFileLimit)
+	case errors.Is(err, http.ErrUseLastResponse):
+		return "redirect refused"
+	case errors.Is(err, context.DeadlineExceeded), errors.As(err, &netErr) && netErr.Timeout():
+		return "timeout"
+	case errors.Is(err, context.Canceled):
+		return "cancelled"
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection refused"
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, io.ErrUnexpectedEOF), errors.Is(err, io.EOF):
+		return "connection closed"
+	case errors.As(err, &dnsErr):
+		return "name lookup failure"
+	case errors.As(err, &verifyErr), errors.As(err, &recordErr), errors.As(err, &alertErr),
+		errors.As(err, &unknownAuthErr), errors.As(err, &hostnameErr), errors.As(err, &invalidCertErr),
+		errors.As(err, &systemRootsErr), errors.As(err, &insecureAlgoErr):
+		return "TLS failure"
+	default:
+		return "other transport failure"
 	}
-	return parsed.Scheme + "://" + parsed.Host + parsed.Path
 }
+
+// callbackCodeAndState reads the code and the state from the Keycloak
+// redirect to the PM callback path. A failure message shows no part of the
+// Location: only an OAuth error code that has the form of one.
+func callbackCodeAndState(location, origin string) (string, string, error) {
+	callback, err := url.Parse(location)
+	if err != nil || callback.Scheme+"://"+callback.Host+callback.Path != origin+browserCallbackPath {
+		return "", "", errors.New("the Keycloak login did not redirect to the PM callback path of the deployment")
+	}
+	query := callback.Query()
+	if problem := query.Get("error"); problem != "" {
+		if oauthErrorCode.MatchString(problem) {
+			return "", "", fmt.Errorf("the Keycloak login redirected to the PM callback with the error %s", problem)
+		}
+		return "", "", errors.New("the Keycloak login redirected to the PM callback with an error that does not have the form of an OAuth error code, not shown")
+	}
+	code, state := query.Get("code"), query.Get("state")
+	if code == "" || state == "" {
+		return "", "", errors.New("the Keycloak redirect to the PM callback has no code or no state")
+	}
+	return code, state, nil
+}
+
+// oauthErrorCode is the form of an OAuth error code (RFC 6749, section
+// 4.1.2.1) that a failure message can show.
+var oauthErrorCode = regexp.MustCompile(`^[a-z_]{1,64}$`)
 
 // describeProblem describes a PM answer for a failure message: only the
 // problem code of a problem document, never the raw body.
@@ -493,7 +567,7 @@ func describeProblem(body []byte) string {
 	var problem struct {
 		Code string `json:"code"`
 	}
-	if json.Unmarshal(body, &problem) == nil && problem.Code != "" && len(problem.Code) <= 128 &&
+	if json.Unmarshal(body, &problem) == nil && problem.Code != "" && len(problem.Code) <= 64 &&
 		!strings.ContainsFunc(problem.Code, func(r rune) bool { return !(r == '_' || r >= 'a' && r <= 'z') }) {
 		return fmt.Sprintf("problem code %s", problem.Code)
 	}
@@ -504,10 +578,27 @@ var (
 	keycloakLoginForm = regexp.MustCompile(`(?is)<form\b[^>]*\bid="kc-form-login"[^>]*>`)
 	formAction        = regexp.MustCompile(`(?is)\saction="([^"]*)"`)
 	keycloakTexts     = []*regexp.Regexp{
-		regexp.MustCompile(`(?is)<title>\s*([^<]*?)\s*</title>`),
 		regexp.MustCompile(`(?is)\bid="input-error[^"]*"[^>]*>\s*([^<]*?)\s*<`),
 		regexp.MustCompile(`(?is)\bclass="[^"]*kc-feedback-text[^"]*"[^>]*>\s*([^<]*?)\s*<`),
 		regexp.MustCompile(`(?is)\bclass="[^"]*instruction[^"]*"[^>]*>\s*([^<]*?)\s*<`),
+	}
+	// knownKeycloakTexts are the Keycloak messages that a failure message
+	// can show. They are fixed English texts of Keycloak with no value in
+	// them. Any other page text can hold the issuer, a host or an address,
+	// so a failure message only counts it.
+	knownKeycloakTexts = []string{
+		"Invalid username or password.",
+		"Invalid username or email.",
+		"Account is disabled, contact your administrator.",
+		"Account is temporarily disabled; contact your administrator or retry later.",
+		"Cookie not found. Please make sure cookies are enabled in your browser.",
+		"Invalid parameter: redirect_uri",
+		"Client not found.",
+		"Page not found",
+		"Action expired. Please continue with login now.",
+		"Your login attempt timed out. Login will start from the beginning.",
+		"You took too long to login. Login process starting from beginning.",
+		"You are already logged in.",
 	}
 )
 
@@ -531,22 +622,32 @@ func loginFormAction(page []byte, issuer string) (string, error) {
 	return action, nil
 }
 
-// keycloakMessage describes a Keycloak page for a failure message: its
-// title and its visible error and feedback texts, redacted. It never shows
-// the page itself, which holds session codes.
-func (s *deviceLoginScenario) keycloakMessage(page []byte) string {
-	var texts []string
+// keycloakMessage describes a Keycloak page for a failure message: its byte
+// count, whether it has the login form, and its error and feedback texts.
+// It shows a text only when the text is one of knownKeycloakTexts, and
+// otherwise only counts it. It never shows the page, which holds session
+// codes and can hold the issuer, a host or an address.
+func keycloakMessage(page []byte) string {
+	var known []string
+	other := 0
 	for _, pattern := range keycloakTexts {
 		for _, match := range pattern.FindAllSubmatch(page, 4) {
-			if text := strings.TrimSpace(html.UnescapeString(string(match[1]))); text != "" {
-				texts = append(texts, text)
+			text := strings.TrimSpace(html.UnescapeString(string(match[1])))
+			switch {
+			case text == "":
+			case slices.Contains(knownKeycloakTexts, text):
+				known = append(known, fmt.Sprintf("%q", text))
+			default:
+				other++
 			}
 		}
 	}
-	if len(texts) == 0 {
-		return fmt.Sprintf("%d bytes, no Keycloak title or message", len(page))
+	form := "no login form"
+	if keycloakLoginForm.Match(page) {
+		form = "a login form"
 	}
-	return fmt.Sprintf("%d bytes, Keycloak texts %s", len(page), s.redact(strings.Join(texts, " | ")))
+	return fmt.Sprintf("Keycloak page of %d bytes with %s, known texts [%s] and %d other texts, not shown",
+		len(page), form, strings.Join(known, ", "), other)
 }
 
 // loginStart is the step that runs pm sessions login-start and keeps its
@@ -567,7 +668,7 @@ func (s *deviceLoginScenario) loginStart(ctx context.Context, line string) error
 	if err != nil {
 		return err
 	}
-	challenge, err := s.checkLoginStart(code, stdout, stderr)
+	challenge, err := checkLoginStart(code, stdout, stderr)
 	if err != nil {
 		return err
 	}
@@ -577,18 +678,15 @@ func (s *deviceLoginScenario) loginStart(ctx context.Context, line string) error
 }
 
 // checkLoginStart reads the login-start result. A failure message never
-// shows stdout: it holds the proof, and the proof is not known before the
-// read. The stderr text is redacted for each proof and user code that the
-// stdout holds.
-func (s *deviceLoginScenario) checkLoginStart(code int, stdout, stderr string) (*deviceChallenge, error) {
-	fields := deviceChallengeFields(stdout)
+// shows stdout: it holds the proof. It shows stderr only by form
+// (describeSafeLines), because the step cannot know each secret that a
+// failed login-start can write (review finding F2).
+func checkLoginStart(code int, stdout, stderr string) (*deviceChallenge, error) {
 	if code != 0 {
-		secrets := append(s.secrets(), fields["device_proof"]...)
-		secrets = append(secrets, fields["user_code"]...)
-		return nil, fmt.Errorf("pm sessions login-start exited with code %d, want 0\nstdout: %d bytes, not shown\nstderr (redacted, %d bytes): %s",
-			code, len(stdout), len(stderr), redactSecrets(stderr, secrets...))
+		return nil, fmt.Errorf("pm sessions login-start exited with code %d, want 0\nstdout: %d bytes, not shown\n%s",
+			code, len(stdout), describeSafeLines("stderr", stderr, true))
 	}
-	challenge, err := parseDeviceChallenge(fields)
+	challenge, err := parseDeviceChallenge(deviceChallengeFields(stdout))
 	if err != nil {
 		return nil, fmt.Errorf("read the pm sessions login-start stdout (%d bytes, not shown): %w", len(stdout), err)
 	}
@@ -675,7 +773,7 @@ func (s *deviceLoginScenario) startExchange(ctx context.Context, line string) er
 	}
 	s.exchange = process
 	if err := process.writeStdin(s.challenge.proof); err != nil {
-		return fmt.Errorf("write the device proof to the login-exchange stdin pipe and close the pipe: %v", err)
+		return fmt.Errorf("write the device proof to the login-exchange stdin pipe and close the pipe: %s", pipeCategory(err))
 	}
 	godog.Logf(ctx, "login-exchange started %s after login-start ended", time.Since(s.startedAt).Round(time.Millisecond))
 	return nil
@@ -708,7 +806,7 @@ func startExchangeProcess(binary string, args, environment []string) (*exchangeP
 	command.Stdin, command.Stdout, command.Stderr = stdinReader, stdoutWriter, stderrWriter
 	if err := command.Start(); err != nil {
 		closeAll()
-		return nil, fmt.Errorf("start pm sessions login-exchange: %w", err)
+		return nil, errors.New("start pm sessions login-exchange: the pm binary did not start")
 	}
 	// The child holds its own copies of these ends.
 	_ = stdinReader.Close()
@@ -754,6 +852,14 @@ func (p *exchangeProcess) writeStdin(proof string) error {
 	_, writeErr := writer.Write(line)
 	clear(line)
 	return errors.Join(writeErr, writer.Close())
+}
+
+// pipeCategory names a stdin pipe failure by a fixed category.
+func pipeCategory(err error) string {
+	if errors.Is(err, syscall.EPIPE) {
+		return "the process closed its stdin"
+	}
+	return "the write or the close failed"
 }
 
 // readStream reads one output stream until end of file. For stderr, it sends
@@ -857,7 +963,7 @@ func (s *deviceLoginScenario) noticeLine(ctx context.Context, code string) error
 	case first = <-p.first:
 	case <-timer.C:
 		return fmt.Errorf("the device login exchange wrote no complete first stderr line within %s; %s\n%s",
-			deviceLoginNoticeLimit, p.describeStatus(), s.describeOutputText("stderr", &p.stderr))
+			deviceLoginNoticeLimit, p.describeStatus(), describeOutputText("stderr", &p.stderr))
 	}
 	if first.found {
 		if match := deviceLoginNoticeLine.FindStringSubmatch(first.line); match != nil {
@@ -865,8 +971,8 @@ func (s *deviceLoginScenario) noticeLine(ctx context.Context, code string) error
 				godog.Logf(ctx, "login-exchange notice line names %s", match[1])
 				return nil
 			}
-			return fmt.Errorf("the wait notice line names %s, want %s: the first exchange request did not reach pm-server within 5 s of login-start (the five-second assumption of this scenario)\nfirst stderr line (redacted): %s",
-				match[1], code, s.redact(first.line))
+			return fmt.Errorf("the wait notice line names %s, want %s: the first exchange request did not reach pm-server within 5 s of login-start (the five-second assumption of this scenario)\nfirst stderr line: %q",
+				match[1], code, first.line)
 		}
 	}
 	// The failure path waits for the end of the process within the same
@@ -877,7 +983,7 @@ func (s *deviceLoginScenario) noticeLine(ctx context.Context, code string) error
 	}
 	p.awaitEnd(timer.C)
 	return fmt.Errorf("the device login exchange wrote no wait notice line: %s; %s\n%s",
-		what, p.describeStatus(), s.describeOutputText("stderr", &p.stderr))
+		what, p.describeStatus(), describeOutputText("stderr", &p.stderr))
 }
 
 // decide is the step in which the browser session approves or denies the
@@ -890,24 +996,29 @@ func (s *deviceLoginScenario) decide(ctx context.Context, decision string) error
 	if s.challenge == nil {
 		return errors.New("the scenario did not start a device login")
 	}
-	path := map[string]string{"approves": "/v1/sessions/device/approve", "denies": "/v1/sessions/device/deny"}[decision]
+	path, operation := "/v1/sessions/device/approve", operationDeviceApprove
+	if decision == "denies" {
+		path, operation = "/v1/sessions/device/deny", operationDeviceDeny
+	}
 	body, err := json.Marshal(map[string]string{"challenge_id": s.challenge.challengeID, "user_code": s.challenge.userCode})
 	if err != nil {
 		return fmt.Errorf("encode the device decision: %w", err)
 	}
 	header := jsonHeaders(s.browser.origin)
 	header.Set("X-CSRF-Token", s.browser.csrf)
-	status, _, answer, err := s.browser.send(ctx, http.MethodPost, s.browser.origin+path, body, header)
+	status, _, answer, err := s.browser.send(ctx, operation, http.MethodPost, s.browser.origin+path, body, header)
 	clear(body)
 	if err != nil {
 		return err
 	}
-	return s.checkDecision(path, status, answer)
+	return checkDecision(operation, status, answer)
 }
 
-func (s *deviceLoginScenario) checkDecision(path string, status int, answer []byte) error {
+// checkDecision needs status 204. A failure message shows only the status
+// and the problem code.
+func checkDecision(operation string, status int, answer []byte) error {
 	if status != http.StatusNoContent {
-		return fmt.Errorf("POST %s returned status %d, want 204: %s", path, status, describeProblem(answer))
+		return fmt.Errorf("the %s request returned status %d, want 204: %s", operation, status, describeProblem(answer))
 	}
 	return nil
 }
@@ -921,7 +1032,7 @@ func (s *deviceLoginScenario) sendSIGINT() error {
 	}
 	select {
 	case <-p.exited:
-		return fmt.Errorf("the device login exchange ended before the step sent SIGINT: %s\n%s", p.describeStatus(), s.describeOutputText("stderr", &p.stderr))
+		return fmt.Errorf("the device login exchange ended before the step sent SIGINT: %s\n%s", p.describeStatus(), describeOutputText("stderr", &p.stderr))
 	default:
 	}
 	if err := p.command.Process.Signal(os.Interrupt); err != nil {
@@ -940,10 +1051,10 @@ func (s *deviceLoginScenario) exitsWithCode(want int) error {
 	timer := time.NewTimer(deviceLoginExitLimit)
 	defer timer.Stop()
 	if !p.awaitEnd(timer.C) {
-		return fmt.Errorf("the device login exchange did not end within %s; %s\n%s", deviceLoginExitLimit, p.describeStatus(), s.describeOutputText("stderr", &p.stderr))
+		return fmt.Errorf("the device login exchange did not end within %s; %s\n%s", deviceLoginExitLimit, p.describeStatus(), describeOutputText("stderr", &p.stderr))
 	}
 	if !p.status.exited || p.status.code != want {
-		return fmt.Errorf("%s, want exit code %d\n%s", p.describeStatus(), want, s.describeOutputText("stderr", &p.stderr))
+		return fmt.Errorf("%s, want exit code %d\n%s", p.describeStatus(), want, describeOutputText("stderr", &p.stderr))
 	}
 	return nil
 }
@@ -981,7 +1092,7 @@ func (s *deviceLoginScenario) stderrNames(code string) error {
 	}
 	text, whole := p.stderr.text()
 	if !whole || !strings.Contains(text, code) {
-		return fmt.Errorf("the device login exchange stderr does not name %s\n%s", code, s.describeOutputText("stderr", &p.stderr))
+		return fmt.Errorf("the device login exchange stderr does not name %s\n%s", code, describeOutputText("stderr", &p.stderr))
 	}
 	return nil
 }
@@ -989,7 +1100,7 @@ func (s *deviceLoginScenario) stderrNames(code string) error {
 // runWithStoredSession is the step that runs one pm command against the
 // started pm-server with the default OS session store, so that the command
 // reads the PM session that login-exchange stored in the private keyring. It
-// writes the shared result state.
+// writes the shared result state, with its output by form only.
 func (s *deviceLoginScenario) runWithStoredSession(ctx context.Context, line string) error {
 	if _, err := s.shared.started("pm-server"); err != nil {
 		return err
@@ -1002,8 +1113,23 @@ func (s *deviceLoginScenario) runWithStoredSession(ctx context.Context, line str
 	if err != nil {
 		return err
 	}
-	s.shared.result = commandResult{ran: true, exitCode: code, stdout: stdout, stderr: stderr, deploymentID: s.shared.deployment.deploymentID}
+	s.shared.result = storedSessionResult(code, stdout, stderr, s.shared.deployment.deploymentID)
 	return nil
+}
+
+// storedSessionResult is the shared result state of a command with the
+// stored PM session. The shared exit code step prints the stdout and the
+// stderr of the result when it fails. The command runs with a PM session
+// that the step does not know, so the result keeps only text that is safe by
+// its form: the stdout byte count and the stderr by form.
+func storedSessionResult(code int, stdout, stderr, deploymentID string) commandResult {
+	return commandResult{
+		ran:          true,
+		exitCode:     code,
+		stdout:       fmt.Sprintf("%d bytes, not kept by the device login steps", len(stdout)),
+		stderr:       describeSafeLines("stderr", stderr, true),
+		deploymentID: deploymentID,
+	}
 }
 
 // close ends a login-exchange process that is still running, with SIGKILL,
