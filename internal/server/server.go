@@ -172,7 +172,8 @@ func openWithOIDCFactory(
 		SQLResources: func(connection config.ProviderSQLConnection) (app.SQLConnectionResources, error) {
 			return app.LoadProviderSQLResources(secrets, connection)
 		},
-		ClientIdentity: clientIdentity,
+		ClientIdentity:     clientIdentity,
+		DevicePollInterval: identitySettings.DevicePollInterval,
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,

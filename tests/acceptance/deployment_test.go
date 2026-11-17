@@ -1,6 +1,7 @@
 package acceptance
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
@@ -39,6 +40,11 @@ type deployment struct {
 	authority     *laneAuthority
 	identity      *keycloak.Identity
 	edge          *httptest.Server
+
+	// devicePollInterval is the JSON token that a device poll interval step
+	// supplied, or nil. The configuration writer writes it unchanged as
+	// identity.device_poll_interval.
+	devicePollInterval json.RawMessage
 }
 
 // newDeployment makes the deployment directory, the CA, the HTTPS edge, the
@@ -197,8 +203,11 @@ func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 // The copy keeps the stack PostgreSQL, Temporal, artifact, admission and
 // limit settings. It changes the deployment identity, the public origin, the
 // identity client, the wrapping key reference and the Temporal namespace,
-// and adds the server and worker controls. The stack configuration file does
-// not change.
+// and adds the server and worker controls. It adds
+// identity.device_poll_interval only when a device poll interval step
+// supplied a JSON token, and then it writes the token bytes unchanged: no
+// escaping, compaction or indentation. The stack configuration file does not
+// change.
 func (d *deployment) writeConfiguration(stack stackInputs, backend string) (string, error) {
 	document := maps.Clone(stack.document)
 	temporal := map[string]json.RawMessage{}
@@ -210,6 +219,25 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 		return "", fmt.Errorf("encode the deployment Temporal namespace: %w", err)
 	}
 	temporal["namespace"] = namespace
+	identity := map[string]any{
+		"issuer":            stack.identity.admin.Issuer(),
+		"client_id":         d.identity.ClientID,
+		"client_secret_ref": laneIdentityRef,
+		"ca_ref":            laneIdentityRef,
+	}
+	// A device poll interval step supplied a JSON token. encoding/json would
+	// compact and escape a raw value, so the writer encodes a new placeholder
+	// string in its place. After the encoding, it replaces the one quoted
+	// placeholder with the token bytes, null included. Without a token, the
+	// key is absent.
+	var placeholder []byte
+	if d.devicePollInterval != nil {
+		text := "pm-acceptance-device-poll-interval-" + randomHex(16)
+		if placeholder, err = json.Marshal(text); err != nil {
+			return "", fmt.Errorf("encode the device poll interval placeholder: %w", err)
+		}
+		identity["device_poll_interval"] = text
+	}
 	values := map[string]any{
 		"deployment_id": d.deploymentID,
 		"public_origin": d.origin,
@@ -218,12 +246,7 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 			"trusted_proxies": []string{"127.0.0.1/32"},
 			"drain_timeout":   "5s",
 		},
-		"identity": map[string]any{
-			"issuer":            stack.identity.admin.Issuer(),
-			"client_id":         d.identity.ClientID,
-			"client_secret_ref": laneIdentityRef,
-			"ca_ref":            laneIdentityRef,
-		},
+		"identity":   identity,
 		"encryption": map[string]any{"wrapping_key_ref": laneEncryptionRef},
 		"worker":     laneWorkerControls,
 		"temporal":   temporal,
@@ -238,6 +261,12 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {
 		return "", fmt.Errorf("encode the deployment configuration: %w", err)
+	}
+	if placeholder != nil {
+		if bytes.Count(encoded, placeholder) != 1 {
+			return "", errors.New("the device poll interval placeholder does not occur exactly once in the deployment configuration")
+		}
+		encoded = bytes.Replace(encoded, placeholder, d.devicePollInterval, 1)
 	}
 	path := filepath.Join(d.dir, "pm-deployment.json")
 	if err := writePrivateFile(path, append(encoded, '\n')); err != nil {

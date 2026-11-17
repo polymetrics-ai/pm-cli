@@ -30,6 +30,7 @@ go_test(
     size = "large",
     srcs = [
         "delegations_integration_test.go",
+        "device_poll_interval_test.go",
         "integration_fixture_test.go",
         "integration_test.go",
         "lifecycle_test.go",

@@ -479,6 +479,30 @@ func describeOutput(output string) string {
 	return fmt.Sprintf("%d bytes, not shown", len(output))
 }
 
+// knownConfigurationRefusalLines are the complete pm-server configuration
+// refusal lines for identity.device_poll_interval that a bootstrap failure
+// message can show. Each is a fixed text with no secret and no configured
+// value.
+var knownConfigurationRefusalLines = []string{
+	"pm-server: configuration unknown at identity.device_poll_interval",
+	"pm-server: configuration type at identity.device_poll_interval",
+	"pm-server: configuration value at identity.device_poll_interval",
+	"pm-server: configuration bounds at identity.device_poll_interval",
+}
+
+// describeStderr describes the bootstrap stderr for the failure messages of
+// the steps "the bootstrap exits with code <n>" and "the bootstrap stderr is
+// exactly the line: <line>". When stderr is exactly one known configuration
+// refusal line and one line feed, it shows that line. It compares the whole
+// line as a string. Every other stderr has the description of
+// describeOutput.
+func describeStderr(output string) string {
+	if line, found := strings.CutSuffix(output, "\n"); found && slices.Contains(knownConfigurationRefusalLines, line) {
+		return fmt.Sprintf("%d bytes, the configuration refusal line %q", len(output), line)
+	}
+	return describeOutput(output)
+}
+
 func (s *bootstrapScenario) runWithInput(ctx context.Context) error {
 	d, err := s.deployment()
 	if err != nil {
@@ -566,7 +590,7 @@ func (s *bootstrapScenario) exitsWithCode(want int) error {
 	}
 	if run.exitCode != want {
 		return fmt.Errorf("the bootstrap exited with code %d, want %d\nstdout: %s\nstderr: %s",
-			run.exitCode, want, describeOutput(run.stdout), describeOutput(run.stderr))
+			run.exitCode, want, describeOutput(run.stdout), describeStderr(run.stderr))
 	}
 	return nil
 }
@@ -590,7 +614,7 @@ func (s *bootstrapScenario) stderrIsExactlyLine(line string) error {
 		return err
 	}
 	if run.stderr != line+"\n" {
-		return fmt.Errorf("the bootstrap stderr is %s, want exactly the line %q", describeOutput(run.stderr), line+"\n")
+		return fmt.Errorf("the bootstrap stderr is %s, want exactly the line %q", describeStderr(run.stderr), line+"\n")
 	}
 	return nil
 }
