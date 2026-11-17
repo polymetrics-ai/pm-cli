@@ -480,12 +480,12 @@ class ExitWatch:
 def terminate_process_group(process: subprocess.Popen[bytes], grace: float | None = None) -> None:
     """Stop the process group of PROCESS, a child that this script has not reaped.
 
-    While the child is not reaped, its process ID names no other process, so
-    its process group ID names no other group. The function sends SIGTERM to
+    While the child is not reaped, the system keeps its process ID for it, so
+    no new process or process group can get that ID. The function sends SIGTERM to
     the group, waits up to GRACE seconds (default PROCESS_TERM_GRACE) for the
     exit of the child without reaping it, and sends SIGKILL to the group. It
     reaps the child only after that. A child that is already reaped is
-    refused: its process group ID can name another group.
+    refused: after the reap, its process group ID can name a new group.
     """
     if process.returncode is not None:
         raise FixtureError("owned process was reaped before its process group was stopped")
