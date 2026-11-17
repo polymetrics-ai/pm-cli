@@ -1767,21 +1767,17 @@ class BddTimeBudget(unittest.TestCase):
                              r"gherkin_minimum|gherkin_deadline|stack_deadline)=", line)]
         self.assertEqual(len(lines), 8, lines)
         result = subprocess.run(["/bin/sh", "-c", "started=0\n" + "\n".join(lines)
-                                 + '\necho "$budget $stack_deadline $gherkin_deadline"'],
+                                 + '\necho "$budget $stack_deadline $gherkin_deadline $start_allowance'
+                                 + ' $cleanup_allowance $finish_allowance $stop_grace $gherkin_minimum"'],
                                 capture_output=True, text=True, timeout=30)
-        budget, stack_deadline, gherkin_deadline = map(int, result.stdout.split())
-        self.assertEqual((budget, stack_deadline, gherkin_deadline), (5220, 3600, 4770))
+        (budget, stack_deadline, gherkin_deadline, start_allowance, cleanup_allowance,
+         finish_allowance, stop_grace, gherkin_minimum) = map(int, result.stdout.split())
         text = script.replace("\\\n", " ")
         stack = re.search(r'--deadline "\$stack_deadline" --timeout (\d+) .* -timeout (\w+) \$\(cat', text)
         gherkin = re.search(r'--deadline "\$gherkin_deadline" --timeout (\d+) ', text)
         stack_timeout, gherkin_timeout = int(stack.group(1)), int(gherkin.group(1))
-        self.assertEqual((stack_timeout, stack.group(2), gherkin_timeout), (3600, "15m", 1140))
-        child_timeout = self.module("stack_fixture", ROOT / "scripts/ci/with-stack-fixture.py").CHILD_TIMEOUT
+        fixture = self.module("stack_fixture", ROOT / "scripts/ci/with-stack-fixture.py")
         kill_grace = self.module("go_test_report", REPORT).KILL_GRACE
-        self.assertEqual(child_timeout, 3660)
-        # The reporter, not the wrapper, ends each run.
-        self.assertLess(stack_timeout + kill_grace, child_timeout)
-        self.assertLess(gherkin_timeout + kill_grace, child_timeout)
         workflow = (ROOT / WORKFLOW).read_text()
         bdd = workflow[workflow.index("\n  bdd:\n"):workflow.index("\n  checks:\n")]
         job = int(re.search(r"\n    timeout-minutes: (\d+)\n", bdd).group(1))
@@ -1789,11 +1785,34 @@ class BddTimeBudget(unittest.TestCase):
                              bdd).group(1))
         cleanup = int(re.search(r"- name: Clean up the job container and dependency fixture\n"
                                 r"        if: always\(\)\n        timeout-minutes: (\d+)\n", bdd).group(1))
-        self.assertEqual((step, job, cleanup), (90, 100, 6))
+        # The allowances are the real worst cases. A stopped go test command
+        # gets the TERM grace and then the bounded reap after SIGKILL. A phase
+        # can end PROCESS_TERM_GRACE after its deadline, because the wait
+        # after the SIGKILL of a stopped call has no phase limit.
+        self.assertEqual(stop_grace, 2 * kill_grace)
+        self.assertEqual(start_allowance, fixture.START_PHASE_LIMIT + fixture.PROCESS_TERM_GRACE)
+        self.assertEqual(cleanup_allowance, fixture.CLEANUP_PHASE_LIMIT + fixture.PROCESS_TERM_GRACE)
+        # The reporter, not the wrapper, ends each run.
+        self.assertLess(stack_timeout + 2 * kill_grace, fixture.CHILD_TIMEOUT)
+        self.assertLess(gherkin_timeout + 2 * kill_grace, fixture.CHILD_TIMEOUT)
         # The step keeps 3 minutes for the job container; the job keeps the
         # cleanup step and 4 minutes for the checkout and the runner.
         self.assertEqual(step * 60, budget + 3 * 60)
         self.assertEqual(job, step + cleanup + 4)
+        # The longest path ends at the budget for a prelude end P of 2870 s
+        # or less, and the 8-minute prelude of the budget is inside that.
+        for prelude, end in ((480, budget), (2870, budget), (2871, budget + 1)):
+            stack_start_end = prelude + start_allowance
+            gherkin_start_end = (max(stack_deadline, stack_start_end) + stop_grace + cleanup_allowance
+                                 + finish_allowance + start_allowance)
+            gherkin_end = max(gherkin_deadline, gherkin_start_end) + stop_grace + cleanup_allowance
+            self.assertEqual(gherkin_end + finish_allowance, end, prelude)
+        self.assertEqual((budget, stack_deadline, gherkin_deadline, gherkin_minimum), (5220, 3600, 4775, 0))
+        self.assertEqual((start_allowance, cleanup_allowance, finish_allowance, stop_grace), (730, 370, 15, 60))
+        self.assertEqual((stack_timeout, stack.group(2), gherkin_timeout), (3590, "15m", 1140))
+        self.assertEqual((fixture.CHILD_TIMEOUT, kill_grace, fixture.PROCESS_TERM_GRACE), (3660, 30, 10))
+        self.assertEqual((fixture.START_PHASE_LIMIT, fixture.CLEANUP_PHASE_LIMIT), (720, 360))
+        self.assertEqual((step, job, cleanup), (90, 100, 6))
 
 
 class GoPackageSelection(unittest.TestCase):

@@ -797,10 +797,13 @@ class PhaseDeadlineTests(unittest.TestCase):
             self.assertEqual(self.manifest(path)["phase"], "cleanup_failed")
 
     def test_phase_deadline_limits_match_the_bdd_budget(self):
-        # check-bdd.sh plans with the same start and cleanup times.
+        # check-bdd.sh plans with the same start and cleanup times, plus the
+        # wait after the SIGKILL of a stopped call, which the phase does not
+        # limit.
         script = (ROOT / "scripts/ci/check-bdd.sh").read_text()
-        self.assertIn(f"\nstart_allowance={FIXTURE.START_PHASE_LIMIT}\n", script)
-        self.assertIn(f"\ncleanup_allowance={FIXTURE.CLEANUP_PHASE_LIMIT}\n", script)
+        grace = FIXTURE.PROCESS_TERM_GRACE
+        self.assertIn(f"\nstart_allowance={FIXTURE.START_PHASE_LIMIT + grace}\n", script)
+        self.assertIn(f"\ncleanup_allowance={FIXTURE.CLEANUP_PHASE_LIMIT + grace}\n", script)
         self.assertEqual(FIXTURE.CLEANUP_STEP_PHASE_LIMIT, 300)
 
 
