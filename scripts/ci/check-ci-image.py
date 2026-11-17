@@ -24,12 +24,18 @@ The check fails when one of these items is false:
   the job user can search but the walk cannot list fails, because the job user
   can run a file in it by its name. Each directory that the job user cannot
   search is a recorded closed directory, and each recorded closed directory
-  denies search to others by its mode. The access tests use the effective
-  access of the job user (owner, group, other and ACLs), and the mode test does
-  not depend on the user ID of the job. Each difference is printed.
+  denies search to others by its mode. The job user must not be able to
+  restore access to a directory that the walk cannot read: the job user must
+  not own it, and the job process must not have CAP_DAC_OVERRIDE,
+  CAP_DAC_READ_SEARCH or CAP_FOWNER in its effective set. The access tests use
+  the effective access of the job user (owner, group, other and ACLs), and the
+  mode test does not depend on the user ID of the job. Each difference is
+  printed.
 - `dbus-daemon --version` and `gnome-keyring-daemon --version` exit with code 0
   within VERSION_TIMEOUT seconds, and the first line of their output is
   exactly the version line with the upstream version of the recorded package.
+  The check runs the daemons only when every check above passed. A version
+  failure reports the exit status and fixed text, never the daemon output.
 
 scripts/ci/test_ci_image.py tests the fail paths with fixtures. That test is a
 developer check, not acceptance proof.
@@ -64,6 +70,10 @@ COMMAND_ENVIRONMENT = {"PATH": "/usr/bin:/bin", "LANG": "C"}
 VERSION_LINES = {"dbus-daemon": "D-Bus Message Bus Daemon {}",
                  "gnome-keyring": "gnome-keyring-daemon: {}"}
 VERSION_TIMEOUT = 10
+# Bits of the effective capability set that let a process read, search or
+# change the mode of a directory that it cannot search (capabilities(7)).
+ACCESS_CAPABILITIES = {1: "CAP_DAC_OVERRIDE", 2: "CAP_DAC_READ_SEARCH", 3: "CAP_FOWNER"}
+PROCESS_STATUS = "/proc/self/status"
 
 failures = []
 
@@ -136,8 +146,13 @@ def installed_packages():
 
 
 def launcher_directories():
-    """Return BINARY_DIRECTORIES and each directory of the runtime PATH."""
-    runtime = [entry for entry in os.environ.get("PATH", "").split(":") if entry]
+    """Return BINARY_DIRECTORIES and each directory of the runtime PATH.
+
+    An empty PATH entry (leading, trailing or `::`) is the current directory,
+    as the shell reads it. The check resolves it when it runs. In a job, that
+    is the checkout, which can be on another device than the privilege walk.
+    """
+    runtime = [entry or os.getcwd() for entry in os.environ.get("PATH", "").split(":")]
     return tuple(dict.fromkeys((*BINARY_DIRECTORIES, *runtime)))
 
 
@@ -303,9 +318,42 @@ def scan_privileges(root="/", capability=read_capability):
     return setid, closed, searchable, launchers, count
 
 
+def access_capabilities(status=PROCESS_STATUS):
+    """Return the names of ACCESS_CAPABILITIES in the effective set of this process.
+
+    Raise OSError or ValueError when the effective set cannot be read.
+    """
+    for line in Path(status).read_text().splitlines():
+        key, _, value = line.partition(":")
+        if key == "CapEff":
+            mask = int(value.strip(), 16)
+            return {name for bit, name in ACCESS_CAPABILITIES.items() if mask >> bit & 1}
+    raise ValueError(f"{status} has no CapEff line")
+
+
 def check_privileges(recorded, recorded_closed, root="/", capability=read_capability):
     start = len(failures)
     setid, closed, searchable, launchers, count = scan_privileges(root, capability)
+    # A closed directory hides its files from the walk. That is safe only when
+    # the job user cannot restore access: it must not own the directory (an
+    # owner can chmod it), and the process must not have a capability that
+    # bypasses the directory mode.
+    if closed:
+        try:
+            held = access_capabilities()
+        except (OSError, ValueError):
+            fail(f"the effective capabilities of the job process cannot be read from {PROCESS_STATUS}")
+        else:
+            for name in sorted(held):
+                fail(f"the job process has {name}, so a closed directory does not stop it")
+    for path in sorted(closed):
+        try:
+            information = os.lstat(os.path.join(root, path.lstrip("/")))
+        except OSError as error:
+            fail(f"closed directory {path}: its owner cannot be read: {error.strerror}")
+            continue
+        if information.st_uid == os.geteuid():
+            fail(f"closed directory {path}: the job user owns it, so it can restore access")
     for path in sorted(launchers):
         fail(f"{path} exists")
     for path in sorted(searchable):
@@ -344,14 +392,21 @@ def check_versions(record):
             result = subprocess.run([path, "--version"], capture_output=True, text=True,
                                     stdin=subprocess.DEVNULL, env=COMMAND_ENVIRONMENT,
                                     timeout=VERSION_TIMEOUT, check=False)
-        except (OSError, subprocess.TimeoutExpired) as error:
-            fail(f"{path} --version did not finish: {error}")
+        except subprocess.TimeoutExpired:
+            fail(f"{path} --version did not finish within {VERSION_TIMEOUT} seconds")
+            continue
+        except OSError:
+            fail(f"{path} --version did not finish: the command could not start")
             continue
         lines = result.stdout.splitlines()
         first = lines[0].strip() if lines else ""
-        if result.returncode != 0 or first != expected:
-            fail(f"{path} --version exited with {result.returncode} and printed {first!r}, "
-                 f"not exactly {expected!r}")
+        # Report only the exit status and fixed text. The daemon output is
+        # not printed, so no unexpected output reaches the job log.
+        if result.returncode != 0:
+            fail(f"{path} --version exited with {result.returncode}")
+            continue
+        if first != expected:
+            fail(f"{path} --version: the first output line is not exactly {expected!r}")
             continue
         found.append(f"{path} --version prints {upstream}")
     passed(start, "; ".join(found))
@@ -367,6 +422,10 @@ def main():
     check_binaries()
     check_activation()
     check_privileges(recorded, recorded_closed)
+    # Run no daemon that a check above rejected.
+    if failures:
+        raise SystemExit(f"check-ci-image: {len(failures)} failures in the keyring layer; "
+                         "the daemons were not run")
     check_versions(record)
     if failures:
         raise SystemExit(f"check-ci-image: {len(failures)} failures in the keyring layer")
