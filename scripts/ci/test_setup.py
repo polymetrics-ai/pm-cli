@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Exercise the public setup checker against isolated, real file inventories."""
 import ast
+import contextlib
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -759,6 +761,61 @@ class GoTestReport(unittest.TestCase):
                 self.assertNotIn("refused:", result.stderr)
                 self.assertIn("go test: the go test event stream is empty", result.stdout)
 
+    def test_goflags_forms_that_go_reads_differently_are_refused(self):
+        # Deferred item (b): go reads a quoted GOFLAGS field without its
+        # quotes. The guard refuses each quoted form, each field that is not
+        # an option, and a GOFLAGS -count with no =value. -p=2 and -race stay
+        # accepted.
+        program = [sys.executable, "-c", "raise SystemExit(0)", "-json", "-count=1"]
+        for goflags in ("'-run=^$'", '"-run=^$"', "-p=2 '-run=^$'", "-p=2\t'-short'", "-p=2 '-p=2'",
+                        "-p=2 x", "-p 2", "-timeout 10m", "-count"):
+            with self.subTest(goflags=goflags):
+                result, _ = self.report([], expect=["m/a"], command=program, env={"GOFLAGS": goflags})
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("refused: GOFLAGS has", result.stderr)
+        for goflags, extra in (("-p=2", []), ("-p=2 -race", []), ("-p=2\t-race", []), ("-p=2", ["-race"])):
+            with self.subTest(accepted=goflags, extra=extra):
+                result, _ = self.report([], expect=["m/a"], command=[*program, *extra], env={"GOFLAGS": goflags})
+                self.assertNotIn("refused:", result.stderr)
+
+    def test_quoted_goflags_are_refused_for_a_real_go_package(self):
+        # Deferred item (b), with a real Go package. go removes the quotes of
+        # a GOFLAGS field, so '-run=^$' selects no test, and the package still
+        # reports a pass. The reporter must refuse the run before go starts.
+        # GOFLAGS=-p=2 must still run the real test. The go command comes from
+        # the shared toolchain through tools/bootstrap.py, with GOPROXY=off,
+        # GOTOOLCHAIN=local and no module to download.
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "quoted"
+            package.mkdir()
+            (package / "go.mod").write_text("module example.com/quoted\n\ngo 1.22\n")
+            (package / "quoted_test.go").write_text(
+                'package quoted\n\nimport "testing"\n\nfunc TestRuns(t *testing.T) { t.Log("ran") }\n')
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("example.com/quoted\n")
+            go_test = [sys.executable, str(ROOT / "tools/bootstrap.py"), "exec", "go", "--",
+                       "test", "-json", "-count=1", "./..."]
+
+            def run(goflags):
+                env = dict(os.environ, CGO_ENABLED="0", GOPROXY="off", GOWORK="off",
+                           GOTOOLCHAIN="local", GOFLAGS=goflags)
+                return subprocess.run(
+                    [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                     "--expect", str(expected), "--", *go_test],
+                    cwd=package, env=env, capture_output=True, text=True, timeout=600)
+
+            for goflags in ("'-run=^$'", "-p=2 '-run=^$'", '"-run=^$"'):
+                with self.subTest(goflags=goflags):
+                    result = run(goflags)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("refused: GOFLAGS has a quote character", result.stderr)
+                    self.assertNotIn("PASS", result.stdout)
+            result = run("-p=2")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("go test: intended set: 1 packages from go list; package results: 1", result.stdout)
+            events = [json.loads(line) for line in (Path(directory) / "out.json").read_text().splitlines()]
+            self.assertIn({"pass"}, [{event["Action"]} for event in events if event.get("Test") == "TestRuns"])
+
     def test_deadline_stops_the_command_and_still_reports(self):
         started = time.monotonic()
         result, summary = self.held_child_report(
@@ -863,11 +920,11 @@ class GoTestReport(unittest.TestCase):
                            str(hold)]
                 with mock.patch.object(module.subprocess, "Popen", RecordingPopen), \
                         mock.patch.object(module.os, "killpg", recording_killpg):
-                    status, timed_out, received = module.run_command(
+                    status, timed_out, received, cleanup = module.run_command(
                         command, Path(directory) / "out.json", None, None)
             finally:
                 os.close(hold_end)
-        self.assertEqual((status, timed_out, received), (0, False, None))
+        self.assertEqual((status, timed_out, received, cleanup), (0, False, None, None))
         reaped = [event for event in events if event[0] == "reaped"]
         self.assertEqual(len(reaped), 1, events)
         leader = reaped[0][1]
@@ -876,6 +933,102 @@ class GoTestReport(unittest.TestCase):
         self.assertIn(("killpg", leader, signal.SIGKILL), events)
         self.assertEqual([index for index in kills if index > reaped_at], [],
                          f"killpg after the command was reaped: {events}")
+
+    def run_with_refused_group_signals(self, script):
+        """Run run_command with a killpg that the system refuses (EPERM).
+
+        SCRIPT is a /bin/sh command. "$0" is a FIFO that the test holds open
+        and never writes. Return (status, cleanup problem or None).
+        """
+        module = self.load_reporter()
+
+        def refused_killpg(group, signum):
+            raise PermissionError(1, "Operation not permitted")
+
+        with tempfile.TemporaryDirectory() as directory:
+            hold = Path(directory) / "hold"
+            os.mkfifo(hold)
+            hold_end = os.open(hold, os.O_RDWR)
+            try:
+                with mock.patch.object(module.os, "killpg", refused_killpg):
+                    result = module.run_command(["/bin/sh", "-c", script, str(hold)],
+                                                Path(directory) / "out.json", None, None)
+            finally:
+                # A group member that is still there reads the end of the
+                # FIFO and stops, so the test needs no signal.
+                os.close(hold_end)
+        return result[0], (result[3] if len(result) > 3 else None)
+
+    def test_refused_group_signal_with_a_live_member_fails_the_run(self):
+        # security cross-review r2 N-R2-1: the command exits 0, a member of its
+        # group still runs, and the system refuses the group signal. The exit
+        # of the command does not make the refusal harmless, so the run fails
+        # and names the refused signal, on every platform.
+        status, cleanup = self.run_with_refused_group_signals(
+            'cat < "$0" & echo \'{"Action":"pass","Package":"m/a"}\'')
+        self.assertNotEqual(status, 0)
+        self.assertIsNotNone(cleanup)
+        self.assertIn("refused to send SIGKILL to the process group of the command", cleanup)
+
+    def test_refused_group_signal_after_the_group_is_empty(self):
+        # The command exits 0 and leaves no member. Only on Darwin does the
+        # system refuse a signal to a group whose only member is the exited,
+        # unreaped command; ps then shows no live member, so the run passes.
+        # On Linux each refusal fails the run.
+        status, cleanup = self.run_with_refused_group_signals("echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+        if sys.platform == "darwin":
+            self.assertEqual((status, cleanup), (0, None))
+        else:
+            self.assertNotEqual(status, 0)
+            self.assertIn("refused to send SIGKILL", cleanup)
+
+    def test_signal_after_the_reap_is_recorded_and_not_forwarded(self):
+        # Deferred item (a): after the real reap of the command, the
+        # reporter's handlers are still in place. A signal then must not reach
+        # killpg, because the old process ID can name a new group, and it must
+        # still fail the run. The check calls the installed SIGTERM handler
+        # directly, right after the real reap, so it needs no timing. It covers
+        # the normal path and the path where ExitWatch cannot start.
+        module = self.load_reporter()
+        command = [sys.executable, "-c",
+                   "print('{\"Action\":\"pass\",\"Package\":\"m/a\"}', flush=True)", "-count=1"]
+        for path in ("normal", "no exit watch"):
+            events = []
+            real_killpg = os.killpg
+
+            class SignalAfterReap(subprocess.Popen):
+                # Only the command of the reporter. The reporter can also
+                # start ps (the Darwin path), which must not count here.
+                def wait(self, timeout=None):
+                    status = super().wait(timeout)
+                    if list(self.args) == command:
+                        events.append(("reaped", self.pid))
+                        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                    return status
+
+            def recording_killpg(group, signum):
+                reaped = any(event[0] == "reaped" for event in events)
+                events.append(("killpg", group, signum))
+                if not reaped:
+                    real_killpg(group, signum)
+
+            patches = [mock.patch.object(module.subprocess, "Popen", SignalAfterReap),
+                       mock.patch.object(module.os, "killpg", recording_killpg)]
+            if path == "no exit watch":
+                patches.append(mock.patch.object(module, "ExitWatch", side_effect=OSError("no watch")))
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as directory, \
+                    contextlib.ExitStack() as stack:
+                for patch in patches:
+                    stack.enter_context(patch)
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                result = module.run_command(command, Path(directory) / "out.json", None, None)
+                status, received = result[0], result[2]
+                reaped = [index for index, event in enumerate(events) if event[0] == "reaped"]
+                self.assertEqual(len(reaped), 1, events)
+                self.assertEqual([event for event in events[reaped[0]:] if event[0] == "killpg"], [],
+                                 f"killpg after the reap: {events}")
+                self.assertEqual(received, signal.SIGTERM)
+                self.assertEqual(status, 128 + signal.SIGTERM)
 
     def test_signal_to_the_reporter_fails_the_run(self):
         # The child prints a complete, passing stream, exits 0 on SIGTERM and
