@@ -339,7 +339,16 @@ func endRunAfterUnitFailure(
 	if ctx.Err() != nil {
 		return
 	}
-	_ = executeUnitFailureEnd(ctx, contract.WorkflowUnitRequest{Run: state.run, Unit: *failedUnit}, state.timeouts)
+	// The end result does not change the close cause (R4). A result that does
+	// not name this run still gets a warning, with no value from the result.
+	// An end activity failure stays in the workflow history only.
+	err := executeUnitFailureEnd(ctx, contract.WorkflowUnitRequest{Run: state.run, Unit: *failedUnit}, state.timeouts)
+	if errors.Is(err, errUnitFailureEndResult) {
+		workflow.GetLogger(ctx).Warn(
+			"the run end activity returned a result that does not name this run",
+			"RunRef", state.run.RunID,
+		)
+	}
 }
 
 func drainBeforeExit(ctx workflow.Context, state *coordinatorState) error {

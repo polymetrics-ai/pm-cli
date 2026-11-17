@@ -265,6 +265,22 @@ func TestUnitActivityFailureCallsTheEndActivity(t *testing.T) {
 		logger.requireDrainWarning(t, activities.input.RunID)
 	})
 
+	t.Run("an end result for another run is logged and keeps the unit failure", func(t *testing.T) {
+		activities := newUnitFailureActivities(t, "end-result-other-run")
+		activities.executeErr = func() error {
+			return sdktemporal.NewNonRetryableApplicationError("worker state conflict", "pm.worker.conflict", nil)
+		}
+		activities.endResultRunID = "unit-failure-other-run"
+		logger := &capturedWorkflowLogger{}
+		environment := newUnitFailureEnvironmentWithLogger(t, activities, logger)
+
+		environment.ExecuteWorkflow(contract.RunWorkflowType, activities.input)
+
+		activities.assertEndedOnce(t)
+		assertUnitActivityFailure(t, environment.GetWorkflowError())
+		logger.requireEndResultWarning(t, activities.input.RunID, activities.endResultRunID)
+	})
+
 	t.Run("a mismatched unit result does not end the run", func(t *testing.T) {
 		activities := newUnitFailureActivities(t, "mismatched-result")
 		activities.mismatchedResult = true
@@ -430,6 +446,7 @@ type unitFailureActivities struct {
 	executeErr       func() error
 	commandErr       error
 	endErr           error
+	endResultRunID   string
 	mismatchedResult bool
 
 	executeAttempts atomic.Int32
@@ -513,7 +530,11 @@ func (activities *unitFailureActivities) End(
 	if activities.endErr != nil {
 		return contract.WorkflowProjectionResult{}, activities.endErr
 	}
-	return contract.WorkflowProjectionResult{RunID: request.Run.RunID, Revision: 2, State: contract.RunStateFailed}, nil
+	runID := request.Run.RunID
+	if activities.endResultRunID != "" {
+		runID = activities.endResultRunID
+	}
+	return contract.WorkflowProjectionResult{RunID: runID, Revision: 2, State: contract.RunStateFailed}, nil
 }
 
 func (activities *unitFailureActivities) endRequests() []contract.WorkflowUnitRequest {
@@ -627,5 +648,33 @@ func (logger *capturedWorkflowLogger) requireDrainWarning(t *testing.T, runID st
 	}
 	if matching != 1 {
 		t.Fatalf("drain warnings with RunRef %q and an error = %d; want one (warnings: %#v)", runID, matching, logger.warnings)
+	}
+}
+
+// requireEndResultWarning requires one warning about an end result that does
+// not name the run. The warning names the run and holds no value from the
+// result.
+func (logger *capturedWorkflowLogger) requireEndResultWarning(t *testing.T, runID, resultRunID string) {
+	t.Helper()
+	logger.mu.Lock()
+	defer logger.mu.Unlock()
+	var matching int
+	for _, warning := range logger.warnings {
+		if warning.message != "the run end activity returned a result that does not name this run" {
+			continue
+		}
+		fields := map[interface{}]interface{}{}
+		for index := 0; index+1 < len(warning.keyvals); index += 2 {
+			fields[warning.keyvals[index]] = warning.keyvals[index+1]
+		}
+		if slices.Contains(warning.keyvals, interface{}(resultRunID)) {
+			t.Fatalf("end result warning holds the result value %q: %#v", resultRunID, warning.keyvals)
+		}
+		if fields["RunRef"] == runID {
+			matching++
+		}
+	}
+	if matching != 1 {
+		t.Fatalf("end result warnings with RunRef %q = %d; want one (warnings: %#v)", runID, matching, logger.warnings)
 	}
 }

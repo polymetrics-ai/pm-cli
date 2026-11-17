@@ -137,8 +137,13 @@ func executeProjection(
 	return result, nil
 }
 
+// errUnitFailureEndResult marks an end result that is invalid or names
+// another run. The caller reports it without the result's values.
+var errUnitFailureEndResult = errors.New("unit failure activity returned a result that does not name the run")
+
 // executeUnitFailureEnd runs the activity that ends the run after a unit
-// activity failed. It refuses a result that is invalid or names another run.
+// activity failed. It refuses a result that is invalid or names another run
+// with errUnitFailureEndResult.
 func executeUnitFailureEnd(
 	ctx workflow.Context,
 	request contract.WorkflowUnitRequest,
@@ -155,11 +160,8 @@ func executeUnitFailureEnd(
 	if err := workflow.ExecuteActivity(activityCtx, contract.UnitFailureActivityName, request).Get(activityCtx, &result); err != nil {
 		return err
 	}
-	if err := result.Validate(); err != nil {
-		return err
-	}
-	if result.RunID != request.Run.RunID {
-		return errors.New("unit failure activity returned a mismatched run identity")
+	if result.Validate() != nil || result.RunID != request.Run.RunID {
+		return errUnitFailureEndResult
 	}
 	return nil
 }
