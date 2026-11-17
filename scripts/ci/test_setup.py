@@ -687,6 +687,60 @@ class GoTestReport(unittest.TestCase):
                 "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
             return self.report(events, *options)
 
+    def test_gherkin_skip_causes_come_from_the_totals(self):
+        # C0 of #286b (run 44133272339 at f44e130) failed with 8 "skipped step"
+        # and 2 "skipped scenario" lines, while the totals showed no skip.
+        # godog v0.16.0 prints the template steps of a Scenario Outline in cyan
+        # whatever their result. The real stream is the `go test -json` output
+        # of `PM_ACCEPTANCE_TAGS=@pmgen go test ./tests/acceptance/` (12
+        # scenarios, 3 of them outlines), recorded locally.
+        real = (ROOT / "scripts/ci/testdata/godog-pmgen-outlines.jsonl").read_text().splitlines()
+
+        def gherkin(events, raw=None):
+            with tempfile.TemporaryDirectory() as directory:
+                expected = Path(directory) / "expected.txt"
+                expected.write_text(("github.com/polymetrics-ai/pm-cli/tests/acceptance" if raw else "m/acc") + "\n")
+                options = gherkin_caller_options({
+                    "$gherkin_deadline": str(int(time.time()) + 600),
+                    "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                    "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+                return self.report(events, *options, raw=raw)
+
+        with self.subTest(case="real outlines, no skip in the totals"):
+            result, summary = gherkin([], "\n".join(real) + "\n")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("12 scenarios (12 passed)\n77 steps (77 passed)\n", result.stdout)
+            self.assertNotIn("skipped", result.stdout.replace("0 skipped tests", ""))
+            self.assertNotIn("Problems:", summary)
+        with self.subTest(case="cyan step names alone do not fail a run"):
+            events = self.gherkin_suite({"first": ("pass", [self.step_line(36, "Given", "a state")])},
+                                        ["1 scenarios (\x1b[32m1 passed\x1b[0m)", "1 steps (\x1b[32m1 passed\x1b[0m)"])
+            result, _ = gherkin(events)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("skipped step", result.stdout)
+        with self.subTest(case="real outlines and one real skipped step"):
+            # One more scenario with one skipped step, before the godog totals,
+            # and the totals changed to match. Only that step is named.
+            package = "github.com/polymetrics-ai/pm-cli/tests/acceptance"
+            key = "TestFeatures/Synthetic_skip"
+            extra = [go_event("run", package, key),
+                     go_event("output", package, key,
+                              Output="  [1;37mScenario:[0m Synthetic skip [1;30m# features/synthetic.feature:3[0m\n"),
+                     go_event("output", package, key, Output=self.step_line(32, "When", "a step passes")),
+                     go_event("output", package, key, Output=self.step_line(36, "Then", "the step is skipped")),
+                     go_event("pass", package, key)]
+            at = next(index for index, line in enumerate(real) if "12 scenarios (" in line)
+            changed = real[:at] + extra + real[at:]
+            text = "\n".join(changed).replace("12 scenarios (", "13 scenarios (").replace(
+                "12 passed", "13 passed").replace("77 steps (", "79 steps (").replace(
+                "77 passed", "78 passed, \\u001b[36m1 skipped\\u001b[0m") + "\n"
+            result, summary = gherkin([], text)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            causes = [line for line in result.stdout.splitlines() if "skipped step" in line or "skipped scenario" in line]
+            self.assertEqual(causes, ["go test: the godog step total has 1 skipped steps",
+                                      "go test: skipped step: Synthetic skip / Then the step is skipped"])
+            self.assertIn("- skipped step: Synthetic skip / Then the step is skipped\n", summary)
+
     def test_gherkin_run_passes_with_a_cyan_table_row(self):
         table = "      | \x1b[36mname\x1b[0m | \x1b[36mvalue\x1b[0m |\n"
         events = self.gherkin_suite(
@@ -729,10 +783,14 @@ class GoTestReport(unittest.TestCase):
              "3 steps (\x1b[32m1 passed\x1b[0m, \x1b[36m2 skipped\x1b[0m)"])
         result, summary = self.gherkin_report(events)
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        for cause in ("skipped scenario: second", "skipped scenario: third"):
+        for cause in ("skipped scenario: second", "the godog step total has 2 skipped steps"):
             self.assertIn(f"go test: {cause}\n", result.stdout)
             self.assertIn(f"- {cause}\n", summary)
         self.assertNotIn("skipped scenario: first", result.stdout)
+        # The test of "third" has the result skip, a Go test skip event, so
+        # --fail-on-skip names it. The godog totals do not.
+        self.assertIn("go test: skipped test fails this run: m/acc TestFeatures/third\n", result.stdout)
+        self.assertIn("- `m/acc TestFeatures/third`\n", summary)
         self.assertIn("3 scenarios (3 passed)", summary)
 
     def test_gherkin_run_fails_on_a_skipped_go_test(self):

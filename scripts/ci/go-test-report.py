@@ -83,14 +83,17 @@ or skipped test and each problem that --expect or --deadline found.
 With --scenarios, the summary also lists each godog scenario with its result
 and repeats the godog totals (`N scenarios (...)`, `N steps (...)`), also when
 the suite passes. A passing run without godog totals, or with a scenario count
-that differs from the godog total, fails. These also fail the run (issue
-#350), and the log and the summary name each cause:
+that differs from the godog total, fails. The godog totals also fail the run
+(issue #350), and the log and the summary name each cause:
   - the godog scenario total is 0 ("0 scenarios ran");
-  - the godog step total has skipped steps;
-  - a step of a scenario is skipped ("skipped step: SCENARIO / STEP"). godog
-    v0.16.0 prints a skipped step in cyan;
-  - a scenario is skipped as a whole: its test has the result skip, or each of
-    its steps is skipped ("skipped scenario: SCENARIO").
+  - the godog step total has skipped steps.
+Only these totals, and the skip events of Go tests (--fail-on-skip), fail the
+run. When the step total has skipped steps, the log and the summary also name
+each skipped step ("skipped step: SCENARIO / STEP") and each scenario whose
+steps are all skipped ("skipped scenario: SCENARIO"). godog v0.16.0 prints a
+skipped step in cyan. It also prints the template steps of a Scenario Outline
+in cyan, whatever their result, so the names come only from scenarios that
+are not outlines.
 Without --title, the scenario section of the summary also lists each test
 with no result, each skipped test and each problem. --summary-file appends
 the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
@@ -114,15 +117,20 @@ SCENARIO = re.compile(r"^\s*Scenario(?: Outline)?:\s*(.*?)\s+#\s+(\S+)\s*$")
 TOTAL = re.compile(r"^(\d+) (scenarios?|steps?) \(.*\)$|^No (scenarios|steps)$")
 # A step line of the godog pretty format: the keyword and the text, each in
 # the color of the step status. Table rows start with "|" and do not match.
+# In a Scenario Outline, godog prints the template steps in cyan whatever
+# their result, so OUTLINE marks the output of an outline.
 STEP = re.compile(r"^\s*\x1b?\[(3[0-7])m([^\s\x1b]+)\x1b?\[0m \x1b?\[\1m([^\x1b]*?)\x1b?\[0m")
 SKIPPED_COLOR = "36"
 SKIPPED_STEPS = re.compile(r"\b(\d+) skipped\b")
+OUTLINE = re.compile(r"^\s*Scenario Outline:")
 
 
 def scenario_report(order, results, output):
     """Return the scenario rows, the godog total lines and the steps.
 
-    STEPS has one (name, step count, skipped steps) item for each row.
+    STEPS has one (name, step count, skipped steps) item for each row. The
+    step lines of a Scenario Outline are not step results, so an outline has
+    no counted steps.
     """
     totals, suite, steps = [], None, []
     for key in order:
@@ -147,7 +155,8 @@ def scenario_report(order, results, output):
                 name, location = match.group(1), match.group(2)
                 break
         count, skipped = 0, []
-        for text in output.get(key, []):
+        outline = any(OUTLINE.match(ANSI.sub("", text)) for text in output.get(key, []))
+        for text in ([] if outline else output.get(key, [])):
             match = STEP.match(text)
             if match:
                 count += 1
@@ -159,8 +168,13 @@ def scenario_report(order, results, output):
 
 
 def scenario_causes(rows, totals, steps):
-    """Name each cause of issue #350: 0 scenarios and each skip."""
-    causes = []
+    """Name each cause of issue #350 that the godog totals show.
+
+    Only the totals decide: 0 scenarios, or skipped steps in the step total.
+    The names of skipped steps and scenarios only explain a step total with
+    skipped steps. They never fail a run on their own.
+    """
+    causes, skipped_total = [], 0
     for line in totals:
         match = TOTAL.match(line)
         if match and (match.group(3) == "scenarios" or
@@ -169,9 +183,12 @@ def scenario_causes(rows, totals, steps):
         elif match and (match.group(2) or "").startswith("step"):
             skipped = SKIPPED_STEPS.search(line)
             if skipped and int(skipped.group(1)):
+                skipped_total += int(skipped.group(1))
                 causes.append(f"the godog step total has {skipped.group(1)} skipped steps")
+    if not skipped_total:
+        return causes
     for (action, _, _), (name, count, skipped) in zip(rows, steps):
-        if action == "skip" or (count and len(skipped) == count):
+        if count and len(skipped) == count:
             causes.append(f"skipped scenario: {name}")
         else:
             causes += [f"skipped step: {name} / {step}" for step in skipped]
