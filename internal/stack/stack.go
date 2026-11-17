@@ -1712,7 +1712,8 @@ func (topology seaweedTopology) writable(collection string) int {
 // container and returns the response body. A non-2xx response fails. The
 // Compose and curl diagnostics can name the private service address and the
 // bucket, so pm-stack does not show them. Each call ends within its own time
-// limit (masterLimit), or earlier at the deadline of ctx.
+// limit (masterLimit) plus masterCallWaitDelay, or earlier at the deadline of
+// ctx.
 func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Configuration, path string, query url.Values) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, rt.masterLimit())
 	defer cancel()
@@ -1820,12 +1821,17 @@ func startArtifactStore(ctx context.Context, configuration config.Configuration,
 // does not repeat the grow. The next pm-stack up reads the status first and
 // grows only a layout that has no writable volume.
 func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
+	// missing is the text of the final check. growFailed is the text of a
+	// grow request that got no success answer: the volume may have grown.
 	layouts := []struct {
 		collection string
 		missing    string
+		growFailed string
 	}{
-		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume"},
-		{"", "default collection has no writable volume"},
+		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume",
+			"no success answer arrived for the grow request of the artifact bucket. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
+		{"", "default collection has no writable volume",
+			"no success answer arrived for the grow request of the default collection. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
 	}
 	topology, err := rt.artifactVolumeStatus(ctx, configuration)
 	if err != nil {
@@ -1842,7 +1848,7 @@ func ensureArtifactVolumes(ctx context.Context, configuration config.Configurati
 				query.Set("collection", layout.collection)
 			}
 			if _, err := rt.seaweedMaster(ctx, configuration, "/vol/grow", query); err != nil {
-				return fmt.Errorf("%s: the grow request did not complete", layout.missing)
+				return errors.New(layout.growFailed)
 			}
 			grown = true
 		}

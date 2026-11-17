@@ -21,6 +21,9 @@ const (
 	defaultGrowCall    = "http://seaweed-master:9333/vol/grow?count=1"
 	unjoinedStatus     = `{"Topology":{"Max":0,"Free":0,"Layouts":null}}`
 	bucketMissingError = "artifact bucket has no writable volume"
+	// The texts of a grow request that got no success answer.
+	bucketGrowFailedError  = "no success answer arrived for the grow request of the artifact bucket. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."
+	defaultGrowFailedError = "no success answer arrived for the grow request of the default collection. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."
 )
 
 // TestEnsureArtifactVolumes runs ensureArtifactVolumes against fake python3
@@ -63,7 +66,15 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 			before:    freshMasterStatus,
 			growExit:  22,
 			wantGrows: []string{bucketGrowCall},
-			wantError: bucketMissingError,
+			wantError: bucketGrowFailedError,
+		},
+		{
+			name:      "a refused grow of the default collection fails with its own text",
+			grow:      true,
+			before:    bucketOnlyStatus,
+			growExit:  22,
+			wantGrows: []string{defaultGrowCall},
+			wantError: defaultGrowFailedError,
 		},
 		{
 			name:      "a grow of no volume fails with the named error",
@@ -166,7 +177,7 @@ func TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatal("the grow step did not return: the hung master call has no effective time limit")
 	}
-	const want = "artifact bucket has no writable volume: the grow request did not complete"
+	const want = bucketGrowFailedError
 	if err == nil || err.Error() != want {
 		t.Fatalf("ensureArtifactVolumes error = %v, want %q", err, want)
 	}
