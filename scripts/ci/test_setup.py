@@ -934,48 +934,91 @@ class GoTestReport(unittest.TestCase):
         self.assertEqual([index for index in kills if index > reaped_at], [],
                          f"killpg after the command was reaped: {events}")
 
+    # The command of the refused-signal tests that leaves a live member: a
+    # reader of the hold FIFO ("$0"). The reader opens the FIFO first, writes
+    # its process ID to "$2", then acknowledges on the FIFO "$1". The command
+    # exits only after that acknowledgement. So the reader cannot open the
+    # FIFO after the test closes it (brahmagupta F2 at 333e804).
+    LIVE_MEMBER = ("sh -c 'exec 3<\"$0\"; echo $$ > \"$2\"; echo opened > \"$1\"; exec cat <&3 > /dev/null' "
+                   "\"$0\" \"$1\" \"$2\" & read ack < \"$1\"; echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+
     def run_with_refused_group_signals(self, script):
         """Run run_command with a killpg that the system refuses (EPERM).
 
         SCRIPT is a /bin/sh command. "$0" is a FIFO that the test holds open
-        and never writes. Return (status, cleanup problem or None).
+        and never writes, "$1" an acknowledgement FIFO and "$2" a file for the
+        process ID of a reader. Return (status, cleanup problem or None,
+        reader), where READER says whether a reader acknowledged before the
+        command exited, was alive then, and ended after the test closed the
+        FIFO.
         """
         module = self.load_reporter()
 
         def refused_killpg(group, signum):
             raise PermissionError(1, "Operation not permitted")
 
+        reader = {"acknowledged": False, "alive": False, "ended": False}
         with tempfile.TemporaryDirectory() as directory:
-            hold = Path(directory) / "hold"
+            hold, ack, pid_file = (Path(directory) / name for name in ("hold", "ack", "pid"))
             os.mkfifo(hold)
-            hold_end = os.open(hold, os.O_RDWR)
+            os.mkfifo(ack)
+            hold_end, ack_end = os.open(hold, os.O_RDWR), os.open(ack, os.O_RDWR)
+            handle = None
             try:
                 with mock.patch.object(module.os, "killpg", refused_killpg):
-                    result = module.run_command(["/bin/sh", "-c", script, str(hold)],
+                    result = module.run_command(["/bin/sh", "-c", script, str(hold), str(ack), str(pid_file)],
                                                 Path(directory) / "out.json", None, None)
+                if pid_file.exists():
+                    # The reader wrote its ID before its acknowledgement, and the
+                    # command exited after it. The reader blocks on the open
+                    # FIFO, so it is alive and its ID names no other process.
+                    reader["acknowledged"] = True
+                    handle = HeldProcess(int(pid_file.read_text().strip()))
+                    reader["alive"] = not handle.exits_within(0)
             finally:
-                # A group member that is still there reads the end of the
-                # FIFO and stops, so the test needs no signal.
+                # The reader reads the end of the FIFO and stops, so the test
+                # needs no signal.
                 os.close(hold_end)
-        return result[0], (result[3] if len(result) > 3 else None)
+                os.close(ack_end)
+                if handle is not None:
+                    # One wait for the exit event of the held reader.
+                    reader["ended"] = handle.exits_within(30)
+                    handle.close()
+        return result[0], (result[3] if len(result) > 3 else None), reader
 
     def test_refused_group_signal_with_a_live_member_fails_the_run(self):
         # security cross-review r2 N-R2-1: the command exits 0, a member of its
         # group still runs, and the system refuses the group signal. The exit
         # of the command does not make the refusal harmless, so the run fails
         # and names the refused signal, on every platform.
-        status, cleanup = self.run_with_refused_group_signals(
-            'cat < "$0" & echo \'{"Action":"pass","Package":"m/a"}\'')
+        status, cleanup, _ = self.run_with_refused_group_signals(self.LIVE_MEMBER)
         self.assertNotEqual(status, 0)
         self.assertIsNotNone(cleanup)
         self.assertIn("refused to send SIGKILL to the process group of the command", cleanup)
+
+    def test_refused_signal_reader_opens_before_the_command_exits(self):
+        # brahmagupta F2 at 333e804: with `cat < "$0" &`, the reader could
+        # open the FIFO after the test closed it, and then block forever. The
+        # check needs the order: reader open and acknowledged, then the exit of
+        # the command, then the close by the test, then the exit of the
+        # reader through its held identity. No pause, retry or signal.
+        # The order is in the command text: the reader opens, writes its ID,
+        # then acknowledges; the command waits for that before it exits. The
+        # run below shows the outcome, but a missing wait is only a race there.
+        script = self.LIVE_MEMBER
+        steps = ['exec 3<"$0"', 'echo $$ > "$2"', 'echo opened > "$1"', 'exec cat <&3',
+                 'read ack < "$1"', "echo '{"]
+        self.assertEqual([step for step in steps if step in script], steps, script)
+        self.assertEqual([script.index(step) for step in steps], sorted(script.index(step) for step in steps))
+        _, _, reader = self.run_with_refused_group_signals(script)
+        self.assertEqual(reader, {"acknowledged": True, "alive": True, "ended": True})
 
     def test_refused_group_signal_after_the_group_is_empty(self):
         # The command exits 0 and leaves no member. Only on Darwin does the
         # system refuse a signal to a group whose only member is the exited,
         # unreaped command; ps then shows no live member, so the run passes.
         # On Linux each refusal fails the run.
-        status, cleanup = self.run_with_refused_group_signals("echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+        status, cleanup, _ = self.run_with_refused_group_signals("echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
         if sys.platform == "darwin":
             self.assertEqual((status, cleanup), (0, None))
         else:
