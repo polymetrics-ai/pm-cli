@@ -3002,7 +3002,13 @@ def run_mode(
                     safe_error("pre-manifest fixture cleanup refused or failed")
                     result = 1
         else:
-            with Phase("cleanup", CLEANUP_PHASE_LIMIT):
+            # Deliberate fault for the #286b canary D1, only on the throwaway
+            # branch agent/286b-canary-d1-2, which never merges. In CI, with a
+            # real Docker socket, the cleanup in the run step gets 0 s, so it
+            # reaches its phase deadline before its first call. The workflow
+            # cleanup step (--cleanup, 300 s) then removes the fixture.
+            canary_d1 = os.environ.get("GITHUB_ACTIONS") == "true" and Path(endpoint.removeprefix("unix://")).is_socket()
+            with Phase("cleanup", 0 if canary_d1 else CLEANUP_PHASE_LIMIT):
                 cleaned = cleanup_fixture(manifest, docker, image_refs, base_environment)
             if not cleaned:
                 safe_error(f"cleanup incomplete; safe ownership diagnostic retained at {manifest.path}")
