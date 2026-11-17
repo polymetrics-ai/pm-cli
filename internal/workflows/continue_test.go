@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	workflowpb "go.temporal.io/api/workflow/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	sdkclient "go.temporal.io/sdk/client"
@@ -560,20 +562,9 @@ func (harness *productionWorkflowHarness) relayAdmitted(
 	if err := relay.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var runID string
-	for runID == "" {
-		description, err := harness.client.DescribeWorkflowExecution(ctx, admitted.WorkflowID, "")
-		if err == nil {
-			runID = description.GetWorkflowExecutionInfo().GetExecution().GetRunId()
-			if runID != "" {
-				break
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("relayed workflow did not become observable")
-		case <-time.After(20 * time.Millisecond):
-		}
+	runID, err := relayedWorkflowRunID(ctx, harness.client, admitted.WorkflowID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	testfixture.CleanupWorkflowChain(
 		t, harness.client, harness.options.Namespace, admitted.WorkflowID, runID,
@@ -632,6 +623,97 @@ func (harness *productionWorkflowHarness) relayAdmitted(
 	}
 	harness.started = true
 	return harness.client.GetWorkflow(ctx, canonical.WorkflowID, runID), canonical
+}
+
+// workflowDescriber is the one client call that relayedWorkflowRunID makes.
+type workflowDescriber interface {
+	DescribeWorkflowExecution(
+		ctx context.Context,
+		workflowID, runID string,
+	) (*workflowservice.DescribeWorkflowExecutionResponse, error)
+}
+
+// relayedWorkflowRunID asks Temporal once for the run that the relay started.
+// relay.RunOnce returns without an error only after Temporal answered the
+// start request (StartOrReconcile in internal/temporal/outbox.go). So this
+// answer must name the run. A missing run is a failure, not a reason to ask
+// again.
+func relayedWorkflowRunID(ctx context.Context, client workflowDescriber, workflowID string) (string, error) {
+	description, err := client.DescribeWorkflowExecution(ctx, workflowID, "")
+	if err != nil {
+		return "", fmt.Errorf("describe the relayed workflow: %w", err)
+	}
+	runID := description.GetWorkflowExecutionInfo().GetExecution().GetRunId()
+	if runID == "" {
+		return "", errors.New("the relayed workflow has no run after the relay started it")
+	}
+	return runID, nil
+}
+
+// TestRelayedWorkflowRunIDAsksOnce checks the start wait of relayAdmitted with
+// a scripted client. It needs no stack. A repeated request or a timed pause
+// in relayedWorkflowRunID fails it.
+func TestRelayedWorkflowRunIDAsksOnce(t *testing.T) {
+	t.Run("one answer gives the run with no timed pause", func(t *testing.T) {
+		client := &scriptedDescriber{answers: []describeAnswer{{runID: "relayed-run-1"}}}
+		// A timed pause stops on this ended context before the request.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		runID, err := relayedWorkflowRunID(ctx, client, "pm/run/relayed")
+		if err != nil || runID != "relayed-run-1" {
+			t.Fatalf("relayed run = %q error %v; want relayed-run-1 from one answer", runID, err)
+		}
+		if client.calls != 1 {
+			t.Fatalf("describe requests = %d; want 1", client.calls)
+		}
+	})
+	t.Run("a missing run fails without a second request", func(t *testing.T) {
+		client := &scriptedDescriber{answers: []describeAnswer{{runID: ""}, {runID: "relayed-run-2"}}}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		runID, err := relayedWorkflowRunID(ctx, client, "pm/run/relayed")
+		if err == nil || client.calls != 1 {
+			t.Fatalf("relayed run = %q error %v after %d describe requests; want a failure after 1", runID, err, client.calls)
+		}
+	})
+	t.Run("an error answer fails without a second request", func(t *testing.T) {
+		client := &scriptedDescriber{answers: []describeAnswer{
+			{err: errors.New("workflow not found")}, {runID: "relayed-run-3"},
+		}}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		runID, err := relayedWorkflowRunID(ctx, client, "pm/run/relayed")
+		if err == nil || client.calls != 1 {
+			t.Fatalf("relayed run = %q error %v after %d describe requests; want a failure after 1", runID, err, client.calls)
+		}
+	})
+}
+
+type describeAnswer struct {
+	runID string
+	err   error
+}
+
+// scriptedDescriber gives its answers in order and repeats the last one.
+type scriptedDescriber struct {
+	answers []describeAnswer
+	calls   int
+}
+
+func (client *scriptedDescriber) DescribeWorkflowExecution(
+	_ context.Context,
+	workflowID, _ string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	client.calls++
+	answer := client.answers[min(client.calls, len(client.answers))-1]
+	if answer.err != nil {
+		return nil, answer.err
+	}
+	return &workflowservice.DescribeWorkflowExecutionResponse{
+		WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{
+			Execution: &commonpb.WorkflowExecution{WorkflowId: workflowID, RunId: answer.runID},
+		},
+	}, nil
 }
 
 type blockingExecutionController struct {
