@@ -62,7 +62,10 @@ so no new process or process group can get that ID. After that SIGKILL, the
 script sends no more signals to the group: a signal that the script receives
 later is only recorded, and it still fails the run. The script waits for the
 exit of COMMAND with a pidfd (Linux) or a kqueue process filter (macOS), which
-do not reap it.
+do not reap it. Each wait after the last SIGKILL has a limit of 30 seconds,
+because the system can refuse that SIGKILL. When COMMAND has not ended by
+then, the script does not reap it, so its ID stays reserved, and the run fails
+with a cleanup problem.
 
 With --title, --summary-file appends a Markdown section with that title: the
 result, the totals, each package with its result and elapsed time, each failed
@@ -321,12 +324,18 @@ def run_command(command, output, deadline, limit):
     also refuses a signal to a group whose only member is COMMAND after it
     has exited and before the script reaps it. Only then, and only when ps
     shows no member of the group that has not exited, the refusal does not
-    fail the run.
+    fail the run. CLEANUP also names a COMMAND that did not end KILL_GRACE
+    seconds after the last SIGKILL. The script does not reap such a COMMAND,
+    and the run fails.
     """
     # forward is False after the last signal to the group, before the reap.
     state = {"process": None, "watch": None, "waiting": False, "forward": True}
     received = []
     denied = []
+    # alive is True when COMMAND has not ended KILL_GRACE seconds after the
+    # last SIGKILL (for example, the system refused that SIGKILL). The script
+    # then does not reap it, so its ID stays reserved, and the run fails.
+    alive = []
 
     def refusal_is_harmless(group):
         watch = state["watch"]
@@ -347,11 +356,29 @@ def run_command(command, output, deadline, limit):
                 denied.append(signum)
 
     def cleanup():
-        if not denied:
-            return None
-        names = ", ".join(sorted({signal.Signals(number).name for number in denied}))
-        return (f"the system refused to send {names} to the process group of the command "
-                f"(permission denied), so a test process can still run")
+        parts = []
+        if denied:
+            names = ", ".join(sorted({signal.Signals(number).name for number in denied}))
+            parts.append(f"the system refused to send {names} to the process group of the command "
+                         f"(permission denied), so a test process can still run")
+        if alive:
+            parts.append(f"the command did not end {KILL_GRACE} seconds after the last SIGKILL, so "
+                         f"the reporter did not reap it and a test process can still run")
+        return ". ".join(parts) or None
+
+    def reap(process, watch):
+        """Reap COMMAND only when it has ended. Never wait without a limit."""
+        if watch is not None:
+            ended = watch.wait(KILL_GRACE)
+        else:
+            try:
+                return process.wait(timeout=KILL_GRACE)
+            except subprocess.TimeoutExpired:
+                ended = False
+        if not ended:
+            alive.append(True)
+            return 1
+        return process.wait()
 
     def early_status():
         # A received signal forces 128 plus its number on each path.
@@ -387,7 +414,7 @@ def run_command(command, output, deadline, limit):
                 print(f"go test: cannot watch the command: {exc}")
                 forward(signal.SIGKILL, None)
                 state["forward"] = False
-                process.wait()
+                reap(process, None)
                 return early_status(), False, received[0] if received else None, cleanup()
             timed_out = False
             try:
@@ -401,14 +428,12 @@ def run_command(command, output, deadline, limit):
                         forward(signal.SIGTERM, None)
                         if not watch.wait(KILL_GRACE):
                             forward(signal.SIGKILL, None)
-                            watch.wait(None)
                 except _ReceivedSignal:
                     # The handler forwarded the signal to the group. Give the
                     # command KILL_GRACE seconds to stop, then SIGKILL.
                     forward(received[0], None)
                     if not watch.wait(KILL_GRACE):
                         forward(signal.SIGKILL, None)
-                        watch.wait(None)
             finally:
                 state["waiting"] = False
                 # A test process that outlives the command must not keep
@@ -418,7 +443,9 @@ def run_command(command, output, deadline, limit):
                 # after the reap the ID can name a new group.
                 forward(signal.SIGKILL, None)
                 state["forward"] = False
-                status = process.wait()
+                # The wait for the end is bounded: a refused SIGKILL can leave
+                # the command alive.
+                status = reap(process, watch)
                 watch.close()
             if timed_out:
                 status = DEADLINE_STATUS
@@ -429,7 +456,7 @@ def run_command(command, output, deadline, limit):
         status = 128 - status
     if received:
         status = 128 + received[0]
-    if denied and status == 0:
+    if (denied or alive) and status == 0:
         status = 1
     return status, timed_out, received[0] if received else None, cleanup()
 

@@ -982,6 +982,73 @@ class GoTestReport(unittest.TestCase):
             self.assertNotEqual(status, 0)
             self.assertIn("refused to send SIGKILL", cleanup)
 
+    # brahmagupta F1 at 333e804: the system refuses each group signal, and the
+    # command stays alive. run_command installs signal handlers, so it runs
+    # in this child, in its main thread. The child prints the result and
+    # whether the command was reaped.
+    REFUSED_KILL_CHILD = """\
+import importlib.util, json, signal, subprocess, sys, time
+from pathlib import Path
+report, hold, out, case = sys.argv[1:5]
+spec = importlib.util.spec_from_file_location("go_test_report", report)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.KILL_GRACE = 0
+def refused(group, signum):
+    raise PermissionError(1, "Operation not permitted")
+module.os.killpg = refused
+started = []
+class Recording(subprocess.Popen):
+    def __init__(self, *arguments, **options):
+        super().__init__(*arguments, **options)
+        started.append(self)
+        if case == "received":
+            signal.raise_signal(signal.SIGTERM)
+module.subprocess.Popen = Recording
+if case == "no exit watch":
+    def no_watch(pid):
+        raise OSError("no watch")
+    module.ExitWatch = no_watch
+deadline = time.time() - 1 if case == "deadline" else None
+result = module.run_command(["/bin/sh", "-c", 'read line < "$0"', hold], Path(out), deadline, None)
+print(json.dumps({"result": list(result), "reaped": started[0].returncode is not None}))
+"""
+
+    def test_refused_kill_of_a_live_command_has_a_bounded_wait(self):
+        # The command blocks on a FIFO that the test holds open and never
+        # writes, and each group signal is refused. The reporter must not wait
+        # with no limit, must not reap the live command, and must fail with
+        # the cleanup text. One bounded wait for the child; the test then
+        # closes the FIFO, so the command reads its end and stops.
+        expected = {"deadline": 124, "received": 128 + signal.SIGTERM, "no exit watch": 1}
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "child.py"
+            child.write_text(self.REFUSED_KILL_CHILD)
+            for case, status in expected.items():
+                with self.subTest(case=case):
+                    hold = Path(directory) / ("hold-" + case.replace(" ", "-"))
+                    # The live command inherits the standard error of the child,
+                    # so it goes to a file, not to a pipe that the wait reads.
+                    errors = Path(directory) / ("errors-" + case.replace(" ", "-"))
+                    os.mkfifo(hold)
+                    hold_end = os.open(hold, os.O_RDWR)
+                    try:
+                        with errors.open("w") as error_file:
+                            result = subprocess.run(
+                                [sys.executable, "-I", "-B", str(child), str(REPORT), str(hold),
+                                 str(Path(directory) / "out.json"), case],
+                                stdout=subprocess.PIPE, stderr=error_file, text=True, timeout=20)
+                    except subprocess.TimeoutExpired:
+                        self.fail(f"{case}: the reporter waited with no limit after a refused SIGKILL")
+                    finally:
+                        os.close(hold_end)
+                    self.assertEqual(result.returncode, 0, result.stdout + errors.read_text())
+                    report = json.loads(result.stdout.splitlines()[-1])
+                    self.assertEqual(report["result"][0], status, report)
+                    self.assertFalse(report["reaped"], "the reporter reaped a live command")
+                    self.assertIn("refused to send SIGKILL", report["result"][3])
+                    self.assertIn("after the last SIGKILL, so the reporter did not reap it", report["result"][3])
+
     def test_signal_after_the_reap_is_recorded_and_not_forwarded(self):
         # Deferred item (a): after the real reap of the command, the
         # reporter's handlers are still in place. A signal then must not reach
