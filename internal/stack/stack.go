@@ -223,20 +223,20 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		stderr = io.Discard
 	}
 
-	options, err := parseCommand(args)
-	if err != nil {
-		return err
-	}
-	if options.action == "up" {
-		// Every failure of pm-stack up has a fixed step code, also before
-		// upStack runs: opening, loading and validating the configuration
-		// (review F9).
+	if len(args) > 0 && args[0] == "up" {
+		// Every failure of an explicit pm-stack up has a fixed step code,
+		// also before upStack runs: parsing its arguments, and opening,
+		// loading and validating the configuration (review F9, round 2 F1).
 		defer func() {
 			var step *stepError
 			if err != nil && !errors.As(err, &step) {
 				err = &stepError{step: "configuration", err: err}
 			}
 		}()
+	}
+	options, err := parseCommand(args)
+	if err != nil {
+		return err
 	}
 
 	reader := stdin
