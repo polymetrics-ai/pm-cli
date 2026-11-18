@@ -21,6 +21,7 @@ list_folder() { /bin/ls -A -- "$1"; }
 sync_file() { /usr/bin/sync -- "$1"; }
 grep=/usr/bin/grep
 python=/usr/bin/python3
+owner=0
 
 user=pmlive
 # absent PATH...: 0 when each is proved absent (ENOENT), 1 if one exists, 2 else (N3).
@@ -35,6 +36,26 @@ for path in sys.argv[1:]:
     except OSError:
         sys.exit(2)
     sys.exit(1)' "$@"
+}
+# protected [NAME]: /, etc, pm-live and NAME in it each open without a link, belong to
+# $owner and are not group- or world-writable, as in the admission hook (#403 R3-2).
+protected() {
+  "$python" -I -B -c '
+import os, stat, sys
+owner, flags = int(sys.argv[1]), os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK
+def owned(descriptor, kind):
+    status = os.fstat(descriptor)
+    if not kind(status.st_mode) or status.st_uid != owner or status.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        sys.exit(1)
+    return descriptor
+try:
+    folder = owned(os.open(sys.argv[2] or "/", flags | os.O_DIRECTORY), stat.S_ISDIR)
+    for part in ("etc", "pm-live"):
+        folder = owned(os.open(part, flags | os.O_DIRECTORY, dir_fd=folder), stat.S_ISDIR)
+    for name in sys.argv[3:]:
+        owned(os.open(name, flags, dir_fd=folder), stat.S_ISREG)
+except OSError:
+    sys.exit(1)' "$owner" "$root" "$@"
 }
 # The at jobs, from atq. Without atq, no at scheduler or spool may exist (F5).
 at_jobs() {
@@ -106,6 +127,10 @@ forbidden_files() {
 if [ "${1:-}" = --record ]; then
   forbidden_files
   [ "$status" -eq 0 ] || exit 1
+  protected || {
+    fail 'the list folder or a folder above it is not root-owned or is writable by group or others'
+    exit 1
+  }
   # Only a complete, flushed new list replaces the old one (#403 N1).
   temporary=$(/usr/bin/mktemp "$list.XXXXXX") || exit 1
   if current_list > "$temporary" && [ -s "$temporary" ] && sync_file "$temporary" && /bin/chmod 0644 "$temporary" &&
@@ -175,6 +200,8 @@ if [ "$gate" -ne 0 ]; then
   fail 'the files were not compared, because the gate failed'
 elif [ ! -f "$list" ] || [ -L "$list" ] || [ ! -s "$list" ]; then
   fail 'the root-held file list is missing or empty'
+elif ! protected "${list##*/}"; then
+  fail 'the list, its folder or a folder above it is not root-owned or is writable by group or others'
 else
   # In the root-owned list folder, not /tmp. An empty list never matches (crrao, N1).
   temporary=$(/usr/bin/mktemp "$list.compare.XXXXXX") || exit 1

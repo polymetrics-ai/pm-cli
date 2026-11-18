@@ -28,7 +28,8 @@ RUNNER_FIXED = CLEANUP_FIXED[:2] + [
     'sha256_of() { /usr/bin/sha256sum -- "$1"; }\n',
     'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n', "put() { printf '%s %s %s\\n' \"$@\"; }\n",
     "read_line() { IFS= read -r path; }\n", 'list_folder() { /bin/ls -A -- "$1"; }\n',
-    'sync_file() { /usr/bin/sync -- "$1"; }\n', "grep=/usr/bin/grep\n", "python=/usr/bin/python3\n"]
+    'sync_file() { /usr/bin/sync -- "$1"; }\n', "grep=/usr/bin/grep\n", "python=/usr/bin/python3\n",
+    "owner=0\n"]
 FAKE_PODMAN = """import os, subprocess, sys
 state, args = STATE, sys.argv[1:]
 with open(os.path.join(state, "log"), "a") as log:
@@ -298,7 +299,8 @@ class RunnerCheck(unittest.TestCase):
             f"read_line() {{ reads=$((${{reads:-0}} + 1)); [ ! -f '{state}/read-fails' ] || [ \"$reads\" -lt 2 ] "
             "|| { path=; return 1; }; IFS= read -r path; }\n",
             f"list_folder() {{ [ ! -f '{state}/ls-fails' ] && /bin/ls -A -- \"$1\"; }}\n",
-            f'sync_file() {{ "{host.bin / "sync"}" "$1"; }}\n', f"grep={host.bin / 'grep'}\n", f"python={sys.executable}\n"])
+            f'sync_file() {{ "{host.bin / "sync"}" "$1"; }}\n', f"grep={host.bin / 'grep'}\n", f"python={sys.executable}\n",
+            f"owner={UID}\n"])
         host.run_root.parent.parent.rename(host.root / "runtime-gone")  # the gate needs no runtime folder
         self.runner = host.root / "opt/pm-live/actions-runner"
         for path, text in (("run.sh", "#!/bin/sh\n"), (".env", "A=1\n"), ("bin/Runner.Listener", "binary\n"),
@@ -533,6 +535,37 @@ class RunnerCheck(unittest.TestCase):
                 self.assertIn("cannot be listed, read or hashed", check.stdout)
                 self.assertNotRegex(check.stdout, "match the list|differ from the list")
         self.assertNotIn("/usr/bin/mktemp)", (ROOT / "scripts/ci/live-runner-check.sh").read_text())  # no /tmp
+
+    def test_an_unprotected_list_or_folder_fails(self):
+        # #403 R3-2: the list, /etc/pm-live and each folder above it must be owner-held and
+        # not group- or world-writable. True when --record must also refuse.
+        folder, etc = (lambda: self.list.parent), (lambda: self.host.root / "etc")  # new for each case
+
+        def foreign_owner():  # the same files, with a script that expects another owner
+            self.script.write_text(self.script.read_text().replace(f"owner={UID}\n", f"owner={UID + 1}\n"))
+
+        def folder_link():
+            folder().rename(etc() / "pm-live-real")
+            folder().symlink_to(etc() / "pm-live-real")
+        cases = {"wrong owner": (foreign_owner, True), "group-writable list": (lambda: self.list.chmod(0o664), False),
+                 "world-writable list": (lambda: self.list.chmod(0o646), False),
+                 "group-writable folder": (lambda: folder().chmod(0o775), True),
+                 "world-writable folder above": (lambda: etc().chmod(0o757), True), "folder link": (folder_link, True)}
+        for name, (fault, record_fails) in cases.items():
+            with self.subTest(case=name):
+                self.tearDown()
+                self.setUp()
+                fault()
+                check = self.check()
+                self.assertEqual(check.returncode, 1, check.stdout)
+                self.assertIn("not root-owned or is writable by group or others", check.stdout)
+                self.assertNotRegex(check.stdout, "match the list|differ from the list")
+                if record_fails:
+                    record = self.host.run(self.script, "--record")
+                    self.assertEqual(record.returncode, 1, record.stdout)
+                    self.assertIn("not root-owned or is writable by group or others", record.stdout)
+                    self.assertEqual(self.list.read_bytes(), self.recorded)
+                    self.assertEqual(sorted(path.name for path in self.list.parent.iterdir()), [self.list.name])
 
     def test_a_failed_deletion_and_listing_fail_the_check(self):
         # #403 N2: find and ls both fail on an excluded folder. No "empty".
