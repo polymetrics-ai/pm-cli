@@ -899,7 +899,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		if freshSend {
 			physicalCall, err := newWorkerPhysicalCallBoundary(
 				service, execution, request.Run, state, task, dispatch.Intent, attempt, lease, permit,
-				dispatch.Retry != nil, handler.Kind == HandlerSQL,
+				dispatch.Retry != nil, handler.Kind == HandlerSQL, discovery != nil,
 			)
 			if err != nil {
 				return err
@@ -1843,6 +1843,9 @@ type workerPhysicalCallBoundary struct {
 	call      pmruntime.PhysicalCall
 	approval  string
 	retry     bool
+	// discovery marks a schema discovery run. Its connection.manage grant is
+	// checked again at each physical call, as at prepare.
+	discovery bool
 
 	mu             sync.Mutex
 	admissionUsed  bool
@@ -1880,6 +1883,7 @@ func newWorkerPhysicalCallBoundary(
 	permit store.AccountPermit,
 	retryAuthorized bool,
 	multiSend bool,
+	discovery bool,
 ) (*workerPhysicalCallBoundary, error) {
 	if service == nil || !workerPhysicalStateEligible(state.record.State, task.State, retryAuthorized) ||
 		state.record.CancelRequested || task.CancelRequested || state.grant.RevokedAt != nil ||
@@ -1955,7 +1959,7 @@ func newWorkerPhysicalCallBoundary(
 	return &workerPhysicalCallBoundary{
 		service: service, execution: execution, reference: reference, route: state.route,
 		task: task, dispatch: dispatch, lease: lease, permit: cloneWorkerPhysicalPermit(permit),
-		call: call, approval: approval, retry: retryAuthorized, multiSend: multiSend,
+		call: call, approval: approval, retry: retryAuthorized, multiSend: multiSend, discovery: discovery,
 	}, nil
 }
 
@@ -2355,6 +2359,13 @@ func (boundary *workerPhysicalCallBoundary) recheckPhysicalCall(
 		ctx, tx, state, call.OperationID,
 	); err != nil {
 		return err
+	}
+	if boundary.discovery {
+		if err := boundary.service.requireCurrentDiscoveryAuthorization(
+			ctx, tx, state, call.OperationID,
+		); err != nil {
+			return err
+		}
 	}
 	if err := store.CheckAccountCooldown(ctx, tx, permit); err != nil {
 		return workerFailure(ErrWorkerAuthorization, err)

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/polymetrics-ai/pm-cli/internal/api"
+	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
 )
@@ -249,4 +251,78 @@ func (harness *sqlExecutionHarness) discoveryIntents(t *testing.T) int {
 		return nil
 	})
 	return count
+}
+
+// TestDiscoveryPhysicalCallRechecksConnectionManage is the developer check of
+// #301 review finding S1. Defect: a discovery needs connection.manage and
+// operation.invoke, but the physical-call boundary checks only
+// operation.invoke again at the send. connection.manage is checked again only
+// at prepare. The controlled callback removes connection.manage from the
+// actor's membership after prepare and before the send, and then asks the
+// physical-call boundary to admit the send. The change keeps every policy
+// epoch, so the operation.invoke recheck still passes and only the
+// connection.manage recheck can refuse. A product revocation also changes the
+// policy epoch, which the operation.invoke recheck already refuses.
+func TestDiscoveryPhysicalCallRechecksConnectionManage(t *testing.T) {
+	temporal := newPermitTemporalHarness(t)
+	var harness *sqlExecutionHarness
+	var observed struct {
+		called       bool
+		authorityErr error
+		revokeErr    error
+		admitErr     error
+	}
+	execute := func(ctx context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+		observed.called = true
+		call, admitter, _, err := request.PhysicalCallAuthority()
+		if err != nil {
+			observed.authorityErr = err
+			return app.ExecutionObservation{}, err
+		}
+		observed.revokeErr = harness.fixture.WithinSetupSQL(ctx, request.Scope, func(ctx context.Context, tx pgx.Tx) error {
+			tag, err := tx.Exec(ctx, `
+				UPDATE pm.memberships
+				SET permissions = array_remove(permissions, 'connection.manage'),
+				    resource_grants = array_remove(resource_grants, 'permission:connection.manage')
+				WHERE org_id = $1 AND workspace_id = $2 AND identity_id = $3
+				  AND 'connection.manage' = ANY(permissions)
+			`, request.Scope.OrgID, request.Scope.WorkspaceID, harness.fixture.Actor.RequestedActor.PrincipalID)
+			if err != nil {
+				return err
+			}
+			if tag.RowsAffected() != 1 {
+				return fmt.Errorf("remove connection.manage: %d memberships changed; want one", tag.RowsAffected())
+			}
+			return nil
+		})
+		if observed.revokeErr != nil {
+			return app.ExecutionObservation{}, observed.revokeErr
+		}
+		observed.admitErr = admitter.AdmitPhysicalCall(ctx, call)
+		if observed.admitErr == nil {
+			return app.ExecutionObservation{}, errors.New("the physical call was admitted after connection.manage was removed")
+		}
+		return app.ExecutionObservation{}, observed.admitErr
+	}
+	harness = newDiscoveryHarness(t, temporal, sqlExecutionTuning{declared: true, noSnapshot: true, execute: execute})
+	response := harness.postDiscovery(t, sqlExecutionResource, "schema-discovery-manage-revoked")
+	admitted := requireFreshInitialAdmission(t, response, "schema-discovery-manage-revoked")
+	run := preparePermitWorkerRun(
+		t, harness.fixture, harness.service, temporal, harness.fixture.Scope, harness.fixture.Actor, admitted,
+	)
+	_, _ = executePermitWorkerUnit(t, harness.service, run)
+	if !observed.called || observed.authorityErr != nil || observed.revokeErr != nil {
+		t.Fatalf("controlled discovery callback: called %t, authority %v, revoke %v; want one fresh callback that removed connection.manage",
+			observed.called, observed.authorityErr, observed.revokeErr)
+	}
+	if !errors.Is(observed.admitErr, app.ErrWorkerAuthorization) {
+		t.Fatalf("physical-call admission after connection.manage was removed = %v; want ErrWorkerAuthorization before the send",
+			observed.admitErr)
+	}
+	if dials := harness.customer.dials.Load(); dials != 0 {
+		t.Fatalf("the customer database was dialed %d times; want none", dials)
+	}
+	if candidates := harness.schemaCandidates(t); len(candidates) != 0 {
+		t.Fatalf("a refused discovery stored %d candidates; want none", len(candidates))
+	}
 }
