@@ -25,11 +25,12 @@ import (
 // default backoff, so the second attempt claims the task and succeeds.
 //
 // PostgreSQL and Temporal are the real stack. The held lease is a durable row
-// with a known end. The first attempt itself installs it: the operation
-// resolver, which ExecuteUnit calls during preparation before its lease
-// decision, holds the lease once. So the first claim sees a live lease however
-// long the worker takes to start. The check reads the activity's last failure
-// from the workflow history after the run ends, so it does not sleep, poll or
+// with a known end. The first attempt itself installs it: its lease decision
+// hook, which runs in the prepare transaction after every preparation step
+// and just before the stored lease is read, holds the lease once. So the first
+// claim sees a live lease however long the worker takes to start and however
+// long the preparation takes. The check reads the activity's last failure from
+// the workflow history after the run ends, so it does not sleep, poll or
 // retry.
 func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
@@ -100,12 +101,13 @@ func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 
 // TestLeaseDecisionReadsTheDatabaseTimeAgain checks the lease decision of
 // ExecuteUnit when preparation outlasts a held lease. ExecuteUnit samples the
-// database time when it loads the run. The operation resolver runs later in
-// the same preparation, before the lease decision. Here it changes the end of
-// the held lease, so the stored end is after the first sample. The lease
-// decision must use a database time from after that change, for both the
-// expiry comparison and the remaining lease time. No sleep or poll sets the
-// order: the resolver call is the event.
+// database time when it loads the run. Its lease decision hook runs later, in
+// the same prepare transaction, after every preparation step and just before
+// the stored lease is read. Here it changes the end of the held lease, so the
+// stored end is after the first sample. The lease decision must use a database
+// time from after that change, for both the expiry comparison and the
+// remaining lease time. No sleep or poll sets the order: the hook call is the
+// event.
 func TestLeaseDecisionReadsTheDatabaseTimeAgain(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
 
@@ -187,7 +189,7 @@ func prepareLeaseDecisionRun(
 		},
 		unexpectedPermitReconciliation,
 	)
-	// ExecuteUnit runs in the test goroutine here, so every resolver call
+	// ExecuteUnit runs in the test goroutine here, so every lease decision
 	// after the hook is armed belongs to it.
 	hook := newLeaseDecisionHook(func(context.Context) bool { return true }, nil)
 	service := newLeaseDecisionWorkerService(t, fixture, temporal, hook)
@@ -199,10 +201,11 @@ func prepareLeaseDecisionRun(
 	return run, fixture, service, hook, sends
 }
 
-// leaseDecisionHook runs one action in the operation resolver of a worker
-// service. ExecuteUnit calls that resolver during preparation, after it
-// samples the database time and before its lease decision. The hook runs
-// its action only once, and only after the test arms it.
+// leaseDecisionHook runs one action in the prepare transaction of
+// ExecuteUnit, just before the lease decision reads the stored lease
+// (app.SetBeforeLeaseDecision). That is after every other preparation step,
+// so no preparation time lies between the action and the decision. The hook
+// runs its action only once, and only after the test arms it.
 type leaseDecisionHook struct {
 	armed  atomic.Bool
 	fired  atomic.Bool
@@ -219,22 +222,13 @@ func newLeaseDecisionHook(
 	return &leaseDecisionHook{match: match, action: action, done: make(chan struct{})}
 }
 
-func (hook *leaseDecisionHook) resolver(next app.OperationResolver) app.OperationResolver {
-	return func(
-		ctx context.Context,
-		scope contract.Scope,
-		connectionID string,
-		operationID string,
-	) (app.OperationSelection, error) {
-		if hook.armed.Load() && hook.match(ctx) && hook.fired.CompareAndSwap(false, true) {
-			hook.err = hook.action(ctx)
-			close(hook.done)
-			if hook.err != nil {
-				return app.OperationSelection{}, hook.err
-			}
-		}
-		return next(ctx, scope, connectionID, operationID)
+func (hook *leaseDecisionHook) run(ctx context.Context) error {
+	if hook.armed.Load() && hook.match(ctx) && hook.fired.CompareAndSwap(false, true) {
+		hook.err = hook.action(ctx)
+		close(hook.done)
+		return hook.err
 	}
+	return nil
 }
 
 // result returns the error of the action. It fails when the action did not
@@ -247,7 +241,7 @@ func (hook *leaseDecisionHook) result() error {
 		}
 		return nil
 	default:
-		return errors.New("ExecuteUnit did not call the operation resolver after the lease decision hook was armed")
+		return errors.New("ExecuteUnit made no lease decision after the lease decision hook was armed")
 	}
 }
 
@@ -258,15 +252,17 @@ func newLeaseDecisionWorkerService(
 	hook *leaseDecisionHook,
 ) *app.WorkerService {
 	t.Helper()
-	return testfixture.NewWorkerService(
+	service := testfixture.NewWorkerService(
 		t,
 		fixture,
 		fixture.WorkerRegistry,
-		hook.resolver(fixture.ResolveOperation),
+		fixture.ResolveOperation,
 		nil,
 		temporal.observer,
 		temporal.timeouts,
 	)
+	app.SetBeforeLeaseDecision(service, hook.run)
+	return service
 }
 
 // endLiveTaskLease moves a planning lease that is still live past its end by
@@ -317,7 +313,7 @@ func holdTaskLease(fixture *testfixture.Fixture, ref store.TaskRef, ttl time.Dur
 
 // setTaskLeaseEnd sets the end of the held task lease to the database time of
 // the statement plus remaining. It returns that database time. It does not
-// call t, so the resolver can run it inside ExecuteUnit.
+// call t, so the lease decision hook can run it inside ExecuteUnit.
 func setTaskLeaseEnd(fixture *testfixture.Fixture, ref store.TaskRef, remaining time.Duration) (time.Time, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
