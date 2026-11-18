@@ -17,6 +17,7 @@ sha256_of() { /usr/bin/sha256sum -- "$1"; }
 crontab_of() { /usr/bin/crontab -u "$1" -l; }
 put() { printf '%s %s %s\n' "$@"; }
 read_line() { IFS= read -r path; }
+list_folder() { /bin/ls -A -- "$1"; }
 sync_file() { /usr/bin/sync -- "$1"; }
 grep=/usr/bin/grep
 python=/usr/bin/python3
@@ -161,7 +162,7 @@ for folder in "$work" "$runner/_diag" "$home/.local/share/containers" "$home/pm-
     # Each status counts: a failed deletion or listing is no proof (#403 N2).
     if ! /usr/bin/find "$folder" -mindepth 1 -delete 2> /dev/null; then
       fail "$folder: the deletion failed"
-    elif ! left=$(/bin/ls -A -- "$folder" 2> /dev/null); then
+    elif ! left=$(list_folder "$folder" 2> /dev/null); then
       fail "$folder: cannot be listed"
     elif [ -z "$left" ]; then pass "$folder is empty"; else fail "$folder is not empty"; fi
   else

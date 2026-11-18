@@ -27,7 +27,7 @@ RUNNER_FIXED = CLEANUP_FIXED[:2] + [
     "entry_of() { /usr/bin/stat -c '%u %g %f' -- \"$1\"; }\n",
     'sha256_of() { /usr/bin/sha256sum -- "$1"; }\n',
     'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n', "put() { printf '%s %s %s\\n' \"$@\"; }\n",
-    "read_line() { IFS= read -r path; }\n",
+    "read_line() { IFS= read -r path; }\n", 'list_folder() { /bin/ls -A -- "$1"; }\n',
     'sync_file() { /usr/bin/sync -- "$1"; }\n', "grep=/usr/bin/grep\n", "python=/usr/bin/python3\n"]
 FAKE_PODMAN = """import os, subprocess, sys
 state, args = STATE, sys.argv[1:]
@@ -291,10 +291,13 @@ class RunnerCheck(unittest.TestCase):
             f'sha256_of() {{ "{host.bin / "sha"}" "$1"; }}\n',
             f'crontab_of() {{ if [ -f "{state}/crontab" ]; then cat "{state}/crontab"; '
             'else echo "no crontab for $1" >&2; return 1; fi; }\n',
-            f"put() {{ [ -f '{state}/put-empty' ] || {{ [ ! -f '{state}/put-fails' ] && printf '%s %s %s\\n' \"$@\"; }}; }}\n",
+            # put-fails: each write fails; put-fails-late: each write after the first fails.
+            f"put() {{ puts=$((${{puts:-0}} + 1)); [ -f '{state}/put-empty' ] || {{ [ ! -f '{state}/put-fails' ] && "
+            f"{{ [ ! -f '{state}/put-fails-late' ] || [ \"$puts\" -lt 2 ]; }} && printf '%s %s %s\\n' \"$@\"; }}; }}\n",
             # With read-fails, each read after the first fails like a read error: no text, status 1.
             f"read_line() {{ reads=$((${{reads:-0}} + 1)); [ ! -f '{state}/read-fails' ] || [ \"$reads\" -lt 2 ] "
             "|| { path=; return 1; }; IFS= read -r path; }\n",
+            f"list_folder() {{ [ ! -f '{state}/ls-fails' ] && /bin/ls -A -- \"$1\"; }}\n",
             f'sync_file() {{ "{host.bin / "sync"}" "$1"; }}\n', f"grep={host.bin / 'grep'}\n", f"python={sys.executable}\n"])
         host.run_root.parent.parent.rename(host.root / "runtime-gone")  # the gate needs no runtime folder
         self.runner = host.root / "opt/pm-live/actions-runner"
@@ -487,7 +490,7 @@ class RunnerCheck(unittest.TestCase):
     def test_a_write_or_flush_failure_keeps_the_old_list(self):
         # #403 N1: a failed write or flush of the new list keeps the old list.
         (self.runner / ".env").write_text("A=2\n")  # a new list would differ
-        for flag in ("put-fails", "sync-fails"):
+        for flag in ("put-fails", "put-fails-late", "sync-fails"):
             with self.subTest(case=flag):
                 self.host.flag(flag)
                 record = self.host.run(self.script, "--record")
@@ -519,6 +522,16 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual((record.returncode, check.returncode), (1, 1), record.stdout + check.stdout)
                 self.assertEqual(self.list.read_text(), "")
                 self.assertNotIn("match the list", check.stdout)
+        # #403 R3-3: with a valid baseline, the compare reaches the fresh list and refuses it.
+        self.list.write_bytes(self.recorded)
+        for flag in ("put-fails", "put-empty"):
+            with self.subTest(case=f"{flag} with a baseline"):
+                self.host.flag(flag)
+                check = self.check()
+                (self.host.state / flag).unlink()
+                self.assertEqual(check.returncode, 1, check.stdout)
+                self.assertIn("cannot be listed, read or hashed", check.stdout)
+                self.assertNotRegex(check.stdout, "match the list|differ from the list")
         self.assertNotIn("/usr/bin/mktemp)", (ROOT / "scripts/ci/live-runner-check.sh").read_text())  # no /tmp
 
     def test_a_failed_deletion_and_listing_fail_the_check(self):
@@ -532,6 +545,17 @@ class RunnerCheck(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertNotIn(f"{diag} is empty", result.stdout)
         self.assertIn(f"{diag}: the deletion failed", result.stdout)
+
+    def test_a_failed_listing_after_a_good_deletion_fails(self):
+        # #403 N2 and crrao I11 (M5): find succeeds, then ls fails. No folder counts as empty.
+        self.host.flag("ls-fails")
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        for folder in (self.host.root / "var/lib/pm-live/work", self.runner / "_diag",
+                       self.host.home / ".local/share/containers", self.host.home / "pm-live-cache"):
+            self.assertIn(f"{folder}: cannot be listed", result.stdout)
+            self.assertNotIn(f"{folder} is empty", result.stdout)
+            self.assertEqual(list(folder.iterdir()), [], folder)  # the deletion ran
 
     def test_a_unit_drop_in_folder_fails(self):
         # crrao I9: a drop-in folder can change the unit.
