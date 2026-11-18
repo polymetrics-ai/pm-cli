@@ -200,6 +200,20 @@ class LiveAdmission(unittest.TestCase):
         else:
             yield
 
+    def test_the_cases_of_the_surviving_mutations(self):
+        # crrao I4 at 481df57: each case catches one mutation that survived his
+        # mutation run (his section 3 table).
+        self.refused("environment mainx, payload main", lambda e, v: v.update(GITHUB_REF="refs/heads/mainx"))
+        upper = "A" * 40
+        with tempfile.TemporaryDirectory() as directory:
+            self.refused("upper-case SHA in the environment and the file",
+                         lambda e, v: v.update(GITHUB_SHA=upper, GITHUB_WORKFLOW_SHA=upper),
+                         make_root(directory, approved=upper.encode() + b"\n"))
+        for name, data in (("kind", b"w2x"), ("approved", SHA.encode() + b"0")):
+            with tempfile.TemporaryDirectory() as directory:
+                self.refused(f"{name}: no final line break, valid less one byte", lambda e, v: None,
+                             make_root(directory, **{name: data}))
+
     def test_shared_policy_refuses_the_live_event(self):
         # R2-1: the valid live event and environment, given to the shared
         # policy of the CI runners, must be refused.
