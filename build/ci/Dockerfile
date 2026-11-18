@@ -71,6 +71,30 @@ COPY requirements.txt /opt/pmcli/requirements.txt
 RUN set -eu; python3 -m venv /opt/pmcli/venv; \
     /opt/pmcli/venv/bin/python3 -m pip install --no-cache-dir --disable-pip-version-check \
       --no-deps --require-hashes -r /opt/pmcli/requirements.txt
+# The private Secret Service for the pm `os` session store (#323, D1-9). The job
+# harness starts /usr/bin/dbus-daemon with its own configuration and no service
+# directory, then /usr/bin/gnome-keyring-daemon. This layer starts nothing.
+# dbus-daemon needs dbus-bin and dbus-session-bus-common, so they stay.
+# build/ci/keyring-packages.txt records the complete package set, and the
+# `image` check of scripts/ci/check-docs.sh verifies this layer in the image.
+# - dbus-x11 (dbus-launch) is not installed. dbus-user-session gives the
+#   session bus that gnome-keyring needs.
+# - The D-Bus service files of gnome-keyring are removed: no D-Bus activation
+#   can start the keyring daemon or own org.freedesktop.secrets.
+# - The dbus postinst makes dbus-daemon-launch-helper setuid root through
+#   dpkg-statoverride. The statoverride is replaced with mode 0754, so no file
+#   of this layer has a setuid bit.
+# A failed install or a failed step fails the image build.
+RUN set -eu; apt-get update; \
+    DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+      dbus-daemon dbus-bin dbus-session-bus-common gnome-keyring; \
+    rm /usr/share/dbus-1/services/org.freedesktop.secrets.service \
+      /usr/share/dbus-1/services/org.freedesktop.impl.portal.Secret.service \
+      /usr/share/dbus-1/services/org.gnome.keyring.service; \
+    helper=/usr/lib/dbus-1.0/dbus-daemon-launch-helper; \
+    dpkg-statoverride --remove "$helper"; \
+    dpkg-statoverride --update --add root messagebus 0754 "$helper"; \
+    rm -rf /var/lib/apt/lists/* /var/cache/apt/*.bin
 ENV PATH=/opt/pmcli/venv/bin:/opt/pmcli/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
     LANG=C.UTF-8 \
     PYTHONDONTWRITEBYTECODE=1

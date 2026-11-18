@@ -21,6 +21,16 @@ go_library(
 )
 
 go_test(
+    name = "artifact_volumes_test",
+    srcs = [
+        "artifact_volumes_test.go",
+        "no_recreate_test.go",
+    ],
+    embed = [":stack"],
+    deps = ["//internal/config"],
+)
+
+go_test(
     name = "identity_test",
     srcs = ["identity_test.go"],
     embed = [":stack"],
@@ -28,6 +38,42 @@ go_test(
 
 go_test(
     name = "stack_test",
-    srcs = ["identity_test.go"],
+    srcs = [
+        "artifact_volumes_test.go",
+        "identity_provider_bounds_test.go",
+        "identity_provider_test.go",
+        "identity_test.go",
+        "image_lock_test.go",
+        "no_recreate_test.go",
+        "temporal_connect_test.go",
+    ],
+    # The tests read the Compose projection, the identity provider overlay
+    # and the image lock (review F10).
+    data = [
+        "//:deploy/compose.identity.yaml",
+        "//:deploy/compose.yaml",
+        "//:deploy/images.lock.json",
+    ],
     embed = [":stack"],
+    deps = [
+        "//internal/config",
+        "@io_temporal_go_api//serviceerror",
+    ],
+)
+
+go_test(
+    name = "no_recreate_test",
+    srcs = ["no_recreate_test.go"],
+    embed = [":stack"],
+    deps = ["//internal/config"],
+)
+
+go_test(
+    name = "temporal_connect_test",
+    srcs = ["temporal_connect_test.go"],
+    embed = [":stack"],
+    deps = [
+        "//internal/config",
+        "@io_temporal_go_api//serviceerror",
+    ],
 )
