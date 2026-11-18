@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -54,6 +55,71 @@ func TestTemporalConnectFailureKeepsItsCause(t *testing.T) {
 	})
 }
 
+// TestHeldConnectionCleanupWaitsForAnAcceptedConnection stops the
+// held-connection helper while its accept goroutine has a just-accepted
+// connection that it does not keep yet. The cleanup must wait for that
+// goroutine, and then close the connection. Channels force the order. The
+// check has no sleep and no retry, and each wait has one time limit.
+func TestHeldConnectionCleanupWaitsForAnAcceptedConnection(t *testing.T) {
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	joining := make(chan struct{})
+	stop := holdConnections(listener, heldConnectionHooks{
+		accepted: func() {
+			close(entered)
+			<-release
+		},
+		joining: func() { close(joining) },
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var dialer net.Dialer
+	client, err := dialer.DialContext(ctx, "tcp4", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		t.Fatal("the helper did not accept the connection")
+	}
+
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		stop()
+	}()
+	// The cleanup closed the listener and waits for the accept goroutine, or
+	// it returned without that wait. Either way, the accept goroutine then
+	// continues with its connection.
+	select {
+	case <-joining:
+	case <-stopped:
+	case <-ctx.Done():
+		t.Fatal("the cleanup neither waited for the accept goroutine nor returned")
+	}
+	close(release)
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		t.Fatal("the cleanup did not return after the accept goroutine continued")
+	}
+
+	// The cleanup closed the accepted connection, so the client reads the end
+	// of the stream.
+	if err := client.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("read from the held connection after the cleanup = %v; want end of stream", err)
+	}
+}
+
 // listenAndClose accepts each connection and closes it at once, as a port
 // forwarder does when no Temporal frontend is behind it.
 func listenAndClose(t *testing.T) string {
@@ -82,28 +148,54 @@ func listenAndHold(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	held := make(chan net.Conn, 8)
-	t.Cleanup(func() {
-		_ = listener.Close()
-		close(held)
-		for connection := range held {
-			_ = connection.Close()
-		}
-	})
+	t.Cleanup(holdConnections(listener, heldConnectionHooks{}))
+	return listener.Addr().String()
+}
+
+// heldConnectionHooks let a developer check stop holdConnections at its two
+// ordering points. A nil hook does nothing.
+type heldConnectionHooks struct {
+	// accepted runs in the accept goroutine after Accept returns a
+	// connection, before the goroutine keeps it.
+	accepted func()
+	// joining runs in stop after stop closed the listener, before stop waits
+	// for the accept goroutine.
+	joining func()
+}
+
+// holdConnections accepts each connection on listener and never answers. It
+// returns the stop function of the helper.
+//
+// Only the accept goroutine writes the held connections. stop closes the
+// listener, which ends Accept, and waits until the goroutine returns. Then
+// stop closes the held connections. Nothing sends on a closed channel, and no
+// connection stays open after stop.
+func holdConnections(listener net.Listener, hooks heldConnectionHooks) (stop func()) {
+	var held []net.Conn
+	accepting := make(chan struct{})
 	go func() {
+		defer close(accepting)
 		for {
 			connection, err := listener.Accept()
 			if err != nil {
 				return
 			}
-			select {
-			case held <- connection:
-			default:
-				_ = connection.Close()
+			if hooks.accepted != nil {
+				hooks.accepted()
 			}
+			held = append(held, connection)
 		}
 	}()
-	return listener.Addr().String()
+	return func() {
+		_ = listener.Close()
+		if hooks.joining != nil {
+			hooks.joining()
+		}
+		<-accepting
+		for _, connection := range held {
+			_ = connection.Close()
+		}
+	}
 }
 
 // temporalTestConfiguration returns a valid server configuration whose
