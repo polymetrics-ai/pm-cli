@@ -52,15 +52,15 @@ selects a snapshot.
 
 With --wait, the command waits for the run and exits with a nonzero code when the run does
 not succeed. An interrupt ends only the wait, not the run, and exits with code 0 (issue #437).
-Run pm runs inspect RUN_ID with the run ID from the notice to see its state.
+Run "pm runs inspect RUN_ID" with the run ID from the notice to see its state.
 
 A resource that the connection does not declare is refused with schema_relation_unknown and
 exit code 3 before any run starts. Check the --resource value against the relations that the
 connection declares.
 
 When the outcome of the admission is unknown, the command exits with code 7 and names the
-request key. Repeat the same command with that --request-key to get the same run. A new key
-starts a new discovery.`,
+request key. Repeat this exact command, unchanged, with that --request-key to get the same
+run. A new key starts a new discovery.`,
 		Args: noArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			connection := runtime.flags.connection
@@ -86,6 +86,11 @@ starts a new discovery.`,
 				return err
 			}
 			defer cancel()
+			// A context that ends before the send sends nothing, so its own
+			// error stands. From the send on, the outcome can be unknown.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
 			response, err := bundle.client.API().DiscoverConnectionSchemaWithResponse(
 				ctx,
 				pmapi.WorkspaceID(bundle.config.workspace),
@@ -94,7 +99,12 @@ starts a new discovery.`,
 				pmapi.DiscoverConnectionSchemaJSONRequestBody{Resource: resource.value},
 			)
 			if err != nil {
-				return discoveryAdmissionError(ctx, selection.RequestKey, err)
+				return discoveryAdmissionError(selection.RequestKey, err)
+			}
+			// A refusal, also a server-reported unknown outcome, names the request
+			// key as the shared mutation recovery does.
+			if _, err := recoveredMutationResponse(selection.RequestKey, response, nil); err != nil {
+				return err
 			}
 			if !bundle.config.wait {
 				return renderWireResponse(command.OutOrStdout(), bundle.config.output, response)
@@ -187,19 +197,20 @@ selection. The command never discovers metadata and requires no provider credent
 	return command
 }
 
-// discoveryAdmissionError maps a failed admission send. A transport failure
-// can follow a committed admission, so its outcome is unknown: the command
-// exits with code 7 and names the request key, as the shared mutation recovery
-// does, and a repeat with that key replays the same admission. Every other
-// failure keeps its own exit code.
-func discoveryAdmissionError(ctx context.Context, requestKey string, err error) error {
-	err = requestError(ctx, err)
-	if !errors.Is(err, pmapi.ErrClientTransport) {
+// discoveryAdmissionError maps a failed admission send. A refusal of the
+// client before any request keeps its own exit code. Every other failure,
+// also the request deadline or an interrupt during the send, can follow a
+// committed admission, so its outcome is unknown: the command exits with code
+// 7 and names the request key, as the shared mutation recovery does, and a
+// repeat with that key replays the same admission.
+func discoveryAdmissionError(requestKey string, err error) error {
+	if errors.Is(err, pmapi.ErrCompatibility) || errors.Is(err, pmapi.ErrInstanceMismatch) ||
+		errors.Is(err, pmapi.ErrUnsafeClientRequest) || errors.Is(err, pmapi.ErrMalformedEnvelope) {
 		return err
 	}
 	return &exitError{
 		code:    7,
-		message: fmt.Sprintf("PM discovery admission outcome is unknown; repeat only this command with %s to get the same run", requestKeyFlag(requestKey)),
+		message: fmt.Sprintf("PM discovery admission outcome is unknown; repeat this exact command, unchanged, with %s to get the same run", requestKeyFlag(requestKey)),
 		cause:   err,
 	}
 }
