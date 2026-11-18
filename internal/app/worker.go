@@ -120,10 +120,12 @@ type WorkerService struct {
 	artifactPublisher         *objects.Publisher
 	maximumResultBytes        int64
 	sqlBounds                 SQLBoundsResolver
-	// beforeLeaseDecision runs in the prepare transaction just before
-	// claimWorkerTask reads the stored lease. Production sets no value. Only
-	// the Go developer checks set it, through lease_decision_export_test.go.
-	beforeLeaseDecision func(context.Context) error
+	// beforeLeaseDecision runs in the prepare transaction after
+	// claimWorkerTask samples the database time for the lease decision and
+	// before it reads the stored lease. It gets that sample. Production sets
+	// no value. Only the Go developer checks set it, through
+	// lease_decision_export_test.go.
+	beforeLeaseDecision func(context.Context, time.Time) error
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -901,7 +903,7 @@ func claimWorkerTask(
 	ref store.TaskRef,
 	maxTTL time.Duration,
 	reconciliationOnly bool,
-	beforeLeaseDecision func(context.Context) error,
+	beforeLeaseDecision func(context.Context, time.Time) error,
 ) (store.Lease, error) {
 	ownerID, err := workerRecordID("task-owner-v1-", struct {
 		RunID         string `json:"run_id"`
@@ -919,21 +921,24 @@ func claimWorkerTask(
 		return store.Lease{}, workerFailure(ErrWorkerAuthorization, errors.New("worker lease authority has elapsed"))
 	}
 	expectedFence := uint64(0)
+	// Preparation runs after loadWorkerRunState sampled state.now, and it can
+	// outlast the stored lease. The lease decision reads the database time
+	// again, before it reads the stored lease, and uses that one sample for
+	// the expiry comparison and for the remaining lease time. A lease that
+	// ends between the sample and the read counts as held for the rest of
+	// that short interval. ClaimTask compares the lease end with its own
+	// database time again.
+	decidedAt, err := store.ReadAuthenticationTime(ctx, tx)
+	if err != nil {
+		return store.Lease{}, err
+	}
 	if beforeLeaseDecision != nil {
-		if err := beforeLeaseDecision(ctx); err != nil {
+		if err := beforeLeaseDecision(ctx, decidedAt); err != nil {
 			return store.Lease{}, err
 		}
 	}
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
-		// Preparation runs after loadWorkerRunState sampled state.now, and it
-		// can outlast the stored lease. The lease decision reads the database
-		// time again and uses that one sample for the expiry comparison and
-		// for the remaining lease time.
-		decidedAt, err := store.ReadAuthenticationTime(ctx, tx)
-		if err != nil {
-			return store.Lease{}, err
-		}
 		if current.ExpiresAt.After(decidedAt) {
 			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(decidedAt)}
 		}

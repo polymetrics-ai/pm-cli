@@ -26,12 +26,13 @@ import (
 //
 // PostgreSQL and Temporal are the real stack. The held lease is a durable row
 // with a known end. The first attempt itself installs it: its lease decision
-// hook, which runs in the prepare transaction after every preparation step
-// and just before the stored lease is read, holds the lease once. So the first
-// claim sees a live lease however long the worker takes to start and however
-// long the preparation takes. The check reads the activity's last failure from
-// the workflow history after the run ends, so it does not sleep, poll or
-// retry.
+// hook runs in the prepare transaction after every preparation step, after the
+// lease decision samples the database time and just before the stored lease is
+// read. The hook holds the lease once and sets its end 6 s after that sample.
+// So the first lease decision sees a live lease with exactly 6 s left, however
+// long the worker takes to start, the preparation takes and the hook takes.
+// The check reads the activity's last failure from the workflow history after
+// the run ends, so it does not sleep, poll or retry.
 func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
 	var sends atomic.Int32
@@ -43,8 +44,7 @@ func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 		},
 		unexpectedPermitReconciliation,
 	)
-	var held store.Lease
-	var heldAt time.Time
+	var heldAt, heldUntil time.Time
 	hook := newLeaseDecisionHook(
 		func(ctx context.Context) bool {
 			return activity.IsActivity(ctx) && activity.GetInfo(ctx).ActivityType.Name == contract.ExecuteActivityName
@@ -58,9 +58,13 @@ func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 	run := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, admitted)
 	ref := store.TaskRef{RunID: run.reference.RunID, TaskID: run.plan.TaskID}
 	endLiveTaskLease(t, fixture, ref)
-	hook.action = func(context.Context) error {
+	hook.action = func(_ context.Context, decidedAt time.Time) error {
+		if err := holdTaskLease(fixture, ref, 6*time.Second); err != nil {
+			return err
+		}
 		var err error
-		held, heldAt, err = holdTaskLease(fixture, ref, 6*time.Second)
+		heldAt = decidedAt
+		heldUntil, err = setTaskLeaseEnd(fixture, ref, decidedAt, 6*time.Second)
 		return err
 	}
 	hook.armed.Store(true)
@@ -87,11 +91,17 @@ func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 		t.Fatalf("ExecuteUnit attempt = %d; want a first attempt that found the lease held", started.GetAttempt())
 	}
 	failure := started.GetLastFailure().GetApplicationFailureInfo()
-	maximum := held.ExpiresAt.Sub(heldAt)
+	maximum := heldUntil.Sub(heldAt)
 	delay := failure.GetNextRetryDelay()
 	if delay == nil || delay.AsDuration() <= 0 || delay.AsDuration() > maximum {
 		t.Fatalf("claim-lost retry delay = %v (attempt %d, failure type %q); want the remaining lease time, above 0 and at most %s",
 			delay, started.GetAttempt(), failure.GetType(), maximum)
+	}
+	// The lease ends exactly maximum after the database time of the lease
+	// decision, so the remaining lease time is exactly maximum.
+	if delay.AsDuration() != maximum {
+		t.Fatalf("claim-lost retry delay = %s; want exactly %s, the time from the lease decision's database time %s to the lease end",
+			delay.AsDuration(), maximum, heldAt)
 	}
 	if started.GetAttempt() != 2 {
 		t.Fatalf("ExecuteUnit attempt = %d after a retry delay of %s; want the second attempt to claim the ended lease",
@@ -101,26 +111,28 @@ func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 
 // TestLeaseDecisionReadsTheDatabaseTimeAgain checks the lease decision of
 // ExecuteUnit when preparation outlasts a held lease. ExecuteUnit samples the
-// database time when it loads the run. Its lease decision hook runs later, in
-// the same prepare transaction, after every preparation step and just before
-// the stored lease is read. Here it changes the end of the held lease, so the
-// stored end is after the first sample. The lease decision must use a database
-// time from after that change, for both the expiry comparison and the
-// remaining lease time. No sleep or poll sets the order: the hook call is the
-// event.
+// database time when it loads the run. The lease decision samples it again
+// later, in the same prepare transaction, after every preparation step. Its
+// lease decision hook runs after that second sample and just before the stored
+// lease is read, and it gets the sample. Here it sets the end of the held lease
+// relative to that sample, so the stored end is after the first sample. The
+// lease decision must use the second sample for both the expiry comparison and
+// the remaining lease time. No sleep or poll sets the order: the hook call is
+// the event, and the time that the hook and the lease read take does not
+// change the result.
 func TestLeaseDecisionReadsTheDatabaseTimeAgain(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
 
 	t.Run("the lease ends during preparation: the unit claims the task", func(t *testing.T) {
 		run, fixture, service, hook, sends := prepareLeaseDecisionRun(t, temporal, "lease-ends-in-preparation")
 		ref := store.TaskRef{RunID: run.reference.RunID, TaskID: run.plan.TaskID}
-		if _, _, err := holdTaskLease(fixture, ref, time.Minute); err != nil {
+		if err := holdTaskLease(fixture, ref, time.Minute); err != nil {
 			t.Fatalf("hold the unit's task lease: %v", err)
 		}
 		var endedAt time.Time
-		hook.action = func(context.Context) error {
+		hook.action = func(_ context.Context, decidedAt time.Time) error {
 			var err error
-			endedAt, err = setTaskLeaseEnd(fixture, ref, 0)
+			endedAt, err = setTaskLeaseEnd(fixture, ref, decidedAt, 0)
 			return err
 		}
 		hook.armed.Store(true)
@@ -143,14 +155,14 @@ func TestLeaseDecisionReadsTheDatabaseTimeAgain(t *testing.T) {
 	t.Run("the lease is live at the decision: the retry delay is from the later time", func(t *testing.T) {
 		run, fixture, service, hook, sends := prepareLeaseDecisionRun(t, temporal, "lease-live-at-decision")
 		ref := store.TaskRef{RunID: run.reference.RunID, TaskID: run.plan.TaskID}
-		if _, _, err := holdTaskLease(fixture, ref, time.Minute); err != nil {
+		if err := holdTaskLease(fixture, ref, time.Minute); err != nil {
 			t.Fatalf("hold the unit's task lease: %v", err)
 		}
 		const remaining = 2 * time.Second
 		var changedAt time.Time
-		hook.action = func(context.Context) error {
-			var err error
-			changedAt, err = setTaskLeaseEnd(fixture, ref, remaining)
+		hook.action = func(_ context.Context, decidedAt time.Time) error {
+			changedAt = decidedAt
+			_, err := setTaskLeaseEnd(fixture, ref, decidedAt, remaining)
 			return err
 		}
 		hook.armed.Store(true)
@@ -162,10 +174,14 @@ func TestLeaseDecisionReadsTheDatabaseTimeAgain(t *testing.T) {
 		if !errors.As(err, &held) {
 			t.Fatalf("ExecuteUnit with a live held lease: %v; want a held-lease error", err)
 		}
-		// changedAt is a database time after the first sample and before the
-		// lease decision. The lease ends exactly remaining after changedAt.
+		// changedAt is the lease decision's database time, after the first
+		// sample. The lease ends exactly remaining after changedAt.
 		if held.RetryAfter <= 0 || held.RetryAfter > remaining {
 			t.Fatalf("held-lease retry delay = %s; want above 0 and at most %s, the time left when the lease end changed at %s",
+				held.RetryAfter, remaining, changedAt)
+		}
+		if held.RetryAfter != remaining {
+			t.Fatalf("held-lease retry delay = %s; want exactly %s, the time from the lease decision's database time %s to the lease end",
 				held.RetryAfter, remaining, changedAt)
 		}
 		if sends.Load() != 0 {
@@ -202,29 +218,30 @@ func prepareLeaseDecisionRun(
 }
 
 // leaseDecisionHook runs one action in the prepare transaction of
-// ExecuteUnit, just before the lease decision reads the stored lease
-// (app.SetBeforeLeaseDecision). That is after every other preparation step,
-// so no preparation time lies between the action and the decision. The hook
-// runs its action only once, and only after the test arms it.
+// ExecuteUnit, after the lease decision samples the database time and just
+// before it reads the stored lease (app.SetBeforeLeaseDecision). That is after
+// every other preparation step. The action gets the decision's database time,
+// so it can set the lease relative to the time that the decision uses. The
+// hook runs its action only once, and only after the test arms it.
 type leaseDecisionHook struct {
 	armed  atomic.Bool
 	fired  atomic.Bool
 	match  func(context.Context) bool
-	action func(context.Context) error
+	action func(context.Context, time.Time) error
 	err    error
 	done   chan struct{}
 }
 
 func newLeaseDecisionHook(
 	match func(context.Context) bool,
-	action func(context.Context) error,
+	action func(context.Context, time.Time) error,
 ) *leaseDecisionHook {
 	return &leaseDecisionHook{match: match, action: action, done: make(chan struct{})}
 }
 
-func (hook *leaseDecisionHook) run(ctx context.Context) error {
+func (hook *leaseDecisionHook) run(ctx context.Context, decidedAt time.Time) error {
 	if hook.armed.Load() && hook.match(ctx) && hook.fired.CompareAndSwap(false, true) {
-		hook.err = hook.action(ctx)
+		hook.err = hook.action(ctx, decidedAt)
 		close(hook.done)
 		return hook.err
 	}
@@ -281,13 +298,10 @@ func endLiveTaskLease(t *testing.T, fixture *testfixture.Fixture, ref store.Task
 }
 
 // holdTaskLease claims the unit's ended task lease for another attempt with
-// the given lifetime. It returns the held lease and the database time before
-// the claim. It does not call t, so a worker goroutine can run it.
-func holdTaskLease(fixture *testfixture.Fixture, ref store.TaskRef, ttl time.Duration) (store.Lease, time.Time, error) {
+// the given lifetime. It does not call t, so a worker goroutine can run it.
+func holdTaskLease(fixture *testfixture.Fixture, ref store.TaskRef, ttl time.Duration) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var held store.Lease
-	var heldAt time.Time
 	err := store.WithinScope(ctx, fixture.Pool, fixture.Scope, fixture.Actor, func(ctx context.Context, tx *store.Transaction) error {
 		expectedFence := uint64(0)
 		current, err := store.LoadLease(ctx, tx, ref)
@@ -296,43 +310,43 @@ func holdTaskLease(fixture *testfixture.Fixture, ref store.TaskRef, ttl time.Dur
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return err
 		}
-		heldAt, err = store.ReadAuthenticationTime(ctx, tx)
-		if err != nil {
-			return err
-		}
-		held, err = store.ClaimTask(ctx, tx, store.ClaimRequest{
+		_, err = store.ClaimTask(ctx, tx, store.ClaimRequest{
 			Task: ref, OwnerID: "held-by-another-attempt", ExpectedFence: expectedFence, TTL: ttl,
 		})
 		return err
 	})
 	if err != nil {
-		return store.Lease{}, time.Time{}, errors.Join(errors.New("hold the unit's task lease"), err)
+		return errors.Join(errors.New("hold the unit's task lease"), err)
 	}
-	return held, heldAt, nil
+	return nil
 }
 
-// setTaskLeaseEnd sets the end of the held task lease to the database time of
-// the statement plus remaining. It returns that database time. It does not
-// call t, so the lease decision hook can run it inside ExecuteUnit.
-func setTaskLeaseEnd(fixture *testfixture.Fixture, ref store.TaskRef, remaining time.Duration) (time.Time, error) {
+// setTaskLeaseEnd sets the end of the held task lease to from plus remaining,
+// where from is the lease decision's database time. It returns the stored end.
+// It does not call t, so the lease decision hook can run it inside
+// ExecuteUnit.
+func setTaskLeaseEnd(
+	fixture *testfixture.Fixture,
+	ref store.TaskRef,
+	from time.Time,
+	remaining time.Duration,
+) (time.Time, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	var changedAt time.Time
+	var endsAt time.Time
 	err := fixture.WithinSetupSQL(ctx, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
 		return tx.QueryRow(ctx, `
-			WITH lease_clock AS (SELECT clock_timestamp() AS changed_at)
 			UPDATE pm.task_leases AS lease
-			SET lease_expires_at = lease_clock.changed_at + make_interval(secs => $5::double precision / 1000000.0)
-			FROM lease_clock
+			SET lease_expires_at = $5::timestamptz + make_interval(secs => $6::double precision / 1000000.0)
 			WHERE lease.org_id = $1 AND lease.workspace_id = $2 AND lease.run_id = $3 AND lease.task_id = $4
 			  AND lease.owner_id = 'held-by-another-attempt'
-			RETURNING lease_clock.changed_at
-		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, ref.RunID, ref.TaskID, remaining.Microseconds()).Scan(&changedAt)
+			RETURNING lease.lease_expires_at
+		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, ref.RunID, ref.TaskID, from, remaining.Microseconds()).Scan(&endsAt)
 	})
 	if err != nil {
 		return time.Time{}, errors.Join(errors.New("change the end of the held task lease"), err)
 	}
-	return changedAt.UTC(), nil
+	return endsAt.UTC(), nil
 }
 
 func executeUnitStartedEvent(
