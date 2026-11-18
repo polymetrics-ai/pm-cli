@@ -215,8 +215,9 @@ func parseReadyDescriptor(value string) (int, bool) {
 // descriptor must be open for writing and must not have close-on-exec set: Go
 // opens each descriptor of its own with close-on-exec, so a descriptor with
 // the flag belongs to this process and not to the starter. The handle then
-// gets close-on-exec, so that no child process holds it. The process makes
-// no other copy of the descriptor.
+// gets close-on-exec, so that no child process holds it, and non-blocking
+// mode, so that Serve can end a ready write that still waits when it stops
+// serving. The process makes no other copy of the descriptor.
 func inheritReadyDescriptor(fd int) (*os.File, error) {
 	refused := errors.New("--ready-fd requires an inherited descriptor that is open for writing")
 	descriptorFlags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), uintptr(syscall.F_GETFD), 0)
@@ -231,6 +232,11 @@ func inheritReadyDescriptor(fd int) (*os.File, error) {
 		return nil, refused
 	}
 	if _, _, errno := syscall.Syscall(syscall.SYS_FCNTL, uintptr(fd), uintptr(syscall.F_SETFD), syscall.FD_CLOEXEC); errno != 0 {
+		return nil, refused
+	}
+	// os.NewFile makes a pollable handle from a non-blocking descriptor, so a
+	// Close ends a write that still waits.
+	if err := syscall.SetNonblock(fd, true); err != nil {
 		return nil, refused
 	}
 	return os.NewFile(uintptr(fd), "ready-fd"), nil
