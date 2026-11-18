@@ -178,7 +178,15 @@ GitHub documents that the runner empties `RUNNER_TEMP` at the start and at the e
    A direct `with-stack-fixture.py --cleanup` on the host does not work. The wrapper uses the socket `/var/run/docker.sock`, which exists only in the job container. It also checks the manifest against `RUNNER_TEMP` and the run identity. The command has these prerequisites:
 
    - It runs as the original runner user.
-   - It runs from a checkout of the same commit inside `GITHUB_WORKSPACE`.
+   - It runs from the checkout at the repository root that the manifest records, at the same commit. This root is inside `GITHUB_WORKSPACE`. The wrapper refuses a manifest that records another root, and it runs the operator `pm-stack` from that root.
+   - The operator `.cache/bin/pm-stack` of that commit is in that checkout. When the checkout of the job still holds it, do not build it again. Else build it through the CI image, with the same run variables set:
+
+     ```sh
+     sh scripts/ci/in-ci-image.sh run bdd-build -- sh -c \
+       'GOCACHE="$PMCLI_CACHE_DIR/go-build" GOMODCACHE="$PMCLI_CACHE_DIR/go-mod" CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack ./cmd/pm-stack'
+     ```
+
+     This is the `pm-stack` build of `check-bdd.sh`, with the same Go caches. When stack containers stay, the cleanup runs `pm-stack drain --dependency all`. Without the operator, the cleanup records `operator-drain`, and the fixture can stay. Then step 2 applies.
    - `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GITHUB_WORKSPACE` and `RUNNER_TEMP` have the values of that run. `RUNNER_TEMP` is the existing folder that holds the manifest.
    - The Podman socket of the runner user is available: `PMCLI_ENGINE_SOCKET`, else `$XDG_RUNTIME_DIR/podman/podman.sock`, else `/run/user/<uid>/podman/podman.sock`.
    - `PMCLI_CACHE_DIR` has the value from the runner `.env`, or it is unset when the runner uses the default under `HOME`. Then the cleanup container finds the pinned Compose in the same cache.
