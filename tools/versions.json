@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.dependencies/v1",
-  "go_version": "1.27.1",
+  "go_version": "1.27.4",
   "modules": {
     "application": [
       {
