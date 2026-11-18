@@ -113,6 +113,13 @@ if [ -z "$range" ]; then
   fail "the subordinate UID range of $user in /etc/subuid is missing, unreadable or not one range" && gate=1
   range='-1 -1'
 fi
+# The process folder must list at least one process: a real /proc always
+# holds PID 1. An unlisted folder is no proof of absence (#403 F3).
+if ! entries=$(/bin/ls -- "$proc" 2> /dev/null); then
+  fail "the process folder $proc cannot be listed" && gate=1
+elif ! printf '%s\n' "$entries" | /usr/bin/grep -qx '[0-9][0-9]*'; then
+  fail "the process folder $proc lists no process" && gate=1
+fi
 for entry in "$proc"/[0-9]*; do
   [ -d "$entry" ] || continue
   state=$(/usr/bin/awk -v uid="$uid" -v low="${range% *}" -v high="${range#* }" '$1 == "Uid:" {

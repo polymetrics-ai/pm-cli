@@ -85,6 +85,7 @@ class Host:
         (self.run_root / "fixture").mkdir()
         (self.home / "pm-live-cache/77-1").mkdir(parents=True)
         (self.root / "etc").mkdir()
+        self.process(1, 0, "/init.scope")  # a real /proc always holds PID 1
         # One range for pmlive (the runner check) and one for the user of the
         # test (the cleanup check, which runs as that user).
         (self.root / "etc/subuid").write_text(
@@ -256,8 +257,10 @@ class RunnerCheck(unittest.TestCase):
         self.recorded = self.list.read_bytes()
 
     def tearDown(self):
-        for entry in self.host.proc.iterdir():
-            (entry / "status").chmod(0o644)
+        if self.host.proc.exists():
+            self.host.proc.chmod(0o755)
+            for entry in self.host.proc.iterdir():
+                (entry / "status").chmod(0o644)
         self.directory.cleanup()
 
     def check(self):
@@ -301,6 +304,14 @@ class RunnerCheck(unittest.TestCase):
     # crrao m1: a process of a subordinate UID of pmlive, and a range that is
     # missing, unreadable or not one range. Each fails the gate.
     SUBUID_FAULTS = {
+        # #403 F3: a process folder that is missing, cannot be listed or lists
+        # no process is no proof that no live process exists.
+        "process folder missing": lambda self: [(entry / "status").unlink() or (entry / "cgroup").unlink()
+                                                or entry.rmdir() for entry in self.host.proc.iterdir()]
+        and self.host.proc.rmdir(),
+        "process folder unlistable": lambda self: self.host.proc.chmod(0),
+        "no process listed": lambda self: [(entry / "status").unlink() or (entry / "cgroup").unlink()
+                                           or entry.rmdir() for entry in self.host.proc.iterdir()],
         "subordinate UID process": lambda self: self.host.process(23, SUBUID + 5),
         "subordinate UID range end": lambda self: self.host.process(24, SUBUID + 65535),
         "no range": lambda self: (self.host.root / "etc/subuid").write_text(""),
@@ -347,7 +358,7 @@ class RunnerCheck(unittest.TestCase):
                 for folder in (self.host.root / "var/lib/pm-live/work", self.runner / "_diag",
                                self.host.home / ".local/share/containers", self.host.home / "pm-live-cache"):
                     self.assertNotEqual(list(folder.iterdir()), [], folder)
-                self.assertNotIn("list", result.stdout)
+                self.assertNotRegex(result.stdout, "runner, unit|root-held")  # no compare ran
                 self.assertEqual(self.list.read_bytes(), self.recorded)
 
     def test_unit_rules_hold_for_a_recorded_unit(self):

@@ -466,7 +466,7 @@ Any failure exits 1, and the cleanup is then uncertain (owner step 14).
 
 `live-runner-check.sh` runs as root before each start of the runner:
 
-1. The gate: `/proc` must show no process of the live UID or of its subordinate UID range. This includes the cgroups of the user manager and of the engine. Root reads the range from `/etc/subuid`. A missing or unreadable range, or more than one range, fails. An entry that cannot be read fails. `/run/user/<uid>` must not exist.
+1. The gate: `/proc` must show no process of the live UID or of its subordinate UID range. This includes the cgroups of the user manager and of the engine. Root reads the range from `/etc/subuid`. A missing or unreadable range, or more than one range, fails. A process folder that cannot be listed, or that lists no process, fails. An entry that cannot be read fails. `/run/user/<uid>` must not exist.
 2. Only when the gate passes, it empties the work folder `/var/lib/pm-live/work`, `_diag`, the engine storage `~/.local/share/containers` and the cache folder. A symbolic link in these paths fails.
 3. Only when the gate passes, it compares the files with the root-held list `/etc/pm-live/runner-files.sha256`. The list has the owner, group, mode, SHA-256 and path of each file. It covers `/opt/pm-live/actions-runner` except `_diag`, the unit file, and the home folder of the live account except the emptied folders. A `~/.ssh` folder and a file in `~/.config/systemd/user/` also fail.
 4. The live account has no crontab and no `at` job.
