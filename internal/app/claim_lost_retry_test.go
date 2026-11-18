@@ -3,6 +3,8 @@ package app_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -29,10 +31,13 @@ import (
 // hook runs in the prepare transaction after every preparation step, after the
 // lease decision samples the database time and just before the stored lease is
 // read. The hook holds the lease once and sets its end 6 s after that sample.
-// So the first lease decision sees a live lease with exactly 6 s left, however
-// long the worker takes to start, the preparation takes and the hook takes.
-// The check reads the activity's last failure from the workflow history after
-// the run ends, so it does not sleep, poll or retry.
+// So, within the time limits of the check, the first lease decision sees a
+// live lease with exactly 6 s left, however long the worker takes to start,
+// the preparation takes and the hook takes. The check also requires that the
+// decision's sample is not before a database time that the check reads itself
+// during preparation (leaseDecisionHook.result). The check reads the
+// activity's last failure from the workflow history after the run ends, so it
+// does not sleep, poll or retry.
 func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
 	var sends atomic.Int32
@@ -117,9 +122,13 @@ func TestHeldLeaseRetryStartsWhenTheLeaseEnds(t *testing.T) {
 // lease is read, and it gets the sample. Here it sets the end of the held lease
 // relative to that sample, so the stored end is after the first sample. The
 // lease decision must use the second sample for both the expiry comparison and
-// the remaining lease time. No sleep or poll sets the order: the hook call is
-// the event, and the time that the hook and the lease read take does not
-// change the result.
+// the remaining lease time. Because the lease end follows the decision's own
+// sample, the check also reads its own database time during preparation, after
+// the first sample. The decision's sample must not be before it
+// (leaseDecisionHook.result), so a decision that used the first sample fails.
+// No sleep or poll sets the order: the operation resolver call and the hook
+// call are the events. Within the time limits of the check, the time that the
+// hook and the lease read take does not change the result.
 func TestLeaseDecisionReadsTheDatabaseTimeAgain(t *testing.T) {
 	temporal := newPermitTemporalHarness(t)
 
@@ -223,6 +232,12 @@ func prepareLeaseDecisionRun(
 // every other preparation step. The action gets the decision's database time,
 // so it can set the lease relative to the time that the decision uses. The
 // hook runs its action only once, and only after the test arms it.
+//
+// The hook also wraps the operation resolver (resolve). ExecuteUnit calls the
+// resolver during preparation: after it samples the database time when it
+// loads the run, and before the lease decision samples it again. There the
+// check reads its own database time (preparedAt). It does not come from the
+// worker, so it is an independent lower bound for the decision's sample.
 type leaseDecisionHook struct {
 	armed  atomic.Bool
 	fired  atomic.Bool
@@ -230,6 +245,10 @@ type leaseDecisionHook struct {
 	action func(context.Context, time.Time) error
 	err    error
 	done   chan struct{}
+
+	mu         sync.Mutex
+	preparedAt time.Time
+	decidedAt  time.Time
 }
 
 func newLeaseDecisionHook(
@@ -239,8 +258,29 @@ func newLeaseDecisionHook(
 	return &leaseDecisionHook{match: match, action: action, done: make(chan struct{})}
 }
 
+// resolve returns the fixture's operation resolver with one addition: while
+// the hook is armed and has not fired, each matching call first reads the
+// database time in its own transaction and keeps it as preparedAt.
+func (hook *leaseDecisionHook) resolve(fixture *testfixture.Fixture) app.OperationResolver {
+	return func(ctx context.Context, scope contract.Scope, connectionID, operationID string) (app.OperationSelection, error) {
+		if hook.armed.Load() && !hook.fired.Load() && hook.match(ctx) {
+			preparedAt, err := preparationDatabaseTime(fixture)
+			if err != nil {
+				return app.OperationSelection{}, err
+			}
+			hook.mu.Lock()
+			hook.preparedAt = preparedAt
+			hook.mu.Unlock()
+		}
+		return fixture.ResolveOperation(ctx, scope, connectionID, operationID)
+	}
+}
+
 func (hook *leaseDecisionHook) run(ctx context.Context, decidedAt time.Time) error {
 	if hook.armed.Load() && hook.match(ctx) && hook.fired.CompareAndSwap(false, true) {
+		hook.mu.Lock()
+		hook.decidedAt = decidedAt
+		hook.mu.Unlock()
 		hook.err = hook.action(ctx, decidedAt)
 		close(hook.done)
 		return hook.err
@@ -249,17 +289,30 @@ func (hook *leaseDecisionHook) run(ctx context.Context, decidedAt time.Time) err
 }
 
 // result returns the error of the action. It fails when the action did not
-// run, so a test cannot pass without the event that sets its order.
+// run, so a test cannot pass without the event that sets its order. It also
+// fails when the decision's database time is before preparedAt, the database
+// time that the check read during preparation. A lease decision that uses the
+// time that ExecuteUnit sampled when it loaded the run fails here, although
+// the lease end follows the decision's time.
 func (hook *leaseDecisionHook) result() error {
 	select {
 	case <-hook.done:
-		if hook.err != nil {
-			return errors.Join(errors.New("lease decision hook failed"), hook.err)
-		}
-		return nil
 	default:
 		return errors.New("ExecuteUnit made no lease decision after the lease decision hook was armed")
 	}
+	if hook.err != nil {
+		return errors.Join(errors.New("lease decision hook failed"), hook.err)
+	}
+	hook.mu.Lock()
+	defer hook.mu.Unlock()
+	if hook.preparedAt.IsZero() {
+		return errors.New("the check read no database time during the preparation of ExecuteUnit")
+	}
+	if hook.decidedAt.Before(hook.preparedAt) {
+		return fmt.Errorf("lease decision database time %s is before %s, a database time that the check read during preparation; "+
+			"the lease decision must read the database time again after preparation", hook.decidedAt, hook.preparedAt)
+	}
+	return nil
 }
 
 func newLeaseDecisionWorkerService(
@@ -273,13 +326,28 @@ func newLeaseDecisionWorkerService(
 		t,
 		fixture,
 		fixture.WorkerRegistry,
-		fixture.ResolveOperation,
+		hook.resolve(fixture),
 		nil,
 		temporal.observer,
 		temporal.timeouts,
 	)
 	app.SetBeforeLeaseDecision(service, hook.run)
 	return service
+}
+
+// preparationDatabaseTime reads the database time in its own transaction. It
+// does not call t, so the operation resolver can run it inside ExecuteUnit.
+func preparationDatabaseTime(fixture *testfixture.Fixture) (time.Time, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	var at time.Time
+	err := fixture.WithinSetupSQL(ctx, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&at)
+	})
+	if err != nil {
+		return time.Time{}, errors.Join(errors.New("read the database time during preparation"), err)
+	}
+	return at.UTC(), nil
 }
 
 // endLiveTaskLease moves a planning lease that is still live past its end by
