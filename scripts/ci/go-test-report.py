@@ -104,8 +104,9 @@ the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
 summary file: only counts, godog totals as numbers, the words PASS, FAIL, SKIP
 and "no result", and ordinals ("test 4 of 9: FAIL"). The full report and the
 stderr of COMMAND go to the new --raw-output FILE (mode 0600). --live requires
---scenarios, --expect and --raw-output, and the reverse. A known event field of
-the wrong type is a malformed line. Any other error writes its traceback only to
+--scenarios, --expect and --raw-output, and --raw-output requires --live. The
+other options do not require --live. A known event field of the wrong type is a
+malformed line. Any other error writes its traceback only to
 the raw file and exits 1 with one fixed line. This is prevention, not detection.
 """
 import argparse

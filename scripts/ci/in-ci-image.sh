@@ -162,7 +162,9 @@ if [ "$mode" = live ]; then
   [ "$(live_owner_mode "$token")" = "$uid 600" ] || live_refuse 'the token file needs the runner UID and mode 0600'
   size=$(wc -c < "$token")
   [ "$size" -ge 20 ] && [ "$size" -le 4096 ] || live_refuse 'the token file must hold 20 to 4096 bytes'
-  # The run root on tmpfs (F3). RUNNER_TEMP names it inside, so every run file is there.
+  # The run root on tmpfs (F3). Inside, RUNNER_TEMP names it, so the fixture root, the
+  # secret root, the manifest, the raw report and the scan copies are there. The caches
+  # under HOME and the step summary are not.
   run_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   run_root="$live_runtime/$uid/pm-live-run/$run_id"
   [ -d "$live_runtime/$uid/pm-live-run" ] || mkdir -m 700 "$live_runtime/$uid/pm-live-run"
