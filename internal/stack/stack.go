@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -72,6 +73,9 @@ type runtime struct {
 	gid               string
 	stdout            io.Writer
 	stderr            io.Writer
+	// masterCallLimit is the time limit of one SeaweedFS master call. Zero
+	// means defaultMasterCallLimit.
+	masterCallLimit time.Duration
 }
 
 type imageLock struct {
@@ -186,7 +190,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 // CheckStack verifies the selected PostgreSQL schemas and roles, the
-// authenticated Temporal namespace, and authenticated S3 bucket access.
+// authenticated Temporal namespace, authenticated S3 bucket access, and, for
+// bundled artifacts, a writable volume for the bucket and the default
+// collection.
 func CheckStack(ctx context.Context, configuration config.Configuration, stdout, stderr io.Writer) error {
 	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
@@ -340,7 +346,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyPostgres] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "--wait", "postgres"); err != nil {
+		if err := rt.startServices(ctx, configuration, true, "postgres"); err != nil {
 			return fmt.Errorf("start PostgreSQL: %w", err)
 		}
 	}
@@ -349,7 +355,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyTemporal] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "temporal"); err != nil {
+		if err := rt.startServices(ctx, configuration, false, "temporal"); err != nil {
 			return fmt.Errorf("start Temporal: %w", err)
 		}
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
@@ -360,20 +366,10 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyArtifacts] {
-		for _, services := range [][]string{
-			{"up", "-d", "seaweed-master"},
-			{"up", "-d", "seaweed-volume"},
-			{"up", "-d", "seaweed-filer"},
-			{"up", "-d", "seaweed-s3-a", "seaweed-s3-b", "caddy"},
-		} {
-			if err := rt.compose(ctx, configuration, services...); err != nil {
-				return fmt.Errorf("start artifact services: %w", err)
-			}
-		}
-		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
+		if err := startArtifactStore(ctx, configuration, rt, func(checkCtx context.Context) error {
 			return ensureArtifactBucket(checkCtx, configuration, rt, true)
 		}); err != nil {
-			return fmt.Errorf("initialize artifact bucket: %w", err)
+			return err
 		}
 	}
 
@@ -1155,6 +1151,132 @@ func (rt *runtime) compose(ctx context.Context, configuration config.Configurati
 	return nil
 }
 
+// serviceContainer is the state of one Compose service container that
+// decides whether pm-stack up keeps it.
+type serviceContainer struct {
+	running    bool
+	configHash string
+}
+
+// settledService reports whether a service keeps its container: the service
+// has exactly one container, the container runs, and its Compose config hash
+// label equals the hash that Compose expects for the current configuration.
+// A changed configuration, a missing container, a stopped container or an
+// unknown hash goes through the normal up.
+func settledService(expectedHash string, containers []serviceContainer) bool {
+	return expectedHash != "" &&
+		len(containers) == 1 &&
+		containers[0].running &&
+		containers[0].configHash == expectedHash
+}
+
+// startServices runs compose up for the named services. A settled service
+// (settledService) goes through up --no-recreate, so its running container
+// stays. Compose otherwise recreates a running container when the engine
+// reports a network ID that Compose cannot match, also when the configuration
+// is unchanged (rootless Podman). Every other service goes through the normal
+// up, which creates, starts or recreates it.
+func (rt *runtime) startServices(ctx context.Context, configuration config.Configuration, wait bool, services ...string) error {
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return err
+	}
+	expected, err := rt.expectedServiceHashes(ctx, configuration, services)
+	if err != nil {
+		return err
+	}
+	var recreate, keep []string
+	for _, service := range services {
+		containers, err := rt.serviceContainers(ctx, service)
+		if err != nil {
+			return err
+		}
+		if settledService(expected[service], containers) {
+			keep = append(keep, service)
+		} else {
+			recreate = append(recreate, service)
+		}
+	}
+	arguments := []string{"up", "-d"}
+	if wait {
+		arguments = append(arguments, "--wait")
+	}
+	if len(recreate) > 0 {
+		if err := rt.compose(ctx, configuration, append(slices.Clone(arguments), recreate...)...); err != nil {
+			return err
+		}
+	}
+	if len(keep) > 0 {
+		keepArguments := append(slices.Clone(arguments), "--no-recreate")
+		if err := rt.compose(ctx, configuration, append(keepArguments, keep...)...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expectedServiceHashes returns the config hash that Compose computes for
+// each named service from the current configuration.
+func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration config.Configuration, services []string) (map[string]string, error) {
+	command := exec.CommandContext(ctx, "python3",
+		rt.composeArguments(configuration, "config", "--hash", strings.Join(services, ","))...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	command.Stderr = rt.stderr
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("read Compose service configuration hashes: %w", err)
+	}
+	hashes := make(map[string]string, len(services))
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("Compose service configuration hash output is malformed")
+		}
+		hashes[fields[0]] = fields[1]
+	}
+	return hashes, nil
+}
+
+// serviceContainers returns the state of the containers of one service of
+// this Compose project. One-off containers (compose run) are not included.
+func (rt *runtime) serviceContainers(ctx context.Context, service string) ([]serviceContainer, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	list := exec.CommandContext(ctx, "docker", "ps", "--all", "--quiet", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+rt.project,
+		"--filter", "label=com.docker.compose.service="+service,
+		"--filter", "label=com.docker.compose.oneoff=False")
+	list.Dir = rt.root
+	output, err := list.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list the %s service containers: %w", service, err)
+	}
+	ids := strings.Fields(string(output))
+	containers := make([]serviceContainer, 0, len(ids))
+	for _, id := range ids {
+		inspect := exec.CommandContext(ctx, "docker", "inspect", "--format",
+			`{{.State.Running}} {{index .Config.Labels "com.docker.compose.config-hash"}}`, id)
+		inspect.Dir = rt.root
+		state, err := inspect.Output()
+		if err != nil {
+			return nil, fmt.Errorf("inspect a %s service container: %w", service, err)
+		}
+		fields := strings.Fields(string(state))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("inspect a %s service container: empty state", service)
+		}
+		container := serviceContainer{running: fields[0] == "true"}
+		if len(fields) == 2 {
+			container.configHash = fields[1]
+		}
+		containers = append(containers, container)
+	}
+	return containers, nil
+}
+
 func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1265,6 +1387,11 @@ func checkLive(ctx context.Context, configuration config.Configuration, rt *runt
 	}
 	if err := ensureArtifactBucket(ctx, configuration, rt, false); err != nil {
 		return fmt.Errorf("artifact readiness: %w", err)
+	}
+	if configuration.Artifacts().Ownership == config.OwnershipBundled {
+		if err := ensureArtifactVolumes(ctx, configuration, rt, false); err != nil {
+			return fmt.Errorf("artifact readiness: %w", err)
+		}
 	}
 	return nil
 }
@@ -1401,9 +1528,9 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 	if err != nil {
 		return err
 	}
-	temporalClient, err := client.Dial(options)
+	temporalClient, err := client.DialContext(ctx, options)
 	if err != nil {
-		return fmt.Errorf("connect authenticated Temporal client")
+		return temporalConnectError{cause: err}
 	}
 	defer temporalClient.Close()
 	service := temporalClient.WorkflowService()
@@ -1444,6 +1571,33 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 		return fmt.Errorf("Temporal server version mismatch")
 	}
 	return nil
+}
+
+// temporalConnectError keeps the cause of a failed Temporal connection for
+// errors.As. Its text names only the class of the cause. The SDK text can
+// name the endpoint or its address, so the text does not include it.
+type temporalConnectError struct {
+	cause error
+}
+
+func (e temporalConnectError) Error() string {
+	var deadline *serviceerror.DeadlineExceeded
+	var canceled *serviceerror.Canceled
+	var unavailable *serviceerror.Unavailable
+	switch {
+	case errors.As(e.cause, &deadline):
+		return "connect authenticated Temporal client: the server did not answer within the connection limit"
+	case errors.As(e.cause, &canceled):
+		return "connect authenticated Temporal client: the check was cancelled"
+	case errors.As(e.cause, &unavailable):
+		return "connect authenticated Temporal client: the server refused or closed the connection"
+	default:
+		return "connect authenticated Temporal client: the connection failed"
+	}
+}
+
+func (e temporalConnectError) Unwrap() error {
+	return e.cause
 }
 
 func artifactClient(configuration config.Configuration, rt *runtime) (*s3.Client, error) {
@@ -1504,6 +1658,210 @@ func ensureArtifactBucket(ctx context.Context, configuration config.Configuratio
 	})
 	if err != nil {
 		return fmt.Errorf("list artifact bucket")
+	}
+	return nil
+}
+
+// seaweedMasterOrigin is the HTTP origin of the SeaweedFS master on the
+// private stack network. pm-stack calls it inside the master container, so
+// the admin API is not published outside that network.
+const seaweedMasterOrigin = "http://seaweed-master:9333"
+
+const (
+	// defaultMasterCallLimit bounds one compose exec call to the SeaweedFS
+	// master, from its start to the end of the process.
+	defaultMasterCallLimit = 30 * time.Second
+	// masterCallWaitDelay bounds the wait for the output of a master call
+	// after its limit kills the process. A child that keeps the output open
+	// cannot block the call longer.
+	masterCallWaitDelay = 5 * time.Second
+)
+
+// masterLimit returns the time limit of one SeaweedFS master call.
+func (rt *runtime) masterLimit() time.Duration {
+	if rt.masterCallLimit > 0 {
+		return rt.masterCallLimit
+	}
+	return defaultMasterCallLimit
+}
+
+// seaweedTopology is the part of the master's /dir/status document that
+// pm-stack reads: the volume slots and the writable volumes of each layout.
+type seaweedTopology struct {
+	Max     *int64 `json:"Max"`
+	Free    *int64 `json:"Free"`
+	Layouts []struct {
+		Collection string   `json:"collection"`
+		Writables  []uint32 `json:"writables"`
+	} `json:"Layouts"`
+}
+
+// writable returns the number of writable volumes of the layouts whose
+// collection is exactly the given collection. The default collection is "".
+func (topology seaweedTopology) writable(collection string) int {
+	count := 0
+	for _, layout := range topology.Layouts {
+		if layout.Collection == collection {
+			count += len(layout.Writables)
+		}
+	}
+	return count
+}
+
+// seaweedMaster calls one master endpoint with curl inside the master
+// container and returns the response body. A non-2xx response fails. The
+// Compose and curl diagnostics can name the private service address and the
+// bucket, so pm-stack does not show them. Each call ends within its own time
+// limit (masterLimit) plus masterCallWaitDelay, or earlier at the deadline of
+// ctx.
+func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Configuration, path string, query url.Values) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, rt.masterLimit())
+	defer cancel()
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return nil, err
+	}
+	target := seaweedMasterOrigin + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	command := exec.CommandContext(ctx, "python3", rt.composeArguments(configuration,
+		"exec", "-T", "seaweed-master", "curl", "-fsS", "-m", "10", target)...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	command.WaitDelay = masterCallWaitDelay
+	return command.Output()
+}
+
+func (rt *runtime) artifactVolumeStatus(ctx context.Context, configuration config.Configuration) (seaweedTopology, error) {
+	output, err := rt.seaweedMaster(ctx, configuration, "/dir/status", nil)
+	if err != nil {
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
+	}
+	var status struct {
+		Topology *seaweedTopology `json:"Topology"`
+	}
+	if err := json.Unmarshal(output, &status); err != nil || status.Topology == nil ||
+		status.Topology.Max == nil || status.Topology.Free == nil {
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
+	}
+	return *status.Topology, nil
+}
+
+// checkArtifactVolumeCapacity is a read-only readiness fact: the master
+// reports volume slots, so the volume server has joined the master.
+func checkArtifactVolumeCapacity(ctx context.Context, configuration config.Configuration, rt *runtime) error {
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if *topology.Max < 1 {
+		return fmt.Errorf("artifact volume server has not joined the master")
+	}
+	return nil
+}
+
+// startArtifactStore starts the bundled artifact store for pm-stack up.
+// ensureBucket is the bucket step.
+//
+// It grows the artifact volumes after the volume server joins the master and
+// before seaweed-filer starts (#381). The filer writes its metadata log to the
+// default collection about one minute after it starts. In SeaweedFS 4.46 that
+// write grows a default volume when the default collection has no writable
+// volume, and /vol/grow grows without a check. A grow by pm-stack after the
+// filer starts can read the status before that growth and grow after it. The
+// stack is then ready with two default volumes and one spare slot. On a fresh
+// or stopped stack, no SeaweedFS service writes to a volume before the filer
+// starts. On a running stack, the filer already runs and can write while
+// pm-stack up grows.
+//
+// The bucket collection gets its volume before the bucket exists. A SeaweedFS
+// 4.46 bucket create decides from the bucket directory only, so it creates a
+// bucket whose collection already has a volume.
+func startArtifactStore(ctx context.Context, configuration config.Configuration, rt *runtime, ensureBucket func(context.Context) error) error {
+	for _, services := range [][]string{{"seaweed-master"}, {"seaweed-volume"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	// The start-up wait repeats only the read-only capacity fact. The volume
+	// grow runs after the wait, once.
+	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
+		return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
+	}); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	for _, services := range [][]string{{"seaweed-filer"}, {"seaweed-s3-a", "seaweed-s3-b", "caddy"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	// The start-up wait repeats only the bucket step.
+	if err := waitFor(ctx, readinessTimeout, ensureBucket); err != nil {
+		return fmt.Errorf("initialize artifact bucket: %w", err)
+	}
+	return nil
+}
+
+// ensureArtifactVolumes requires a writable volume for the artifact bucket
+// and for the default collection. Without one, the first object write of a
+// run waits for SeaweedFS to grow the volume. With grow, it reads the status,
+// asks the master once to grow one volume for each layout that has no
+// writable volume, and reads the status again. It never repeats a grow. Each
+// pm-stack up holds the deployment lock, and a second up finds the volumes
+// and grows nothing. pm-stack up calls it with grow before it starts
+// seaweed-filer (startArtifactStore). So on a fresh or stopped stack, the
+// filer does not run during the grow. On a running stack, it does. Without
+// grow, it only reads.
+//
+// A grow request that fails or reaches its time limit can still have grown a
+// volume, so the error does not say that no volume grew. The same pm-stack up
+// does not repeat the grow. The next pm-stack up reads the status first and
+// grows only a layout that has no writable volume.
+func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
+	// missing is the text of the final check. growFailed is the text of a
+	// grow request that got no success answer: the volume may have grown.
+	layouts := []struct {
+		collection string
+		missing    string
+		growFailed string
+	}{
+		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume",
+			"no success answer arrived for the grow request of the artifact bucket. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
+		{"", "default collection has no writable volume",
+			"no success answer arrived for the grow request of the default collection. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
+	}
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if grow {
+		grown := false
+		for _, layout := range layouts {
+			if topology.writable(layout.collection) > 0 {
+				continue
+			}
+			query := url.Values{"count": {"1"}}
+			if layout.collection != "" {
+				query.Set("collection", layout.collection)
+			}
+			if _, err := rt.seaweedMaster(ctx, configuration, "/vol/grow", query); err != nil {
+				return errors.New(layout.growFailed)
+			}
+			grown = true
+		}
+		if grown {
+			if topology, err = rt.artifactVolumeStatus(ctx, configuration); err != nil {
+				return err
+			}
+		}
+	}
+	for _, layout := range layouts {
+		if topology.writable(layout.collection) < 1 {
+			return errors.New(layout.missing)
+		}
 	}
 	return nil
 }
