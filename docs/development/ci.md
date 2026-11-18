@@ -159,6 +159,18 @@ The frozen cleanup step of `bdd.yml` stops the job container and runs `with-stac
 
 If the stack fixture is not clean, the receipt check fails, and the manifest stays at the path for the cleanup step. `check-bdd.sh` does not repeat the cleanup. The Gherkin run does not run, the log says so with the reason, and the job fails. Both runs report only on the other paths.
 
+The `--cleanup` of the cleanup step has its own 300 s phase deadline (see [Fixture phase deadlines](#fixture-phase-deadlines)). This is the end state when it reaches that deadline:
+
+- `--cleanup` exits 1. The cleanup step fails, and so the job fails.
+- The wrapper sets the manifest phase to `cleanup_failed`, with the diagnostic code `cleanup-phase-deadline`. If that manifest write also fails, the manifest keeps its earlier phase. Another cleanup failure also gives the phase `cleanup_failed`, with its own code.
+- The fixture can stay on the runner host: its containers, its network, its volumes and its private folder (`pm-stack-job-*` in `RUNNER_TEMP`). No later step of the job removes them.
+- If the 6-minute step limit stops the step first, the manifest keeps the phase that it had. The job also fails.
+
+GitHub documents that the runner empties `RUNNER_TEMP` at the start and at the end of each job. So the manifest can be gone after the job. Then the owner, or an operator with host access, acts in this order:
+
+1. If the manifest is still there, run `with-stack-fixture.py --cleanup` on that manifest path from a runner shell.
+2. If the manifest is gone, find the fixture by its project label (`pmci-*`) in a host health read. The owner decides on the removal, and the operator then removes the fixture by hand.
+
 [go-test-report.py](../../scripts/ci/go-test-report.py) `--scenarios` lists each scenario with its result and the godog totals (`N scenarios (...)`, `N steps (...)`). It does this also when the suite passes. The list is at the end of the `bdd` job log and in the job summary on the workflow run page. A passing run fails when the godog scenario total is missing or differs from the number of scenarios in the test stream.
 
 The Gherkin run also fails in these cases (issue #350). The log and the job summary name each cause:
