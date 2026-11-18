@@ -87,6 +87,29 @@ func newBootstrapTestRequest(t *testing.T, deploymentID string, scope contract.S
 	}
 }
 
+// bootstrapCleanupLimit bounds each cleanup step of a bootstrap snapshot.
+const bootstrapCleanupLimit = 10 * time.Second
+
+// endBootstrapSnapshot rolls the snapshot back and closes its connection. Each
+// step has its own context with the limit, so a PostgreSQL that does not
+// answer cannot hold the check after its own deadline. A nil tx skips the
+// rollback.
+func endBootstrapSnapshot(
+	tx interface{ Rollback(context.Context) error },
+	connection interface{ Close(context.Context) error },
+	limit time.Duration,
+) error {
+	var rollbackErr error
+	if tx != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), limit)
+		rollbackErr = tx.Rollback(ctx)
+		cancel()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	return errors.Join(rollbackErr, connection.Close(ctx))
+}
+
 // readBootstrapRows reads every bootstrap row of the deployment and the
 // organizations in one snapshot, one JSON text for each row.
 func (s bootstrapTestStore) readBootstrapRows(t *testing.T, deploymentID string, orgIDs ...string) map[string][]string {
@@ -97,12 +120,18 @@ func (s bootstrapTestStore) readBootstrapRows(t *testing.T, deploymentID string,
 	if err != nil {
 		t.Fatalf("connect the stack administrator: %v", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
 	tx, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
+		if closeErr := endBootstrapSnapshot(nil, connection, bootstrapCleanupLimit); closeErr != nil {
+			t.Errorf("close the stack administrator connection: %v", closeErr)
+		}
 		t.Fatalf("begin the bootstrap snapshot: %v", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() {
+		if err := endBootstrapSnapshot(tx, connection, bootstrapCleanupLimit); err != nil {
+			t.Errorf("end the bootstrap snapshot: %v", err)
+		}
+	}()
 	rows := make(map[string][]string, len(bootstrapTables))
 	for _, table := range bootstrapTables {
 		filter := "org_id = ANY($2) AND $1 <> ''"
@@ -712,4 +741,38 @@ func TestOpenBootstrapPoolRefusesAnotherCredential(t *testing.T) {
 			t.Errorf("bootstrap pool with the %s = %v; want %v", name, err, ErrBootstrapAuthority)
 		}
 	}
+}
+
+// Go developer check, not acceptance proof. The snapshot cleanup must end at
+// its limit when PostgreSQL does not answer. The two stand-ins wait for the
+// end of the context that each call gets, as the driver does on a connection
+// that does not answer. Defect: a cleanup on context.Background(), which never
+// ends.
+func TestBootstrapSnapshotCleanupEndsAtItsLimit(t *testing.T) {
+	done := make(chan error, 1)
+	go func() { done <- endBootstrapSnapshot(stalledCleanup{}, stalledCleanup{}, 100*time.Millisecond) }()
+	guard := time.NewTimer(10 * time.Second)
+	defer guard.Stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("snapshot cleanup with a PostgreSQL that does not answer = %v; want the end of its limit", err)
+		}
+	case <-guard.C:
+		t.Fatal("snapshot cleanup did not end 10 s after a PostgreSQL that does not answer; want an end at its limit")
+	}
+}
+
+// stalledCleanup stands for a rollback and a close on a connection that does
+// not answer: each call returns only when its context ends.
+type stalledCleanup struct{}
+
+func (stalledCleanup) Rollback(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (stalledCleanup) Close(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
