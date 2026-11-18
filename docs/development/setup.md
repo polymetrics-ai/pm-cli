@@ -249,6 +249,8 @@ The input file is one JSON document with exactly these fields. It holds no secre
 }
 ```
 
+The input must be a regular file. The bootstrap refuses a pipe, a device or a directory with `pm-server: bootstrap input is invalid`.
+
 In one PostgreSQL transaction, the subcommand writes:
 
 - the workspace;
