@@ -278,21 +278,21 @@ func TestStopBoundsTheOwnerEnd(t *testing.T) {
 		}
 		return syscall.EPERM
 	}
+	// This cleanup is registered before startStandIn, so it also runs when
+	// the setup fails after the seam stopped an owner. It runs after the
+	// bounded stop cleanup of startStandIn. SIGKILL alone ends a stopped
+	// owner, and no signal follows it: the reaper goroutine of
+	// endGroupOwner can reap the owner after the SIGKILL.
 	t.Cleanup(func() {
+		mutex.Lock()
+		for _, pgid := range owners {
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+		}
+		mutex.Unlock()
 		groupOwnerEndLimit = previousLimit
 		signalGroup = previousSignal
 	})
 	d := startStandIn(t, dir, fmt.Sprintf(`echo waiting; read line < '%s'`, stall), "waiting\n")
-	// This cleanup runs before the stop cleanup of startStandIn. It ends the
-	// stopped owner, so a stop that still waits for it can return.
-	t.Cleanup(func() {
-		mutex.Lock()
-		defer mutex.Unlock()
-		for _, pgid := range owners {
-			_ = syscall.Kill(-pgid, syscall.SIGKILL)
-			_ = syscall.Kill(-pgid, syscall.SIGCONT)
-		}
-	})
 	result := make(chan error, 1)
 	go func() { result <- d.stop(Limits{Stop: 5 * time.Second, Kill: 10 * time.Second}, false) }()
 	select {
@@ -305,63 +305,106 @@ func TestStopBoundsTheOwnerEnd(t *testing.T) {
 	}
 }
 
+// deadlineOnlyContext has a deadline, but it never ends: its Done channel
+// is nil. Only a read deadline that comes from it can end a wait.
+type deadlineOnlyContext struct {
+	context.Context
+	deadline time.Time
+}
+
+func (c deadlineOnlyContext) Deadline() (time.Time, bool) { return c.deadline, true }
+
 // Defect: the wait for the ready byte of the group owner ignores the start
-// context of the harness (round 3 finding N2). The owner here keeps its
-// stdout open and never sends the byte. An ended start context must refuse
-// the start, a cancellation must end the start, and a start deadline must
-// end the wait. Each must return far before groupOwnerReadyLimit (10 s).
-// Each wait has one time limit. No sleep, no retry.
+// context of the harness (round 3 finding N2, round 4 finding F3). The owner
+// here never sends the ready byte. Each case makes its own context in its
+// own subtest:
+//   - an ended start context must refuse the start (the early check);
+//   - a start deadline must end the wait through the read deadline. The
+//     context of this case never ends, so the AfterFunc cannot end it;
+//   - a cancellation after the owner runs must end the wait through the
+//     AfterFunc. The owner writes to a FIFO first, so the start has passed
+//     its early check when the check cancels.
+//
+// Each case must return far before groupOwnerReadyLimit (10 s). Each wait
+// has one time limit. No sleep, no retry.
 func TestStartGroupOwnerEndsWithTheStartContext(t *testing.T) {
-	previous := groupOwnerScript
-	groupOwnerScript = `trap "" TERM; exec cat`
-	t.Cleanup(func() { groupOwnerScript = previous })
 	const checkLimit = 5 * time.Second
-	ended, cancel := context.WithCancel(context.Background())
-	cancel()
-	deadline, stop := context.WithTimeout(context.Background(), 200*time.Millisecond)
-	defer stop()
-	cancelled, cancelStart := context.WithCancel(context.Background())
-	defer cancelStart()
-	for name, ctx := range map[string]context.Context{
-		"an ended start context":                 ended,
-		"a start deadline before the ready byte": deadline,
-		"a cancellation while the owner starts":  cancelled,
-	} {
-		t.Run(name, func(t *testing.T) {
-			result := make(chan error, 1)
-			done := make(chan struct{})
-			// After a failure the start can still run, and it reads the seams
-			// of this check. So the cleanup waits once for its end, with one
-			// limit, before any seam is restored.
-			t.Cleanup(func() {
-				select {
-				case <-done:
-				case <-time.After(2 * groupOwnerReadyLimit):
-					t.Errorf("startGroupOwner did not end within %s", 2*groupOwnerReadyLimit)
-				}
-			})
-			go func() {
-				defer close(done)
-				owner, input, err := startGroupOwner(ctx)
-				if err == nil {
-					_ = killGroup(owner.Process.Pid)
-					_ = endGroupOwner(owner, input)
-				}
-				result <- err
-			}()
-			if ctx == cancelled {
-				cancelStart()
-			}
+	start := func(t *testing.T, ctx context.Context, script string) <-chan error {
+		t.Helper()
+		previous := groupOwnerScript
+		groupOwnerScript = script
+		result := make(chan error, 1)
+		done := make(chan struct{})
+		// After a failure the start can still run, and it reads the seams
+		// of this check. So the cleanup waits once for its end, with one
+		// limit, before the seam is restored.
+		t.Cleanup(func() {
 			select {
-			case err := <-result:
-				if err == nil || !errors.Is(err, ctx.Err()) {
-					t.Fatalf("startGroupOwner = %v; want an error with the end of the start context", err)
-				}
-			case <-time.After(checkLimit):
-				t.Fatalf("startGroupOwner did not return within %s of an ended start context", checkLimit)
+			case <-done:
+			case <-time.After(2 * groupOwnerReadyLimit):
+				t.Errorf("startGroupOwner did not end within %s", 2*groupOwnerReadyLimit)
 			}
+			groupOwnerScript = previous
 		})
+		go func() {
+			defer close(done)
+			owner, input, err := startGroupOwner(ctx)
+			if err == nil {
+				_ = killGroup(owner.Process.Pid)
+				_ = endGroupOwner(owner, input)
+			}
+			result <- err
+		}()
+		return result
 	}
+	await := func(t *testing.T, result <-chan error, want error) {
+		t.Helper()
+		select {
+		case err := <-result:
+			if err == nil || !errors.Is(err, want) {
+				t.Fatalf("startGroupOwner = %v; want an error with %v", err, want)
+			}
+		case <-time.After(checkLimit):
+			t.Fatalf("startGroupOwner did not return within %s", checkLimit)
+		}
+	}
+
+	t.Run("an ended start context", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		await(t, start(t, ctx, `trap "" TERM; exec cat`), context.Canceled)
+	})
+
+	t.Run("a start deadline before the ready byte", func(t *testing.T) {
+		ctx := deadlineOnlyContext{Context: context.Background(), deadline: time.Now().Add(200 * time.Millisecond)}
+		await(t, start(t, ctx, `trap "" TERM; exec cat`), context.DeadlineExceeded)
+	})
+
+	t.Run("a cancellation during the ready wait", func(t *testing.T) {
+		running := makeFIFO(t, filepath.Join(t.TempDir(), "running"))
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		result := start(t, ctx, fmt.Sprintf(`trap "" TERM; printf r > '%s'; exec cat`, running))
+		line := make(chan error, 1)
+		go func() {
+			reader, err := os.Open(running)
+			if err == nil {
+				_, err = reader.Read(make([]byte, 1))
+				_ = reader.Close()
+			}
+			line <- err
+		}()
+		select {
+		case err := <-line:
+			if err != nil {
+				t.Fatalf("read the running mark of the owner: %v", err)
+			}
+		case <-time.After(checkLimit):
+			t.Fatalf("the owner did not run within %s", checkLimit)
+		}
+		cancel()
+		await(t, result, context.Canceled)
+	})
 }
 
 // Defect: when the second pipe of the group owner cannot be made, the first
