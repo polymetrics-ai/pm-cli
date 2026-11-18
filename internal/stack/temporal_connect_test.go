@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -59,64 +60,142 @@ func TestTemporalConnectFailureKeepsItsCause(t *testing.T) {
 // held-connection helper while its accept goroutine has a just-accepted
 // connection that it does not keep yet. The cleanup must wait for that
 // goroutine, and then close the connection. Channels force the order. The
-// check has no sleep and no retry, and each wait has one time limit.
+// check has no sleep and no retry, and each wait has one time limit. Every
+// exit of the check releases and stops the helper (startHeldConnectionCheck).
 func TestHeldConnectionCleanupWaitsForAnAcceptedConnection(t *testing.T) {
-	listener, err := net.Listen("tcp4", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	entered := make(chan struct{})
-	release := make(chan struct{})
-	joining := make(chan struct{})
-	stop := holdConnections(listener, heldConnectionHooks{
-		accepted: func() {
-			close(entered)
-			<-release
-		},
-		joining: func() { close(joining) },
-	})
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	check := startHeldConnectionCheck(t)
+	defer check.client.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), heldConnectionLimit)
 	defer cancel()
-	var dialer net.Dialer
-	client, err := dialer.DialContext(ctx, "tcp4", listener.Addr().String())
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer client.Close()
-	select {
-	case <-entered:
-	case <-ctx.Done():
-		t.Fatal("the helper did not accept the connection")
-	}
 
-	stopped := make(chan struct{})
-	go func() {
-		defer close(stopped)
-		stop()
-	}()
+	check.stop()
 	// The cleanup closed the listener and waits for the accept goroutine, or
 	// it returned without that wait. Either way, the accept goroutine then
 	// continues with its connection.
 	select {
-	case <-joining:
-	case <-stopped:
+	case <-check.joining:
+	case <-check.stopped:
 	case <-ctx.Done():
 		t.Fatal("the cleanup neither waited for the accept goroutine nor returned")
 	}
-	close(release)
+	check.release()
 	select {
-	case <-stopped:
+	case <-check.stopped:
 	case <-ctx.Done():
 		t.Fatal("the cleanup did not return after the accept goroutine continued")
 	}
 
 	// The cleanup closed the accepted connection, so the client reads the end
 	// of the stream.
-	if err := client.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+	assertEndOfStream(t, check.client)
+}
+
+// TestHeldConnectionCheckCleansUpAfterAnEarlyExit ends one run of the
+// held-connection check while the accept goroutine holds the accepted
+// connection in its hook, as a timeout before the release does. The cleanup
+// of that run must release the hook and stop the helper. The client then
+// reads the end of the stream. The check has no sleep and no retry, and the
+// read has one time limit.
+func TestHeldConnectionCheckCleansUpAfterAnEarlyExit(t *testing.T) {
+	var check *heldConnectionCheck
+	t.Run("an exit while the helper holds the connection", func(t *testing.T) {
+		check = startHeldConnectionCheck(t)
+	})
+	if check == nil {
+		t.Fatal("the run ended before the helper held the connection")
+	}
+	defer check.client.Close()
+	assertEndOfStream(t, check.client)
+}
+
+// heldConnectionCheck is one run of holdConnections with one connection
+// that the accept goroutine holds in its accepted hook.
+type heldConnectionCheck struct {
+	client  net.Conn
+	joining chan struct{}
+	stopped chan struct{}
+	// release lets the accept goroutine keep the held connection. stop starts
+	// the stop function of the helper in its own goroutine and closes stopped
+	// when it returns. Each one acts once, also when it is called again.
+	release func()
+	stop    func()
+}
+
+// heldConnectionLimit is the one time limit of each wait in the
+// held-connection checks.
+const heldConnectionLimit = 10 * time.Second
+
+// startHeldConnectionCheck starts holdConnections on a loopback listener,
+// dials it once and waits until the accept goroutine holds the connection in
+// its accepted hook. Before the dial, it registers one cleanup for every exit
+// of the test, also a failure or a timeout: the cleanup starts the stop,
+// releases the hook and waits once for the stop, with one time limit. The
+// stop closes the listener, joins the accept goroutine and closes the held
+// connection. The caller closes the client.
+func startHeldConnectionCheck(t *testing.T) *heldConnectionCheck {
+	t.Helper()
+	listener, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	check := &heldConnectionCheck{joining: make(chan struct{}), stopped: make(chan struct{})}
+	stop := holdConnections(listener, heldConnectionHooks{
+		accepted: func() {
+			close(entered)
+			<-release
+		},
+		joining: func() { close(check.joining) },
+	})
+	var releaseOnce, stopOnce sync.Once
+	check.release = func() { releaseOnce.Do(func() { close(release) }) }
+	check.stop = func() {
+		stopOnce.Do(func() {
+			go func() {
+				defer close(check.stopped)
+				stop()
+			}()
+		})
+	}
+	t.Cleanup(func() {
+		check.stop()
+		check.release()
+		limit := time.NewTimer(heldConnectionLimit)
+		defer limit.Stop()
+		select {
+		case <-check.stopped:
+		case <-limit.C:
+			t.Errorf("the held-connection helper did not stop within %s", heldConnectionLimit)
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), heldConnectionLimit)
+	defer cancel()
+	var dialer net.Dialer
+	client, err := dialer.DialContext(ctx, "tcp4", listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	check.client = client
+	select {
+	case <-entered:
+	case <-ctx.Done():
+		_ = client.Close()
+		t.Fatal("the helper did not accept the connection")
+	}
+	return check
+}
+
+// assertEndOfStream reads once from client, with one time limit, and requires
+// the end of the stream.
+func assertEndOfStream(t *testing.T, client net.Conn) {
+	t.Helper()
+	if err := client.SetReadDeadline(time.Now().Add(heldConnectionLimit)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
-		t.Fatalf("read from the held connection after the cleanup = %v; want end of stream", err)
+		t.Fatalf("read from the held connection = %v; want end of stream", err)
 	}
 }
 
