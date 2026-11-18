@@ -274,11 +274,13 @@ func policyForRequest(method, path string) (requestPolicy, bool) {
 		"GET /v1/workspaces/:workspace_id/artifacts/:artifact_id/content",
 		"GET /v1/workspaces/:workspace_id/tasks/:task_id",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id/schema",
+		"POST /v1/workspaces/:workspace_id/connections/:connection_id/schema/discoveries",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset",
 		"POST /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/cancel",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/resume",
 		"GET /v1/workspaces/:workspace_id/memberships", "POST /v1/workspaces/:workspace_id/memberships",
+		"PATCH /v1/workspaces/:workspace_id/memberships/:id",
 		"POST /v1/workspaces/:workspace_id/memberships/:id/revoke",
 		"GET /v1/workspaces/:workspace_id/service-accounts", "POST /v1/workspaces/:workspace_id/service-accounts",
 		"POST /v1/workspaces/:workspace_id/service-accounts/:id/revoke":
@@ -734,6 +736,9 @@ func (r problemResponse) VisitSubmitInvocationResponse(w http.ResponseWriter) er
 func (r problemResponse) VisitListMembershipsResponse(w http.ResponseWriter) error { return r.write(w) }
 func (r problemResponse) VisitGrantMembershipResponse(w http.ResponseWriter) error { return r.write(w) }
 func (r problemResponse) VisitRevokeMembershipResponse(w http.ResponseWriter) error {
+	return r.write(w)
+}
+func (r problemResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
 	return r.write(w)
 }
 func (r problemResponse) VisitListServiceAccountsResponse(w http.ResponseWriter) error {

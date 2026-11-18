@@ -77,6 +77,9 @@ type ServerInterface interface {
 	// GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
 	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema)
 	GetConnectionSchema(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params GetConnectionSchemaParams)
+	// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
+	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries)
+	DiscoverConnectionSchema(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params DiscoverConnectionSchemaParams)
 	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
 	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset})
 	GetWarehouseDataset(c *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params GetWarehouseDatasetParams)
@@ -107,6 +110,9 @@ type ServerInterface interface {
 	// GrantMembership Grant a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships)
 	GrantMembership(c *gin.Context, workspaceId WorkspaceID, params GrantMembershipParams)
+	// UpdateMembership Add connections to a workspace membership
+	// (PATCH /v1/workspaces/{workspace_id}/memberships/{id})
+	UpdateMembership(c *gin.Context, workspaceId WorkspaceID, id ResourceID, params UpdateMembershipParams)
 	// RevokeMembership Revoke a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships/{id}/revoke)
 	RevokeMembership(c *gin.Context, workspaceId WorkspaceID, id ResourceID, params RevokeMembershipParams)
@@ -1059,6 +1065,86 @@ func (siw *ServerInterfaceWrapper) GetConnectionSchema(c *gin.Context) {
 	siw.Handler.GetConnectionSchema(c, workspaceId, connectionId, params)
 }
 
+// DiscoverConnectionSchema operation middleware
+func (siw *ServerInterfaceWrapper) DiscoverConnectionSchema(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "connection_id" -------------
+	var connectionId ConnectionID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "connection_id", c.Param("connection_id"), &connectionId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter connection_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params DiscoverConnectionSchemaParams
+
+	headers := c.Request.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		siw.ErrorHandler(c, fmt.Errorf("Header parameter Idempotency-Key is required, but not found"), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for X-CSRF-Token, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter X-CSRF-Token: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.DiscoverConnectionSchema(c, workspaceId, connectionId, params)
+}
+
 // GetWarehouseDataset operation middleware
 func (siw *ServerInterfaceWrapper) GetWarehouseDataset(c *gin.Context) {
 
@@ -1694,6 +1780,105 @@ func (siw *ServerInterfaceWrapper) GrantMembership(c *gin.Context) {
 	}
 
 	siw.Handler.GrantMembership(c, workspaceId, params)
+}
+
+// UpdateMembership operation middleware
+func (siw *ServerInterfaceWrapper) UpdateMembership(c *gin.Context) {
+
+	var err error
+	_ = err
+
+	// ------------- Path parameter "workspace_id" -------------
+	var workspaceId WorkspaceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "workspace_id", c.Param("workspace_id"), &workspaceId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter workspace_id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Path parameter "id" -------------
+	var id ResourceID
+
+	err = runtime.BindStyledParameterWithOptions("simple", "id", c.Param("id"), &id, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: "", ValueIsUnescaped: true})
+	if err != nil {
+		siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter id: %w", err), http.StatusBadRequest)
+		return
+	}
+
+	// Parameter object where we will unmarshal all parameters from the context
+	var params UpdateMembershipParams
+
+	headers := c.Request.Header
+
+	// ------------- Required header parameter "Idempotency-Key" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("Idempotency-Key")]; found {
+		var IdempotencyKey IdempotencyKey
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for Idempotency-Key, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "Idempotency-Key", valueList[0], &IdempotencyKey, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: true, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter Idempotency-Key: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IdempotencyKey = IdempotencyKey
+
+	} else {
+		siw.ErrorHandler(c, fmt.Errorf("Header parameter Idempotency-Key is required, but not found"), http.StatusBadRequest)
+		return
+	}
+
+	// ------------- Optional header parameter "If-Match" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("If-Match")]; found {
+		var IfMatch IfMatch
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for If-Match, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "If-Match", valueList[0], &IfMatch, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter If-Match: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.IfMatch = &IfMatch
+
+	}
+
+	// ------------- Optional header parameter "X-CSRF-Token" -------------
+	if valueList, found := headers[http.CanonicalHeaderKey("X-CSRF-Token")]; found {
+		var XCSRFToken CSRFToken
+		n := len(valueList)
+		if n != 1 {
+			siw.ErrorHandler(c, fmt.Errorf("Expected one value for X-CSRF-Token, got %d", n), http.StatusBadRequest)
+			return
+		}
+
+		err = runtime.BindStyledParameterWithOptions("simple", "X-CSRF-Token", valueList[0], &XCSRFToken, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""})
+		if err != nil {
+			siw.ErrorHandler(c, fmt.Errorf("Invalid format for parameter X-CSRF-Token: %w", err), http.StatusBadRequest)
+			return
+		}
+
+		params.XCSRFToken = &XCSRFToken
+
+	}
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		middleware(c)
+		if c.IsAborted() {
+			return
+		}
+	}
+
+	siw.Handler.UpdateMembership(c, workspaceId, id, params)
 }
 
 // RevokeMembership operation middleware
@@ -2480,6 +2665,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.GetConnection)
 	router.PATCH(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id", wrapper.UpdateConnection)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/schema", wrapper.GetConnectionSchema)
+	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/schema/discoveries", wrapper.DiscoverConnectionSchema)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset", wrapper.GetWarehouseDataset)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query", wrapper.RunWarehouseQuery)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/connectors", wrapper.ListCatalogConnectors)
@@ -2490,6 +2676,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/invocations", wrapper.SubmitInvocation)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/memberships", wrapper.ListMemberships)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/memberships", wrapper.GrantMembership)
+	router.PATCH(options.BaseURL+"/v1/workspaces/:workspace_id/memberships/:id", wrapper.UpdateMembership)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/memberships/:id/revoke", wrapper.RevokeMembership)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/runs", wrapper.ListRuns)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/runs/:run_id", wrapper.GetRun)
@@ -2501,6 +2688,24 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/service-accounts", wrapper.CreateServiceAccount)
 	router.POST(options.BaseURL+"/v1/workspaces/:workspace_id/service-accounts/:id/revoke", wrapper.RevokeServiceAccount)
 	router.GET(options.BaseURL+"/v1/workspaces/:workspace_id/tasks/:task_id", wrapper.GetTask)
+}
+
+type DevicePoll409ResponseHeaders struct {
+	RetryAfter *DevicePollRetryAfterSeconds
+}
+type DevicePoll409ApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers DevicePoll409ResponseHeaders
+}
+
+type DevicePoll429ResponseHeaders struct {
+	RetryAfter *DevicePollRetryAfterSeconds
+}
+type DevicePoll429ApplicationProblemPlusJSONResponse struct {
+	Body Problem
+
+	Headers DevicePoll429ResponseHeaders
 }
 
 type Problem400ApplicationProblemPlusJSONResponse Problem
@@ -3339,16 +3544,19 @@ func (response ExchangeDeviceLogin403ApplicationProblemPlusJSONResponse) VisitEx
 }
 
 type ExchangeDeviceLogin409ApplicationProblemPlusJSONResponse struct {
-	Problem409ApplicationProblemPlusJSONResponse
+	DevicePoll409ApplicationProblemPlusJSONResponse
 }
 
 func (response ExchangeDeviceLogin409ApplicationProblemPlusJSONResponse) VisitExchangeDeviceLoginResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
 	w.WriteHeader(409)
 	_, err := buf.WriteTo(w)
 	return err
@@ -3371,16 +3579,19 @@ func (response ExchangeDeviceLogin410ApplicationProblemPlusJSONResponse) VisitEx
 }
 
 type ExchangeDeviceLogin429ApplicationProblemPlusJSONResponse struct {
-	Problem429ApplicationProblemPlusJSONResponse
+	DevicePoll429ApplicationProblemPlusJSONResponse
 }
 
 func (response ExchangeDeviceLogin429ApplicationProblemPlusJSONResponse) VisitExchangeDeviceLoginResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
 		return err
 	}
 	w.Header().Set("Content-Type", "application/problem+json")
+	if response.Headers.RetryAfter != nil {
+		w.Header().Set("Retry-After", fmt.Sprint(*response.Headers.RetryAfter))
+	}
 	w.WriteHeader(429)
 	_, err := buf.WriteTo(w)
 	return err
@@ -4654,6 +4865,159 @@ type GetConnectionSchema503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GetConnectionSchema503ApplicationProblemPlusJSONResponse) VisitGetConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchemaRequestObject struct {
+	WorkspaceId  WorkspaceID  `json:"workspace_id"`
+	ConnectionId ConnectionID `json:"connection_id"`
+	Params       DiscoverConnectionSchemaParams
+	Body         *DiscoverConnectionSchemaJSONRequestBody
+}
+
+type DiscoverConnectionSchemaResponseObject interface {
+	VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error
+}
+
+type DiscoverConnectionSchema202JSONResponse AdmissionResponse
+
+func (response DiscoverConnectionSchema202JSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(202)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema400ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema401ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema403ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema404ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema409ApplicationProblemPlusJSONResponse struct {
+	Problem409ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema409ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema410ApplicationProblemPlusJSONResponse struct {
+	Problem410ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema410ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema429ApplicationProblemPlusJSONResponse struct {
+	Problem429ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema429ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(429)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type DiscoverConnectionSchema503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response DiscoverConnectionSchema503ApplicationProblemPlusJSONResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -5994,6 +6358,175 @@ type GrantMembership503ApplicationProblemPlusJSONResponse struct {
 }
 
 func (response GrantMembership503ApplicationProblemPlusJSONResponse) VisitGrantMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(503)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembershipRequestObject struct {
+	WorkspaceId WorkspaceID `json:"workspace_id"`
+	Id          ResourceID  `json:"id"`
+	Params      UpdateMembershipParams
+	Body        *UpdateMembershipJSONRequestBody
+}
+
+type UpdateMembershipResponseObject interface {
+	VisitUpdateMembershipResponse(w http.ResponseWriter) error
+}
+
+type UpdateMembership200JSONResponse UpdateMembership200JSONResponseBody
+
+func (response UpdateMembership200JSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(UpdateMembership200JSONResponseBody(response)); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership400ApplicationProblemPlusJSONResponse struct {
+	Problem400ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership400ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(400)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership401ApplicationProblemPlusJSONResponse struct {
+	Problem401ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership401ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(401)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership403ApplicationProblemPlusJSONResponse struct {
+	Problem403ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership403ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(403)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership404ApplicationProblemPlusJSONResponse struct {
+	Problem404ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership404ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(404)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership409ApplicationProblemPlusJSONResponse struct {
+	Problem409ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership409ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(409)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership410ApplicationProblemPlusJSONResponse struct {
+	Problem410ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership410ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(410)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership412ApplicationProblemPlusJSONResponse struct {
+	Problem412ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership412ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(412)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership428ApplicationProblemPlusJSONResponse struct {
+	Problem428ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership428ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/problem+json")
+	w.WriteHeader(428)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type UpdateMembership503ApplicationProblemPlusJSONResponse struct {
+	Problem503ApplicationProblemPlusJSONResponse
+}
+
+func (response UpdateMembership503ApplicationProblemPlusJSONResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
 
 	var buf bytes.Buffer
 	if err := json.NewEncoder(&buf).Encode(response); err != nil {
@@ -7574,6 +8107,9 @@ type StrictServerInterface interface {
 	// GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
 	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema)
 	GetConnectionSchema(ctx context.Context, request GetConnectionSchemaRequestObject) (GetConnectionSchemaResponseObject, error)
+	// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
+	// (POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries)
+	DiscoverConnectionSchema(ctx context.Context, request DiscoverConnectionSchemaRequestObject) (DiscoverConnectionSchemaResponseObject, error)
 	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
 	// (GET /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset})
 	GetWarehouseDataset(ctx context.Context, request GetWarehouseDatasetRequestObject) (GetWarehouseDatasetResponseObject, error)
@@ -7604,6 +8140,9 @@ type StrictServerInterface interface {
 	// GrantMembership Grant a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships)
 	GrantMembership(ctx context.Context, request GrantMembershipRequestObject) (GrantMembershipResponseObject, error)
+	// UpdateMembership Add connections to a workspace membership
+	// (PATCH /v1/workspaces/{workspace_id}/memberships/{id})
+	UpdateMembership(ctx context.Context, request UpdateMembershipRequestObject) (UpdateMembershipResponseObject, error)
 	// RevokeMembership Revoke a workspace membership
 	// (POST /v1/workspaces/{workspace_id}/memberships/{id}/revoke)
 	RevokeMembership(ctx context.Context, request RevokeMembershipRequestObject) (RevokeMembershipResponseObject, error)
@@ -8290,6 +8829,41 @@ func (sh *strictHandler) GetConnectionSchema(ctx *gin.Context, workspaceId Works
 	}
 }
 
+// DiscoverConnectionSchema operation middleware
+func (sh *strictHandler) DiscoverConnectionSchema(ctx *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, params DiscoverConnectionSchemaParams) {
+	var request DiscoverConnectionSchemaRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.ConnectionId = connectionId
+	request.Params = params
+
+	var body DiscoverConnectionSchemaJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.DiscoverConnectionSchema(ctx.Request.Context(), request.(DiscoverConnectionSchemaRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "DiscoverConnectionSchema")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(DiscoverConnectionSchemaResponseObject); ok {
+		if err := validResponse.VisitDiscoverConnectionSchemaResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
 // GetWarehouseDataset operation middleware
 func (sh *strictHandler) GetWarehouseDataset(ctx *gin.Context, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params GetWarehouseDatasetParams) {
 	var request GetWarehouseDatasetRequestObject
@@ -8593,6 +9167,41 @@ func (sh *strictHandler) GrantMembership(ctx *gin.Context, workspaceId Workspace
 		sh.options.HandlerErrorFunc(ctx, err)
 	} else if validResponse, ok := response.(GrantMembershipResponseObject); ok {
 		if err := validResponse.VisitGrantMembershipResponse(ctx.Writer); err != nil {
+			sh.options.ResponseErrorHandlerFunc(ctx, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(ctx, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// UpdateMembership operation middleware
+func (sh *strictHandler) UpdateMembership(ctx *gin.Context, workspaceId WorkspaceID, id ResourceID, params UpdateMembershipParams) {
+	var request UpdateMembershipRequestObject
+
+	request.WorkspaceId = workspaceId
+	request.Id = id
+	request.Params = params
+
+	var body UpdateMembershipJSONRequestBody
+	if err := ctx.ShouldBindJSON(&body); err != nil {
+		sh.options.RequestErrorHandlerFunc(ctx, err)
+		return
+	}
+	request.Body = &body
+
+	handler := func(ctx *gin.Context, request interface{}) (interface{}, error) {
+		return sh.ssi.UpdateMembership(ctx.Request.Context(), request.(UpdateMembershipRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "UpdateMembership")
+	}
+
+	response, err := handler(ctx, request)
+
+	if err != nil {
+		sh.options.HandlerErrorFunc(ctx, err)
+	} else if validResponse, ok := response.(UpdateMembershipResponseObject); ok {
+		if err := validResponse.VisitUpdateMembershipResponse(ctx.Writer); err != nil {
 			sh.options.ResponseErrorHandlerFunc(ctx, err)
 		}
 	} else if response != nil {
@@ -8998,8 +9607,13 @@ type DenyDeviceLoginJSONRequestBody = api.DenyDeviceLoginJSONRequestBody
 type DenyDeviceLoginParams = api.DenyDeviceLoginParams
 type DeviceApproval = api.DeviceApproval
 type DeviceChallenge = api.DeviceChallenge
+type DevicePoll409 = api.DevicePoll409
+type DevicePoll429 = api.DevicePoll429
+type DevicePollRetryAfterSeconds = api.DevicePollRetryAfterSeconds
 type DeviceProof = api.DeviceProof
 type DeviceStart = api.DeviceStart
+type DiscoverConnectionSchemaJSONRequestBody = api.DiscoverConnectionSchemaJSONRequestBody
+type DiscoverConnectionSchemaParams = api.DiscoverConnectionSchemaParams
 type EffectState = api.EffectState
 type EffectSummary = api.EffectSummary
 type EventCursor = api.EventCursor
@@ -9035,6 +9649,7 @@ type Membership = api.Membership
 type MembershipGrantRequest = api.MembershipGrantRequest
 type MembershipPage = api.MembershipPage
 type MembershipRevokeRequest = api.MembershipRevokeRequest
+type MembershipUpdateRequest = api.MembershipUpdateRequest
 type MutationReplayResponse = api.MutationReplayResponse
 type MutationReplayResponseReplay = api.MutationReplayResponseReplay
 type MutationReplayResponseResultDisposition = api.MutationReplayResponseResultDisposition
@@ -9106,6 +9721,7 @@ type SafeConnectionInput = api.SafeConnectionInput
 type SafeConnectionPatch = api.SafeConnectionPatch
 type SafeOutcomeReference = api.SafeOutcomeReference
 type SafeOutcomeReferenceKind = api.SafeOutcomeReferenceKind
+type SchemaDiscoveryRequest = api.SchemaDiscoveryRequest
 type SchemaField = api.SchemaField
 type SchemaFieldType = api.SchemaFieldType
 type SchemaPermissionRevision = api.SchemaPermissionRevision
@@ -9133,6 +9749,9 @@ type TaskViewLane = api.TaskViewLane
 type TypedSchema = api.TypedSchema
 type UpdateConnectionJSONRequestBody = api.UpdateConnectionJSONRequestBody
 type UpdateConnectionParams = api.UpdateConnectionParams
+type UpdateMembership200JSONResponseBody = api.UpdateMembership200JSONResponseBody
+type UpdateMembershipJSONRequestBody = api.UpdateMembershipJSONRequestBody
+type UpdateMembershipParams = api.UpdateMembershipParams
 type WarehouseColumn = api.WarehouseColumn
 type WarehouseColumnKind = api.WarehouseColumnKind
 type WarehouseDatasetSnapshot = api.WarehouseDatasetSnapshot

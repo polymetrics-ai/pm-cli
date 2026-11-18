@@ -34,8 +34,14 @@
     "scripts/ci/check-docs.sh",
     "scripts/ci/in-ci-image.sh",
     "scripts/ci/go-test-report.py",
+    "scripts/ci/go-packages.sh",
+    "scripts/ci/stack-packages.txt",
+    "scripts/ci/check-ci-image.py",
+    "scripts/ci/test_ci_image.py",
     "build/ci/Dockerfile",
     "build/ci/requirements.txt",
+    "build/ci/keyring-packages.txt",
+    "build/ci/privileged-files.txt",
     "build/ci/capture-native-profile.py"
   ],
   "checked_prefixes": [

@@ -53,8 +53,11 @@ type AdmissionServiceConfig struct {
 	Registry          *HandlerRegistry
 	ResolveOperation  OperationResolver
 	ResolveHTTPPolicy HTTPPolicyResolver
-	Policy            store.RunBudgetPolicy
-	Random            io.Reader
+	// ResolveDiscovery resolves the declared relation of a schema discovery.
+	// Nil admits no discovery: every resource is unknown.
+	ResolveDiscovery DiscoveryResolver
+	Policy           store.RunBudgetPolicy
+	Random           io.Reader
 }
 
 // AdmissionService owns authenticated acceptance only. Handler resolution proves
@@ -66,6 +69,7 @@ type AdmissionService struct {
 	registry          *HandlerRegistry
 	resolveOperation  OperationResolver
 	resolveHTTPPolicy HTTPPolicyResolver
+	resolveDiscovery  DiscoveryResolver
 	policy            store.RunBudgetPolicy
 	random            io.Reader
 }
@@ -99,6 +103,7 @@ func NewAdmissionService(configuration AdmissionServiceConfig) (*AdmissionServic
 		registry:          configuration.Registry,
 		resolveOperation:  configuration.ResolveOperation,
 		resolveHTTPPolicy: configuration.ResolveHTTPPolicy,
+		resolveDiscovery:  configuration.ResolveDiscovery,
 		policy:            configuration.Policy,
 		random:            configuration.Random,
 	}, nil

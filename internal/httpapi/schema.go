@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/polymetrics-ai/pm-cli/internal/api"
+	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
@@ -15,10 +16,11 @@ import (
 // GetConnectionSchema reports the immutable metadata snapshot one authorized
 // connection currently selects, together with the effective typed fields built
 // from it. Nothing on this route discovers metadata, promotes a snapshot, or
-// selects one: the connection's own config.json owns the sole schema_ref
-// selection, and a failed or partial discovery never replaces the last complete
-// valid snapshot. The route reads no provider credential and performs no
-// provider I/O.
+// selects one, and a failed or partial discovery never replaces the last
+// complete valid snapshot. Without a configured file metadata root the route
+// reads PM PostgreSQL (storedConnectionSchema); with one, the connection's own
+// config.json owns the schema_ref selection. The route reads no provider
+// credential and performs no provider I/O.
 func (service *Service) GetConnectionSchema(
 	ctx context.Context,
 	request GetConnectionSchemaRequestObject,
@@ -28,14 +30,6 @@ func (service *Service) GetConnectionSchema(
 		return asProblemResponse(err, nil), nil
 	}
 	connection, err := service.identity.InspectConnection(ctx, state.identity.Actor, scope, request.ConnectionId)
-	if err != nil {
-		return asProblemResponse(err, nil), nil
-	}
-	// The connection identity is workspace-scoped, so the store is the one
-	// namespaced by the authorized organization, workspace and connection, and
-	// the binding names that same owner: another workspace's snapshot under the
-	// same connection identity is neither reachable nor readable here.
-	store, err := service.connectionSchemaStore(scope, connection.ConnectionID)
 	if err != nil {
 		return asProblemResponse(err, nil), nil
 	}
@@ -51,6 +45,17 @@ func (service *Service) GetConnectionSchema(
 	}
 	if request.Params.ProviderAccountId != nil {
 		binding.ProviderAccountID = *request.Params.ProviderAccountId
+	}
+	if service.connectionMetadataRoot == "" {
+		return service.storedConnectionSchema(ctx, state.identity.Actor, scope, binding, request.Params.SnapshotId), nil
+	}
+	// The connection identity is workspace-scoped, so the store is the one
+	// namespaced by the authorized organization, workspace and connection, and
+	// the binding names that same owner: another workspace's snapshot under the
+	// same connection identity is neither reachable nor readable here.
+	store, err := service.connectionSchemaStore(scope, connection.ConnectionID)
+	if err != nil {
+		return asProblemResponse(err, nil), nil
 	}
 	selected, present, err := store.Selection()
 	if err != nil {
@@ -73,7 +78,7 @@ func (service *Service) GetConnectionSchema(
 			ConnectorId:  binding.ConnectorID,
 			ConnectionId: binding.ConnectionID,
 			Selected:     nullableText(""),
-			Snapshot:     absentSchemaSnapshot(binding),
+			Snapshot:     absentSchemaSnapshot(binding, "no_complete_discovery"),
 			Fields:       []api.SchemaField{},
 		}), nil
 	}
@@ -86,6 +91,85 @@ func (service *Service) GetConnectionSchema(
 		return asProblemResponse(err, nil), nil
 	}
 	return GetConnectionSchema200JSONResponse(projected), nil
+}
+
+// storedConnectionSchema answers the schema route from PM PostgreSQL when no
+// file metadata root is configured, which is the case in every product
+// deployment. PM PostgreSQL holds no selection before the selection slice of
+// ADR 0007, and a discovery never selects, so the selection is absent. A named
+// snapshot is read from the stored candidates of the connection, and it must
+// carry the exact binding the caller names.
+func (service *Service) storedConnectionSchema(
+	ctx context.Context,
+	actor contract.Actor,
+	scope contract.Scope,
+	binding schema.Binding,
+	snapshotID *string,
+) GetConnectionSchemaResponseObject {
+	if snapshotID == nil {
+		return GetConnectionSchema200JSONResponse(api.ConnectionSchemaInspection{
+			OrgId:        scope.OrgID,
+			WorkspaceId:  scope.WorkspaceID,
+			ConnectorId:  binding.ConnectorID,
+			ConnectionId: binding.ConnectionID,
+			Selected:     nullableText(""),
+			Snapshot:     absentSchemaSnapshot(binding, "no_selection"),
+			Fields:       []api.SchemaField{},
+		})
+	}
+	reference := contract.SemanticDigest(*snapshotID)
+	if err := reference.Validate(); err != nil {
+		return asProblemResponse(errInvalidHTTPInput, nil)
+	}
+	snapshot, err := service.identity.InspectSchemaCandidate(ctx, actor, scope, binding.ConnectionID, reference)
+	if err != nil {
+		return asProblemResponse(err, nil)
+	}
+	if snapshot.Binding != binding {
+		return asProblemResponse(concealedSchemaSelector(schema.ErrSnapshotScope), nil)
+	}
+	projected, err := connectionSchemaResponse(scope, binding, reference, &snapshot)
+	if err != nil {
+		return asProblemResponse(err, nil)
+	}
+	return GetConnectionSchema200JSONResponse(projected)
+}
+
+// DiscoverConnectionSchema admits one durable discovery run of one declared
+// relation. The run stores one complete candidate through a worker activity;
+// this route performs no provider I/O, reads no credential and never selects.
+func (service *Service) DiscoverConnectionSchema(
+	ctx context.Context,
+	request DiscoverConnectionSchemaRequestObject,
+) (DiscoverConnectionSchemaResponseObject, error) {
+	state, scope, err := scopedState(ctx, request.WorkspaceId)
+	if err != nil {
+		return asProblemResponse(err, nil), nil
+	}
+	requestKey := string(request.Params.IdempotencyKey)
+	if request.Body == nil || requestKey == "" {
+		return invalidRequestResponse(), nil
+	}
+	result, err := service.admission.AcceptDiscovery(ctx, state.identity.Actor, scope, app.DiscoveryInvocation{
+		ConnectionRef: request.ConnectionId,
+		Resource:      request.Body.Resource,
+		RequestKey:    requestKey,
+	})
+	if err != nil {
+		return asMutationProblemResponse(err, requestKey, api.SafeOutcomeReferenceKindRun, ""), nil
+	}
+	return DiscoverConnectionSchema202JSONResponse(api.AdmissionResponse{
+		IntentDigest:     string(result.IntentDigest),
+		OutcomeReference: api.SafeOutcomeReference{Kind: api.SafeOutcomeReferenceKindRun, Ref: result.RunID},
+		Replay:           result.Replayed,
+		RequestKey:       requestKey,
+		RunRef:           result.RunID,
+		State:            api.AdmissionResponseStateAccepted,
+	}), nil
+}
+
+func (r problemResponse) VisitDiscoverConnectionSchemaResponse(w http.ResponseWriter) error {
+	return r.write(w)
 }
 
 // concealedSchemaSelector translates the metadata store's refusals that the
@@ -127,9 +211,9 @@ func (service *Service) connectionSchemaStore(scope contract.Scope, connectionID
 
 // absentSchemaSnapshot reports the withheld snapshot identity of a connection
 // that has selected nothing yet. It carries the exact binding the caller asked
-// about and no fields, so an absent selection is never rendered as an empty
-// discovery.
-func absentSchemaSnapshot(binding schema.Binding) api.ConnectionSchemaSnapshot {
+// about, the one blocker that explains the absence, and no fields, so an
+// absent selection is never rendered as an empty discovery.
+func absentSchemaSnapshot(binding schema.Binding, blocker string) api.ConnectionSchemaSnapshot {
 	return api.ConnectionSchemaSnapshot{
 		ConnectorId:        binding.ConnectorID,
 		ConnectionId:       binding.ConnectionID,
@@ -139,7 +223,7 @@ func absentSchemaSnapshot(binding schema.Binding) api.ConnectionSchemaSnapshot {
 		SourceRevision:     binding.SourceRevision,
 		ContentFingerprint: "",
 		Complete:           false,
-		Blockers:           []string{"no_complete_discovery"},
+		Blockers:           []string{blocker},
 		FieldCount:         0,
 	}
 }

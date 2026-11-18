@@ -16,6 +16,9 @@ go_binary(
 
 go_test(
     name = "pm-stack-fixture_test",
-    srcs = ["main_test.go"],
+    srcs = [
+        "identity_provider_test.go",
+        "main_test.go",
+    ],
     embed = [":pm-stack-fixture_lib"],
 )

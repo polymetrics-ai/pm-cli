@@ -702,15 +702,8 @@ type SQLRelation struct {
 }
 
 func (relation SQLRelation) Validate() error {
-	if relation.Binding == "" || !utf8.ValidString(relation.Binding) ||
-		strings.ContainsAny(relation.Binding, "\x00\r\n") || strings.TrimSpace(relation.Binding) != relation.Binding {
-		return fmt.Errorf("%w: binding identity must be a nonempty stable reference", ErrSQLRelation)
-	}
-	if _, err := QuoteSQLIdentifier(relation.Schema); err != nil {
-		return fmt.Errorf("%w: schema: %v", ErrSQLRelation, err)
-	}
-	if _, err := QuoteSQLIdentifier(relation.Name); err != nil {
-		return fmt.Errorf("%w: relation: %v", ErrSQLRelation, err)
+	if err := relation.validateIdentity(); err != nil {
+		return err
 	}
 	if len(relation.Columns) == 0 {
 		return fmt.Errorf("%w: relation must declare at least one column", ErrSQLRelation)
@@ -731,6 +724,23 @@ func (relation SQLRelation) Validate() error {
 	}
 	if keys == 0 {
 		return fmt.Errorf("%w: relation must declare a key column", ErrSQLRelation)
+	}
+	return nil
+}
+
+// validateIdentity checks only the declared binding, schema and table. A
+// metadata statement reads the live columns of exactly this relation, so it
+// needs no declared column list: the first discovery of a relation has none.
+func (relation SQLRelation) validateIdentity() error {
+	if relation.Binding == "" || !utf8.ValidString(relation.Binding) ||
+		strings.ContainsAny(relation.Binding, "\x00\r\n") || strings.TrimSpace(relation.Binding) != relation.Binding {
+		return fmt.Errorf("%w: binding identity must be a nonempty stable reference", ErrSQLRelation)
+	}
+	if _, err := QuoteSQLIdentifier(relation.Schema); err != nil {
+		return fmt.Errorf("%w: schema: %v", ErrSQLRelation, err)
+	}
+	if _, err := QuoteSQLIdentifier(relation.Name); err != nil {
+		return fmt.Errorf("%w: relation: %v", ErrSQLRelation, err)
 	}
 	return nil
 }
@@ -907,16 +917,14 @@ func BuildSQLStatement(
 	input []SQLColumnValue,
 	rowBound uint64,
 ) (SQLStatement, error) {
+	if operation.Transport.StatementKind == contract.PostgreSQLStatementMetadata {
+		return buildSQLMetadataStatement(operation, relation, input)
+	}
 	mapped, qualified, projection, err := prepareSQLStatement(operation, relation, input)
 	if err != nil {
 		return SQLStatement{}, err
 	}
 	switch operation.Transport.StatementKind {
-	case contract.PostgreSQLStatementMetadata:
-		if len(input) != 0 {
-			return SQLStatement{}, fmt.Errorf("%w: metadata statement takes no mapped input", ErrSQLStatement)
-		}
-		return sqlMetadataStatement(relation), nil
 	case contract.PostgreSQLStatementSelect:
 		return sqlSelectStatement(relation, mapped, qualified, projection, rowBound)
 	case contract.PostgreSQLStatementMappedUpsert:
@@ -968,6 +976,30 @@ func prepareSQLStatement(
 		return nil, "", "", err
 	}
 	return mapped, qualified, projection, nil
+}
+
+// buildSQLMetadataStatement builds the declared metadata statement. It binds
+// only the declared schema and table as parameters, so it validates only the
+// relation identity. The caller that compares the observed columns with a
+// declared column list (VerifySQLRelation) validates that list itself.
+func buildSQLMetadataStatement(
+	operation contract.Operation,
+	relation SQLRelation,
+	input []SQLColumnValue,
+) (SQLStatement, error) {
+	if err := validateSQLSourceFacts(operation); err != nil {
+		return SQLStatement{}, err
+	}
+	if err := relation.validateIdentity(); err != nil {
+		return SQLStatement{}, err
+	}
+	if relation.Binding != operation.Transport.RelationBinding {
+		return SQLStatement{}, fmt.Errorf("%w: relation binding does not match the declared operation", ErrSQLRelation)
+	}
+	if len(input) != 0 {
+		return SQLStatement{}, fmt.Errorf("%w: metadata statement takes no mapped input", ErrSQLStatement)
+	}
+	return sqlMetadataStatement(relation), nil
 }
 
 func sqlMetadataStatement(relation SQLRelation) SQLStatement {

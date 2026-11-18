@@ -1,0 +1,37 @@
+# The privileged files and the closed directories of the CI job image (#323).
+# The `image` check (scripts/ci/check-ci-image.py) walks the root file system
+# of the image on one device and compares it with this file. Each difference
+# fails the check and is printed. No file may have a file capability.
+#
+# setid MODE UID:GID PATH: the only setuid or setgid regular files, with their
+# octal mode and numeric owner. All come from the digest-pinned Ubuntu base.
+setid 2755 0:42 /usr/bin/chage
+setid 4755 0:0 /usr/bin/chfn
+setid 4755 0:0 /usr/bin/chsh
+setid 2755 0:42 /usr/bin/expiry
+setid 4755 0:0 /usr/bin/gpasswd
+setid 4755 0:0 /usr/bin/mount
+setid 4755 0:0 /usr/bin/newgrp
+setid 4755 0:0 /usr/bin/passwd
+setid 4755 0:0 /usr/bin/su
+setid 4755 0:0 /usr/bin/umount
+setid 2755 0:42 /usr/sbin/pam_extrausers_chkpwd
+setid 2755 0:42 /usr/sbin/unix_chkpwd
+#
+# closed PATH: directories whose mode denies search to others. A job user that
+# cannot search a directory cannot open or run a file in it. The check fails
+# when the job user can search a directory that it cannot list, because the
+# walk cannot scan that directory, but the job user can run a file in it.
+# The Ubuntu base:
+closed /home/ubuntu
+closed /root
+closed /var/cache/apt/archives/partial
+closed /var/cache/ldconfig
+# openssl (the first package layer):
+closed /etc/ssl/private
+# systemd-tmpfiles --create in the postinst of systemd (the keyring layer):
+closed /etc/credstore
+closed /etc/credstore.encrypted
+closed /var/cache/private
+closed /var/lib/private
+closed /var/log/private

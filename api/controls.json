@@ -81,6 +81,12 @@
       "disposition": "confirmed_refusal"
     },
     {
+      "status": 404,
+      "code": "schema_relation_unknown",
+      "safe_retry_action": "correct_input",
+      "disposition": "confirmed_refusal"
+    },
+    {
       "status": 409,
       "code": "foundation_incompatible",
       "safe_retry_action": "after_capability_change",
@@ -614,6 +620,15 @@
       "requires_if_match": true
     },
     {
+      "operation_id": "updateMembership",
+      "method": "PATCH",
+      "path": "/v1/workspaces/{workspace_id}/memberships/{id}",
+      "required_body_fields": ["membership", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
       "operation_id": "uploadArtifact",
       "method": "POST",
       "path": "/v1/workspaces/{workspace_id}/artifacts",
@@ -638,6 +653,15 @@
       "required_body_fields": [],
       "optional_body_fields": [],
       "requires_idempotency_key": false,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "discoverConnectionSchema",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries",
+      "required_body_fields": ["resource"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
       "requires_if_match": false
     },
     {

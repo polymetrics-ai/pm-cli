@@ -32,8 +32,8 @@ var queryChildBuild struct {
 }
 
 // queryChildBinary builds ./cmd/pm-query with CGO_ENABLED=1 and the go tool on
-// PATH. The binary goes to the ignored .cache directory of the checkout, so a
-// new run replaces it. CI sets TMPDIR to a persistent cache, so a new temporary
+// PATH, with the build limit. The binary goes to the ignored .cache directory
+// of the checkout, so a new run replaces it. CI sets TMPDIR to a persistent cache, so a new temporary
 // directory for each run would stay there.
 func queryChildBinary() (string, error) {
 	queryChildBuild.once.Do(func() {
@@ -52,12 +52,11 @@ func queryChildBinary() (string, error) {
 			queryChildBuild.err = fmt.Errorf("create the binary directory: %w", err)
 			return
 		}
-		binary := filepath.Join(dir, "pm-query")
-		cmd := exec.Command(goTool, "build", "-o", binary, "./cmd/pm-query")
-		cmd.Dir = root
-		cmd.Env = append(os.Environ(), "CGO_ENABLED=1")
-		if out, err := cmd.CombinedOutput(); err != nil {
-			queryChildBuild.err = fmt.Errorf("build pm-query: %v\n%s", err, out)
+		ctx, cancel := context.WithTimeout(context.Background(), buildLimit)
+		defer cancel()
+		binary, err := buildBinary(ctx, binaries{root: root, goTool: goTool}, dir, "pm-query", "./cmd/pm-query", true)
+		if err != nil {
+			queryChildBuild.err = err
 			return
 		}
 		queryChildBuild.path = binary

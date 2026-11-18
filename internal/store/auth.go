@@ -19,6 +19,18 @@ var (
 	ErrAuthPollTooSoon      = errors.New("authentication challenge polled too soon")
 )
 
+// DevicePollWait is a pending or too-soon device exchange outcome. It wraps
+// ErrAuthChallengePending or ErrAuthPollTooSoon and carries the time from the
+// database clock until the stored next_poll_at, so the server can state the
+// cadence that it enforces.
+type DevicePollWait struct {
+	Outcome error
+	Wait    time.Duration
+}
+
+func (wait *DevicePollWait) Error() string { return wait.Outcome.Error() }
+func (wait *DevicePollWait) Unwrap() error { return wait.Outcome }
+
 type AuthDeploymentTransactionFunc func(context.Context, *Transaction) error
 
 // WithinAuthDeployment installs the deployment scope used only by pre-workspace
@@ -808,7 +820,7 @@ func ExchangeDeviceChallenge(
 		return ErrAuthChallengeExpired
 	}
 	if (state == DeviceChallengePending || state == DeviceChallengeApproved) && now.Before(nextPollAt) {
-		return ErrAuthPollTooSoon
+		return &DevicePollWait{Outcome: ErrAuthPollTooSoon, Wait: nextPollAt.Sub(now)}
 	}
 	switch state {
 	case DeviceChallengePending:
@@ -819,7 +831,7 @@ func ExchangeDeviceChallenge(
 		`, deploymentID, challengeID, now, pollSeconds); err != nil {
 			return safeMetadataWriteError("advance device login poll cadence", err)
 		}
-		return ErrAuthChallengePending
+		return &DevicePollWait{Outcome: ErrAuthChallengePending, Wait: time.Duration(pollSeconds) * time.Second}
 	case DeviceChallengeDenied:
 		return ErrAuthChallengeDenied
 	case DeviceChallengeExpired:

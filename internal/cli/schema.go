@@ -1,33 +1,154 @@
 package cli
 
 import (
+	"context"
 	"errors"
+	"fmt"
+	"io"
 
 	pmapi "github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/spf13/cobra"
 )
 
-// The schema commands are thin clients of the connection schema route. They
-// report the immutable metadata snapshot the connection currently selects and
-// the exact typed fields it declares. They never discover metadata, never
-// promote or select a snapshot, and never resolve a provider credential: the
-// connection's own config.json owns the sole schema_ref selection, and a failed
+// The schema commands are thin clients of the connection schema routes. show
+// reports the immutable metadata snapshot the connection currently selects and
+// the exact typed fields it declares. discover asks the server to admit one
+// durable discovery run; pm-worker performs the metadata I/O. No schema
+// command selects a snapshot or resolves a provider credential, and a failed
 // or partial discovery never replaces the last complete valid snapshot.
 func newSchemaCommand(runtime *commandRuntime) *cobra.Command {
 	command := &cobra.Command{
 		Use:   "schema",
-		Short: "Inspect the selected metadata snapshot of one connection",
-		Long: `Inspect the immutable metadata snapshot one explicitly selected connection uses.
+		Short: "Discover or inspect the metadata snapshots of one connection",
+		Long: `Discover or inspect the immutable metadata snapshots of one explicitly selected connection.
 
-The command reports the connection's current selection, that snapshot's declared binding and
-completeness, and the effective typed fields built from it. It is read-only, requires no provider
-credential, and performs no discovery or selection.
+show reports the connection's current selection, that snapshot's declared binding and
+completeness, and the effective typed fields built from it. It is read-only. discover starts one
+durable discovery run of one declared relation, which stores one complete candidate snapshot and
+never selects it. No schema command requires a provider credential in the client.
 
 Help and completion for this namespace work offline, without a reachable server or any credential.`,
 		Args: noArgs,
 	}
-	command.AddCommand(newSchemaShowCommand(runtime))
+	command.AddCommand(newSchemaShowCommand(runtime), newSchemaDiscoverCommand(runtime))
 	return command
+}
+
+func newSchemaDiscoverCommand(runtime *commandRuntime) *cobra.Command {
+	resource := singleString{name: "resource"}
+	requestKey := singleString{name: "request-key"}
+	command := &cobra.Command{
+		Use:   "discover",
+		Short: "Start one discovery of a declared relation of one connection",
+		Long: `Start one durable discovery of one relation that the connection declares.
+
+The server admits a discovery run. pm-worker runs only the connector's declared metadata
+operation for that relation and stores one complete candidate snapshot. A discovery never
+selects a snapshot.
+
+With --wait, the command waits for the run and exits with a nonzero code when the run does
+not succeed. An interrupt ends only the wait, not the run, and exits with code 0 (issue #437).
+Run "pm runs inspect RUN_ID" with the run ID from the notice to see its state.
+
+A resource that the connection does not declare is refused with schema_relation_unknown and
+exit code 3 before any run starts. Check the --resource value against the relations that the
+connection declares.
+
+When the outcome of the admission is unknown, the command exits with code 7 and names the
+request key. Repeat this exact command, unchanged, with that --request-key to get the same
+run. A new key starts a new discovery.`,
+		Args: noArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			connection := runtime.flags.connection
+			if !connection.set {
+				return usageFailure(errors.New("--connection is required"))
+			}
+			if !resource.set {
+				return usageFailure(errors.New("--resource is required"))
+			}
+			explicitKey := ""
+			if requestKey.set {
+				explicitKey = requestKey.value
+			}
+			selection, err := pmapi.SelectRequestKey(explicitKey)
+			if err != nil {
+				if errors.Is(err, pmapi.ErrInvalidRequestKey) {
+					return usageFailure(errors.New("--request-key is invalid"))
+				}
+				return err
+			}
+			ctx, cancel, bundle, err := runtime.requestBundle(command, true, true)
+			if err != nil {
+				return err
+			}
+			defer cancel()
+			// A context that ends before the send sends nothing, so its own
+			// error stands. From the send on, the outcome can be unknown.
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			response, err := bundle.client.API().DiscoverConnectionSchemaWithResponse(
+				ctx,
+				pmapi.WorkspaceID(bundle.config.workspace),
+				pmapi.ConnectionID(connection.value),
+				&pmapi.DiscoverConnectionSchemaParams{IdempotencyKey: pmapi.IdempotencyKey(selection.RequestKey)},
+				pmapi.DiscoverConnectionSchemaJSONRequestBody{Resource: resource.value},
+			)
+			if err != nil {
+				return discoveryAdmissionError(selection.RequestKey, err)
+			}
+			// A refusal, also a server-reported unknown outcome, names the request
+			// key as the shared mutation recovery does.
+			if _, err := recoveredMutationResponse(selection.RequestKey, response, nil); err != nil {
+				return err
+			}
+			if !bundle.config.wait {
+				return renderWireResponse(command.OutOrStdout(), bundle.config.output, response)
+			}
+			envelope, err := pmapi.DecodeEnvelope(response)
+			if err != nil {
+				return err
+			}
+			if problem := pmapi.EnvelopeError(envelope); problem != nil {
+				return problem
+			}
+			admitted, err := pmapi.DecodeAdmissionResponse(envelope.Body)
+			if err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintf(command.ErrOrStderr(), "notice: accepted discovery run %s; waiting for its terminal state\n", admitted.RunRef)
+			waitContext, cancelWait := context.WithTimeout(command.Context(), bundle.config.requestTimeout)
+			defer cancelWait()
+			// The event stream is followed for its terminal projection only. The
+			// run result projection then decides the exit code.
+			completed, err := watchRunToTerminal(waitContext, io.Discard, bundle, admitted.RunRef)
+			if err != nil || !completed {
+				return err
+			}
+			return fetchAndRenderRunResult(waitContext, command.OutOrStdout(), bundle, admitted.RunRef)
+		},
+	}
+	command.Flags().Var(&resource, resource.name, "Declared resource of the relation to discover")
+	command.Flags().Var(&requestKey, requestKey.name, "Existing retained request key for an intentional replay; omit to allocate a new key")
+	return command
+}
+
+// discoveryAdmissionError maps a failed admission send. A refusal of the
+// client before any request keeps its own exit code. Every other failure,
+// also the request deadline or an interrupt during the send, can follow a
+// committed admission, so its outcome is unknown: the command exits with code
+// 7 and names the request key, as the shared mutation recovery does, and a
+// repeat with that key replays the same admission.
+func discoveryAdmissionError(requestKey string, err error) error {
+	if errors.Is(err, pmapi.ErrCompatibility) || errors.Is(err, pmapi.ErrInstanceMismatch) ||
+		errors.Is(err, pmapi.ErrUnsafeClientRequest) || errors.Is(err, pmapi.ErrMalformedEnvelope) {
+		return err
+	}
+	return &exitError{
+		code:    7,
+		message: fmt.Sprintf("PM discovery admission outcome is unknown; repeat this exact command, unchanged, with %s to get the same run", requestKeyFlag(requestKey)),
+		cause:   err,
+	}
 }
 
 func newSchemaShowCommand(runtime *commandRuntime) *cobra.Command {

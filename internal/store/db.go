@@ -14,8 +14,9 @@ const (
 	ApplicationDatabase   = "pm_app"
 	MigratorRole          = "pm_app_migrator"
 	RuntimeRole           = "pm_app_runtime"
-	ControlSchemaRevision = "pm.control/v19"
-	ControlSchemaVersion  = int64(19)
+	BootstrapRole         = "pm_app_bootstrap"
+	ControlSchemaRevision = "pm.control/v23"
+	ControlSchemaVersion  = int64(23)
 )
 
 type PoolConfig struct {
@@ -52,6 +53,23 @@ func OpenPool(ctx context.Context, configuration PoolConfig) (*Pool, error) {
 	if parsed.ConnConfig.Database != ApplicationDatabase || parsed.ConnConfig.User != RuntimeRole {
 		return nil, fmt.Errorf("runtime pool requires role %s on database %s", RuntimeRole, ApplicationDatabase)
 	}
+	configurePool(parsed, configuration)
+	inner, err := pgxpool.NewWithConfig(ctx, parsed)
+	if err != nil {
+		return nil, fmt.Errorf("open PostgreSQL pool: %w", err)
+	}
+	pool := &Pool{inner: inner}
+	if err := pool.verifyRuntimeIdentity(ctx); err != nil {
+		inner.Close()
+		return nil, err
+	}
+	return pool, nil
+}
+
+// configurePool applies the connection bounds and the session reset that every
+// PM application pool uses. A connection returns to the pool only with an
+// empty tenant and actor scope.
+func configurePool(parsed *pgxpool.Config, configuration PoolConfig) {
 	parsed.MaxConns = configuration.MaxConns
 	parsed.MinConns = configuration.MinConns
 	parsed.MinIdleConns = 0
@@ -95,17 +113,6 @@ func OpenPool(ctx context.Context, configuration PoolConfig) (*Pool, error) {
 			requestedActorID == "" && requestedActorKind == "" &&
 			effectiveActorID == "" && effectiveActorKind == "", nil
 	}
-
-	inner, err := pgxpool.NewWithConfig(ctx, parsed)
-	if err != nil {
-		return nil, fmt.Errorf("open PostgreSQL pool: %w", err)
-	}
-	pool := &Pool{inner: inner}
-	if err := pool.verifyRuntimeIdentity(ctx); err != nil {
-		inner.Close()
-		return nil, err
-	}
-	return pool, nil
 }
 
 func (pool *Pool) verifyRuntimeIdentity(ctx context.Context) error {
