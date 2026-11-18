@@ -7,7 +7,6 @@ package starter
 // retry. Each test names the defect that makes it fail.
 
 import (
-	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -97,28 +96,24 @@ func awaitCreated(t *testing.T, f *fakeTimers, want time.Duration) *fakeTimer {
 	return nil
 }
 
-// markerWriter is a fake output tee. It signals once when its output holds
-// the marker.
-type markerWriter struct {
-	mu     sync.Mutex
-	data   bytes.Buffer
-	marker string
-	seen   chan struct{}
-	once   sync.Once
-}
-
-func newMarkerWriter(marker string) *markerWriter {
-	return &markerWriter{marker: marker, seen: make(chan struct{})}
-}
-
-func (w *markerWriter) Write(p []byte) (int, error) {
-	w.mu.Lock()
-	defer w.mu.Unlock()
-	w.data.Write(p)
-	if strings.Contains(w.data.String(), w.marker) {
-		w.once.Do(func() { close(w.seen) })
+// awaitTeeMarker reads the chunks of one tee channel until they hold the
+// marker. One time limit bounds the whole read. Each receive waits for the
+// next output of the child, and nothing repeats a receive.
+func awaitTeeMarker(t *testing.T, tee <-chan []byte, marker string) {
+	t.Helper()
+	limit := time.After(testLimit)
+	var data strings.Builder
+	for !strings.Contains(data.String(), marker) {
+		select {
+		case chunk, open := <-tee:
+			if !open {
+				t.Fatalf("the tee closed before the marker %q; output %q", marker, data.String())
+			}
+			data.Write(chunk)
+		case <-limit:
+			t.Fatalf("no marker %q in the tee within %s; output %q", marker, testLimit, data.String())
+		}
 	}
-	return len(p), nil
 }
 
 func awaitSignal(t *testing.T, signal <-chan struct{}, what string) {
@@ -191,13 +186,11 @@ func startShell(t *testing.T, f *fakeTimers, script string, stdin *os.File, extr
 func TestStarterSendsSIGTERMAtTheStartLimit(t *testing.T) {
 	f := newFakeTimers()
 	stdin, _ := heldStdin(t)
-	stdout := newMarkerWriter("out-a\n")
-	stderr := newMarkerWriter("err-a\n")
 	process := startShell(t, f, `printf 'out-a\n'; printf 'err-a\n' >&2; exec cat`, stdin,
-		func(c *Config) { c.StdoutTee = stdout; c.StderrTee = stderr })
+		func(c *Config) { c.TeeChunks = 8 })
 	start := awaitCreated(t, f, fakeStart)
-	awaitSignal(t, stdout.seen, "standard output from the child")
-	awaitSignal(t, stderr.seen, "standard error from the child")
+	awaitTeeMarker(t, process.StdoutTee(), "out-a\n")
+	awaitTeeMarker(t, process.StderrTee(), "err-a\n")
 
 	results := make(chan result, 1)
 	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
@@ -217,12 +210,11 @@ func TestStarterSendsSIGTERMAtTheStartLimit(t *testing.T) {
 func TestStarterSendsSIGKILLAfterTheStopLimit(t *testing.T) {
 	f := newFakeTimers()
 	stdin, _ := heldStdin(t)
-	armed := newMarkerWriter("armed\n")
 	// The trap runs before the marker, and exec keeps the ignored SIGTERM.
 	process := startShell(t, f, `trap '' TERM; printf 'armed\n'; exec cat`, stdin,
-		func(c *Config) { c.StdoutTee = armed })
+		func(c *Config) { c.TeeChunks = 8 })
 	start := awaitCreated(t, f, fakeStart)
-	awaitSignal(t, armed.seen, "the child's marker that it ignores SIGTERM")
+	awaitTeeMarker(t, process.StdoutTee(), "armed\n")
 
 	results := make(chan result, 1)
 	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
@@ -491,5 +483,44 @@ func TestStarterKeepsAReadyLineThatCameBeforeTheStartDeadline(t *testing.T) {
 	}
 	if !process.Running() {
 		t.Fatalf("Running reports a running child as not running: %s", got.report)
+	}
+}
+
+// (j) The child writes more output than the tee holds, then exits with no
+// ready line. The test takes nothing from the tee until the starter reported
+// the exit. The report must come with no fired timer, the output readers must
+// have ended, and the tee must hold or count every byte.
+// Defect: a tee that the starter waits for, so a consumer that takes nothing
+// holds an output reader after the exit.
+func TestStarterOutputReadersEndWhileATeeTakesNothing(t *testing.T) {
+	f := newFakeTimers()
+	data := strings.Repeat("0123456789abcdef", 16384)
+	file := filepath.Join(t.TempDir(), "stdout")
+	if err := os.WriteFile(file, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	process := startShell(t, f, `cat "$1"; exit 0`, nil, func(c *Config) { c.TeeChunks = 1 }, file)
+	awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	got := awaitResult(t, results, f)
+	if got.ok || got.report.Outcome != OutcomeEOFBeforeReady || got.report.Stop != StopNone ||
+		!got.report.Exited || !got.report.OutputEnded {
+		t.Fatalf("report %s, want end of file before the ready line, the exit and ended output", got.report)
+	}
+	select {
+	case <-process.readersEnd:
+	default:
+		t.Fatalf("the output readers did not end before the report: %s", got.report)
+	}
+	var teed int64
+	for chunk := range process.StdoutTee() {
+		teed += int64(len(chunk))
+	}
+	if got.report.StdoutTotal != int64(len(data)) || got.report.StdoutTeeDropped == 0 ||
+		teed+got.report.StdoutTeeDropped != got.report.StdoutTotal {
+		t.Fatalf("stdout total %d, tee %d, dropped %d; want %d bytes in all, with some dropped",
+			got.report.StdoutTotal, teed, got.report.StdoutTeeDropped, len(data))
 	}
 }

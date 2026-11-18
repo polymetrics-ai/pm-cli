@@ -106,9 +106,12 @@ type Config struct {
 	// SnapshotBytes bounds each output snapshot: the report keeps the last
 	// SnapshotBytes bytes of standard output and of standard error.
 	SnapshotBytes int
-	// StdoutTee and StderrTee, when set, also receive each output chunk.
-	StdoutTee io.Writer
-	StderrTee io.Writer
+	// TeeChunks, when more than 0, makes the starter also send a copy of each
+	// output chunk to the channels of Process.StdoutTee and Process.StderrTee.
+	// Each channel holds at most TeeChunks chunks. The starter never waits for
+	// a tee: when a channel is full, it drops the chunk and counts its bytes
+	// in the report. It closes each channel when the reader of its pipe ends.
+	TeeChunks int
 
 	// reap waits for the process and reaps it. Nil means cmd.Wait. The Go
 	// developer tests use it to hold the reaper.
@@ -131,6 +134,8 @@ func (c Config) check() error {
 		return errors.New("starter: the ready line must have text and end with a line feed")
 	case c.SnapshotBytes <= 0:
 		return errors.New("starter: the snapshot bound must be more than 0")
+	case c.TeeChunks < 0:
+		return errors.New("starter: the tee capacity must not be less than 0")
 	}
 	return nil
 }
@@ -183,6 +188,10 @@ type Report struct {
 	// StdoutTotal and StderrTotal count every byte read from each pipe.
 	StdoutTotal int64
 	StderrTotal int64
+	// StdoutTeeDropped and StderrTeeDropped count the bytes that the starter
+	// did not send to a full tee channel.
+	StdoutTeeDropped int64
+	StderrTeeDropped int64
 	// OutputEnded is true when both output readers read end of file.
 	OutputEnded bool
 	// Elapsed is the time from the start to the ready line or to end of file
@@ -232,6 +241,9 @@ type Process struct {
 	stderrRead *os.File
 	stdout     *snapshot
 	stderr     *snapshot
+	// stdoutTee and stderrTee are nil when Config.TeeChunks is 0.
+	stdoutTee chan []byte
+	stderrTee chan []byte
 
 	// readyRead is the read end of the ready pipe.
 	readyRead *os.File
@@ -320,6 +332,10 @@ func Start(config Config) (*Process, error) {
 		stderr:     newSnapshot(config.SnapshotBytes),
 		outcome:    OutcomeNone,
 	}
+	if config.TeeChunks > 0 {
+		process.stdoutTee = make(chan []byte, config.TeeChunks)
+		process.stderrTee = make(chan []byte, config.TeeChunks)
+	}
 	closeAll(readyWrite, stdoutWrite, stderrWrite)
 
 	reap := config.reap
@@ -331,8 +347,8 @@ func Start(config Config) (*Process, error) {
 		close(process.exited)
 	}()
 	process.readers.Add(2)
-	go process.copyOutput(stdoutRead, process.stdout, config.StdoutTee)
-	go process.copyOutput(stderrRead, process.stderr, config.StderrTee)
+	go process.copyOutput(stdoutRead, process.stdout, process.stdoutTee)
+	go process.copyOutput(stderrRead, process.stderr, process.stderrTee)
 	go func() {
 		process.readers.Wait()
 		close(process.readersEnd)
@@ -372,6 +388,14 @@ func (p *Process) stopWatching() {
 
 // PID returns the process ID.
 func (p *Process) PID() int { return p.cmd.Process.Pid }
+
+// StdoutTee returns the channel of standard output chunks. It is nil when
+// Config.TeeChunks is 0. The starter closes it when the stdout reader ends.
+func (p *Process) StdoutTee() <-chan []byte { return p.stdoutTee }
+
+// StderrTee returns the channel of standard error chunks. It is nil when
+// Config.TeeChunks is 0. The starter closes it when the stderr reader ends.
+func (p *Process) StderrTee() <-chan []byte { return p.stderrTee }
 
 // Done reports whether the starter finished with the process: it exited and
 // the starter reported it, or the stop sequence ended.
@@ -573,19 +597,19 @@ func (p *Process) stopSequence() Report {
 		return p.afterExit(StopAfterSIGKILL)
 	case <-kill.C():
 	}
-	p.closeReadEnds()
+	p.closeReadEndsAndJoin()
 	return p.finish(StopNoExitAtLimit)
 }
 
 // afterExit waits once for the output readers, up to the kill limit. If they
-// did not end, it closes the read ends.
+// did not end, it closes the read ends and joins the readers.
 func (p *Process) afterExit(stop StopResult) Report {
 	drain := p.config.Timers.NewTimer(p.config.Limits.Kill)
 	select {
 	case <-p.readersEnd:
 		drain.Stop()
 	case <-drain.C():
-		p.closeReadEnds()
+		p.closeReadEndsAndJoin()
 	}
 	return p.finish(stop)
 }
@@ -608,8 +632,8 @@ func (p *Process) report(outcome Outcome, stop StopResult, at time.Time) Report 
 	}
 	report.ReadyData, report.ReadyEOF, report.ReadyReadStopped = p.readyState()
 	var stdoutEnded, stderrEnded bool
-	report.Stdout, report.StdoutTotal, stdoutEnded = p.stdout.state()
-	report.Stderr, report.StderrTotal, stderrEnded = p.stderr.state()
+	report.Stdout, report.StdoutTotal, report.StdoutTeeDropped, stdoutEnded = p.stdout.state()
+	report.Stderr, report.StderrTotal, report.StderrTeeDropped, stderrEnded = p.stderr.state()
 	report.OutputEnded = stdoutEnded && stderrEnded
 	if !at.IsZero() {
 		report.Elapsed = at.Sub(p.started)
@@ -623,21 +647,45 @@ func (p *Process) report(outcome Outcome, stop StopResult, at time.Time) Report 
 	return report
 }
 
-func (p *Process) closeReadEnds() {
+// closeReadEndsAndJoin closes the output read ends and waits until both
+// output readers returned. A closed read end ends a blocked read at once, and
+// no other step of a reader waits: the snapshot takes a short lock, and the
+// tee send never waits. So this wait ends without a timer.
+func (p *Process) closeReadEndsAndJoin() {
 	closeAll(p.stdoutRead, p.stderrRead)
+	<-p.readersEnd
 }
 
 // copyOutput reads one output pipe until end of file, or until the starter
-// closes its read end.
-func (p *Process) copyOutput(source *os.File, destination *snapshot, tee io.Writer) {
+// closes its read end. It closes the tee channel when it returns.
+func (p *Process) copyOutput(source *os.File, destination *snapshot, tee chan []byte) {
 	defer p.readers.Done()
 	defer source.Close()
 	var writer io.Writer = destination
 	if tee != nil {
-		writer = io.MultiWriter(destination, tee)
+		defer close(tee)
+		writer = teeWriter{snapshot: destination, tee: tee}
 	}
 	_, err := io.Copy(writer, source)
 	destination.end(err == nil)
+}
+
+// teeWriter writes each chunk to the snapshot and sends a copy to the tee
+// channel without a wait. When the channel is full, it counts the bytes of
+// the chunk as dropped.
+type teeWriter struct {
+	snapshot *snapshot
+	tee      chan<- []byte
+}
+
+func (w teeWriter) Write(chunk []byte) (int, error) {
+	n, err := w.snapshot.Write(chunk)
+	select {
+	case w.tee <- append([]byte(nil), chunk...):
+	default:
+		w.snapshot.drop(len(chunk))
+	}
+	return n, err
 }
 
 // readReady is the one blocking reader of the ready pipe. It reads at most
@@ -715,11 +763,12 @@ func (p *Process) readyState() ([]byte, bool, bool) {
 
 // snapshot keeps the last size bytes written to it and counts every byte.
 type snapshot struct {
-	mu    sync.Mutex
-	size  int
-	data  []byte
-	total int64
-	eof   bool
+	mu      sync.Mutex
+	size    int
+	data    []byte
+	total   int64
+	dropped int64
+	eof     bool
 }
 
 func newSnapshot(size int) *snapshot { return &snapshot{size: size} }
@@ -735,16 +784,23 @@ func (s *snapshot) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// drop counts bytes that the tee did not get.
+func (s *snapshot) drop(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.dropped += int64(n)
+}
+
 func (s *snapshot) end(eof bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.eof = eof
 }
 
-func (s *snapshot) state() ([]byte, int64, bool) {
+func (s *snapshot) state() ([]byte, int64, int64, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]byte(nil), s.data...), s.total, s.eof
+	return append([]byte(nil), s.data...), s.total, s.dropped, s.eof
 }
 
 func closeAll(files ...*os.File) {
