@@ -39,6 +39,7 @@ go_test(
         "connections_test.go",
         "dynamic_test.go",
         "result_document_test.go",
+        "sessions_test.go",
         "tree_test.go",
         "workspaces_test.go",
     ],
