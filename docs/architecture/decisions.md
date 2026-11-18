@@ -23,7 +23,7 @@ This is a portable index, not a second decision log. The complete accepted ratio
 | Process ready signal | `pm-server` and `pm-worker` send one fixed ready line on a descriptor that the starter names with `--ready-fd`. The starter owns the start time limit. The worker line means that its own Temporal checks passed and its pollers started | [0005](../decisions/0005-process-ready-signal.md) |
 | Operator bootstrap | The operator creates the first workspace, admin, login binding and provider accounts with `pm-server bootstrap` and a dedicated bootstrap database credential, once for each deployment and organization. Accepted 2026-11-16 | [0006](../decisions/0006-operator-bootstrap.md) |
 | Schema discovery and selection | Discovered metadata snapshots and each connection's schema selection live in PM PostgreSQL; pm-server and pm-worker read them only from there. Accepted 2026-11-16 | [0007](../decisions/0007-schema-discovery-and-selection.md) |
-| Inherited server listener | A starter can pass `pm-server` a TCP listener that it already holds, with `--listen-fd`; the process uses it only at the configured `server.listen` address. Proposed 2026-11-18 | [0008](../decisions/0008-inherited-server-listener.md) |
+| Inherited server listener | A starter can pass `pm-server` a TCP listener that it already holds, with `--listen-fd`; the process uses it only at the configured `server.listen` address. Accepted 2026-11-18 | [0008](../decisions/0008-inherited-server-listener.md) |
 
 ## Applying a decision
 

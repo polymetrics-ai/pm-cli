@@ -1,6 +1,6 @@
 # 0008: pm-server can take an inherited listener from its starter
 
-Date: 2026-11-18. Status: proposed. This record does not authorize application work. Every flag, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #72.
+Date: 2026-11-18. Status: accepted 2026-11-18. This record does not authorize application work. Every flag, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #72.
 
 ## Context
 
@@ -52,9 +52,9 @@ Each refusal: exit code 1, nothing served, and exactly one stderr line after `pm
 | Order | Case | Text after `pm-server: ` |
 | --- | --- | --- |
 | 1, while the flags are read | `--listen-fd` with no value | `flag needs an argument: --listen-fd` (the text of the flag parser, which contains no value) |
-| 2, after the flags are read | `--listen-fd` given more than once | `--listen-fd may be supplied exactly once` |
-| 2, after the flags are read | A value that breaks the number rules above | `--listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
-| 2, after the flags are read | `--listen-fd` and `--ready-fd` name the same descriptor | `--listen-fd and --ready-fd require different descriptors` |
+| 2, after the `--config` and `--secrets-directory` checks | `--listen-fd` given more than once | `--listen-fd may be supplied exactly once` |
+| 2, after the `--config` and `--secrets-directory` checks | A value that breaks the number rules above | `--listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | `--listen-fd` and `--ready-fd` name the same descriptor | `--listen-fd and --ready-fd require different descriptors` |
 | 3, after the configuration is validated | A descriptor that fails any check of "The checks of the descriptor" | `--listen-fd requires an inherited listener at the configured server address` |
 
 The order-2 checks run after the `--config` and `--secrets-directory` checks and before the process opens or reads the configuration file. So the process refuses a malformed value also when the configuration path does not exist. This is the place of the `--ready-fd` check of ADR 0005. Only the order-3 check needs the configuration, because it compares the socket with `server.listen`.
