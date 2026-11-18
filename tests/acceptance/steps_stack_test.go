@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,9 @@ type stackScenario struct {
 	keyring    *keyring.Keyring
 	workspace  string
 	result     commandResult
+	// secondListener is the listener of step N2. The scenario close step
+	// closes it.
+	secondListener *net.TCPListener
 }
 
 // startedProcess is one process that the starter started, with the report of
@@ -81,6 +85,7 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *
 	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.result.stderrContains)
 	registerStartedServerSteps(sc, scenario)
 	registerLaneSteps(sc, scenario, lane)
+	registerListenerSteps(sc, scenario)
 }
 
 // newConfiguration is step 1. It runs the shared build and migration step,
@@ -171,12 +176,17 @@ func (s *stackScenario) runWithDescriptor(ctx context.Context, name, arguments, 
 // process limits and the real timer source, and waits once for its ready line
 // or end of file. Only the start limit fails the step. The Then steps check
 // every other result. The step output records the duration of the start.
+// start owns the listener copy in config.Listener until starter.Start takes
+// it. It closes that copy when it returns before starter.Start, and
+// starter.Start closes it on every other path.
 func (s *stackScenario) start(ctx context.Context, name string, config starter.Config) (*startedProcess, error) {
 	if _, ok := s.processes[name]; ok {
+		closeListenerCopy(config)
 		return nil, fmt.Errorf("the scenario already started %s", name)
 	}
 	binary, err := s.harness.binary(name)
 	if err != nil {
+		closeListenerCopy(config)
 		return nil, err
 	}
 	config.Path = binary
@@ -197,6 +207,14 @@ func (s *stackScenario) start(ctx context.Context, name string, config starter.C
 		return nil, fmt.Errorf("%s: %s: %s", name, started.report.Outcome, started.report)
 	}
 	return started, nil
+}
+
+// closeListenerCopy closes the listener copy of a start that did not reach
+// starter.Start.
+func closeListenerCopy(config starter.Config) {
+	if config.Listener != nil {
+		_ = config.Listener.Close()
+	}
 }
 
 func (s *stackScenario) started(name string) (*startedProcess, error) {
@@ -346,6 +364,9 @@ func (s *stackScenario) close() error {
 		if report.Stop != starter.StopNone && (report.Stop != starter.StopAfterSIGTERM || report.ExitCode != 0) {
 			errs = append(errs, fmt.Errorf("stop %s at the end of the scenario: %s", name, report))
 		}
+	}
+	if s.secondListener != nil {
+		errs = append(errs, s.secondListener.Close())
 	}
 	if s.deployment != nil {
 		errs = append(errs, s.deployment.close())

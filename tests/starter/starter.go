@@ -92,7 +92,8 @@ type Config struct {
 	// Stdin is given to the process as is. Nil gives the null device.
 	Stdin *os.File
 	// ReadyFD is the number of the ready descriptor in the process, 3 or
-	// more. The descriptors from 3 to ReadyFD-1 are closed in the process.
+	// more. Each descriptor from 3 to ReadyFD-1 is closed in the process,
+	// except the descriptor that ListenFD names when Listener is set.
 	ReadyFD   int
 	ReadyMode ReadyMode
 	// ListenFD, when more than 0, is the number of an inherited listener

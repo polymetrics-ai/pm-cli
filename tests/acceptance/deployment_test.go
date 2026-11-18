@@ -1,6 +1,7 @@
 package acceptance
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
@@ -14,9 +15,11 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -51,6 +54,11 @@ type deployment struct {
 	// pm-server a copy with --listen-fd. releaseListener closes it once.
 	listener    *net.TCPListener
 	releaseOnce sync.Once
+	// holdListener is set by the --listen-fd scenario starts (criteria N3,
+	// N4 and N5). Then an answer through the edge does not release the
+	// listener, so the starter keeps its copy until the deployment closes
+	// (criteria N1: "No step of LF1, LF2 or LF3 closes that listener").
+	holdListener atomic.Bool
 }
 
 // newDeployment makes the deployment directory, the CA, the HTTPS edge, the
@@ -86,8 +94,9 @@ func (d *deployment) open() error {
 	}
 	d.listen = d.listener.Addr().String()
 	// The harness closes its copy of the listener after pm-server served one
-	// request through the edge (ADR 0008, "Ownership of the listener").
-	if d.edge, err = newLaneEdge(d.authority, d.listen, d.releaseListener); err != nil {
+	// request through the edge (ADR 0008, "Ownership of the listener"),
+	// unless a --listen-fd scenario holds it (servedThroughEdge).
+	if d.edge, err = newLaneEdge(d.authority, d.listen, d.servedThroughEdge); err != nil {
 		return err
 	}
 	d.origin = d.edge.URL
@@ -168,6 +177,14 @@ func (d *deployment) releaseListener() {
 			_ = d.listener.Close()
 		}
 	})
+}
+
+// servedThroughEdge runs for each answer of pm-server through the edge. It
+// releases the listener unless a --listen-fd scenario holds it.
+func (d *deployment) servedThroughEdge() {
+	if !d.holdListener.Load() {
+		d.releaseListener()
+	}
 }
 
 // close stops the edge, removes the client and the user of the deployment
@@ -397,6 +414,50 @@ func TestDeploymentHoldsThePmServerListenerUntilItsRelease(t *testing.T) {
 	}
 	if err := d.giveListener(&starter.Config{}); err == nil {
 		t.Fatal("giveListener after the release = nil error, want a refusal")
+	}
+}
+
+// Developer check of the listener copy in startAndWait (RED review r1,
+// finding R1), not acceptance proof. It needs no stack and starts no
+// process. Defect: start returns before starter.Start takes the copy that
+// giveListener made, and nobody closes that copy, so the address stays held
+// after the harness releases its own listener. The check turns off the
+// garbage collector, so that no finalizer closes a lost copy.
+func TestStartAndWaitClosesTheListenerCopyWhenTheStartFailsEarly(t *testing.T) {
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	cases := []struct {
+		name    string
+		harness *stackHarness
+		started bool
+	}{
+		{"pm-server already started", &stackHarness{built: true, server: "/nonexistent/pm-server"}, true},
+		{"binary lookup failed", &stackHarness{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			listener, err := holdLoopbackListener()
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &deployment{
+				listener:      listener,
+				listen:        listener.Addr().String(),
+				dir:           t.TempDir(),
+				configuration: filepath.Join(t.TempDir(), "pm-deployment.json"),
+			}
+			t.Cleanup(d.releaseListener)
+			s := &stackScenario{harness: c.harness, deployment: d, processes: map[string]*startedProcess{}}
+			if c.started {
+				s.processes["pm-server"] = &startedProcess{}
+			}
+			if err := s.startAndWait(context.Background(), "pm-server"); err == nil {
+				t.Fatal("startAndWait = nil error, want the early start error")
+			}
+			d.releaseListener()
+			if err := bindAddressOnce(d.listen); err != nil {
+				t.Fatalf("a bind of the address after the early start error and the release = %v; want a free address, with no listener copy left open", err)
+			}
+		})
 	}
 }
 
