@@ -16,6 +16,7 @@ entry_of() { /usr/bin/stat -c '%u %g %f' -- "$1"; }
 sha256_of() { /usr/bin/sha256sum -- "$1"; }
 crontab_of() { /usr/bin/crontab -u "$1" -l; }
 put() { printf '%s %s %s\n' "$@"; }
+read_line() { IFS= read -r path; }
 sync_file() { /usr/bin/sync -- "$1"; }
 grep=/usr/bin/grep
 python=/usr/bin/python3
@@ -70,11 +71,12 @@ current_list() {
   listing=$(/usr/bin/mktemp "$list.find.XXXXXX") || return 1
   if ! /usr/bin/find "$runner" "$unit" "$home" \( -path "$runner/_diag" -o -path "$home/pm-live-cache" \
     -o -path "$home/.local/share/containers" \) -prune -o -print > "$listing" ||
-    ! /usr/bin/sort -o "$listing" -- "$listing"; then
+    ! /usr/bin/sort -o "$listing" -- "$listing" || ! lines=$(/usr/bin/wc -l < "$listing"); then
     /bin/rm -f -- "$listing"
     return 1
   fi
-  while IFS= read -r path; do
+  count=0
+  while read_line; do
     if [ -L "$path" ]; then
       content=$(/usr/bin/readlink -- "$path") || break
       content="link:$content"
@@ -88,11 +90,12 @@ current_list() {
     fi
     entry=$(entry_of "$path") || break
     put "$entry" "$content" "${path#"$root"}" || break
-    path=
+    count=$((count + 1))
   done < "$listing"
   /bin/rm -f -- "$listing"
-  # read empties PATH at the end of the list; a break keeps it.
-  [ -z "$path" ]
+  # read gives the same status for a read error as for the end of the file. So each line
+  # of the listing must give one record: a break or a lost line fails (#403 R3-1).
+  [ "$count" -eq "$((lines))" ]
 }
 forbidden_files() {
   if [ -e "$home/.ssh" ] || [ -L "$home/.ssh" ]; then fail "$home/.ssh exists"; fi

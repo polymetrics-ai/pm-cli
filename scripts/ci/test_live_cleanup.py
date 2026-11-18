@@ -27,6 +27,7 @@ RUNNER_FIXED = CLEANUP_FIXED[:2] + [
     "entry_of() { /usr/bin/stat -c '%u %g %f' -- \"$1\"; }\n",
     'sha256_of() { /usr/bin/sha256sum -- "$1"; }\n',
     'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n', "put() { printf '%s %s %s\\n' \"$@\"; }\n",
+    "read_line() { IFS= read -r path; }\n",
     'sync_file() { /usr/bin/sync -- "$1"; }\n', "grep=/usr/bin/grep\n", "python=/usr/bin/python3\n"]
 FAKE_PODMAN = """import os, subprocess, sys
 state, args = STATE, sys.argv[1:]
@@ -291,6 +292,9 @@ class RunnerCheck(unittest.TestCase):
             f'crontab_of() {{ if [ -f "{state}/crontab" ]; then cat "{state}/crontab"; '
             'else echo "no crontab for $1" >&2; return 1; fi; }\n',
             f"put() {{ [ -f '{state}/put-empty' ] || {{ [ ! -f '{state}/put-fails' ] && printf '%s %s %s\\n' \"$@\"; }}; }}\n",
+            # With read-fails, each read after the first fails like a read error: no text, status 1.
+            f"read_line() {{ reads=$((${{reads:-0}} + 1)); [ ! -f '{state}/read-fails' ] || [ \"$reads\" -lt 2 ] "
+            "|| { path=; return 1; }; IFS= read -r path; }\n",
             f'sync_file() {{ "{host.bin / "sync"}" "$1"; }}\n', f"grep={host.bin / 'grep'}\n", f"python={sys.executable}\n"])
         host.run_root.parent.parent.rename(host.root / "runtime-gone")  # the gate needs no runtime folder
         self.runner = host.root / "opt/pm-live/actions-runner"
@@ -491,6 +495,18 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(record.returncode, 1, record.stdout)
                 self.assertEqual(self.list.read_bytes(), self.recorded)
                 self.assertEqual([path.name for path in self.list.parent.iterdir()], [self.list.name])
+
+    def test_a_read_error_after_a_record_keeps_the_old_list(self):
+        # #403 R3-1: a read error after one complete record looked like the end of the listing.
+        (self.runner / ".env").write_text("A=2\n")  # a new list would differ
+        self.host.flag("read-fails")
+        record, check = self.host.run(self.script, "--record"), self.check()
+        self.assertEqual(record.returncode, 1, record.stdout)
+        self.assertIn("the list was not recorded", record.stdout)
+        self.assertEqual(self.list.read_bytes(), self.recorded)
+        self.assertEqual([path.name for path in self.list.parent.iterdir()], [self.list.name])
+        self.assertEqual(check.returncode, 1, check.stdout)
+        self.assertIn("cannot be listed, read or hashed", check.stdout)
 
     def test_a_failed_or_empty_compare_listing_never_matches(self):
         # crrao's addendum to N1: an empty baseline and a failed or empty fresh listing.
