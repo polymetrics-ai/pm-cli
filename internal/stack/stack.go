@@ -20,7 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync/atomic"
+	"sync"
 	"syscall"
 	"time"
 
@@ -1261,12 +1261,30 @@ func startHashGroupOwner() (*exec.Cmd, io.WriteCloser, error) {
 	return owner, input, nil
 }
 
-// endHashGroupOwner closes the stdin pipe of the owner and reaps it. The exit
-// by the final SIGKILL is expected. Each other exit is an error: the owner
-// exited before the final signal, or the final signal did not reach it.
+// hashGroupOwnerEndLimit bounds the wait for the exit of the group owner of a
+// hash call after the final group signal. A developer check sets a shorter
+// value.
+var hashGroupOwnerEndLimit = composeHashWaitDelay
+
+// endHashGroupOwner closes the stdin pipe of the owner and waits for its exit,
+// at most hashGroupOwnerEndLimit. One goroutine reaps the owner. It keeps
+// waiting after the limit, so the owner is reaped when it exits. When the
+// limit ends first, the owner is not reaped, and no code signals its group
+// after that point. The exit by the final SIGKILL is expected. Each other
+// exit is an error: the owner exited before the final signal, or the final
+// signal did not reach it.
 func endHashGroupOwner(owner *exec.Cmd, input io.Closer) error {
 	_ = input.Close()
-	err := owner.Wait()
+	result := make(chan error, 1)
+	go func() { result <- owner.Wait() }()
+	limit := time.NewTimer(hashGroupOwnerEndLimit)
+	defer limit.Stop()
+	var err error
+	select {
+	case err = <-result:
+	case <-limit.C:
+		return fmt.Errorf("the process group owner of the Compose hash call did not exit within %s of the final signal, so it is not reaped", hashGroupOwnerEndLimit)
+	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
@@ -1308,10 +1326,17 @@ func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration conf
 	// WaitDelay bounds the wait for the output pipe after the leader exited,
 	// also when another process of the group still holds the pipe.
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: group}
-	var cancelled atomic.Bool
+	// Cancel keeps its own signal error. os/exec returns that error only when
+	// the command has no error of its own, so it is joined below.
+	var cancelMutex sync.Mutex
+	var cancelled bool
+	var cancelErr error
 	command.Cancel = func() error {
-		cancelled.Store(true)
-		return killHashGroup(group)
+		err := killHashGroup(group)
+		cancelMutex.Lock()
+		cancelled, cancelErr = true, err
+		cancelMutex.Unlock()
+		return err
 	}
 	command.WaitDelay = composeHashWaitDelay
 	runErr := command.Run()
@@ -1319,10 +1344,12 @@ func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration conf
 	// cancellation. A process of the group can still run. Without a
 	// cancellation, SIGKILL goes to the whole group now, while the owner is
 	// alive. Then the owner is reaped. A cleanup error stops the up.
-	var signalErr error
-	if !cancelled.Load() {
+	cancelMutex.Lock()
+	signalErr := cancelErr
+	if !cancelled {
 		signalErr = killHashGroup(group)
 	}
+	cancelMutex.Unlock()
 	cleanupErr := errors.Join(signalErr, endHashGroupOwner(owner, ownerInput))
 	if runErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

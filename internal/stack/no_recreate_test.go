@@ -248,18 +248,10 @@ func requireOwnedGroupSignals(t *testing.T) {
 func TestStartServicesStopsAfterAFailedHashGroupCleanup(t *testing.T) {
 	services := map[string]string{"postgres": "hash-postgres"}
 	containers := map[string][]string{"postgres": {"true hash-postgres"}}
-	injectCleanupFailure := func(t *testing.T) {
-		previous := signalHashGroup
-		signalHashGroup = func(pgid int) error {
-			_ = previous(pgid)
-			return syscall.EINVAL
-		}
-		t.Cleanup(func() { signalHashGroup = previous })
-	}
 
 	t.Run("after a successful hash call", func(t *testing.T) {
 		fake := installFakeEngine(t, services, containers)
-		injectCleanupFailure(t)
+		injectHashCleanupFailure(t)
 		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
 
 		err := awaitStartServices(t, rt, context.Background())
@@ -275,7 +267,7 @@ func TestStartServicesStopsAfterAFailedHashGroupCleanup(t *testing.T) {
 		makeStallFIFO(t, fake, "ready")
 		writeTestFile(t, filepath.Join(fake, "mode"), "exit\n", 0o600)
 		helperExit := watchHelperExit(t, fake)
-		injectCleanupFailure(t)
+		injectHashCleanupFailure(t)
 		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
 
 		err := awaitStartServices(t, rt, context.Background())
@@ -285,6 +277,114 @@ func TestStartServicesStopsAfterAFailedHashGroupCleanup(t *testing.T) {
 		assertNoComposeCall(t, fake)
 		assertHelperExited(t, fake, helperExit)
 	})
+}
+
+// injectHashCleanupFailure makes each group signal of a hash call fail with
+// EINVAL for one test. It sends the real signal first, so no process of the
+// group stays.
+func injectHashCleanupFailure(t *testing.T) {
+	t.Helper()
+	previous := signalHashGroup
+	signalHashGroup = func(pgid int) error {
+		_ = previous(pgid)
+		return syscall.EINVAL
+	}
+	t.Cleanup(func() { signalHashGroup = previous })
+}
+
+// TestStartServicesKeepsTheCancellationCleanupError injects a failure of the
+// group signal that Cancel sends at a cancellation or at the deadline (round
+// 4 finding F1). os/exec returns the Cancel error only when the command has
+// no error of its own, and the killed hash call has one. startServices must
+// return both causes and must not run compose up. Each wait has one time
+// limit. No sleep, no retry.
+func TestStartServicesKeepsTheCancellationCleanupError(t *testing.T) {
+	services := map[string]string{"postgres": "hash-postgres"}
+	containers := map[string][]string{"postgres": {"true hash-postgres"}}
+
+	t.Run("a cancelled caller", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		makeStallFIFO(t, fake, "stall")
+		started := makeStallFIFO(t, fake, "started")
+		injectHashCleanupFailure(t)
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		results := make(chan error, 1)
+		go func() { results <- rt.startServices(ctx, noRecreateTestConfiguration(t), true, "postgres") }()
+		awaitFIFOLine(t, started)
+		cancel()
+		var err error
+		select {
+		case err = <-results:
+		case <-time.After(hashTestLimit):
+			t.Fatalf("startServices did not return within %s after the cancellation", hashTestLimit)
+		}
+		if !errors.Is(err, context.Canceled) || !errors.Is(err, syscall.EINVAL) {
+			t.Fatalf("startServices after a cancellation with a failed group signal = %v; want the cancellation and the cleanup error", err)
+		}
+		assertNoComposeCall(t, fake)
+	})
+
+	t.Run("the deadline", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		makeStallFIFO(t, fake, "stall")
+		previous := composeHashTimeout
+		composeHashTimeout = 200 * time.Millisecond
+		t.Cleanup(func() { composeHashTimeout = previous })
+		injectHashCleanupFailure(t)
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+
+		err := awaitStartServices(t, rt, context.Background())
+		if !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, syscall.EINVAL) {
+			t.Fatalf("startServices at the deadline with a failed group signal = %v; want the deadline and the cleanup error", err)
+		}
+		assertNoComposeCall(t, fake)
+	})
+}
+
+// TestHashGroupOwnerEndIsBounded refuses the final group signal and stops the
+// owner instead (round 4 finding F2). A stopped owner does not read the end
+// of its stdin pipe, so it does not exit. startServices must return within
+// its own limit, with the signal error and the "not reaped" error, and must
+// not run compose up. The cleanup of the check ends the owner on every exit.
+// Each wait has one time limit. No sleep, no retry.
+func TestHashGroupOwnerEndIsBounded(t *testing.T) {
+	services := map[string]string{"postgres": "hash-postgres"}
+	containers := map[string][]string{"postgres": {"true hash-postgres"}}
+	fake := installFakeEngine(t, services, containers)
+	previousLimit := hashGroupOwnerEndLimit
+	hashGroupOwnerEndLimit = 200 * time.Millisecond
+	previousSignal := signalHashGroup
+	var mutex sync.Mutex
+	var owners []int
+	signalHashGroup = func(pgid int) error {
+		mutex.Lock()
+		owners = append(owners, pgid)
+		mutex.Unlock()
+		if err := syscall.Kill(pgid, syscall.SIGSTOP); err != nil {
+			return err
+		}
+		return syscall.EPERM
+	}
+	t.Cleanup(func() {
+		hashGroupOwnerEndLimit = previousLimit
+		signalHashGroup = previousSignal
+		mutex.Lock()
+		defer mutex.Unlock()
+		for _, pgid := range owners {
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			_ = syscall.Kill(-pgid, syscall.SIGCONT)
+		}
+	})
+	rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+
+	err := awaitStartServices(t, rt, context.Background())
+	if !errors.Is(err, syscall.EPERM) || err == nil || !strings.Contains(err.Error(), "is not reaped") {
+		t.Fatalf("startServices with a stopped owner and a refused group signal = %v; want the signal error and the owner error", err)
+	}
+	assertNoComposeCall(t, fake)
 }
 
 // watchHelperExit makes the alive pipe and starts its one reader before the
