@@ -374,7 +374,9 @@ func TestBootstrapPoolIdentityCheckEndsAtItsLimit(t *testing.T) {
 }
 
 // silentPostgresPeer accepts TCP connections on a loopback port and never
-// writes. It closes every connection when the test ends.
+// writes. When the test ends, it closes the listener, waits for the accept
+// loop to return, and then closes every accepted connection. So a connection
+// that the loop accepted just before the close is also closed.
 func silentPostgresPeer(t *testing.T) string {
 	t.Helper()
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -383,7 +385,9 @@ func silentPostgresPeer(t *testing.T) string {
 	}
 	var mu sync.Mutex
 	var connections []net.Conn
+	acceptDone := make(chan struct{})
 	go func() {
+		defer close(acceptDone)
 		for {
 			connection, err := listener.Accept()
 			if err != nil {
@@ -396,6 +400,14 @@ func silentPostgresPeer(t *testing.T) string {
 	}()
 	t.Cleanup(func() {
 		_ = listener.Close()
+		// A closed listener ends Accept at once. The wait has one limit.
+		limit := time.NewTimer(10 * time.Second)
+		defer limit.Stop()
+		select {
+		case <-acceptDone:
+		case <-limit.C:
+			t.Errorf("the silent peer accept loop did not return 10 s after its listener closed")
+		}
 		mu.Lock()
 		defer mu.Unlock()
 		for _, connection := range connections {
