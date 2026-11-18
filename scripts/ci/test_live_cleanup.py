@@ -28,7 +28,7 @@ CLEANUP_FIXED = ["root=\n", "proc=/proc\n", "podman=/usr/bin/podman\n",
 RUNNER_FIXED = CLEANUP_FIXED[:2] + [
     'uid_of() { /usr/bin/id -u "$1"; }\n', CLEANUP_FIXED[3],
     "entry_of() { /usr/bin/stat -c '%u %g %f' -- \"$1\"; }\n",
-    "sha256_of() { /usr/bin/sha256sum -- \"$1\" | /usr/bin/cut -d ' ' -f 1; }\n",
+    'sha256_of() { /usr/bin/sha256sum -- "$1"; }\n',
     'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n',
     "at_jobs() { if [ -x /usr/bin/atq ]; then /usr/bin/atq; fi; }\n"]
 FAKE_PODMAN = """import os, subprocess, sys
@@ -59,6 +59,8 @@ print(status.st_uid + foreign, status.st_gid, format(status.st_mode, "x"))
 FAKE_SHA = """import hashlib, os, sys
 with open(os.path.join(STATE, "reads"), "a") as reads:
     reads.write(sys.argv[1] + "\\n")
+if os.path.exists(os.path.join(STATE, "sha-fails")):
+    sys.exit(1)
 print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
 """
 
@@ -370,6 +372,24 @@ class RunnerCheck(unittest.TestCase):
         self.assertEqual(result.returncode, 1, result.stdout)
         self.assertFalse(reads.exists(), reads.read_text() if reads.exists() else "")
         self.assertIn("not compared, because the gate failed", result.stdout)
+
+    def test_a_listing_or_hash_failure_fails_record_and_compare(self):
+        # #403 F2: a failed hash or listing gave a list with empty hashes.
+        unreadable = self.host.home / ".config/containers"
+        for name, fault, undo in (("hash fails", lambda: self.host.flag("sha-fails"), lambda: None),
+                                  ("listing fails", lambda: unreadable.chmod(0), lambda: unreadable.chmod(0o755))):
+            with self.subTest(case=name):
+                fault()
+                try:
+                    record = self.host.run(self.script, "--record")
+                    check = self.check()
+                finally:
+                    undo()
+                self.assertEqual(record.returncode, 1, record.stdout)
+                self.assertEqual(self.list.read_bytes(), self.recorded)
+                self.assertEqual(check.returncode, 1, check.stdout)
+                self.assertIn("cannot be listed, read or hashed", check.stdout)
+                (self.host.state / "sha-fails").unlink(missing_ok=True)
 
     def test_record_refuses_a_forbidden_file(self):
         (self.host.home / ".ssh").mkdir()

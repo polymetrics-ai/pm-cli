@@ -24,7 +24,7 @@ proc=/proc
 uid_of() { /usr/bin/id -u "$1"; }
 home_of() { /usr/bin/getent passwd "$1" | /usr/bin/cut -d: -f6; }
 entry_of() { /usr/bin/stat -c '%u %g %f' -- "$1"; }
-sha256_of() { /usr/bin/sha256sum -- "$1" | /usr/bin/cut -d ' ' -f 1; }
+sha256_of() { /usr/bin/sha256sum -- "$1"; }
 crontab_of() { /usr/bin/crontab -u "$1" -l; }
 at_jobs() { if [ -x /usr/bin/atq ]; then /usr/bin/atq; fi; }
 
@@ -53,19 +53,35 @@ uid=$(uid_of "$user") && home=$(home_of "$user") && [ -n "$home" ] && [ -d "$hom
 
 # One line for each runner file except _diag, the unit file and each file of
 # the home folder except the emptied folders: owner, group, raw mode, the
-# SHA-256 of a regular file (or the target of a link) and the path.
+# SHA-256 of a regular file (or the target of a link) and the path. Any
+# listing, stat, link or hash failure fails the whole list (#403 F2).
 current_list() {
-  /usr/bin/find "$runner" "$unit" "$home" \( -path "$runner/_diag" -o -path "$home/pm-live-cache" \
-    -o -path "$home/.local/share/containers" \) -prune -o -print | /usr/bin/sort | while IFS= read -r path; do
+  listing=$(/usr/bin/mktemp) || return 1
+  if ! /usr/bin/find "$runner" "$unit" "$home" \( -path "$runner/_diag" -o -path "$home/pm-live-cache" \
+    -o -path "$home/.local/share/containers" \) -prune -o -print > "$listing" ||
+    ! /usr/bin/sort -o "$listing" -- "$listing"; then
+    /bin/rm -f -- "$listing"
+    return 1
+  fi
+  while IFS= read -r path; do
     if [ -L "$path" ]; then
-      content="link:$(/usr/bin/readlink -- "$path")"
+      content=$(/usr/bin/readlink -- "$path") || break
+      content="link:$content"
     elif [ -f "$path" ]; then
-      content=$(sha256_of "$path")
+      content=$(sha256_of "$path") || break
+      content=${content%% *}
+      case "$content" in '' | *[!0-9a-f]*) break ;; esac
+      [ "${#content}" -eq 64 ] || break
     else
       content=-
     fi
-    printf '%s %s %s\n' "$(entry_of "$path" || echo unreadable)" "$content" "${path#"$root"}"
-  done
+    entry=$(entry_of "$path") || break
+    printf '%s %s %s\n' "$entry" "$content" "${path#"$root"}"
+    path=
+  done < "$listing"
+  /bin/rm -f -- "$listing"
+  # read empties PATH at the end of the list; a break keeps it.
+  [ -z "$path" ]
 }
 forbidden_files() {
   if [ -e "$home/.ssh" ] || [ -L "$home/.ssh" ]; then fail "$home/.ssh exists"; fi
@@ -140,8 +156,9 @@ elif [ ! -f "$list" ] || [ -L "$list" ]; then
   fail 'the root-held file list is missing'
 else
   temporary=$(/usr/bin/mktemp) || exit 1
-  current_list > "$temporary"
-  if /usr/bin/cmp -s -- "$list" "$temporary"; then
+  if ! current_list > "$temporary"; then
+    fail 'the runner, unit or home files cannot be listed, read or hashed'
+  elif /usr/bin/cmp -s -- "$list" "$temporary"; then
     pass 'the runner, unit and home files match the list'
   else
     fail 'the runner, unit or home files differ from the list:'

@@ -472,7 +472,7 @@ Any failure exits 1, and the cleanup is then uncertain (owner step 14).
 4. The live account has no crontab and no `at` job.
 5. The runner has the key `disableUpdate` set to `true` in `.runner` (`--disableupdate`). The unit has the lines `User=pmlive`, `ExecStart=/opt/pm-live/actions-runner/run.sh` and `EnvironmentFile=/opt/pm-live/actions-runner/.env`, and no slice other than `system.slice`. A `KillMode=` line other than `KillMode=control-group` fails, because the service stop must kill each process of its cgroup, whatever its UID.
 
-Any failure exits 1, and the owner does not start the runner. The check never records the list. `live-runner-check.sh --record` records it. The owner runs it once at install, last, and again only after a change that the owner made.
+A failure to list, read, stat or hash a file fails the compare and `--record`, and `--record` then writes no list. Any failure exits 1, and the owner does not start the runner. The check never records the list. `live-runner-check.sh --record` records it. The owner runs it once at install, last, and again only after a change that the owner made.
 
 After each run, the owner stops the runner service and runs `runuser -u pmlive -- env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-cleanup-check.sh post-stop`. The script sets `XDG_RUNTIME_DIR=/run/user/<uid>` itself, after its `env -i` restart. Then the owner runs `loginctl terminate-user pmlive` as root. Then the owner runs `env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --gate` as root. The `--gate` mode runs only step 1, the `/proc` gate. It empties nothing and compares nothing. A failure means an uncertain cleanup (owner step 14). The full check runs again before the next start.
 
