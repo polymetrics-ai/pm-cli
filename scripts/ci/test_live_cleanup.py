@@ -1,12 +1,9 @@
 #!/usr/bin/env python3
-"""Developer checks of the live cleanup check and the runner check (L-e1 P6), not acceptance proof.
+"""Developer checks of the live cleanup and runner checks (L-e1 P6), not acceptance proof.
 
-Each check runs a copy of the script in a temporary root. The copy differs
-only in its fixed lines: the root, /proc and the tools, which are fakes here.
-The scripts clear their environment, so each fake has its state path built
-in. Limit: the real process tree, terminate-user, the engine reset and the
-runner start with root-owned files are proven only by the rehearsal and the
-owner steps.
+A copy of each script runs in a temporary root, with fakes in its fixed lines (the
+scripts clear their environment, so each fake has its state path built in). Only the
+rehearsal and the owner steps prove the real process tree, kills, reset and runner start.
 """
 import os
 from pathlib import Path
@@ -29,7 +26,8 @@ RUNNER_FIXED = CLEANUP_FIXED[:2] + [
     'uid_of() { /usr/bin/id -u "$1"; }\n', CLEANUP_FIXED[4],
     "entry_of() { /usr/bin/stat -c '%u %g %f' -- \"$1\"; }\n",
     'sha256_of() { /usr/bin/sha256sum -- "$1"; }\n',
-    'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n']
+    'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n', "put() { printf '%s %s %s\\n' \"$@\"; }\n",
+    'sync_file() { /usr/bin/sync -- "$1"; }\n', "grep=/usr/bin/grep\n", "python=/usr/bin/python3\n"]
 FAKE_PODMAN = """import os, subprocess, sys
 state, args = STATE, sys.argv[1:]
 with open(os.path.join(state, "log"), "a") as log:
@@ -55,6 +53,13 @@ status, owner = os.lstat(sys.argv[1]), os.path.join(STATE, "owner")
 foreign = os.path.exists(owner) and open(owner).read() == sys.argv[1]
 print(status.st_uid + foreign, status.st_gid, format(status.st_mode, "x"))
 """
+# A grep that logs each file argument it reads (#403 N5), and a sync that can fail (#403 N1).
+FAKE_GREP = """import os, sys
+with open(os.path.join(STATE, "reads"), "a") as reads:
+    reads.write(" ".join(word for word in sys.argv[1:] if os.sep in word) + "\\n")
+os.execv("/usr/bin/grep", ["grep", *sys.argv[1:]])
+"""
+FAKE_SYNC = "import os, sys\nsys.exit(1 if os.path.exists(os.path.join(STATE, 'sync-fails')) else 0)\n"
 FAKE_SHA = """import hashlib, os, sys
 with open(os.path.join(STATE, "reads"), "a") as reads:
     reads.write(sys.argv[1] + "\\n")
@@ -72,7 +77,8 @@ class Host:
         self.state, self.bin, self.proc = self.root / "state", self.root / "bin", self.root / "proc"
         for path in (self.state, self.bin, self.proc, self.root / "hooks"):
             path.mkdir()
-        for name, code in (("podman", FAKE_PODMAN), ("entry", FAKE_ENTRY), ("sha", FAKE_SHA)):
+        for name, code in (("podman", FAKE_PODMAN), ("entry", FAKE_ENTRY), ("sha", FAKE_SHA), ("grep", FAKE_GREP),
+                           ("sync", FAKE_SYNC)):
             self.tool(name, code.replace("STATE", repr(str(self.state))))
         self.home = self.root / "home/pmlive"
         self.runtime = self.root / f"run/user/{UID}"
@@ -85,8 +91,7 @@ class Host:
         (self.home / "pm-live-cache/77-1").mkdir(parents=True)
         (self.root / "etc").mkdir()
         self.process(1, 0, "/init.scope")  # a real /proc always holds PID 1
-        # One range for pmlive (the runner check) and one for the user of the
-        # test (the cleanup check, which runs as that user).
+        # One range for pmlive (the runner check) and one for the test user (the cleanup check).
         (self.root / "etc/subuid").write_text(
             f"pmlive:{SUBUID}:65536\n{pwd.getpwuid(UID).pw_name}:{SUBUID}:65536\n")
 
@@ -193,8 +198,7 @@ class CleanupCheck(unittest.TestCase):
         self.assertIn("FAILED: token directory is not empty", self.check("post-stop").stdout)
 
     def test_every_step_runs_and_keeps_its_result(self):
-        # The receipt is missing and the reset fails. A leftover token file
-        # is still removed, each engine list runs, and the run root goes.
+        # No receipt and a failed reset: the token file, each engine list and the run root still go.
         (self.host.run_root / "scan-receipt").unlink()
         (self.host.tokens / "w2-token").write_text("dummy")
         self.host.flag("reset-fails")
@@ -208,8 +212,7 @@ class CleanupCheck(unittest.TestCase):
         self.assertIn("FAILED: in-job cleanup: uncertain", result.stdout)
 
     def test_podman_gets_the_runtime_folder_of_the_script(self):
-        # crrao I3: env -i removes the caller's XDG_RUNTIME_DIR. The script
-        # sets its own value, and each podman call gets it.
+        # crrao I3: env -i removes the caller's XDG_RUNTIME_DIR; each podman call gets the script's.
         result = self.host.run(self.script, "post-stop", env={"XDG_RUNTIME_DIR": "/caller/value"})
         self.assertEqual(result.returncode, 0, result.stdout)
         values = set((self.host.state / "xdg").read_text().splitlines())
@@ -223,10 +226,7 @@ class CleanupCheck(unittest.TestCase):
         self.assertEqual((list(self.host.tokens.iterdir()), target.read_text()), ([], "keep"))
 
     def test_a_replaced_token_directory_is_refused(self):
-        # #403 F4: the token directory is renamed and a link to a directory
-        # outside takes its name, after the earlier steps and just before the
-        # removal (the python seam does it, then runs the helper). The token
-        # must not be reported as removed, and the outside file must stay.
+        # #403 F4: just before the helper, a link to an outside directory replaces the token directory.
         tokens, outside = self.host.tokens, self.host.root / "outside"
         (tokens / "w2-token").write_text("dummy")
         swap = self.host.root / "swap-then-python"
@@ -241,9 +241,7 @@ class CleanupCheck(unittest.TestCase):
         self.assertEqual((outside / "w2-token").read_text(), "outside\n")
 
     def test_a_swap_after_the_open_cannot_redirect_the_removal(self):
-        # #403 F4: the swap happens inside the helper, after its open and
-        # check. The removal goes through the opened descriptor: the real
-        # token goes, and the file behind the new link stays.
+        # #403 F4: a swap inside the helper, after its open, cannot redirect the removal.
         tokens, outside = self.host.tokens, self.host.root / "outside"
         (tokens / "w2-token").write_text("dummy")
         swap = (f"os.rename({str(tokens)!r}, {str(tokens) + '.moved'!r}); os.mkdir({str(outside)!r}, 0o700); "
@@ -261,11 +259,14 @@ class CleanupCheck(unittest.TestCase):
         self.assertEqual(list(Path(str(tokens) + ".moved").iterdir()), [])
 
     def test_a_token_directory_with_a_wide_mode_is_refused(self):
-        # #403 F4: the owner's token directory has mode 0700. Another mode fails.
-        self.host.tokens.chmod(0o755)
-        result = self.check()
-        self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertIn("token directory: missing, a link", result.stdout)
+        # #403 F4 and N4: the owner's token directory has exactly mode 0700.
+        for mode in (0o755, 0o750, 0o500, 0o1700):
+            with self.subTest(mode=oct(mode)):
+                self.host.tokens.chmod(mode)
+                result = self.check()
+                self.host.tokens.chmod(0o700)
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("token directory: missing, a link", result.stdout)
 
     def test_the_in_job_process_list_is_a_report_only(self):
         self.host.process(10, UID)
@@ -288,7 +289,9 @@ class RunnerCheck(unittest.TestCase):
             f'home_of() {{ echo "{host.home}"; }}\n', f'entry_of() {{ "{host.bin / "entry"}" "$1"; }}\n',
             f'sha256_of() {{ "{host.bin / "sha"}" "$1"; }}\n',
             f'crontab_of() {{ if [ -f "{state}/crontab" ]; then cat "{state}/crontab"; '
-            'else echo "no crontab for $1" >&2; return 1; fi; }\n'])
+            'else echo "no crontab for $1" >&2; return 1; fi; }\n',
+            f"put() {{ [ ! -f '{state}/put-fails' ] && printf '%s %s %s\\n' \"$@\"; }}\n",
+            f'sync_file() {{ "{host.bin / "sync"}" "$1"; }}\n', f"grep={host.bin / 'grep'}\n", f"python={sys.executable}\n"])
         host.run_root.parent.parent.rename(host.root / "runtime-gone")  # the gate needs no runtime folder
         self.runner = host.root / "opt/pm-live/actions-runner"
         for path, text in (("run.sh", "#!/bin/sh\n"), (".env", "A=1\n"), ("bin/Runner.Listener", "binary\n"),
@@ -347,7 +350,6 @@ class RunnerCheck(unittest.TestCase):
         }
         for name, change in changes.items():
             with self.subTest(case=name):
-                # A fresh recorded tree for each case.
                 self.tearDown()
                 self.setUp()
                 change()
@@ -355,11 +357,8 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertEqual(self.list.read_bytes(), self.recorded)
 
-    # crrao m1: a process of a subordinate UID of pmlive, and a range that is
-    # missing, unreadable or not one range. Each fails the gate.
+    # crrao m1 and #403 F3: each of these fails the gate.
     SUBUID_FAULTS = {
-        # #403 F3: a process folder that is missing, cannot be listed or lists
-        # no process is no proof that no live process exists.
         "process folder missing": lambda self: [(entry / "status").unlink() or (entry / "cgroup").unlink()
                                                 or entry.rmdir() for entry in self.host.proc.iterdir()]
         and self.host.proc.rmdir(),
@@ -391,8 +390,7 @@ class RunnerCheck(unittest.TestCase):
                 self.assertTrue((self.host.root / "var/lib/pm-live/work/job").exists())
 
     def test_gate_mode_checks_only_the_processes(self):
-        # Owner step 13a: --gate runs only the /proc gate. It empties and
-        # compares nothing, also when it fails.
+        # Owner step 13a: --gate runs only the /proc gate, and empties and compares nothing.
         cases = {"clean": (lambda: None, 0),
                  "live UID process": (lambda: self.host.process(20, UID), 1),
                  "user manager cgroup": (lambda: self.host.process(
@@ -416,8 +414,7 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(self.list.read_bytes(), self.recorded)
 
     def test_unit_rules_hold_for_a_recorded_unit(self):
-        # crrao m1: the list holds what the owner installed, so these lines are
-        # recorded first. Only the unit rules can refuse them.
+        # crrao m1: these lines are recorded first, so only the unit rules can refuse them.
         for line, expected in (("KillMode=process\n", 1), ("Slice=user.slice\n", 1),
                                ("KillMode=control-group\n", 0)):
             with self.subTest(line=line):
@@ -435,8 +432,9 @@ class RunnerCheck(unittest.TestCase):
         self.host.process(20, UID)
         result = self.check()
         self.assertEqual(result.returncode, 1, result.stdout)
-        self.assertFalse(reads.exists(), reads.read_text() if reads.exists() else "")
+        self.assertFalse(reads.exists(), reads.read_text() if reads.exists() else "")  # stat, hash and grep
         self.assertIn("not compared, because the gate failed", result.stdout)
+        self.assertIn("settings were not read, because the gate failed", result.stdout)
 
     def test_a_listing_or_hash_failure_fails_record_and_compare(self):
         # #403 F2: a failed hash or listing gave a list with empty hashes.
@@ -457,17 +455,65 @@ class RunnerCheck(unittest.TestCase):
                 (self.host.state / "sha-fails").unlink(missing_ok=True)
 
     def test_the_at_check_without_atq(self):
-        # #403 F5: no atq is "no at job" only when no at scheduler and no at
-        # spool exist. The production at_jobs runs here, in the temporary root.
-        for path, expected in (("", 0), ("var/spool/cron/atjobs", 1), ("var/spool/at", 1), ("usr/sbin/atd", 1)):
-            with self.subTest(path=path or "nothing"):
+        # #403 F5 and N3: the production at_jobs, in the temporary root.
+        def loop():  # a link loop in a spool ancestor (#403 N3)
+            (self.host.root / "var/spool").mkdir(parents=True)
+            (self.host.root / "var/spool/cron").symlink_to(self.host.root / "var/spool/cron")
+
+        def unreadable():  # an ancestor that cannot be searched (#403 N3)
+            (self.host.root / "var/spool").mkdir(parents=True)
+            (self.host.root / "var/spool").chmod(0)
+        for path, expected in (("", 0), ("var/spool/cron/atjobs", 1), ("var/spool/at", 1), ("usr/sbin/atd", 1),
+                               (loop, 1), (unreadable, 1)):
+            with self.subTest(path=getattr(path, "__name__", path) or "nothing"):
                 self.tearDown()
                 self.setUp()
-                if path:
+                if callable(path):
+                    path()
+                elif path:
                     (self.host.root / path).mkdir(parents=True)
-                result = self.check()
+                try:
+                    result = self.check()
+                finally:
+                    if (self.host.root / "var/spool").is_dir():
+                        (self.host.root / "var/spool").chmod(0o755)
                 self.assertEqual(result.returncode, expected, result.stdout)
                 self.assertIn("no at job" if expected == 0 else "the at job check cannot run", result.stdout)
+
+    def test_a_write_or_flush_failure_keeps_the_old_list(self):
+        # #403 N1: a failed write or flush of the new list keeps the old list.
+        (self.runner / ".env").write_text("A=2\n")  # a new list would differ
+        for flag in ("put-fails", "sync-fails"):
+            with self.subTest(case=flag):
+                self.host.flag(flag)
+                record = self.host.run(self.script, "--record")
+                (self.host.state / flag).unlink()
+                self.assertEqual(record.returncode, 1, record.stdout)
+                self.assertEqual(self.list.read_bytes(), self.recorded)
+                self.assertEqual([path.name for path in self.list.parent.iterdir()], [self.list.name])
+
+    def test_a_failed_deletion_and_listing_fail_the_check(self):
+        # #403 N2: find and ls both fail on an excluded folder. No "empty".
+        diag = self.runner / "_diag"
+        diag.chmod(0)
+        try:
+            result = self.check()
+        finally:
+            diag.chmod(0o755)
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertNotIn(f"{diag} is empty", result.stdout)
+        self.assertIn(f"{diag}: the deletion failed", result.stdout)
+
+    def test_a_unit_drop_in_folder_fails(self):
+        # crrao I9: a drop-in folder can change the unit.
+        for folder in ("etc/systemd/system", "run/systemd/system", "usr/lib/systemd/system"):
+            with self.subTest(folder=folder):
+                self.tearDown()
+                self.setUp()
+                (self.host.root / folder / "pm-live-runner.service.d").mkdir(parents=True)
+                result = self.check()
+                self.assertEqual(result.returncode, 1, result.stdout)
+                self.assertIn("a drop-in folder of the unit exists", result.stdout)
 
     def test_record_refuses_a_forbidden_file(self):
         (self.host.home / ".ssh").mkdir()

@@ -271,8 +271,7 @@ class HookCheckSelection(unittest.TestCase):
         )
 
     def test_live_suites_and_files_are_registered(self):
-        # L-e1 P4: the checks job runs the live suites, and the setup check
-        # requires the live files.
+        # L-e1 P4: the checks job runs the live suites; the setup check requires the files.
         script = CHECK_DOCS.read_text()
         for suite in ("test_runner_admission_live.py", "test_live_launcher.py", "test_live_cleanup.py"):
             self.assertIn(f"scripts/ci/{suite}", script)
@@ -1850,8 +1849,7 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                 self.assertIn("- scenario 1 of 1: FAIL\n", summary)
 
     def test_live_mode_hides_typed_field_faults_and_errors(self):
-        # #403 F1: a field of the wrong type reached float() and a public
-        # traceback. Each fault fails the run with no stream text in public.
+        # #403 F1: a wrong-typed field reached a public traceback. Each fault must fail privately.
         good = self.gherkin_suite({"a": ("pass", [])}, ["1 scenarios (1 passed)", "0 steps"])
         faults = {"Elapsed": go_event("pass", "m/acc", Elapsed=self.MARK),
                   "Action": json.dumps({"Action": [self.MARK], "Package": "m/acc"}),

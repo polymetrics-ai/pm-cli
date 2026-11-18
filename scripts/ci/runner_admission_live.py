@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """Admit only the owner's first live run of the approved commit (D2-A).
 
-The policy of the pm-live runner. The shared runner_admission.py refuses
-every live event, and this file does not change it. Each rule is one named
-check, and validate() calls each one. read_root_file() reads a root-owned
-file in /etc/pm-live with one openat(O_NOFOLLOW) for each path component.
-Its ROOT and OWNER parameters exist for the developer checks. Production
-calls pass "/" and 0, and no environment variable changes them.
+The pm-live policy; the shared runner_admission.py refuses every live event. Each
+rule is one named check that validate() calls. read_root_file() opens each path
+component with O_NOFOLLOW. Its ROOT and OWNER parameters exist for the developer
+checks; production passes "/" and 0, and no environment variable changes them.
 """
 import json
 import os

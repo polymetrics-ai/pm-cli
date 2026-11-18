@@ -1,18 +1,10 @@
 #!/bin/sh
-# The pre-run check of the live runner (D2-A, L-e1 P6, crrao C4). The owner
-# runs the root-owned copy in /etc/pm-live/hooks as root before each start
-# (owner step 12):
-#
-#   env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh
-#   env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --record
-#   env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --gate
-#
-# --gate runs only step 1, the /proc gate, and changes nothing. The owner runs
-# it after loginctl terminate-user pmlive (owner step 13a).
-# --record writes the root-held file list. The owner runs it once at install,
-# last (owner step 6a). The check never records, also when it fails (R2-6).
-# Any failure exits 1, and the owner does not start the runner. See "Live
-# runner (D2-A)" in docs/development/ci.md.
+# The pre-run check of the live runner (D2-A, L-e1 P6, crrao C4). The owner runs
+# the root-owned copy in /etc/pm-live/hooks as root, with env -i PATH=/usr/bin:/bin:
+# with no option before each start (owner step 12), with --gate after
+# terminate-user (step 13a: only the /proc gate, no change), and with --record
+# once at install, last (step 6a). The check never records (R2-6). Any failure
+# exits 1. See "Live runner (D2-A)" in docs/development/ci.md.
 if [ "${1:-}" != --clean-env ]; then
   exec /usr/bin/env -i PATH=/usr/bin:/bin /bin/sh "$0" --clean-env "$@"
 fi
@@ -26,18 +18,34 @@ home_of() { /usr/bin/getent passwd "$1" | /usr/bin/cut -d: -f6; }
 entry_of() { /usr/bin/stat -c '%u %g %f' -- "$1"; }
 sha256_of() { /usr/bin/sha256sum -- "$1"; }
 crontab_of() { /usr/bin/crontab -u "$1" -l; }
+put() { printf '%s %s %s\n' "$@"; }
+sync_file() { /usr/bin/sync -- "$1"; }
+grep=/usr/bin/grep
+python=/usr/bin/python3
 
 user=pmlive
-# The at jobs, from atq. Without atq, the check passes only when no at
-# scheduler and no at spool exist; else it cannot run (#403 F5).
+# absent PATH...: 0 when each is proved absent (ENOENT), 1 when one exists, 2 on
+# another lookup error, for example ELOOP or EACCES on an ancestor (#403 N3).
+absent() {
+  "$python" -I -B -c '
+import os, sys
+for path in sys.argv[1:]:
+    try:
+        os.lstat(path)
+    except FileNotFoundError:
+        continue
+    except OSError:
+        sys.exit(2)
+    sys.exit(1)' "$@"
+}
+# The at jobs, from atq. Without atq, no at scheduler or spool may exist (F5).
 at_jobs() {
   if [ -x "$root/usr/bin/atq" ]; then
     "$root/usr/bin/atq"
     return
   fi
-  for path in /usr/sbin/atd /usr/bin/atd /var/spool/cron/atjobs /var/spool/cron/atspool /var/spool/at /var/spool/atjobs; do
-    if [ -e "$root$path" ] || [ -L "$root$path" ]; then return 1; fi
-  done
+  absent "$root/usr/sbin/atd" "$root/usr/bin/atd" "$root/var/spool/cron/atjobs" "$root/var/spool/cron/atspool" \
+    "$root/var/spool/at" "$root/var/spool/atjobs"
 }
 runner="$root/opt/pm-live/actions-runner"
 work="$root/var/lib/pm-live/work"
@@ -61,10 +69,8 @@ uid=$(uid_of "$user") && home=$(home_of "$user") && [ -n "$home" ] && [ -d "$hom
   exit 1
 }
 
-# One line for each runner file except _diag, the unit file and each file of
-# the home folder except the emptied folders: owner, group, raw mode, the
-# SHA-256 of a regular file (or the target of a link) and the path. Any
-# listing, stat, link or hash failure fails the whole list (#403 F2).
+# owner, group, raw mode, SHA-256 (or link target) and path of each runner, unit and
+# home file, except the emptied folders. Any failure fails the list (#403 F2, N1).
 current_list() {
   listing=$(/usr/bin/mktemp) || return 1
   if ! /usr/bin/find "$runner" "$unit" "$home" \( -path "$runner/_diag" -o -path "$home/pm-live-cache" \
@@ -86,7 +92,7 @@ current_list() {
       content=-
     fi
     entry=$(entry_of "$path") || break
-    printf '%s %s %s\n' "$entry" "$content" "${path#"$root"}"
+    put "$entry" "$content" "${path#"$root"}" || break
     path=
   done < "$listing"
   /bin/rm -f -- "$listing"
@@ -101,8 +107,10 @@ forbidden_files() {
 if [ "${1:-}" = --record ]; then
   forbidden_files
   [ "$status" -eq 0 ] || exit 1
+  # Only a complete, flushed new list replaces the old one (#403 N1).
   temporary=$(/usr/bin/mktemp "$list.XXXXXX") || exit 1
-  if current_list > "$temporary" && /bin/chmod 0644 "$temporary" && /bin/mv -f -- "$temporary" "$list"; then
+  if current_list > "$temporary" && sync_file "$temporary" && /bin/chmod 0644 "$temporary" &&
+    /bin/mv -f -- "$temporary" "$list"; then
     pass "recorded $(/usr/bin/wc -l < "$list" | /usr/bin/tr -d ' ') entries in $list"
     exit 0
   fi
@@ -111,10 +119,8 @@ if [ "${1:-}" = --record ]; then
   exit 1
 fi
 
-# 1. The gate: no process of the live UID or of its one subordinate UID range
-# in /etc/subuid (crrao m1), also in the user manager's or the engine's cgroup
-# (N1), and no runtime folder. An unreadable entry fails. A missing or
-# unreadable range, or more than one range, fails.
+# 1. The gate: no process of the live UID or of its one /etc/subuid range (m1), in any
+# cgroup (N1), and no runtime folder. An unreadable entry or range fails.
 gate=0
 range=$(/usr/bin/awk -F : -v user="$user" -v uid="$uid" '
   $1 == user || $1 == uid { lines++; if (NF == 3 && $2 ~ /^[0-9]+$/ && $3 ~ /^[1-9][0-9]*$/) { low = $2; high = $2 + $3 } }
@@ -123,8 +129,7 @@ if [ -z "$range" ]; then
   fail "the subordinate UID range of $user in /etc/subuid is missing, unreadable or not one range" && gate=1
   range='-1 -1'
 fi
-# The process folder must list at least one process: a real /proc always
-# holds PID 1. An unlisted folder is no proof of absence (#403 F3).
+# A real /proc always lists PID 1. An unlisted folder proves nothing (#403 F3).
 if ! entries=$(/bin/ls -- "$proc" 2> /dev/null); then
   fail "the process folder $proc cannot be listed" && gate=1
 elif ! printf '%s\n' "$entries" | /usr/bin/grep -qx '[0-9][0-9]*'; then
@@ -149,24 +154,26 @@ if [ "${1:-}" = --gate ]; then
   exit "$status"
 fi
 
-# 2. Empty the work folder, _diag, the engine storage and the cache folder.
-# Only after the gate: no process of the live UID can change a path, and no
-# path component may be a link.
+# 2. Empty the work folder, _diag, the engine storage and the cache folder, only after
+# the gate (no live process can change a path). No path component may be a link.
 for folder in "$work" "$runner/_diag" "$home/.local/share/containers" "$home/pm-live-cache"; do
   if [ "$gate" -ne 0 ]; then
     fail "$folder: not emptied, because the gate failed"
   elif [ -L "$folder" ] || [ -L "$home/.local" ] || [ -L "$home/.local/share" ]; then
     fail "$folder: a link in the path"
   elif [ -d "$folder" ]; then
-    /usr/bin/find "$folder" -mindepth 1 -delete 2> /dev/null
-    if [ -z "$(/bin/ls -A -- "$folder")" ]; then pass "$folder is empty"; else fail "$folder is not empty"; fi
+    # Each status counts: a failed deletion or listing is no proof (#403 N2).
+    if ! /usr/bin/find "$folder" -mindepth 1 -delete 2> /dev/null; then
+      fail "$folder: the deletion failed"
+    elif ! left=$(/bin/ls -A -- "$folder" 2> /dev/null); then
+      fail "$folder: cannot be listed"
+    elif [ -z "$left" ]; then pass "$folder is empty"; else fail "$folder is not empty"; fi
   else
     pass "$folder is absent"
   fi
 done
 
-# 3. Compare the files with the root-held list. Only after the gate, as in
-# step 2: a live process could change a file while root reads it (crrao I2).
+# 3. Compare the files with the root-held list, only after the gate (crrao I2).
 if [ "$gate" -ne 0 ]; then
   fail 'the files were not compared, because the gate failed'
 elif [ ! -f "$list" ] || [ -L "$list" ]; then
@@ -201,21 +208,28 @@ else
   pass 'no at job'
 fi
 
-# 5. The runner configuration and the system unit.
-if /usr/bin/grep -Eq '"disableUpdate"[[:space:]]*:[[:space:]]*true' -- "$runner/.runner" 2> /dev/null; then
-  pass 'the runner was configured with --disableupdate'
+# 5. The runner settings and the unit, only after the gate (#403 N5).
+if [ "$gate" -ne 0 ]; then
+  fail 'the runner and unit settings were not read, because the gate failed'
 else
-  fail 'the runner was not configured with --disableupdate'
-fi
-for line in "User=$user" ExecStart=/opt/pm-live/actions-runner/run.sh EnvironmentFile=/opt/pm-live/actions-runner/.env; do
-  /usr/bin/grep -qxF -- "$line" "$unit" 2> /dev/null || fail "the unit has no line $line"
-done
-if /usr/bin/grep -E '^[[:space:]]*Slice=' -- "$unit" 2> /dev/null | /usr/bin/grep -qvxF Slice=system.slice; then
-  fail 'the unit runs outside system.slice'
-fi
-# The service stop must kill each process of the cgroup, whatever its UID.
-if /usr/bin/grep -E '^[[:space:]]*KillMode=' -- "$unit" 2> /dev/null | /usr/bin/grep -qvxF KillMode=control-group; then
-  fail 'the unit has a KillMode other than control-group'
+  if "$grep" -Eq '"disableUpdate"[[:space:]]*:[[:space:]]*true' -- "$runner/.runner" 2> /dev/null; then
+    pass 'the runner was configured with --disableupdate'
+  else
+    fail 'the runner was not configured with --disableupdate'
+  fi
+  for line in "User=$user" ExecStart=/opt/pm-live/actions-runner/run.sh EnvironmentFile=/opt/pm-live/actions-runner/.env; do
+    "$grep" -qxF -- "$line" "$unit" 2> /dev/null || fail "the unit has no line $line"
+  done
+  if "$grep" -E '^[[:space:]]*Slice=' -- "$unit" 2> /dev/null | "$grep" -qvxF Slice=system.slice; then
+    fail 'the unit runs outside system.slice'
+  fi
+  # The service stop must kill each process of the cgroup, whatever its UID.
+  if "$grep" -E '^[[:space:]]*KillMode=' -- "$unit" 2> /dev/null | "$grep" -qvxF KillMode=control-group; then
+    fail 'the unit has a KillMode other than control-group'
+  fi
+  # A drop-in folder could change the unit (crrao I9).
+  absent "$root/etc/systemd/system/pm-live-runner.service.d" "$root/run/systemd/system/pm-live-runner.service.d" \
+    "$root/usr/lib/systemd/system/pm-live-runner.service.d" || fail 'a drop-in folder of the unit exists or cannot be checked'
 fi
 
 if [ "$status" -eq 0 ]; then pass 'the runner may start'; else fail 'do not start the runner'; fi

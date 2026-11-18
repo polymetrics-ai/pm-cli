@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 """Developer checks of the live mode of in-ci-image.sh (L-e1 P5), not acceptance proof.
 
-The checks run a copy of the launcher in a temporary root. The copy differs
-only in the four fixed lines of the live mode: the runtime root, the
-/etc/pm-live path, and the tmpfs and owner probes. A fake engine records its
-argument list and its environment. Limit: the real engine, tmpfs and the
-process view are proven only by the rehearsal.
+A copy of the launcher runs in a temporary root, with test values in its four fixed
+lines. A fake engine records its arguments and environment. Only the rehearsal proves
+the real engine, tmpfs and process view.
 """
 import hashlib
 import json

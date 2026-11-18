@@ -1,15 +1,9 @@
 #!/bin/sh
-# The cleanup check of the live runner (D2-A, L-e1 P6). The owner installs a
-# root-owned copy in /etc/pm-live/hooks. The always-run step of live-w2.yml
-# and the owner run that copy, never the copy in a checkout.
-#
-#   live-cleanup-check.sh in-job      the always-run step, as pmlive
-#   live-cleanup-check.sh post-stop   the owner, as pmlive, after the runner stops
-#
-# It reads no job variable and no label (F6). Every step runs, also after a
-# failed step, and keeps its result. Any failure exits 1, and the cleanup is
-# then uncertain (owner step 14). See "Live runner (D2-A)" in
-# docs/development/ci.md.
+# The cleanup check of the live runner (D2-A, L-e1 P6), from its root-owned copy in
+# /etc/pm-live/hooks, as pmlive: "in-job" in the always-run step of live-w2.yml,
+# "post-stop" by the owner after the runner stops. It reads no job variable and no
+# label (F6). Every step runs and keeps its result. Any failure exits 1: the cleanup
+# is uncertain (owner step 14). See "Live runner (D2-A)" in docs/development/ci.md.
 if [ "${1:-}" != --clean-env ]; then
   exec /usr/bin/env -i PATH=/usr/bin:/bin /bin/sh "$0" --clean-env "$@"
 fi
@@ -41,15 +35,14 @@ case "$mode" in
 esac
 uid=$(/usr/bin/id -u)
 runtime="$root/run/user/$uid"
-# env -i removed the caller's value. Podman finds the runtime folder of the
-# live UID through this one (crrao I3).
+# env -i removed the caller's value. Podman needs this one (crrao I3).
 XDG_RUNTIME_DIR=$runtime
 export XDG_RUNTIME_DIR
 runs="$runtime/pm-live-run"
 home=$(home_of "$uid")
 
-# 1. in-job: read the scan receipt. Each line is "sink=NAME count=N complete"
-# or "... incomplete", and the last line is "complete=true" (M1).
+# 1. in-job: the scan receipt: "sink=NAME count=N complete|incomplete" lines, then
+# "complete=true" (M1).
 check_receipt() {
   set -- "$runs"/*/scan-receipt
   if [ "$#" -ne 1 ] || [ ! -f "$1" ] || [ -L "$1" ] || [ "$(/usr/bin/wc -c < "$1")" -gt 4096 ]; then
@@ -93,17 +86,15 @@ check_receipt() {
 }
 [ "$mode" = post-stop ] || check_receipt
 
-# 2. Remove the token file by name, through the token directory opened once
-# without following a link (#403 F4): the owner and mode are checked on that
-# descriptor, the file is removed relative to it (unlinkat removes a link
-# itself, never its target) and the directory is listed through it. The
-# directory is the owner's and stays (R2-3).
+# 2. Remove the token file through the token directory, opened once with O_NOFOLLOW:
+# owner and mode 0700 by fstat, then unlinkat (a link goes, never its target) and the
+# listing on that descriptor (#403 F4). The directory is the owner's and stays (R2-3).
 tokens="$runtime/pm-live"
 token_state=$("$python" -I -B -c '
 import os, stat, sys
 directory = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
 status = os.fstat(directory)
-if status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) & 0o077:
+if status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) != 0o700:
     sys.exit(3)
 try:
     os.unlink("w2-token", dir_fd=directory)
@@ -142,9 +133,8 @@ else
   fail 'engine: a network other than the default, or no list'
 fi
 
-# 4. Remove every run path: the run roots (fixture, secret root, PostgreSQL
-# data, raw report, scan copies) and the caches. Files of mapped UIDs need
-# the user namespace of the engine.
+# 4. Remove the run roots (fixture, secret root, PostgreSQL data, raw report, scan
+# copies) and the caches, in the user namespace of the engine (mapped UIDs).
 if [ -z "$home" ]; then
   fail 'the home folder of the live UID is unknown'
   set -- "$runs"
@@ -158,8 +148,7 @@ for path in "$@"; do
   if [ -e "$path" ] || [ -L "$path" ]; then fail "$path is still there"; else pass "$path is absent"; fi
 done
 
-# 5. in-job: a report, not a gate (R2-4, N1). The live UID can move its own
-# processes in its user cgroup tree, so this list proves nothing.
+# 5. in-job: a report, not a gate (R2-4, N1): the live UID can move its processes.
 if [ "$mode" = in-job ]; then
   # The live UID and its subordinate UID range in /etc/subuid (crrao m1).
   range=$(/usr/bin/awk -F : -v user="$(/usr/bin/id -un)" -v uid="$uid" '

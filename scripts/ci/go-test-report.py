@@ -100,19 +100,13 @@ with no result, each skipped test and each problem. --summary-file appends
 the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
 --summary-file requires --title, --scenarios or both.
 
---live is the mode of the live runner (D2-A, L-e1 P5a). The log and the
-summary file then get no text from the test stream: no package, test,
-subtest or scenario name, no output line and no error text. They get only
-counts, the godog totals as numbers, the result words PASS, FAIL, SKIP and
-"no result", and ordinals ("test 4 of 9: FAIL", "scenario 2 of 3: FAIL").
-The full report and the standard error of COMMAND go to the --raw-output
-FILE, which the script creates with mode 0600 and refuses when it exists.
---live requires --scenarios, --expect and --raw-output, and --raw-output
-requires --live. The other rules do not change. An event with a known field
-of the wrong type is a line that is not a JSON event. Any other error of the
-script in --live mode writes its traceback only to the raw file, prints one
-fixed line and exits 1. The live log holds no stream text by design: this is
-prevention, not detection.
+--live (the live runner, D2-A, L-e1 P5a) puts no stream text in the log or the
+summary file: only counts, godog totals as numbers, the words PASS, FAIL, SKIP
+and "no result", and ordinals ("test 4 of 9: FAIL"). The full report and the
+stderr of COMMAND go to the new --raw-output FILE (mode 0600). --live requires
+--scenarios, --expect and --raw-output, and the reverse. A known event field of
+the wrong type is a malformed line. Any other error writes its traceback only to
+the raw file and exits 1 with one fixed line. This is prevention, not detection.
 """
 import argparse
 import json
@@ -711,11 +705,7 @@ RESULT_WORDS = re.compile(r"(\d+) (passed|failed|skipped|undefined|pending|ambig
 
 
 def live_report(packages, order, results, unfinished, rows, totals, problems, failures, skips, status):
-    """The lines of --live: counts, result words and ordinals only.
-
-    No line holds text from the test stream. The godog totals are rebuilt
-    from their numbers and fixed words. Each problem is counted by kind.
-    """
+    """The --live lines: counts, result words and ordinals, with no stream text."""
     counts = {}
     for action, _ in packages.values():
         counts[action] = counts.get(action, 0) + 1

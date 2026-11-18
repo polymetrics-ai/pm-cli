@@ -16,15 +16,12 @@
 # directory and the tool cache at their host paths. It mounts no engine socket
 # and uses the default network, so COMMAND cannot start the dependency stack.
 #
-# The live mode (L-e1 P5) is for the pm-live runner only. It checks the token
-# channel before anything else, puts the run root (RUNNER_TEMP inside) on the
-# memory file system, builds a fresh image with a run-specific tag, uses fresh
-# caches and adds --pid host. See "Live runner (D2-A)" in docs/development/ci.md.
+# The live mode (L-e1 P5, pm-live runner only): see "Live runner (D2-A)" in
+# docs/development/ci.md.
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 engine=${PMCLI_CONTAINER_ENGINE:-podman}
-# The fixed host paths and probes of the live mode. The developer checks
-# (scripts/ci/test_live_launcher.py) replace only these four lines.
+# The fixed paths and probes of the live mode. test_live_launcher.py replaces only these.
 live_runtime=/run/user
 live_etc=/etc/pm-live
 live_fs_type() { stat -f -c %T "$1"; }
@@ -165,9 +162,7 @@ if [ "$mode" = live ]; then
   [ "$(live_owner_mode "$token")" = "$uid 600" ] || live_refuse 'the token file needs the runner UID and mode 0600'
   size=$(wc -c < "$token")
   [ "$size" -ge 20 ] && [ "$size" -le 4096 ] || live_refuse 'the token file must hold 20 to 4096 bytes'
-  # The run root on the memory file system (F3). Inside, RUNNER_TEMP names
-  # it, so the fixture root, the secret root, the manifest, the raw report
-  # and the scan copies are all there.
+  # The run root on tmpfs (F3). RUNNER_TEMP names it inside, so every run file is there.
   run_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
   run_root="$live_runtime/$uid/pm-live-run/$run_id"
   [ -d "$live_runtime/$uid/pm-live-run" ] || mkdir -m 700 "$live_runtime/$uid/pm-live-run"
@@ -184,11 +179,8 @@ if [ "$mode" = live ]; then
   "$engine" build --platform linux/amd64 --tag "$image" \
     --file "$repo_root/build/ci/Dockerfile" "$repo_root/build/ci" >&2
   printf 'live image ID: %s\n' "$("$engine" image inspect --format '{{.Id}}' "$image")" >&2
-  # --pid host lets the harness scan the processes of the live UID (Q2).
-  # Default capabilities only: no privilege flag, no added capability or
-  # device. no-new-privileges: a set-user-ID program in the image gets no
-  # new privileges (crrao m1). The container gets the inside token path
-  # only, never a value.
+  # --pid host for the scan of the live UID's processes (Q2). Default capabilities only,
+  # no-new-privileges (crrao m1), and only the inside token path, never a value.
   exec "$engine" run --rm --init --pull never --name "$container" \
     --userns keep-id --user "$uid:$(id -g)" \
     --network host --pid host --security-opt no-new-privileges \

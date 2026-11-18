@@ -1,10 +1,8 @@
 #!/usr/bin/env python3
 """Negative checks of the live admission policy (L-e1 P2). Developer checks, not acceptance proof.
 
-One valid event and environment. Each case changes one thing and must be
-refused, unless it is marked as accepted. The root files live in a
-temporary root, and the owner is the user of the test (read_root_file
-parameters).
+Each case changes one thing of a valid event and must be refused, unless marked as
+accepted. The root files are in a temporary root, owned by the test user.
 """
 import contextlib
 import importlib.util
@@ -201,8 +199,7 @@ class LiveAdmission(unittest.TestCase):
             yield
 
     def test_the_cases_of_the_surviving_mutations(self):
-        # crrao I4 at 481df57: each case catches one mutation that survived his
-        # mutation run (his section 3 table).
+        # crrao I4 at 481df57: each case catches one of his surviving mutations.
         self.refused("environment mainx, payload main", lambda e, v: v.update(GITHUB_REF="refs/heads/mainx"))
         upper = "A" * 40
         with tempfile.TemporaryDirectory() as directory:
@@ -215,8 +212,7 @@ class LiveAdmission(unittest.TestCase):
                              make_root(directory, **{name: data}))
 
     def test_shared_policy_refuses_the_live_event(self):
-        # R2-1: the valid live event and environment, given to the shared
-        # policy of the CI runners, must be refused.
+        # R2-1: the shared policy of the CI runners must refuse the valid live event.
         with self.assertRaises(ValueError):
             SHARED.validate(*valid())
 
@@ -296,8 +292,7 @@ class LiveAdmission(unittest.TestCase):
                     self.assertEqual(run(), (1, "", REFUSAL))
 
     def test_wrapper_refuses_with_the_fixed_line(self):
-        # The wrapper runs the copy of the policy next to it. The test copy
-        # calls this Python, because /usr/bin/timeout is not on every host.
+        # The test copy of the wrapper calls this Python: /usr/bin/timeout is not on every host.
         wrapper = (ROOT / "scripts/ci/runner-admission-live.sh").read_text()
         line = 'exec /usr/bin/timeout 10 /usr/bin/python3 -I -B "$hooks/runner_admission_live.py"\n'
         self.assertIn(line, wrapper)
