@@ -3,6 +3,7 @@ package stack
 import (
 	"context"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -155,27 +156,45 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 // TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit runs the grow step
 // against a fake master whose /vol/grow call never answers: the fake starts a
 // child that waits on a FIFO that no process writes, and the child keeps the
-// output of the call open. Defect it catches: a master call that has no time
-// limit of its own, or that waits for the output of a child after its limit,
+// output of the call open. Defect it catches: a grow call that does not end
+// when its context ends, or that waits for the output of a child after that,
 // blocks pm-stack up until the caller stops it. The step must end with an
 // error that does not say that no volume grew, after exactly one grow call.
+//
+// The call limit here is one hour, so no call of the step can meet it: the
+// status read and the start of each fake process take as long as the host
+// needs. The grow call ends because the test ends the context of the step at
+// one product event: the fake has recorded the grow call. An earlier version
+// used a 3 s call limit for every call, so on a loaded host the status read
+// met that limit on correct code. TestSeaweedMasterEndsAHungCallAtItsLimit
+// checks the call limit itself.
 func TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit(t *testing.T) {
 	fake := installHungGrowMaster(t, freshMasterStatus)
-	// The limit leaves room for the status read of the fake, which ends at
-	// once, and ends the grow call, which never ends.
 	rt := &runtime{root: fake, project: "pm-artifact-volumes-test", stdout: io.Discard, stderr: io.Discard,
-		masterCallLimit: 3 * time.Second}
+		masterCallLimit: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := growStarted(t, fake)
 	done := make(chan error, 1)
 	go func() {
-		done <- ensureArtifactVolumes(context.Background(), noRecreateTestConfiguration(t), rt, true)
+		done <- ensureArtifactVolumes(ctx, noRecreateTestConfiguration(t), rt, true)
 	}()
 	var err error
-	// The one guard: a call that never returns fails the test. It measures no
-	// time of the call.
+	// The one guard: a step that never returns fails the test. It measures no
+	// time of a call.
+	guard := time.After(30 * time.Second)
+	select {
+	case <-started:
+		cancel()
+	case err = <-done:
+		t.Fatalf("the grow step returned %v before the fake recorded a grow call", err)
+	case <-guard:
+		t.Fatal("the fake recorded no grow call")
+	}
 	select {
 	case err = <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("the grow step did not return: the hung master call has no effective time limit")
+	case <-guard:
+		t.Fatal("the grow step did not return after its context ended: the hung master call does not end")
 	}
 	const want = bucketGrowFailedError
 	if err == nil || err.Error() != want {
@@ -186,9 +205,66 @@ func TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit(t *testing.T) {
 	}
 }
 
+// TestSeaweedMasterEndsAHungCallAtItsLimit calls the master once, with a
+// call limit of 1 s and no deadline of the caller, against the fake whose
+// /vol/grow call never answers and whose child keeps the output open.
+// Defect it catches: a master call with no time limit of its own, or one that
+// waits for the output of a child after its limit. Whichever process of the
+// call runs when the limit comes (docker or python3), the call must end with
+// an error. The result does not depend on how fast a process starts.
+func TestSeaweedMasterEndsAHungCallAtItsLimit(t *testing.T) {
+	fake := installHungGrowMaster(t, freshMasterStatus)
+	rt := &runtime{root: fake, project: "pm-artifact-volumes-test", stdout: io.Discard, stderr: io.Discard,
+		masterCallLimit: time.Second}
+	// Read the start signal, so that a fast call reaches the child that keeps
+	// the output open, and the output wait after the limit is in the check.
+	growStarted(t, fake)
+	done := make(chan error, 1)
+	go func() {
+		query := url.Values{"collection": {"pm-development-artifacts"}, "count": {"1"}}
+		_, err := rt.seaweedMaster(context.Background(), noRecreateTestConfiguration(t), "/vol/grow", query)
+		done <- err
+	}()
+	// The one guard: a call that never returns fails the test. The limit is
+	// 1 s and the output wait after it is masterCallWaitDelay.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the hung master call succeeded, want an error at its limit")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the master call did not return: the hung call has no effective time limit")
+	}
+}
+
+// growStarted returns a channel that closes when the fake master has recorded
+// a grow call. The fake writes to the FIFO grow.started after it records the
+// call and before it waits. The read ends at that write, or at the cleanup.
+func growStarted(t *testing.T, directory string) <-chan struct{} {
+	t.Helper()
+	fifo := filepath.Join(directory, "grow.started")
+	started := make(chan struct{})
+	go func() {
+		if reader, err := os.Open(fifo); err == nil {
+			buffer := make([]byte, 1)
+			if n, _ := reader.Read(buffer); n == 1 {
+				close(started)
+			}
+			_ = reader.Close()
+		}
+	}()
+	t.Cleanup(func() {
+		if writer, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+	})
+	return started
+}
+
 // installHungGrowMaster writes fake python3 and docker programs and puts them
 // first on PATH. /dir/status prints the status document. /vol/grow records
-// its URL and then runs cat on a FIFO that no process writes, so the call
+// its URL, writes to the FIFO grow.started (it waits there until a reader
+// opens it), and then runs cat on a FIFO that no process writes, so the call
 // never ends and cat keeps its output open. A cleanup opens the FIFO for
 // writing once, so a waiting cat ends with the test.
 func installHungGrowMaster(t *testing.T, status string) string {
@@ -200,6 +276,9 @@ func installHungGrowMaster(t *testing.T, status string) string {
 	}
 	fifo := filepath.Join(directory, "grow.fifo")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(directory, "grow.started"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -218,6 +297,7 @@ case "$url" in
     ;;
   */vol/grow\?*)
     printf '%s\n' "$url" >> "$FAKE_MASTER_DIR/grow.log"
+    printf 'started' > "$FAKE_MASTER_DIR/grow.started"
     cat "$FAKE_MASTER_DIR/grow.fifo"
     ;;
   *)
