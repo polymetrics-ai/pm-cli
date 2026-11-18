@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -15,9 +16,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -340,7 +343,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyPostgres] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "--wait", "postgres"); err != nil {
+		if err := rt.startServices(ctx, configuration, true, "postgres"); err != nil {
 			return fmt.Errorf("start PostgreSQL: %w", err)
 		}
 	}
@@ -349,7 +352,7 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyTemporal] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "temporal"); err != nil {
+		if err := rt.startServices(ctx, configuration, false, "temporal"); err != nil {
 			return fmt.Errorf("start Temporal: %w", err)
 		}
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
@@ -361,12 +364,12 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 
 	if selected[config.DependencyArtifacts] {
 		for _, services := range [][]string{
-			{"up", "-d", "seaweed-master"},
-			{"up", "-d", "seaweed-volume"},
-			{"up", "-d", "seaweed-filer"},
-			{"up", "-d", "seaweed-s3-a", "seaweed-s3-b", "caddy"},
+			{"seaweed-master"},
+			{"seaweed-volume"},
+			{"seaweed-filer"},
+			{"seaweed-s3-a", "seaweed-s3-b", "caddy"},
 		} {
-			if err := rt.compose(ctx, configuration, services...); err != nil {
+			if err := rt.startServices(ctx, configuration, false, services...); err != nil {
 				return fmt.Errorf("start artifact services: %w", err)
 			}
 		}
@@ -1155,6 +1158,259 @@ func (rt *runtime) compose(ctx context.Context, configuration config.Configurati
 	return nil
 }
 
+// serviceContainer is the state of one Compose service container that
+// decides whether pm-stack up keeps it.
+type serviceContainer struct {
+	running    bool
+	configHash string
+}
+
+// settledService reports whether a service keeps its container: the service
+// has exactly one container, the container runs, and its Compose config hash
+// label equals the hash that Compose expects for the current configuration.
+// A changed configuration, a missing container, a stopped container or an
+// unknown hash goes through the normal up.
+func settledService(expectedHash string, containers []serviceContainer) bool {
+	return expectedHash != "" &&
+		len(containers) == 1 &&
+		containers[0].running &&
+		containers[0].configHash == expectedHash
+}
+
+// startServices runs compose up for the named services. A settled service
+// (settledService) goes through up --no-recreate, so its running container
+// stays. Compose otherwise recreates a running container when the engine
+// reports a network ID that Compose cannot match, also when the configuration
+// is unchanged (rootless Podman). Every other service goes through the normal
+// up, which creates, starts or recreates it.
+func (rt *runtime) startServices(ctx context.Context, configuration config.Configuration, wait bool, services ...string) error {
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return err
+	}
+	expected, err := rt.expectedServiceHashes(ctx, configuration, services)
+	if err != nil {
+		return err
+	}
+	var recreate, keep []string
+	for _, service := range services {
+		containers, err := rt.serviceContainers(ctx, service)
+		if err != nil {
+			return err
+		}
+		if settledService(expected[service], containers) {
+			keep = append(keep, service)
+		} else {
+			recreate = append(recreate, service)
+		}
+	}
+	arguments := []string{"up", "-d"}
+	if wait {
+		arguments = append(arguments, "--wait")
+	}
+	if len(recreate) > 0 {
+		if err := rt.compose(ctx, configuration, append(slices.Clone(arguments), recreate...)...); err != nil {
+			return err
+		}
+	}
+	if len(keep) > 0 {
+		keepArguments := append(slices.Clone(arguments), "--no-recreate")
+		if err := rt.compose(ctx, configuration, append(keepArguments, keep...)...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// composeHashTimeout bounds one compose config --hash call, which runs
+// Compose through tools/bootstrap.py. A developer check sets a shorter value.
+var composeHashTimeout = 2 * time.Minute
+
+// composeHashWaitDelay bounds the wait for the output pipes of a hash call
+// after its leader exited or got SIGKILL.
+const composeHashWaitDelay = 5 * time.Second
+
+// signalHashGroup sends SIGKILL to the process group pgid of a hash call. A
+// developer check replaces it.
+var signalHashGroup = func(pgid int) error { return syscall.Kill(-pgid, syscall.SIGKILL) }
+
+// killHashGroup sends SIGKILL to the process group pgid of a hash call. ESRCH
+// means that no process of the group is left. Each other error is returned.
+func killHashGroup(pgid int) error {
+	if err := signalHashGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("stop the process group of the Compose hash call: %w", err)
+	}
+	return nil
+}
+
+// startHashGroupOwner starts the owner of the process group of one hash call:
+// cat, as the leader of a new process group, with a stdin pipe that only this
+// process holds. The owner reads its stdin until end of file and writes
+// nothing. The group ID is the process ID of the owner. The kernel keeps that
+// ID while the owner runs and, after it exits, until this process reaps it.
+// If pm-stack ends, the pipe closes and the owner exits.
+func startHashGroupOwner() (*exec.Cmd, io.WriteCloser, error) {
+	owner := exec.Command("cat")
+	owner.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	input, err := owner.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := owner.Start(); err != nil {
+		return nil, nil, err
+	}
+	return owner, input, nil
+}
+
+// hashGroupOwnerEndLimit bounds the wait for the exit of the group owner of a
+// hash call after the final group signal. A developer check sets a shorter
+// value.
+var hashGroupOwnerEndLimit = composeHashWaitDelay
+
+// endHashGroupOwner closes the stdin pipe of the owner and waits for its exit,
+// at most hashGroupOwnerEndLimit. One goroutine reaps the owner. It keeps
+// waiting after the limit, so the owner is reaped when it exits. When the
+// limit ends first, the owner is not reaped, and no code signals its group
+// after that point. The exit by the final SIGKILL is expected. Each other
+// exit is an error: the owner exited before the final signal, or the final
+// signal did not reach it.
+func endHashGroupOwner(owner *exec.Cmd, input io.Closer) error {
+	_ = input.Close()
+	result := make(chan error, 1)
+	go func() { result <- owner.Wait() }()
+	limit := time.NewTimer(hashGroupOwnerEndLimit)
+	defer limit.Stop()
+	var err error
+	select {
+	case err = <-result:
+	case <-limit.C:
+		return fmt.Errorf("the process group owner of the Compose hash call did not exit within %s of the final signal, so it is not reaped", hashGroupOwnerEndLimit)
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+			return nil
+		}
+	}
+	if err == nil {
+		err = errors.New("exit status 0")
+	}
+	return fmt.Errorf("the process group owner of the Compose hash call did not end by the final signal: %w", err)
+}
+
+// expectedServiceHashes returns the config hash that Compose computes for
+// each named service from the current configuration.
+func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration config.Configuration, services []string) (map[string]string, error) {
+	// The call has its own finite deadline. An earlier deadline or a
+	// cancellation of the caller ends it first.
+	ctx, cancel := context.WithTimeout(ctx, composeHashTimeout)
+	defer cancel()
+	// The call runs in the process group of an owner process that this
+	// function starts first and reaps last. The owner is alive at the final
+	// group signal, so the group ID still belongs to this call when the
+	// signal goes out. A process that leaves the group (setsid or setpgid)
+	// does not get the signal.
+	owner, ownerInput, err := startHashGroupOwner()
+	if err != nil {
+		return nil, fmt.Errorf("start the process group owner of the Compose hash call: %w", err)
+	}
+	group := owner.Process.Pid
+	var output bytes.Buffer
+	command := exec.CommandContext(ctx, "python3",
+		rt.composeArguments(configuration, "config", "--hash", strings.Join(services, ","))...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	command.Stdout = &output
+	command.Stderr = rt.stderr
+	// When the context ends while the leader runs, SIGKILL goes to the whole
+	// group, the owner too. That is the final group signal of the call.
+	// WaitDelay bounds the wait for the output pipe after the leader exited,
+	// also when another process of the group still holds the pipe.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: group}
+	// Cancel keeps its own signal error. os/exec returns that error only when
+	// the command has no error of its own, so it is joined below.
+	var cancelMutex sync.Mutex
+	var cancelled bool
+	var cancelErr error
+	command.Cancel = func() error {
+		err := killHashGroup(group)
+		cancelMutex.Lock()
+		cancelled, cancelErr = true, err
+		cancelMutex.Unlock()
+		return err
+	}
+	command.WaitDelay = composeHashWaitDelay
+	runErr := command.Run()
+	// The call ended with a success, a failure, the deadline or a
+	// cancellation. A process of the group can still run. Without a
+	// cancellation, SIGKILL goes to the whole group now, while the owner is
+	// alive. Then the owner is reaped. A cleanup error stops the up.
+	cancelMutex.Lock()
+	signalErr := cancelErr
+	if !cancelled {
+		signalErr = killHashGroup(group)
+	}
+	cancelMutex.Unlock()
+	cleanupErr := errors.Join(signalErr, endHashGroupOwner(owner, ownerInput))
+	if runErr != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, errors.Join(fmt.Errorf("read Compose service configuration hashes: %w: %w", ctxErr, runErr), cleanupErr)
+		}
+		return nil, errors.Join(fmt.Errorf("read Compose service configuration hashes: %w", runErr), cleanupErr)
+	}
+	if cleanupErr != nil {
+		return nil, cleanupErr
+	}
+	hashes := make(map[string]string, len(services))
+	for _, line := range strings.Split(output.String(), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("Compose service configuration hash output is malformed")
+		}
+		hashes[fields[0]] = fields[1]
+	}
+	return hashes, nil
+}
+
+// serviceContainers returns the state of the containers of one service of
+// this Compose project. One-off containers (compose run) are not included.
+func (rt *runtime) serviceContainers(ctx context.Context, service string) ([]serviceContainer, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	list := exec.CommandContext(ctx, "docker", "ps", "--all", "--quiet", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+rt.project,
+		"--filter", "label=com.docker.compose.service="+service,
+		"--filter", "label=com.docker.compose.oneoff=False")
+	list.Dir = rt.root
+	output, err := list.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list the %s service containers: %w", service, err)
+	}
+	ids := strings.Fields(string(output))
+	containers := make([]serviceContainer, 0, len(ids))
+	for _, id := range ids {
+		inspect := exec.CommandContext(ctx, "docker", "inspect", "--format",
+			`{{.State.Running}} {{index .Config.Labels "com.docker.compose.config-hash"}}`, id)
+		inspect.Dir = rt.root
+		state, err := inspect.Output()
+		if err != nil {
+			return nil, fmt.Errorf("inspect a %s service container: %w", service, err)
+		}
+		fields := strings.Fields(string(state))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("inspect a %s service container: empty state", service)
+		}
+		container := serviceContainer{running: fields[0] == "true"}
+		if len(fields) == 2 {
+			container.configHash = fields[1]
+		}
+		containers = append(containers, container)
+	}
+	return containers, nil
+}
+
 func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1401,9 +1657,9 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 	if err != nil {
 		return err
 	}
-	temporalClient, err := client.Dial(options)
+	temporalClient, err := client.DialContext(ctx, options)
 	if err != nil {
-		return fmt.Errorf("connect authenticated Temporal client")
+		return temporalConnectError{cause: err}
 	}
 	defer temporalClient.Close()
 	service := temporalClient.WorkflowService()
@@ -1444,6 +1700,33 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 		return fmt.Errorf("Temporal server version mismatch")
 	}
 	return nil
+}
+
+// temporalConnectError keeps the cause of a failed Temporal connection for
+// errors.As. Its text names only the class of the cause. The SDK text can
+// name the endpoint or its address, so the text does not include it.
+type temporalConnectError struct {
+	cause error
+}
+
+func (e temporalConnectError) Error() string {
+	var deadline *serviceerror.DeadlineExceeded
+	var canceled *serviceerror.Canceled
+	var unavailable *serviceerror.Unavailable
+	switch {
+	case errors.As(e.cause, &deadline):
+		return "connect authenticated Temporal client: the server did not answer within the connection limit"
+	case errors.As(e.cause, &canceled):
+		return "connect authenticated Temporal client: the check was cancelled"
+	case errors.As(e.cause, &unavailable):
+		return "connect authenticated Temporal client: the server refused or closed the connection"
+	default:
+		return "connect authenticated Temporal client: the connection failed"
+	}
+}
+
+func (e temporalConnectError) Unwrap() error {
+	return e.cause
 }
 
 func artifactClient(configuration config.Configuration, rt *runtime) (*s3.Client, error) {
