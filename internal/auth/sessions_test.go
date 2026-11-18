@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
@@ -212,5 +213,25 @@ func TestDeviceBootstrapProofs(t *testing.T) {
 	revokedApprover := start("192.0.2.41", "device-revoked-approver")
 	if err := service.ApproveDeviceLoginFromBrowser(context.Background(), decision(revokedApprover)); err != auth.ErrInvalidCSRF {
 		t.Fatalf("revoked browser approver error = %v, want ErrInvalidCSRF", err)
+	}
+}
+
+// Guard: the runtime cannot configure a device poll interval above one minute,
+// so the pending Retry-After value stays inside the public 1 to 60 second
+// contract. The check stops before the service uses its store pool.
+func TestDevicePollIntervalAboveOneMinuteIsRefused(t *testing.T) {
+	_, err := auth.NewService(auth.Config{
+		Pool:         &store.Pool{},
+		DeploymentID: "deployment-poll-bound",
+		Device: auth.DevicePolicy{
+			ChallengeTTL:     10 * time.Minute,
+			PollInterval:     time.Minute + time.Second,
+			StartWindow:      time.Minute,
+			MaximumStarts:    10,
+			MaximumBodyBytes: 1024,
+		},
+	})
+	if err == nil || err.Error() != "device login bounds are invalid" {
+		t.Fatalf("NewService(poll interval 61s) error = %v, want the device bounds refusal", err)
 	}
 }
