@@ -1,9 +1,7 @@
 #!/bin/sh
-# The cleanup check of the live runner (D2-A, L-e1 P6), from its root-owned copy in
-# /etc/pm-live/hooks, as pmlive: "in-job" in the always-run step of live-w2.yml,
-# "post-stop" by the owner after the runner stops. It reads no job variable and no
-# label (F6). Every step runs and keeps its result. Any failure exits 1: the cleanup
-# is uncertain (owner step 14). See "Live runner (D2-A)" in docs/development/ci.md.
+# The cleanup check of the live runner (D2-A, L-e1 P6), as pmlive from /etc/pm-live/hooks:
+# in-job (always-run step) or post-stop (owner). No job variable or label (F6). Each step
+# runs; any failure exits 1, an uncertain cleanup (step 14). See ci.md "Live runner".
 if [ "${1:-}" != --clean-env ]; then
   exec /usr/bin/env -i PATH=/usr/bin:/bin /bin/sh "$0" --clean-env "$@"
 fi
@@ -41,8 +39,7 @@ export XDG_RUNTIME_DIR
 runs="$runtime/pm-live-run"
 home=$(home_of "$uid")
 
-# 1. in-job: the scan receipt: "sink=NAME count=N complete|incomplete" lines, then
-# "complete=true" (M1).
+# 1. in-job: the scan receipt (M1).
 check_receipt() {
   set -- "$runs"/*/scan-receipt
   if [ "$#" -ne 1 ] || [ ! -f "$1" ] || [ -L "$1" ] || [ "$(/usr/bin/wc -c < "$1")" -gt 4096 ]; then
@@ -86,9 +83,8 @@ check_receipt() {
 }
 [ "$mode" = post-stop ] || check_receipt
 
-# 2. Remove the token file through the token directory, opened once with O_NOFOLLOW:
-# owner and mode 0700 by fstat, then unlinkat (a link goes, never its target) and the
-# listing on that descriptor (#403 F4). The directory is the owner's and stays (R2-3).
+# 2. Remove the token file by unlinkat in the token directory opened once with O_NOFOLLOW,
+# checked by fstat and listed through that descriptor (#403 F4). The directory stays (R2-3).
 tokens="$runtime/pm-live"
 token_state=$("$python" -I -B -c '
 import os, stat, sys
@@ -133,8 +129,7 @@ else
   fail 'engine: a network other than the default, or no list'
 fi
 
-# 4. Remove the run roots (fixture, secret root, PostgreSQL data, raw report, scan
-# copies) and the caches, in the user namespace of the engine (mapped UIDs).
+# 4. Remove the run roots and the caches, in the engine's user namespace (mapped UIDs).
 if [ -z "$home" ]; then
   fail 'the home folder of the live UID is unknown'
   set -- "$runs"

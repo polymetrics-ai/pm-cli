@@ -290,7 +290,7 @@ class RunnerCheck(unittest.TestCase):
             f'sha256_of() {{ "{host.bin / "sha"}" "$1"; }}\n',
             f'crontab_of() {{ if [ -f "{state}/crontab" ]; then cat "{state}/crontab"; '
             'else echo "no crontab for $1" >&2; return 1; fi; }\n',
-            f"put() {{ [ ! -f '{state}/put-fails' ] && printf '%s %s %s\\n' \"$@\"; }}\n",
+            f"put() {{ [ -f '{state}/put-empty' ] || {{ [ ! -f '{state}/put-fails' ] && printf '%s %s %s\\n' \"$@\"; }}; }}\n",
             f'sync_file() {{ "{host.bin / "sync"}" "$1"; }}\n', f"grep={host.bin / 'grep'}\n", f"python={sys.executable}\n"])
         host.run_root.parent.parent.rename(host.root / "runtime-gone")  # the gate needs no runtime folder
         self.runner = host.root / "opt/pm-live/actions-runner"
@@ -491,6 +491,19 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(record.returncode, 1, record.stdout)
                 self.assertEqual(self.list.read_bytes(), self.recorded)
                 self.assertEqual([path.name for path in self.list.parent.iterdir()], [self.list.name])
+
+    def test_a_failed_or_empty_compare_listing_never_matches(self):
+        # crrao's addendum to N1: an empty baseline and a failed or empty fresh listing.
+        self.list.write_text("")
+        for flag in ("put-fails", "put-empty"):
+            with self.subTest(case=flag):
+                self.host.flag(flag)
+                record, check = self.host.run(self.script, "--record"), self.check()
+                (self.host.state / flag).unlink()
+                self.assertEqual((record.returncode, check.returncode), (1, 1), record.stdout + check.stdout)
+                self.assertEqual(self.list.read_text(), "")
+                self.assertNotIn("match the list", check.stdout)
+        self.assertNotIn("/usr/bin/mktemp)", (ROOT / "scripts/ci/live-runner-check.sh").read_text())  # no /tmp
 
     def test_a_failed_deletion_and_listing_fail_the_check(self):
         # #403 N2: find and ls both fail on an excluded folder. No "empty".

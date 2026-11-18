@@ -1,10 +1,7 @@
 #!/bin/sh
-# The pre-run check of the live runner (D2-A, L-e1 P6, crrao C4). The owner runs
-# the root-owned copy in /etc/pm-live/hooks as root, with env -i PATH=/usr/bin:/bin:
-# with no option before each start (owner step 12), with --gate after
-# terminate-user (step 13a: only the /proc gate, no change), and with --record
-# once at install, last (step 6a). The check never records (R2-6). Any failure
-# exits 1. See "Live runner (D2-A)" in docs/development/ci.md.
+# The pre-run check of the live runner (D2-A, L-e1 P6), as root from /etc/pm-live/hooks:
+# before each start (owner step 12), --gate after terminate-user (step 13a), --record
+# once at install, last (6a). Any failure exits 1. See "Live runner (D2-A)" in ci.md.
 if [ "${1:-}" != --clean-env ]; then
   exec /usr/bin/env -i PATH=/usr/bin:/bin /bin/sh "$0" --clean-env "$@"
 fi
@@ -24,8 +21,7 @@ grep=/usr/bin/grep
 python=/usr/bin/python3
 
 user=pmlive
-# absent PATH...: 0 when each is proved absent (ENOENT), 1 when one exists, 2 on
-# another lookup error, for example ELOOP or EACCES on an ancestor (#403 N3).
+# absent PATH...: 0 when each is proved absent (ENOENT), 1 if one exists, 2 else (N3).
 absent() {
   "$python" -I -B -c '
 import os, sys
@@ -69,10 +65,9 @@ uid=$(uid_of "$user") && home=$(home_of "$user") && [ -n "$home" ] && [ -d "$hom
   exit 1
 }
 
-# owner, group, raw mode, SHA-256 (or link target) and path of each runner, unit and
-# home file, except the emptied folders. Any failure fails the list (#403 F2, N1).
+# owner, group, mode, SHA-256 (or link) and path of each runner, unit and home file.
 current_list() {
-  listing=$(/usr/bin/mktemp) || return 1
+  listing=$(/usr/bin/mktemp "$list.find.XXXXXX") || return 1
   if ! /usr/bin/find "$runner" "$unit" "$home" \( -path "$runner/_diag" -o -path "$home/pm-live-cache" \
     -o -path "$home/.local/share/containers" \) -prune -o -print > "$listing" ||
     ! /usr/bin/sort -o "$listing" -- "$listing"; then
@@ -109,7 +104,7 @@ if [ "${1:-}" = --record ]; then
   [ "$status" -eq 0 ] || exit 1
   # Only a complete, flushed new list replaces the old one (#403 N1).
   temporary=$(/usr/bin/mktemp "$list.XXXXXX") || exit 1
-  if current_list > "$temporary" && sync_file "$temporary" && /bin/chmod 0644 "$temporary" &&
+  if current_list > "$temporary" && [ -s "$temporary" ] && sync_file "$temporary" && /bin/chmod 0644 "$temporary" &&
     /bin/mv -f -- "$temporary" "$list"; then
     pass "recorded $(/usr/bin/wc -l < "$list" | /usr/bin/tr -d ' ') entries in $list"
     exit 0
@@ -119,8 +114,7 @@ if [ "${1:-}" = --record ]; then
   exit 1
 fi
 
-# 1. The gate: no process of the live UID or of its one /etc/subuid range (m1), in any
-# cgroup (N1), and no runtime folder. An unreadable entry or range fails.
+# 1. The gate: no process of the live UID or its /etc/subuid range (m1, N1), no runtime folder.
 gate=0
 range=$(/usr/bin/awk -F : -v user="$user" -v uid="$uid" '
   $1 == user || $1 == uid { lines++; if (NF == 3 && $2 ~ /^[0-9]+$/ && $3 ~ /^[1-9][0-9]*$/) { low = $2; high = $2 + $3 } }
@@ -154,8 +148,7 @@ if [ "${1:-}" = --gate ]; then
   exit "$status"
 fi
 
-# 2. Empty the work folder, _diag, the engine storage and the cache folder, only after
-# the gate (no live process can change a path). No path component may be a link.
+# 2. Empty the excluded folders, only after the gate. No path component may be a link.
 for folder in "$work" "$runner/_diag" "$home/.local/share/containers" "$home/pm-live-cache"; do
   if [ "$gate" -ne 0 ]; then
     fail "$folder: not emptied, because the gate failed"
@@ -176,11 +169,12 @@ done
 # 3. Compare the files with the root-held list, only after the gate (crrao I2).
 if [ "$gate" -ne 0 ]; then
   fail 'the files were not compared, because the gate failed'
-elif [ ! -f "$list" ] || [ -L "$list" ]; then
-  fail 'the root-held file list is missing'
+elif [ ! -f "$list" ] || [ -L "$list" ] || [ ! -s "$list" ]; then
+  fail 'the root-held file list is missing or empty'
 else
-  temporary=$(/usr/bin/mktemp) || exit 1
-  if ! current_list > "$temporary"; then
+  # In the root-owned list folder, not /tmp. An empty list never matches (crrao, N1).
+  temporary=$(/usr/bin/mktemp "$list.compare.XXXXXX") || exit 1
+  if ! current_list > "$temporary" || [ ! -s "$temporary" ]; then
     fail 'the runner, unit or home files cannot be listed, read or hashed'
   elif /usr/bin/cmp -s -- "$list" "$temporary"; then
     pass 'the runner, unit and home files match the list'
