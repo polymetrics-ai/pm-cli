@@ -23,10 +23,10 @@ SUBUID = 100000
 SINKS = ("service-logs container-logs container-records temporal-history postgresql object-store "
          "step-summary test-output host-processes").split()
 RECEIPT = "".join(f"sink={name} count=0 complete\n" for name in SINKS) + "complete=true\n"
-CLEANUP_FIXED = ["root=\n", "proc=/proc\n", "podman=/usr/bin/podman\n",
+CLEANUP_FIXED = ["root=\n", "proc=/proc\n", "podman=/usr/bin/podman\n", "python=/usr/bin/python3\n",
                  'home_of() { /usr/bin/getent passwd "$1" | /usr/bin/cut -d: -f6; }\n']
 RUNNER_FIXED = CLEANUP_FIXED[:2] + [
-    'uid_of() { /usr/bin/id -u "$1"; }\n', CLEANUP_FIXED[3],
+    'uid_of() { /usr/bin/id -u "$1"; }\n', CLEANUP_FIXED[4],
     "entry_of() { /usr/bin/stat -c '%u %g %f' -- \"$1\"; }\n",
     'sha256_of() { /usr/bin/sha256sum -- "$1"; }\n',
     'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n',
@@ -124,9 +124,12 @@ class CleanupCheck(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.host = Host(self.directory.name)
-        self.script = self.host.script("live-cleanup-check.sh", CLEANUP_FIXED, [
+        self.script = self.copy(sys.executable)
+
+    def copy(self, python):
+        return self.host.script("live-cleanup-check.sh", CLEANUP_FIXED, [
             f"root={self.host.root}\n", f"proc={self.host.proc}\n", f"podman={self.host.bin / 'podman'}\n",
-            f'home_of() {{ echo "{self.host.home}"; }}\n'])
+            f"python={python}\n", f'home_of() {{ echo "{self.host.home}"; }}\n'])
 
     def tearDown(self):
         self.directory.cleanup()
@@ -212,6 +215,51 @@ class CleanupCheck(unittest.TestCase):
         (self.host.tokens / "w2-token").symlink_to(target)
         self.assertEqual(self.check().returncode, 0)
         self.assertEqual((list(self.host.tokens.iterdir()), target.read_text()), ([], "keep"))
+
+    def test_a_replaced_token_directory_is_refused(self):
+        # #403 F4: the token directory is renamed and a link to a directory
+        # outside takes its name, after the earlier steps and just before the
+        # removal (the python seam does it, then runs the helper). The token
+        # must not be reported as removed, and the outside file must stay.
+        tokens, outside = self.host.tokens, self.host.root / "outside"
+        (tokens / "w2-token").write_text("dummy")
+        swap = self.host.root / "swap-then-python"
+        swap.write_text(f'#!/bin/sh\n/bin/mv "{tokens}" "{tokens}.moved" && /bin/mkdir -m 700 "{outside}" && '
+                        f'echo outside > "{outside}/w2-token" && /bin/ln -s "{outside}" "{tokens}"\n'
+                        f'exec "{sys.executable}" "$@"\n')
+        swap.chmod(0o755)
+        self.script = self.copy(swap)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("token directory: missing, a link", result.stdout)
+        self.assertEqual((outside / "w2-token").read_text(), "outside\n")
+
+    def test_a_swap_after_the_open_cannot_redirect_the_removal(self):
+        # #403 F4: the swap happens inside the helper, after its open and
+        # check. The removal goes through the opened descriptor: the real
+        # token goes, and the file behind the new link stays.
+        tokens, outside = self.host.tokens, self.host.root / "outside"
+        (tokens / "w2-token").write_text("dummy")
+        swap = (f"os.rename({str(tokens)!r}, {str(tokens) + '.moved'!r}); os.mkdir({str(outside)!r}, 0o700); "
+                f"open({str(outside / 'w2-token')!r}, 'w').write('outside'); os.symlink({str(outside)!r}, {str(tokens)!r})\\n")
+        seam = self.host.root / "swap-inside-python"
+        seam.write_text(f"#!{sys.executable}\nimport os, sys\nargs = sys.argv[1:]\nindex = args.index('-c') + 1\n"
+                        "anchor = 'status = os.fstat(directory)\\n'\n"
+                        f"args[index] = args[index].replace(anchor, anchor + \"{swap}\", 1)\n"
+                        "os.execv(sys.executable, [sys.executable, *args])\n")
+        seam.chmod(0o755)
+        self.script = self.copy(seam)
+        result = self.check()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual((outside / "w2-token").read_text(), "outside")
+        self.assertEqual(list(Path(str(tokens) + ".moved").iterdir()), [])
+
+    def test_a_token_directory_with_a_wide_mode_is_refused(self):
+        # #403 F4: the owner's token directory has mode 0700. Another mode fails.
+        self.host.tokens.chmod(0o755)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertIn("token directory: missing, a link", result.stdout)
 
     def test_the_in_job_process_list_is_a_report_only(self):
         self.host.process(10, UID)

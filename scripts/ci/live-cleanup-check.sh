@@ -19,6 +19,7 @@ set -u
 root=
 proc=/proc
 podman=/usr/bin/podman
+python=/usr/bin/python3
 home_of() { /usr/bin/getent passwd "$1" | /usr/bin/cut -d: -f6; }
 
 # The sinks of the scan receipt, which the live harness writes (L-e2 P7).
@@ -84,18 +85,33 @@ check_receipt() {
 }
 [ "$mode" = post-stop ] || check_receipt
 
-# 2. Remove the token file by name. rm removes a link itself, never its
-# target. The token directory is the owner's and stays (R2-3).
+# 2. Remove the token file by name, through the token directory opened once
+# without following a link (#403 F4): the owner and mode are checked on that
+# descriptor, the file is removed relative to it (unlinkat removes a link
+# itself, never its target) and the directory is listed through it. The
+# directory is the owner's and stays (R2-3).
 tokens="$runtime/pm-live"
-if [ -L "$tokens" ] || [ ! -d "$tokens" ]; then
-  fail 'token directory: missing or a link'
-else
-  if [ -e "$tokens/w2-token" ] || [ -L "$tokens/w2-token" ]; then
-    printf '%s\n' 'live-cleanup-check: the token file was still there; it is removed now'
-  fi
-  /bin/rm -f -- "$tokens/w2-token" || fail 'token file: the removal failed'
-  if [ -z "$(/bin/ls -A -- "$tokens" 2>&1)" ]; then pass 'token directory is empty'; else fail 'token directory is not empty'; fi
-fi
+token_state=$("$python" -I -B -c '
+import os, stat, sys
+directory = os.open(sys.argv[1], os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+status = os.fstat(directory)
+if status.st_uid != os.getuid() or stat.S_IMODE(status.st_mode) & 0o077:
+    sys.exit(3)
+try:
+    os.unlink("w2-token", dir_fd=directory)
+    state = "removed"
+except FileNotFoundError:
+    state = "absent"
+print(state + ("-empty" if not os.listdir(directory) else "-not-empty"))
+' "$tokens" 2> /dev/null) || token_state=error
+case "$token_state" in
+  removed-*) printf '%s\n' 'live-cleanup-check: the token file was still there; it is removed now' ;;
+esac
+case "$token_state" in
+  *-not-empty) fail 'token directory is not empty' ;;
+  *-empty) pass 'token directory is empty' ;;
+  *) fail 'token directory: missing, a link, or a wrong owner or mode' ;;
+esac
 
 # 3. Reset the account's engine, then check that nothing is left.
 if "$podman" system reset --force > /dev/null 2>&1; then pass 'engine reset'; else fail 'engine reset'; fi
