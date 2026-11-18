@@ -334,16 +334,22 @@ class ExitWatch:
 
     While the child is not reaped, its process ID, and so the ID of its
     process group, names no other process. Linux uses a pidfd, macOS a
-    kqueue process filter.
+    kqueue process filter. With WAKE (the read end of a non-blocking pipe),
+    a byte on WAKE also ends a wait. One wait call returns every ready event,
+    so an exit that comes with a wake byte is not lost, and an observed exit
+    stays recorded: EXITED only changes from False to True. Only the main
+    path of run_command waits, never a signal handler (#370 round 6).
     """
 
-    def __init__(self, pid):
+    def __init__(self, pid, wake=None):
         self.descriptor = self.queue = None
-        self.exited = False
+        self.exited, self.wake = False, wake
         if hasattr(os, "pidfd_open"):
             self.descriptor = os.pidfd_open(pid)
         elif hasattr(select, "kqueue"):
             self.queue = select.kqueue()
+            if wake is not None:
+                self.queue.control([select.kevent(wake, filter=select.KQ_FILTER_READ, flags=select.KQ_EV_ADD)], 0, 0)
             change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
                                    flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
                                    fflags=select.KQ_NOTE_EXIT)
@@ -356,15 +362,30 @@ class ExitWatch:
             raise OSError("no process exit event: the system has neither pidfd_open nor kqueue")
 
     def wait(self, timeout):
-        """Wait for the exit for at most TIMEOUT seconds (None: no limit)."""
-        if not self.exited:
-            if self.descriptor is not None:
-                poller = select.poll()
-                poller.register(self.descriptor, select.POLLIN)
-                ready = poller.poll(None if timeout is None else int(timeout * 1000))
-            else:
-                ready = self.queue.control(None, 1, timeout)
-            self.exited = bool(ready)
+        """Wait for the exit for at most TIMEOUT seconds (None: no limit), or
+        until a byte on WAKE. Return True when the exit was observed."""
+        if self.exited:
+            return True
+        if self.descriptor is not None:
+            poller = select.poll()
+            for descriptor in (self.descriptor, self.wake):
+                if descriptor is not None:
+                    poller.register(descriptor, select.POLLIN)
+            ready = [descriptor for descriptor, _ in poller.poll(None if timeout is None else int(timeout * 1000))]
+            exited = self.descriptor in ready
+        else:
+            events = self.queue.control(None, 2, timeout)
+            ready = [event.ident for event in events if event.filter == select.KQ_FILTER_READ]
+            exited = any(event.filter == select.KQ_FILTER_PROC and event.fflags & select.KQ_NOTE_EXIT
+                         for event in events)
+        if exited:
+            self.exited = True
+        if self.wake is not None and self.wake in ready:
+            try:
+                while os.read(self.wake, 512):
+                    pass
+            except BlockingIOError:
+                pass
         return self.exited
 
     def close(self):
@@ -372,10 +393,6 @@ class ExitWatch:
             os.close(self.descriptor)
         if self.queue is not None:
             self.queue.close()
-
-
-class _ReceivedSignal(Exception):
-    """The script itself received SIGTERM, SIGINT or SIGHUP."""
 
 
 # The process list of Linux. The developer checks replace it.
@@ -488,9 +505,17 @@ def run_command(command, output, deadline, limit):
     and a member list that cannot be read (crrao R1). They fail the run.
     """
     # forward is False after the last signal to the group, before the reap.
-    state = {"process": None, "watch": None, "waiting": False, "forward": True}
+    state = {"process": None, "forward": True}
     received = []
     denied = []
+    # pending holds the Darwin refusals. The main path decides them after
+    # the last group signal and before the reap (decide_refusals).
+    pending = []
+    # The signal handler writes one byte here, and the main wait watches it
+    # together with the exit event (ExitWatch).
+    wake_read, wake_write = os.pipe()
+    for descriptor in (wake_read, wake_write):
+        os.set_blocking(descriptor, False)
     # alive is True when COMMAND has not ended KILL_GRACE seconds after the
     # last SIGKILL (for example, the system refused that SIGKILL). The script
     # then does not reap it, so its ID stays reserved, and the run fails.
@@ -498,15 +523,6 @@ def run_command(command, output, deadline, limit):
     # unsignalled holds the result of unsignalled_members() after the last
     # SIGKILL: a count, or None when the member list cannot be read.
     unsignalled = []
-
-    def refusal_is_harmless(group):
-        # Ask the exit event of the command itself (a non-reaping wait of at
-        # most KILL_GRACE), not the result of an earlier wait: a signal can
-        # interrupt that wait after the exit.
-        watch = state["watch"]
-        if sys.platform != "darwin" or watch is None or not watch.wait(KILL_GRACE):
-            return False
-        return live_group_members(group) == []
 
     def forward(signum, _frame):
         process = state["process"]
@@ -517,8 +533,25 @@ def run_command(command, output, deadline, limit):
         except ProcessLookupError:
             pass
         except PermissionError:
-            if not refusal_is_harmless(process.pid):
-                denied.append(signum)
+            # Darwin also refuses a signal to a group whose only member is
+            # the exited, unreaped command. Each Linux refusal fails the run.
+            (pending if sys.platform == "darwin" else denied).append(signum)
+
+    def decide_refusals(exited):
+        """After the last group signal and before the reap: a Darwin refusal
+        is harmless only if the main path observed the exit and no live
+        member remains. A signal from here on only records itself."""
+        if pending and (not exited or live_group_members(state["process"].pid) != []):
+            denied.extend(pending)
+        pending.clear()
+
+    def wait_for(watch, seconds):
+        """Wait up to SECONDS for the exit. A wake byte does not shorten it."""
+        end = time.monotonic() + seconds
+        while not watch.wait(max(0.0, end - time.monotonic())):
+            if time.monotonic() >= end:
+                return False
+        return True
 
     def cleanup():
         parts = []
@@ -541,8 +574,10 @@ def run_command(command, output, deadline, limit):
     def reap(process, watch):
         """Reap COMMAND only when it has ended. Never wait without a limit."""
         if watch is not None:
-            ended = watch.wait(KILL_GRACE)
+            ended = wait_for(watch, KILL_GRACE)
+            decide_refusals(ended)
         else:
+            decide_refusals(False)
             try:
                 return process.wait(timeout=KILL_GRACE)
             except subprocess.TimeoutExpired:
@@ -560,10 +595,14 @@ def run_command(command, output, deadline, limit):
         # Only a signal that this script receives comes here. The deadline
         # and the final kill call forward() directly. The signal is always
         # recorded, also after forwarding ended, so that it fails the run.
+        # The handler never waits and never raises: the byte ends the main
+        # wait, which owns the exit event.
         received.append(signum)
         forward(signum, frame)
-        if state["waiting"] and len(received) == 1:
-            raise _ReceivedSignal()
+        try:
+            os.write(wake_write, b"\0")
+        except BlockingIOError:
+            pass
 
     # The handlers are in place before the command starts, so a signal that
     # comes before the wait is recorded too.
@@ -581,7 +620,7 @@ def run_command(command, output, deadline, limit):
                 relative = time.time() + limit
                 deadline = relative if deadline is None else min(deadline, relative)
             try:
-                watch = state["watch"] = ExitWatch(process.pid)
+                watch = ExitWatch(process.pid, wake_read)
             except OSError as exc:
                 print(f"go test: cannot watch the command: {exc}")
                 forward(signal.SIGKILL, None)
@@ -591,24 +630,21 @@ def run_command(command, output, deadline, limit):
                 return early_status(), False, received[0] if received else None, cleanup()
             timed_out = False
             try:
-                try:
-                    state["waiting"] = True
-                    if received:
-                        raise _ReceivedSignal()
-                    timeout = None if deadline is None else max(0.0, deadline - time.time())
-                    if not watch.wait(timeout):
-                        timed_out = True
-                        forward(signal.SIGTERM, None)
-                        if not watch.wait(KILL_GRACE):
-                            forward(signal.SIGKILL, None)
-                except _ReceivedSignal:
+                # The exit, the deadline or the first signal (its wake byte)
+                # ends this wait. A later signal changes nothing but the record.
+                timeout = None if deadline is None else max(0.0, deadline - time.time())
+                if not received and not watch.wait(timeout) and not received:
+                    timed_out = True
+                    forward(signal.SIGTERM, None)
+                    if not wait_for(watch, KILL_GRACE):
+                        forward(signal.SIGKILL, None)
+                if received and not timed_out:
                     # The handler forwarded the signal to the group. Give the
                     # command KILL_GRACE seconds to stop, then SIGKILL.
                     forward(received[0], None)
-                    if not watch.wait(KILL_GRACE):
+                    if not wait_for(watch, KILL_GRACE):
                         forward(signal.SIGKILL, None)
             finally:
-                state["waiting"] = False
                 # A test process that outlives the command must not keep
                 # running. The command is not reaped yet, so no new process
                 # or process group can have its ID. This is the last signal
@@ -628,6 +664,8 @@ def run_command(command, output, deadline, limit):
     finally:
         for number, handler in previous.items():
             signal.signal(number, handler)
+        os.close(wake_read)
+        os.close(wake_write)
     if status < 0:
         status = 128 - status
     if received:
