@@ -478,6 +478,64 @@ class ExitWatch:
             self.queue.close()
 
 
+# The process list of Linux. The developer checks replace it.
+PROC = Path("/proc")
+# The limits of one ps run: its listing, and its collection after a kill.
+LIST_TIMEOUT = 10
+LIST_KILL_GRACE = 5
+# ps starts with this reference, so that a check that replaces
+# subprocess.Popen does not see the ps process.
+PROCESS_LIST_POPEN = subprocess.Popen
+
+
+def live_group_members(group: int) -> list[int] | None:
+    """Return the IDs of the processes in GROUP that have not exited.
+
+    Return None when the process list cannot be read. Linux reads
+    /proc/<pid>/stat, other systems read ps. This is the rule of
+    go-test-report.py: only ENOENT or ESRCH counts as an exited process, and
+    each wait for ps has a limit.
+    """
+    live: list[int] = []
+    if sys.platform.startswith("linux"):
+        try:
+            entries = [entry for entry in PROC.iterdir() if entry.name.isdigit()]
+        except OSError:
+            return None
+        for entry in entries:
+            try:
+                text = (entry / "stat").read_text()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except OSError:
+                return None
+            fields = text[text.rfind(")") + 1:].split()
+            if len(fields) >= 3 and fields[2] == str(group) and fields[0] not in ("Z", "X"):
+                live.append(int(entry.name))
+        return live
+    try:
+        lister = PROCESS_LIST_POPEN(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return None
+    try:
+        listing, _ = lister.communicate(timeout=LIST_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        lister.kill()
+        try:
+            lister.communicate(timeout=LIST_KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+        return None
+    if lister.returncode != 0:
+        return None
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[1] == str(group) and not fields[2].startswith("Z"):
+            live.append(int(fields[0]))
+    return live
+
+
 def terminate_process_group(process: subprocess.Popen[bytes], grace: float | None = None) -> None:
     """Stop the process group of PROCESS, a child that this script has not reaped.
 
@@ -487,6 +545,13 @@ def terminate_process_group(process: subprocess.Popen[bytes], grace: float | Non
     exit of the child without reaping it, and sends SIGKILL to the group. It
     reaps the child only after that. A child that is already reaped is
     refused: after the reap, its process group ID can name a new group.
+
+    A group signal that the system refuses (EPERM) fails the stop, after the
+    reap of an ended child: a member can still run. Only on Darwin, the system
+    also refuses a signal to a group whose only member is the child after it
+    has exited and before the reap. Only then, and only when the member list
+    shows no live member, the refusal does not fail the stop. A member list
+    that cannot be read fails it.
     """
     if process.returncode is not None:
         raise FixtureError("owned process was reaped before its process group was stopped")
@@ -495,17 +560,17 @@ def terminate_process_group(process: subprocess.Popen[bytes], grace: float | Non
     except OSError as exc:
         raise FixtureError("cannot watch the owned process") from exc
 
+    refused: list[int] = []
+
     def signal_group(signum: int) -> None:
         try:
             os.killpg(process.pid, signum)
         except ProcessLookupError:
             pass
         except PermissionError:
-            # Darwin reports EPERM when the only member left in the group is
-            # the child that has exited and is not reaped yet. Then no process
-            # is left to signal. Any other EPERM is an error.
-            if not watch.wait(0):
-                raise
+            if sys.platform == "darwin" and watch.wait(0) and live_group_members(process.pid) == []:
+                return
+            refused.append(signum)
 
     try:
         signal_group(signal.SIGTERM)
@@ -517,6 +582,10 @@ def terminate_process_group(process: subprocess.Popen[bytes], grace: float | Non
     finally:
         watch.close()
     process.wait()
+    if refused:
+        names = ", ".join(sorted({signal.Signals(number).name for number in refused}))
+        raise FixtureError(f"the system refused to send {names} to the owned process group "
+                           f"(permission denied), so a member can still run")
 
 
 def run_capture(
