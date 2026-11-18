@@ -1219,16 +1219,40 @@ func (rt *runtime) startServices(ctx context.Context, configuration config.Confi
 	return nil
 }
 
+// composeHashTimeout bounds one compose config --hash call. The hash call can
+// be the first Compose call of an up, so the limit also covers a first install
+// of the pinned Compose by tools/bootstrap.py. A developer check sets a
+// shorter value.
+var composeHashTimeout = 2 * time.Minute
+
+// composeHashWaitDelay bounds the wait for the output pipe of a hash call
+// after its process group got SIGKILL.
+const composeHashWaitDelay = 5 * time.Second
+
 // expectedServiceHashes returns the config hash that Compose computes for
 // each named service from the current configuration.
 func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration config.Configuration, services []string) (map[string]string, error) {
+	// The call has its own finite deadline. An earlier deadline or a
+	// cancellation of the caller ends it first.
+	ctx, cancel := context.WithTimeout(ctx, composeHashTimeout)
+	defer cancel()
 	command := exec.CommandContext(ctx, "python3",
 		rt.composeArguments(configuration, "config", "--hash", strings.Join(services, ","))...)
 	command.Dir = rt.root
 	command.Env = rt.composeEnvironment()
 	command.Stderr = rt.stderr
+	// The call and each process that it starts are one process group. When
+	// the context ends, SIGKILL goes to the whole group, so no process of the
+	// call keeps its output pipe open after the return. WaitDelay bounds the
+	// wait for that pipe if a process left the group.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
+	command.WaitDelay = composeHashWaitDelay
 	output, err := command.Output()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, fmt.Errorf("read Compose service configuration hashes: %w: %w", ctxErr, err)
+		}
 		return nil, fmt.Errorf("read Compose service configuration hashes: %w", err)
 	}
 	hashes := make(map[string]string, len(services))

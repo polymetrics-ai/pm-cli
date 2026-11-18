@@ -1,13 +1,18 @@
 package stack
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 )
@@ -106,6 +111,125 @@ func TestStartServicesKeepsSettledContainers(t *testing.T) {
 	}
 }
 
+// TestStartServicesBoundsTheHashCommand runs startServices against a fake
+// compose config --hash call that never ends. A child of the fake holds the
+// output pipe of the call. The call must end at its own deadline when the
+// caller set none, and at a cancellation of the caller. Each case expects an
+// error, no compose up call and no process of the call that holds its output
+// pipe (no exec.ErrWaitDelay). Each wait has one time limit. No sleep, no
+// retry.
+func TestStartServicesBoundsTheHashCommand(t *testing.T) {
+	services := map[string]string{"postgres": "hash-postgres"}
+	containers := map[string][]string{"postgres": {"true hash-postgres"}}
+
+	t.Run("a stalled hash call ends at its deadline", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		makeStallFIFO(t, fake, "stall")
+		previous := composeHashTimeout
+		composeHashTimeout = 200 * time.Millisecond
+		t.Cleanup(func() { composeHashTimeout = previous })
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+
+		err := awaitStartServices(t, rt, context.Background())
+		if !errors.Is(err, context.DeadlineExceeded) || errors.Is(err, exec.ErrWaitDelay) {
+			t.Fatalf("startServices with a stalled hash call = %v; want the deadline and no held output pipe", err)
+		}
+		assertNoComposeCall(t, fake)
+	})
+
+	t.Run("a cancelled caller ends the hash call", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		makeStallFIFO(t, fake, "stall")
+		started := makeStallFIFO(t, fake, "started")
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+
+		results := make(chan error, 1)
+		go func() { results <- rt.startServices(ctx, noRecreateTestConfiguration(t), true, "postgres") }()
+		awaitFIFOLine(t, started)
+		cancel()
+		var err error
+		select {
+		case err = <-results:
+		case <-time.After(hashTestLimit):
+			t.Fatalf("startServices did not return within %s after the cancellation", hashTestLimit)
+		}
+		if !errors.Is(err, context.Canceled) || errors.Is(err, exec.ErrWaitDelay) {
+			t.Fatalf("startServices after a cancellation = %v; want the cancellation and no held output pipe", err)
+		}
+		assertNoComposeCall(t, fake)
+	})
+}
+
+// hashTestLimit is the one time limit of each wait in the hash call checks.
+const hashTestLimit = 20 * time.Second
+
+// awaitStartServices runs startServices once and waits once for its result.
+func awaitStartServices(t *testing.T, rt *runtime, ctx context.Context) error {
+	t.Helper()
+	results := make(chan error, 1)
+	go func() { results <- rt.startServices(ctx, noRecreateTestConfiguration(t), true, "postgres") }()
+	select {
+	case err := <-results:
+		return err
+	case <-time.After(hashTestLimit):
+		t.Fatalf("startServices did not return within %s", hashTestLimit)
+	}
+	return nil
+}
+
+// makeStallFIFO makes a named pipe in the fake engine directory. The cleanup
+// opens it once for writing without a wait, so a fake process that still
+// reads it ends when the test ends.
+func makeStallFIFO(t *testing.T, directory, name string) string {
+	t.Helper()
+	path := filepath.Join(directory, name)
+	if err := syscall.Mkfifo(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if writer, err := os.OpenFile(path, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+	})
+	return path
+}
+
+// awaitFIFOLine waits once, with one limit, for one line on the named pipe.
+func awaitFIFOLine(t *testing.T, path string) {
+	t.Helper()
+	lines := make(chan error, 1)
+	go func() {
+		reader, err := os.Open(path)
+		if err != nil {
+			lines <- err
+			return
+		}
+		defer reader.Close()
+		_, err = bufio.NewReader(reader).ReadString('\n')
+		lines <- err
+	}()
+	select {
+	case err := <-lines:
+		if err != nil {
+			t.Fatalf("read the start line of the fake hash call: %v", err)
+		}
+	case <-time.After(hashTestLimit):
+		t.Fatalf("the fake hash call did not start within %s", hashTestLimit)
+	}
+}
+
+// assertNoComposeCall checks that the fake recorded no compose call other
+// than the hash call.
+func assertNoComposeCall(t *testing.T, directory string) {
+	t.Helper()
+	if _, err := os.Stat(filepath.Join(directory, "compose.log")); !errors.Is(err, os.ErrNotExist) {
+		contents, _ := os.ReadFile(filepath.Join(directory, "compose.log"))
+		t.Fatalf("compose calls after a failed hash call = %q (stat error %v); want none", contents, err)
+	}
+}
+
 // installFakeEngine writes fake python3 and docker programs and puts them
 // first on PATH. It returns the directory that holds their data and log.
 func installFakeEngine(t *testing.T, hashes map[string]string, containers map[string][]string) string {
@@ -132,6 +256,16 @@ func installFakeEngine(t *testing.T, hashes map[string]string, containers map[st
 	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
 for argument in "$@"; do
   if [ "$argument" = "--hash" ]; then
+    if [ -p "$FAKE_ENGINE_DIR/stall" ]; then
+      # A child holds the output pipe of this call, as a helper process of a
+      # real Compose call can. Both wait for a writer that never comes.
+      sh -c 'read -r line < "$FAKE_ENGINE_DIR/stall"' &
+      if [ -p "$FAKE_ENGINE_DIR/started" ]; then
+        printf 'started\n' > "$FAKE_ENGINE_DIR/started"
+      fi
+      read -r line < "$FAKE_ENGINE_DIR/stall"
+      exit 0
+    fi
     cat "$FAKE_ENGINE_DIR/hashes"
     exit 0
   fi
