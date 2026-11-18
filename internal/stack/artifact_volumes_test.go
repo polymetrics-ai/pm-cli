@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	goruntime "runtime"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -433,10 +435,15 @@ const artifactStartDeadlockGuard = time.Minute
 // cancelAtFirstCapacityRequest puts a python3 wrapper first on PATH, before
 // the fake of installFakeArtifactStore. When a /dir/status request (the
 // capacity check) reaches the fake master, the wrapper writes one line to a
-// named pipe, then runs the fake. A goroutine opens the pipe, which waits
-// until that first request, reads the line and calls cancel. The returned
-// function reports whether a capacity request came. It also ends the wait
-// of the goroutine when no request came.
+// named pipe, then runs the fake. A goroutine reads the first line of the
+// pipe and calls cancel when it is the capacity line. The returned function
+// reports whether a capacity request came.
+//
+// The test holds the pipe open for read and write (O_RDWR), so that the open
+// never waits and a capacity request never waits for a reader. To end a
+// reader that saw no capacity request, the helper writes its own stop line.
+// The cleanup does that on every exit of the subtest and then waits for the
+// reader within the deadlock guard (#336 round 4 F2).
 func cancelAtFirstCapacityRequest(t *testing.T, cancel context.CancelFunc) func() bool {
 	t.Helper()
 	directory := t.TempDir()
@@ -461,38 +468,63 @@ exec "$FAKE_STORE_DIR/bin/python3" "$@"
 `, 0o700)
 	t.Setenv("FAKE_CAPACITY_SIGNAL", signal)
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	pipe, err := os.OpenFile(signal, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
 	seen := make(chan bool, 1)
-	done := make(chan struct{})
-	t.Cleanup(func() { close(done) })
+	finished := make(chan struct{})
 	go func() {
-		file, err := os.OpenFile(signal, os.O_RDONLY, 0)
-		if err != nil {
-			seen <- false
-			return
-		}
-		defer file.Close()
-		line, _ := bufio.NewReader(file).ReadString('\n')
+		defer close(finished)
+		line, _ := bufio.NewReader(pipe).ReadString('\n')
 		requested := line == "capacity\n"
 		if requested {
 			cancel()
 		}
 		seen <- requested
-		// The read end stays open until the test ends, so that a later
-		// capacity request never waits for a reader.
-		<-done
 	}()
-	return func() bool {
-		// When no capacity request came, the goroutine still waits in
-		// open. A writer that opens and closes the pipe ends that wait.
-		if writer, err := os.OpenFile(signal, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
-			_ = writer.Close()
+	// A capacity line comes before the stop line, because the wrapper
+	// writes it while startArtifacts runs.
+	stop := sync.OnceFunc(func() { _, _ = pipe.Write([]byte("stop\n")) })
+	t.Cleanup(func() {
+		stop()
+		select {
+		case <-finished:
+		case <-time.After(artifactStartDeadlockGuard):
+			t.Error("the capacity signal reader did not end")
 		}
+		_ = pipe.Close()
+	})
+	return func() bool {
+		stop()
 		select {
 		case requested := <-seen:
 			return requested
 		case <-time.After(artifactStartDeadlockGuard):
 			t.Fatal("the capacity signal reader did not end")
 			return false
+		}
+	}
+}
+
+// TestCapacitySignalReaderEndsWithItsSubtest checks that the reader of
+// cancelAtFirstCapacityRequest ends with its subtest, also when the subtest
+// ends before any capacity request (#336 round 4 F2). t.Run returns after the
+// subtest and its cleanups. A reader that still waits, in a system call or
+// on a channel, has leaked. A reader in its last instructions is runnable,
+// not waiting.
+func TestCapacitySignalReaderEndsWithItsSubtest(t *testing.T) {
+	t.Run("a subtest that ends before any capacity request", func(t *testing.T) {
+		_, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		cancelAtFirstCapacityRequest(t, cancel)
+	})
+	buffer := make([]byte, 1<<20)
+	stacks := string(buffer[:goruntime.Stack(buffer, true)])
+	for _, goroutine := range strings.Split(stacks, "\n\n") {
+		header, _, _ := strings.Cut(goroutine, "\n")
+		if strings.Contains(goroutine, ".cancelAtFirstCapacityRequest.func") && !strings.Contains(header, "[runn") {
+			t.Fatalf("the capacity signal reader still waits after its subtest ended:\n%s", goroutine)
 		}
 	}
 }
