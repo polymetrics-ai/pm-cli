@@ -2,6 +2,7 @@
 """Exercise the public setup checker against isolated, real file inventories."""
 import ast
 import contextlib
+import errno
 import importlib.util
 import io
 import json
@@ -374,6 +375,39 @@ def gherkin_caller_options(values):
     return [values.get(word, word) for word in options]
 
 
+def processes_holding(text):
+    """Return each live process whose command line holds TEXT.
+
+    The teardown check of the tests that start processes: no process that
+    names the temporary folder of a test case may stay after the case. Linux
+    reads /proc. Other systems read ps. A process that ends during the
+    listing is not listed.
+    """
+    if sys.platform.startswith("linux"):
+        found = []
+        for entry in Path("/proc").iterdir():
+            if entry.name.isdigit():
+                try:
+                    arguments = (entry / "cmdline").read_bytes()
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                if text.encode() in arguments:
+                    found.append(entry.name + " " + arguments.replace(b"\0", b" ").decode(errors="replace"))
+        return found
+    listing = subprocess.run(["/bin/ps", "-A", "-ww", "-o", "pid=,args="], capture_output=True,
+                             text=True, timeout=10, check=True)
+    return [line.strip() for line in listing.stdout.splitlines() if text in line]
+
+
+def no_fifo_reader(path):
+    """Return True when no process has the FIFO PATH open for reading (ENXIO)."""
+    try:
+        os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+    except OSError as error:
+        return error.errno == errno.ENXIO
+    return False
+
+
 class HeldProcess:
     """The identity of one live process, for one bounded exit wait.
 
@@ -445,6 +479,10 @@ class FifoHold:
     Use it as a context manager, so that the release also runs when an
     assertion fails. READER says whether the reader acknowledged, was alive
     at the release and then ended.
+
+    FifoHold owns a reader only after its acknowledgement. Before that, the
+    starter of the command owns it and must collect it before the release
+    (brahmagupta F2 at 52a87ec, REFUSED_KILL_CHILD).
     """
 
     # The reader steps of a command, in their order.
@@ -748,12 +786,9 @@ class GoTestReport(unittest.TestCase):
             return self.report(events, *options)
 
     def test_gherkin_skip_causes_come_from_the_totals(self):
-        # C0 of #286b (run 44133272339 at f44e130) failed with 8 "skipped step"
-        # and 2 "skipped scenario" lines, while the totals showed no skip.
-        # godog v0.16.0 prints the template steps of a Scenario Outline in cyan
-        # whatever their result. The real stream is the `go test -json` output
-        # of `PM_ACCEPTANCE_TAGS=@pmgen go test ./tests/acceptance/` (12
-        # scenarios, 3 of them outlines), recorded locally.
+        # C0 of #286b (run 44133272339) named skips while the totals had none:
+        # godog prints outline template steps in cyan. The stream is the local
+        # `PM_ACCEPTANCE_TAGS=@pmgen go test -json ./tests/acceptance/` output.
         real = (ROOT / "scripts/ci/testdata/godog-pmgen-outlines.jsonl").read_text().splitlines()
 
         def gherkin(events, raw=None):
@@ -847,15 +882,13 @@ class GoTestReport(unittest.TestCase):
             self.assertIn(f"go test: {cause}\n", result.stdout)
             self.assertIn(f"- {cause}\n", summary)
         self.assertNotIn("skipped scenario: first", result.stdout)
-        # The test of "third" has the result skip, a Go test skip event, so
-        # --fail-on-skip names it. The godog totals do not.
+        # A Go test skip event of "third": --fail-on-skip names it, not godog.
         self.assertIn("go test: skipped test fails this run: m/acc TestFeatures/third\n", result.stdout)
         self.assertIn("- `m/acc TestFeatures/third`\n", summary)
         self.assertIn("3 scenarios (3 passed)", summary)
 
     def test_gherkin_run_fails_on_a_skipped_go_test(self):
-        # A Go test of the Gherkin package calls t.Skip. The caller passes
-        # --fail-on-skip, and the untitled summary names the test.
+        # A Gherkin package test calls t.Skip: the untitled summary names it.
         skipped = [go_event("run", "m/acc", "TestOther"),
                    go_event("output", "m/acc", "TestOther", Output="    other_test.go:5: canary\n"),
                    go_event("skip", "m/acc", "TestOther")]
@@ -1215,11 +1248,8 @@ class GoTestReport(unittest.TestCase):
         self.assertEqual([index for index in kills if index > reaped_at], [],
                          f"killpg after the command was reaped: {events}")
 
-    # The command of the refused-signal tests that leaves a live member: a
-    # reader of the hold FIFO ("$0"). The reader opens the FIFO first, writes
-    # its process ID to "$2", then acknowledges on the FIFO "$1". The command
-    # exits only after that acknowledgement. So the reader cannot open the
-    # FIFO after the test closes it (brahmagupta F2 at 333e804).
+    # The command that leaves a live member: the FifoHold reader. The command
+    # exits only after its acknowledgement (brahmagupta F2 at 333e804).
     LIVE_MEMBER = ("sh -c '" + FifoHold.READER + "; exec cat <&3 > /dev/null' \"$0\" \"$1\" \"$2\" & "
                    "read ack < \"$1\"; echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
 
@@ -1240,6 +1270,7 @@ class GoTestReport(unittest.TestCase):
                 result = module.run_command(["/bin/sh", "-c", script, *fifo.args],
                                             Path(directory) / "out.json", None, None)
             reader = fifo.release()
+            self.assertEqual(processes_holding(directory), [])
         return result[0], (result[3] if len(result) > 3 else None), reader
 
     def test_refused_group_signal_with_a_live_member_fails_the_run(self):
@@ -1253,14 +1284,9 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("refused to send SIGKILL to the process group of the command", cleanup)
 
     def test_refused_signal_reader_opens_before_the_command_exits(self):
-        # brahmagupta F2 at 333e804: with `cat < "$0" &`, the reader could
-        # open the FIFO after the test closed it, and then block forever. The
-        # check needs the order: reader open and acknowledged, then the exit of
-        # the command, then the close by the test, then the exit of the
-        # reader through its held identity. No pause, retry or signal.
-        # The order is in the command text: the reader opens, writes its ID,
-        # then acknowledges; the command waits for that before it exits. The
-        # run below shows the outcome, but a missing wait is only a race there.
+        # brahmagupta F2 at 333e804: the reader must open, write its ID and
+        # acknowledge before the command exits and the test closes the FIFO.
+        # The command text holds that order. The run shows the outcome only.
         script = self.LIVE_MEMBER
         steps = ['exec 3<"$0"', 'echo $$ > "$2"', 'echo opened > "$1"', 'exec cat <&3',
                  'read ack < "$1"', "echo '{"]
@@ -1281,18 +1307,17 @@ class GoTestReport(unittest.TestCase):
             self.assertNotEqual(status, 0)
             self.assertIn("refused to send SIGKILL", cleanup)
 
-    # brahmagupta F1 at 333e804: the system refuses each group signal, and the
-    # command stays alive. run_command installs signal handlers, so it runs
-    # in this child, in its main thread. The child prints the result and
-    # whether the command was reaped.
+    # brahmagupta F1 at 333e804: run_command installs signal handlers, so it
+    # runs in this child. The child prints the result and the reap state.
     REFUSED_KILL_CHILD = """\
-import importlib.util, json, signal, subprocess, sys, time
+import importlib.util, json, os, select, signal, subprocess, sys, time
 from pathlib import Path
-report, out, case, command, hold, ack, pid = sys.argv[1:8]
+report, out, case, command, hold, ack, pid, ack_limit = sys.argv[1:9]
 spec = importlib.util.spec_from_file_location("go_test_report", report)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 module.KILL_GRACE = 0
+real_killpg = module.os.killpg
 def refused(group, signum):
     raise PermissionError(1, "Operation not permitted")
 module.os.killpg = refused
@@ -1301,10 +1326,22 @@ class Recording(subprocess.Popen):
     def __init__(self, *arguments, **options):
         super().__init__(*arguments, **options)
         started.append(self)
-        # The command acknowledges that it opened the FIFO before the
-        # reporter may stop it, so the release of the test finds it there.
-        with open(ack) as acknowledgement:
-            acknowledgement.readline()
+        # The child owns the command from its start. Its wait for the
+        # acknowledgement has a limit. Without it, the child kills the group
+        # of the unreaped command and collects it before the test releases.
+        try:
+            with open(ack) as acknowledgement:
+                ready = select.select([acknowledgement], [], [], float(ack_limit))[0]
+                if not (ready and acknowledgement.readline() == "opened\\n"):
+                    raise TimeoutError("no acknowledgement")
+        except BaseException:
+            real_killpg(self.pid, signal.SIGKILL)
+            try:
+                self.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            print(json.dumps({"acknowledged": False, "status": self.returncode}), flush=True)
+            os._exit(3)
         if case == "received":
             signal.raise_signal(signal.SIGTERM)
 module.subprocess.Popen = Recording
@@ -1322,12 +1359,9 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
     REFUSED_KILL_COMMAND = FifoHold.READER + "; read line <&3"
 
     def test_refused_kill_of_a_live_command_has_a_bounded_wait(self):
-        # The command blocks on a FIFO that the test holds open and never
-        # writes, and each group signal is refused. The reporter must not wait
-        # with no limit, must not reap the live command, and must fail with
-        # the cleanup text. One bounded wait for the child; FifoHold then
-        # releases the command and waits once for its exit, also when an
-        # assertion fails (brahmagupta F4 at 3b6e71f).
+        # Each group signal is refused, and the command blocks on a held FIFO.
+        # The reporter must not wait with no limit or reap the live command,
+        # and must fail. FifoHold then releases the command (F4 at 3b6e71f).
         steps = ['exec 3<"$0"', 'echo $$ > "$2"', 'echo opened > "$1"', "read line <&3"]
         command = self.REFUSED_KILL_COMMAND
         for step in steps:
@@ -1336,6 +1370,8 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
         child_code = self.REFUSED_KILL_CHILD
         self.assertIn("acknowledgement.readline()", child_code, "the child must wait for the acknowledgement")
         self.assertLess(child_code.index("acknowledgement.readline()"), child_code.index("module.run_command("))
+        self.assertLess(child_code.index("started.append(self)"), child_code.index("acknowledgement.readline()"),
+                        "the child must own the command before it waits for the acknowledgement")
         expected = {"deadline": 124, "received": 128 + signal.SIGTERM, "no exit watch": 1}
         with tempfile.TemporaryDirectory() as directory:
             child = Path(directory) / "child.py"
@@ -1351,7 +1387,7 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                         with errors.open("w") as error_file:
                             result = subprocess.run(
                                 [sys.executable, "-I", "-B", str(child), str(REPORT),
-                                 str(case_directory / "out.json"), case, command, *fifo.args],
+                                 str(case_directory / "out.json"), case, command, *fifo.args, "5"],
                                 stdout=subprocess.PIPE, stderr=error_file, text=True, timeout=20)
                     except subprocess.TimeoutExpired:
                         self.fail(f"{case}: the reporter waited with no limit after a refused SIGKILL")
@@ -1362,6 +1398,43 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                     self.assertIn("refused to send SIGKILL", report["result"][3])
                     self.assertIn("after the last SIGKILL, so the reporter did not reap it", report["result"][3])
                     self.assertEqual(fifo.release(), {"acknowledged": True, "alive": True, "ended": True})
+                self.assertEqual(processes_holding(str(case_directory)), [])
+
+    def test_teardown_check_finds_a_live_process(self):
+        # The teardown check must see a live process that names the folder.
+        # The process blocks on its standard input, which the test holds.
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.Popen(["/bin/sh", "-c", "read line", directory], stdin=subprocess.PIPE)
+            try:
+                self.assertEqual(len(processes_holding(directory)), 1)
+            finally:
+                process.stdin.write(b"go\n")
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=30), 0)
+            self.assertEqual(processes_holding(directory), [])
+
+    def test_refused_kill_child_collects_a_command_with_no_acknowledgement(self):
+        # brahmagupta F2 at 52a87ec and process 5352: a command that never
+        # acknowledges blocks on a FIFO with no writer. The child must collect
+        # it. No reporter, command or FIFO reader may stay.
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "child.py"
+            child.write_text(self.REFUSED_KILL_CHILD)
+            never = Path(directory) / "hold.never"
+            os.mkfifo(never)
+            with FifoHold(directory) as fifo:
+                errors = Path(directory) / "errors"
+                with errors.open("w") as error_file:
+                    result = subprocess.run(
+                        [sys.executable, "-I", "-B", str(child), str(REPORT), str(Path(directory) / "out.json"),
+                         "deadline", 'read line < "$0.never"', *fifo.args, "1"],
+                        stdout=subprocess.PIPE, stderr=error_file, text=True, timeout=20)
+                self.assertEqual(result.returncode, 3, result.stdout + errors.read_text())
+                self.assertEqual(json.loads(result.stdout.splitlines()[-1]),
+                                 {"acknowledged": False, "status": -signal.SIGKILL})
+                self.assertEqual(fifo.release(), {"acknowledged": False, "alive": False, "ended": False})
+            self.assertEqual([path.name for path in (never, fifo.hold, fifo.ack) if not no_fifo_reader(path)], [])
+            self.assertEqual(processes_holding(directory), [])
 
     def test_signal_after_the_reap_is_recorded_and_not_forwarded(self):
         # Deferred item (a): after the real reap of the command, the
@@ -1412,10 +1485,8 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                 self.assertEqual(status, 128 + signal.SIGTERM)
 
     def test_member_list_is_unknown_for_an_unreadable_record(self):
-        # brahmagupta F1 at 3b6e71f: a /proc/<pid>/stat that cannot be read is
-        # no proof that the process exited. Only ENOENT or ESRCH is. A fake
-        # /proc on the forced Linux path holds the group leader 4194001 and
-        # one more entry, 4194002, whose record fails to read in each case.
+        # brahmagupta F1 at 3b6e71f: only ENOENT or ESRCH proves an exit. The
+        # fake /proc entry 4194002 fails to read in each case.
         module = self.load_reporter()
         group = 4194001
         real_read_text = Path.read_text
@@ -1449,9 +1520,8 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                     self.assertIsNone(unsignalled, case)
 
     def test_member_list_ps_shutdown_has_a_limit(self):
-        # brahmagupta F2 at 3b6e71f: a ps that does not end, also after
-        # SIGKILL. Each wait for it must have a limit, and the list is then
-        # unknown, so the run fails. The fake raises when a wait has no limit.
+        # brahmagupta F2 at 3b6e71f: each wait for a ps that never ends has a
+        # limit, and the list is unknown. The fake refuses a wait with no limit.
         module = self.load_reporter()
         events = []
 
@@ -1490,14 +1560,10 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
         self.assertTrue(all(event == "kill" or event[1] is not None for event in events), events)
 
     def test_unsignalled_group_member_fails_the_run(self):
-        # crrao R1: Linux reports success for a group signal when one member
-        # gets it. Here the command leaves a real member that blocks on a FIFO,
-        # and the real SIGKILL stops it. A fake /proc (the Linux code path,
-        # forced with sys.platform) also lists a member that the reporter may
-        # not signal: signal 0 to it gives EPERM, as for a setuid process of
-        # another user ID. The run must fail with the fixed message. Only Linux
-        # CI can show the kernel side: a real member that refuses the group
-        # SIGKILL while killpg reports success.
+        # crrao R1: a real member blocks on a FIFO, and the real SIGKILL stops
+        # it. A fake /proc (forced Linux path) also lists a member that gives
+        # EPERM to signal 0. The run must fail with the fixed message. Only
+        # Linux CI can show a real member that refuses a successful killpg.
         module = self.load_reporter()
         refusing = 4194000
         real_kill = os.kill
@@ -1586,11 +1652,8 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
         self.assertIn("go test: intended set: 1 packages from go list; package results: 1", stdout)
 
     def test_new_tests_hold_processes_without_a_timed_pause(self):
-        # Hard rule 5: no timed pause in a test. The tests and test children of this
-        # file, the receipt tests that #278 adds to test_stack_fixture.py and
-        # the tests that #286 adds or changes there hold a process on a FIFO
-        # or a pipe, never on a timed pause. The word is built from two parts,
-        # so that this check does not match itself.
+        # Hard rule 5: this file and the listed fixture tests hold a process on
+        # a FIFO or a pipe, never on a timed pause. The word is split in two.
         token = re.compile(r"\b" + "sl" + "eep" + r"\b")
         texts = {"test_setup.py": Path(__file__).read_text()}
         fixture_tests = ROOT / "scripts/ci/test_stack_fixture.py"
