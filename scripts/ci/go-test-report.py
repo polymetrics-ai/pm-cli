@@ -35,12 +35,16 @@ variable before the command runs:
   - A word that starts with "-" is an option. The guard reads the forms -name,
     --name and -test.name, with "=value" or, in the command, with the value as
     the next word.
-  - It refuses each option that selects or filters tests (-run, -skip, -list,
-    -short, -failfast, -tags), and -args.
+  - It accepts only the go test options of the CI commands and -race (for
+    #312): -json, -p, -count, -timeout and -race. It refuses each other
+    option, for example -exec, -overlay, -toolexec (crrao N1), or a filter
+    such as -run, -skip, -list, -short, -failfast or -tags. It also refuses
+    -args.
   - It splits GOFLAGS at the characters that go splits it at (space, tab,
     newline, carriage return). go also accepts quoted fields there, so the
     guard refuses a GOFLAGS value with a quote character. It also refuses a
-    GOFLAGS field that is not an option, and a GOFLAGS -count with no =value.
+    GOFLAGS field that is not an option, and a GOFLAGS option with a value
+    that has no "=value" form, which go also refuses.
   - The command and GOFLAGS together must set the test count exactly once, to 1.
 Such a command is refused before it runs. The guard does not read other
 sources of go options, for example a GOFLAGS value in the go environment file
@@ -62,7 +66,15 @@ so no new process or process group can get that ID. After that SIGKILL, the
 script sends no more signals to the group: a signal that the script receives
 later is only recorded, and it still fails the run. The script waits for the
 exit of COMMAND with a pidfd (Linux) or a kqueue process filter (macOS), which
-do not reap it.
+do not reap it. After the last SIGKILL and before the reap, the script lists
+the live members of the group (Linux: /proc, other systems: ps). Linux
+reports success for a group signal when one member gets it. So a live member
+that the script may not signal (permission denied) did not get the SIGKILL,
+and it fails the run with a fixed message. A member list that cannot be read
+also fails the run. Each wait after the last SIGKILL has a limit of 30 seconds,
+because the system can refuse that SIGKILL. When COMMAND has not ended by
+then, the script does not reap it, so its ID stays reserved, and the run fails
+with a cleanup problem.
 
 With --title, --summary-file appends a Markdown section with that title: the
 result, the totals, each package with its result and elapsed time, each failed
@@ -71,8 +83,20 @@ or skipped test and each problem that --expect or --deadline found.
 With --scenarios, the summary also lists each godog scenario with its result
 and repeats the godog totals (`N scenarios (...)`, `N steps (...)`), also when
 the suite passes. A passing run without godog totals, or with a scenario count
-that differs from the godog total, fails. --summary-file appends the same
-report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
+that differs from the godog total, fails. The godog totals also fail the run
+(issue #350), and the log and the summary name each cause:
+  - the godog scenario total is 0 ("0 scenarios ran");
+  - the godog step total has skipped steps.
+Only these totals, and the skip events of Go tests (--fail-on-skip), fail the
+run. When the step total has skipped steps, the log and the summary also name
+each skipped step ("skipped step: SCENARIO / STEP") and each scenario whose
+steps are all skipped ("skipped scenario: SCENARIO"). godog v0.16.0 prints a
+skipped step in cyan. It also prints the template steps of a Scenario Outline
+in cyan, whatever their result, so the names come only from scenarios that
+are not outlines.
+Without --title, the scenario section of the summary also lists each test
+with no result, each skipped test and each problem. --summary-file appends
+the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
 --summary-file requires --title, --scenarios or both.
 """
 import argparse
@@ -91,11 +115,24 @@ import time
 ANSI = re.compile(r"\x1b?\[[0-9;]*m")
 SCENARIO = re.compile(r"^\s*Scenario(?: Outline)?:\s*(.*?)\s+#\s+(\S+)\s*$")
 TOTAL = re.compile(r"^(\d+) (scenarios?|steps?) \(.*\)$|^No (scenarios|steps)$")
+# A step line of the godog pretty format: the keyword and the text, each in
+# the color of the step status. Table rows start with "|" and do not match.
+# In a Scenario Outline, godog prints the template steps in cyan whatever
+# their result, so OUTLINE marks the output of an outline.
+STEP = re.compile(r"^\s*\x1b?\[(3[0-7])m([^\s\x1b]+)\x1b?\[0m \x1b?\[\1m([^\x1b]*?)\x1b?\[0m")
+SKIPPED_COLOR = "36"
+SKIPPED_STEPS = re.compile(r"\b(\d+) skipped\b")
+OUTLINE = re.compile(r"^\s*Scenario Outline:")
 
 
 def scenario_report(order, results, output):
-    """Return the scenario rows, the godog total lines and their test."""
-    totals, suite = [], None
+    """Return the scenario rows, the godog total lines and the steps.
+
+    STEPS has one (name, step count, skipped steps) item for each row. The
+    step lines of a Scenario Outline are not step results, so an outline has
+    no counted steps.
+    """
+    totals, suite, steps = [], None, []
     for key in order:
         for text in output.get(key, []):
             line = ANSI.sub("", text).strip()
@@ -104,7 +141,7 @@ def scenario_report(order, results, output):
                 suite = key
     rows = []
     if suite is None:
-        return rows, totals
+        return rows, totals, steps
     prefix = suite[1] + "/" if suite[1] else None
     for key in order:
         if prefix is None or key[0] != suite[0] or not key[1] or not key[1].startswith(prefix):
@@ -117,8 +154,45 @@ def scenario_report(order, results, output):
             if match:
                 name, location = match.group(1), match.group(2)
                 break
+        count, skipped = 0, []
+        outline = any(OUTLINE.match(ANSI.sub("", text)) for text in output.get(key, []))
+        for text in ([] if outline else output.get(key, [])):
+            match = STEP.match(text)
+            if match:
+                count += 1
+                if match.group(1) == SKIPPED_COLOR:
+                    skipped.append(f"{match.group(2)} {match.group(3)}")
         rows.append((results[key], name, location))
-    return rows, totals
+        steps.append((name, count, skipped))
+    return rows, totals, steps
+
+
+def scenario_causes(rows, totals, steps):
+    """Name each cause of issue #350 that the godog totals show.
+
+    Only the totals decide: 0 scenarios, or skipped steps in the step total.
+    The names of skipped steps and scenarios only explain a step total with
+    skipped steps. They never fail a run on their own.
+    """
+    causes, skipped_total = [], 0
+    for line in totals:
+        match = TOTAL.match(line)
+        if match and (match.group(3) == "scenarios" or
+                      (match.group(2) or "").startswith("scenario") and match.group(1) == "0"):
+            causes.append("0 scenarios ran")
+        elif match and (match.group(2) or "").startswith("step"):
+            skipped = SKIPPED_STEPS.search(line)
+            if skipped and int(skipped.group(1)):
+                skipped_total += int(skipped.group(1))
+                causes.append(f"the godog step total has {skipped.group(1)} skipped steps")
+    if not skipped_total:
+        return causes
+    for (action, _, _), (name, count, skipped) in zip(rows, steps):
+        if count and len(skipped) == count:
+            causes.append(f"skipped scenario: {name}")
+        else:
+            causes += [f"skipped step: {name} / {step}" for step in skipped]
+    return causes
 
 
 def scenario_problem(rows, totals):
@@ -137,9 +211,10 @@ def scenario_problem(rows, totals):
     return None
 
 
-def markdown(rows, totals, problem, unfinished=(), problems=()):
+def markdown(rows, totals, problem, unfinished=(), problems=(), skips=(), fail_on_skip=False):
     """The scenario section. A caller without --title also passes the tests
-    with no result and the problems, because no package section lists them."""
+    with no result, the skipped tests and the problems, because no package
+    section lists them."""
     lines = ["### Gherkin scenarios", ""]
     lines += [f"{line}  " for line in totals] or ["No godog totals were found.  "]
     if problem:
@@ -152,7 +227,9 @@ def markdown(rows, totals, problem, unfinished=(), problems=()):
             lines.append(f"| {action.upper()} | {cell} | `{location}` |" if location
                          else f"| {action.upper()} | {cell} | |")
         lines.append("")
+    skipped = "Skipped tests (each one fails this run)" if fail_on_skip else "Skipped tests"
     for heading, items in (("Tests with no result", [f"`{test_name(key)}`" for key in unfinished]),
+                           (skipped, [f"`{test_name(key)}`" for key in skips]),
                            ("Problems", list(problems))):
         if items:
             lines += [f"{heading}:", ""]
@@ -167,6 +244,12 @@ def markdown(rows, totals, problem, unfinished=(), problems=()):
 # accept each one as -name, --name or -test.name, with "=value" or with the
 # value as the next word.
 SELECTION = frozenset({"run", "skip", "list", "short", "failfast", "tags"})
+# The only go test options that a run with --expect accepts: the options of
+# the CI commands (the unit run in check-docs.sh, the stack and Gherkin runs
+# in check-bdd.sh), of GOFLAGS=-p=2, and -race, which #312 adds to the stack
+# run. True marks an option with a value. Any other option, for example
+# -exec, -overlay or -toolexec, can change what runs, so it is refused.
+ALLOWED = {"json": False, "p": True, "count": True, "timeout": True, "race": False}
 # The characters at which go splits GOFLAGS (cmd/internal/quoted).
 GOFLAGS_SPACE = re.compile(r"[ \t\n\r]+")
 DEADLINE_STATUS = 124
@@ -197,10 +280,10 @@ def option_name(word):
 
 
 def filter_problem(command):
-    """Describe a test filter or a wrong test count in COMMAND or GOFLAGS.
+    """Describe a refused option or a wrong test count in COMMAND or GOFLAGS.
 
-    The command and GOFLAGS together must set the test count exactly once,
-    to 1, and must not select or filter tests. Return None when they pass.
+    The command and GOFLAGS together may use only the ALLOWED options, and
+    must set the test count exactly once, to 1. Return None when they pass.
     """
     counts = []
     goflags = os.environ.get("GOFLAGS", "")
@@ -219,16 +302,22 @@ def filter_problem(command):
             if word in ("-args", "--args"):
                 return f"the command passes options to the test binary with {word}"
             name, value = option_name(word)
+            if name is None:
+                index += 1
+                continue
             if name in SELECTION:
                 return f"the command selects or filters tests with {word.split('=')[0]}"
-            if name == "count" and value is None and in_goflags:
+            if name not in ALLOWED:
+                return (f"the command uses the option {word.split('=')[0]}, which is not "
+                        f"in the allow list (-json, -p, -count, -timeout, -race)")
+            if ALLOWED[name] and value is None and in_goflags:
                 return f"GOFLAGS has {word} with no =value"
+            if ALLOWED[name] and value is None:
+                index += 1
+                if index >= len(words):
+                    return f"the command has {word} with no value"
+                value = words[index]
             if name == "count":
-                if value is None:
-                    index += 1
-                    if index >= len(words):
-                        return f"the command has {word} with no value"
-                    value = words[index]
                 counts.append(value)
             index += 1
     if not counts:
@@ -289,24 +378,95 @@ class _ReceivedSignal(Exception):
     """The script itself received SIGTERM, SIGINT or SIGHUP."""
 
 
+# The process list of Linux. The developer checks replace it.
+PROC = Path("/proc")
+# The limits of one ps run: its listing, and its collection after a kill.
+LIST_TIMEOUT = 10
+LIST_KILL_GRACE = 5
+# ps starts with this reference, so that a check that replaces
+# subprocess.Popen to watch the command does not see the ps process.
+PROCESS_LIST_POPEN = subprocess.Popen
+
+
 def live_group_members(group):
     """Return the IDs of the processes in GROUP that have not exited.
 
-    Return None when the process list cannot be read. Only the Darwin path
-    of run_command uses it. It reads the list with ps, so a process that
-    joins the group after the call is not in it.
+    Return None when the process list cannot be read. Linux reads
+    /proc/<pid>/stat, other systems read ps. A process that joins the group
+    after the call is not in the list. Only a confirmed disappearance
+    (ENOENT or ESRCH) counts as an exited process. Any other failure to read
+    a process record makes the list unknown, so the run fails. Each wait for
+    ps has a limit, also after a kill: a ps that does not end gives an
+    unknown list, with no further wait.
     """
-    try:
-        result = subprocess.run(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
-                                capture_output=True, text=True, timeout=10, check=True)
-    except (OSError, subprocess.SubprocessError):
-        return None
     live = []
-    for line in result.stdout.splitlines():
+    if sys.platform.startswith("linux"):
+        try:
+            entries = [entry for entry in PROC.iterdir() if entry.name.isdigit()]
+        except OSError:
+            return None
+        for entry in entries:
+            try:
+                text = (entry / "stat").read_text()
+            except (FileNotFoundError, ProcessLookupError):
+                # The process exited after the directory listing.
+                continue
+            except OSError:
+                # A record that cannot be read is no proof of an exit.
+                return None
+            # The fields after the command name: state, parent, group.
+            fields = text[text.rfind(")") + 1:].split()
+            if len(fields) >= 3 and fields[2] == str(group) and fields[0] not in ("Z", "X"):
+                live.append(int(entry.name))
+        return live
+    try:
+        lister = PROCESS_LIST_POPEN(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return None
+    try:
+        listing, _ = lister.communicate(timeout=LIST_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        lister.kill()
+        try:
+            lister.communicate(timeout=LIST_KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            # ps did not end after SIGKILL. The script does not wait for it.
+            pass
+        return None
+    if lister.returncode != 0:
+        return None
+    for line in listing.splitlines():
         fields = line.split()
         if len(fields) >= 3 and fields[1] == str(group) and not fields[2].startswith("Z"):
             live.append(int(fields[0]))
     return live
+
+
+def unsignalled_members(group):
+    """Count the live members of GROUP that this script may not signal.
+
+    Call it after the last SIGKILL to GROUP and before the reap. Linux
+    reports success for a group signal when one member gets it, so a member
+    without permission can stay alive with no error (crrao R1). A member
+    that the script may signal got the SIGKILL. The check sends signal 0,
+    which delivers nothing. The leader of GROUP is not counted. Return None
+    when the member list cannot be read.
+    """
+    members = live_group_members(group)
+    if members is None:
+        return None
+    count = 0
+    for pid in members:
+        if pid == group:
+            continue
+        try:
+            os.kill(pid, 0)
+        except PermissionError:
+            count += 1
+        except ProcessLookupError:
+            pass
+    return count
 
 
 def run_command(command, output, deadline, limit):
@@ -321,16 +481,30 @@ def run_command(command, output, deadline, limit):
     also refuses a signal to a group whose only member is COMMAND after it
     has exited and before the script reaps it. Only then, and only when ps
     shows no member of the group that has not exited, the refusal does not
-    fail the run.
+    fail the run. CLEANUP also names a COMMAND that did not end KILL_GRACE
+    seconds after the last SIGKILL. The script does not reap such a COMMAND,
+    and the run fails. After the last SIGKILL and before the reap, CLEANUP
+    also names live members of the group that the script may not signal,
+    and a member list that cannot be read (crrao R1). They fail the run.
     """
     # forward is False after the last signal to the group, before the reap.
     state = {"process": None, "watch": None, "waiting": False, "forward": True}
     received = []
     denied = []
+    # alive is True when COMMAND has not ended KILL_GRACE seconds after the
+    # last SIGKILL (for example, the system refused that SIGKILL). The script
+    # then does not reap it, so its ID stays reserved, and the run fails.
+    alive = []
+    # unsignalled holds the result of unsignalled_members() after the last
+    # SIGKILL: a count, or None when the member list cannot be read.
+    unsignalled = []
 
     def refusal_is_harmless(group):
+        # Ask the exit event of the command itself (a non-reaping wait of at
+        # most KILL_GRACE), not the result of an earlier wait: a signal can
+        # interrupt that wait after the exit.
         watch = state["watch"]
-        if sys.platform != "darwin" or watch is None or not watch.exited:
+        if sys.platform != "darwin" or watch is None or not watch.wait(KILL_GRACE):
             return False
         return live_group_members(group) == []
 
@@ -347,11 +521,36 @@ def run_command(command, output, deadline, limit):
                 denied.append(signum)
 
     def cleanup():
-        if not denied:
-            return None
-        names = ", ".join(sorted({signal.Signals(number).name for number in denied}))
-        return (f"the system refused to send {names} to the process group of the command "
-                f"(permission denied), so a test process can still run")
+        parts = []
+        if denied:
+            names = ", ".join(sorted({signal.Signals(number).name for number in denied}))
+            parts.append(f"the system refused to send {names} to the process group of the command "
+                         f"(permission denied), so a test process can still run")
+        if alive:
+            parts.append(f"the command did not end {KILL_GRACE} seconds after the last SIGKILL, so "
+                         f"the reporter did not reap it and a test process can still run")
+        if unsignalled and unsignalled[0] is None:
+            parts.append("the reporter could not list the process group of the command after its "
+                         "last SIGKILL, so a test process can still run")
+        elif unsignalled and unsignalled[0]:
+            parts.append(f"after the last SIGKILL, {unsignalled[0]} processes of the process group "
+                         f"of the command remain that the reporter may not signal (permission "
+                         f"denied), so a test process can still run")
+        return ". ".join(parts) or None
+
+    def reap(process, watch):
+        """Reap COMMAND only when it has ended. Never wait without a limit."""
+        if watch is not None:
+            ended = watch.wait(KILL_GRACE)
+        else:
+            try:
+                return process.wait(timeout=KILL_GRACE)
+            except subprocess.TimeoutExpired:
+                ended = False
+        if not ended:
+            alive.append(True)
+            return 1
+        return process.wait()
 
     def early_status():
         # A received signal forces 128 plus its number on each path.
@@ -387,7 +586,8 @@ def run_command(command, output, deadline, limit):
                 print(f"go test: cannot watch the command: {exc}")
                 forward(signal.SIGKILL, None)
                 state["forward"] = False
-                process.wait()
+                unsignalled.append(unsignalled_members(process.pid))
+                reap(process, None)
                 return early_status(), False, received[0] if received else None, cleanup()
             timed_out = False
             try:
@@ -401,14 +601,12 @@ def run_command(command, output, deadline, limit):
                         forward(signal.SIGTERM, None)
                         if not watch.wait(KILL_GRACE):
                             forward(signal.SIGKILL, None)
-                            watch.wait(None)
                 except _ReceivedSignal:
                     # The handler forwarded the signal to the group. Give the
                     # command KILL_GRACE seconds to stop, then SIGKILL.
                     forward(received[0], None)
                     if not watch.wait(KILL_GRACE):
                         forward(signal.SIGKILL, None)
-                        watch.wait(None)
             finally:
                 state["waiting"] = False
                 # A test process that outlives the command must not keep
@@ -418,7 +616,12 @@ def run_command(command, output, deadline, limit):
                 # after the reap the ID can name a new group.
                 forward(signal.SIGKILL, None)
                 state["forward"] = False
-                status = process.wait()
+                # The group ID still names this group. List its live members
+                # before the reap (crrao R1).
+                unsignalled.append(unsignalled_members(process.pid))
+                # The wait for the end is bounded: a refused SIGKILL can leave
+                # the command alive.
+                status = reap(process, watch)
                 watch.close()
             if timed_out:
                 status = DEADLINE_STATUS
@@ -429,7 +632,7 @@ def run_command(command, output, deadline, limit):
         status = 128 - status
     if received:
         status = 128 + received[0]
-    if denied and status == 0:
+    if (denied or alive or (unsignalled and unsignalled[0] != 0)) and status == 0:
         status = 1
     return status, timed_out, received[0] if received else None, cleanup()
 
@@ -570,6 +773,9 @@ def main():
         problems += expect_problems(expected, counts, events, malformed)
         intended = (f"intended set: {len(set(expected))} packages from go list; "
                     f"package results: {sum(counts.values())}")
+    if args.scenarios:
+        rows, totals, steps = scenario_report(order, results, output)
+        problems += scenario_causes(rows, totals, steps)
     if args.title:
         print(args.title)
     for package, (action, elapsed) in sorted(packages.items(), key=lambda item: -item[1][1]):
@@ -601,7 +807,6 @@ def main():
                                            unfinished))
     problem = None
     if args.scenarios:
-        rows, totals = scenario_report(order, results, output)
         problem = scenario_problem(rows, totals)
         print("Scenarios:")
         for action, name, location in rows:
@@ -616,7 +821,9 @@ def main():
                 # result or the problems, so this section names them.
                 summary.write(markdown(rows, totals, problem,
                                        () if args.title else unfinished,
-                                       () if args.title else problems))
+                                       () if args.title else problems,
+                                       () if args.title else skips,
+                                       args.fail_on_skip))
     print(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
     return status or (1 if failures or problem or problems or skip_failure else 0)
