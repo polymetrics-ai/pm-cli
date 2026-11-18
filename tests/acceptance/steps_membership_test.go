@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -248,14 +249,19 @@ func describeMembershipLines(name, text string) string {
 }
 
 // readJSONOutput decodes the stdout of a pm command with --output json as
-// exactly one JSON document. A failure message never shows the stdout.
+// exactly one JSON document. After the document, a second decode must reach
+// the end of the stdout (io.EOF). So each other byte after the document,
+// apart from white space, refuses the stdout, also a closing bracket or brace
+// (Codex red review of RED 2, finding F2). A failure message never shows the
+// stdout.
 func readJSONOutput(name, stdout string, target any) error {
 	decoder := json.NewDecoder(strings.NewReader(stdout))
 	if err := decoder.Decode(target); err != nil {
 		return fmt.Errorf("the %s stdout (%d bytes, not shown) is not the JSON document that the step reads", name, len(stdout))
 	}
-	if decoder.More() {
-		return fmt.Errorf("the %s stdout (%d bytes, not shown) holds more than one JSON document", name, len(stdout))
+	var trailing json.RawMessage
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("the %s stdout (%d bytes, not shown) holds more than the one JSON document that the step reads", name, len(stdout))
 	}
 	return nil
 }
