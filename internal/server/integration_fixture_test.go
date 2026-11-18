@@ -622,7 +622,7 @@ func newServerIntegrationFixture(t *testing.T) *serverIntegrationFixture {
 	fixture.serveCancel = cancelServe
 	fixture.serveResult = make(chan error, 1)
 	go func() {
-		fixture.serveResult <- fixture.application.Serve(serveContext, listener)
+		fixture.serveResult <- fixture.application.Serve(serveContext, listener, nil)
 	}()
 	edge.StartTLS()
 	fixture.waitForLiveApplication(t)
