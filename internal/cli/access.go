@@ -118,7 +118,7 @@ func newMembershipUpdateCommand(runtime *commandRuntime) *cobra.Command {
 		Long: "Add connections to a workspace membership. The command only adds connections. " +
 			"It removes no connection and changes no other grant.\n\n" +
 			"Set --revision to the current control_revision of the membership. " +
-			"Run \"pm access memberships list\" to read it.\n\n" +
+			"Run \"pm access memberships list\" to read the membership_ref and its control_revision.\n\n" +
 			"Each connection must be an active connection of the workspace. " +
 			"You must hold workspace.access.manage.\n\n" +
 			"You must act as a user, without a delegation. " +
@@ -127,7 +127,9 @@ func newMembershipUpdateCommand(runtime *commandRuntime) *cobra.Command {
 			"For another membership, you can add only connections that your own current grants hold.\n\n" +
 			"If the membership holds each connection already, the result is unchanged. " +
 			"The revision stays the same.\n\n" +
-			"A stale revision stops the command with control_revision_mismatch and exit code 4.",
+			"A stale revision stops the command with control_revision_mismatch and exit code 4.\n\n" +
+			"When the outcome is unknown, the command exits with code 7 and prints the request key. " +
+			"Run the same command, unchanged, with that --request-key to reconcile it.",
 		Args: exactArgs(1),
 	}
 	command.RunE = func(command *cobra.Command, arguments []string) error {
