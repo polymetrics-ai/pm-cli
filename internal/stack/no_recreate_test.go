@@ -375,7 +375,6 @@ func TestHashGroupOwnerEndIsBounded(t *testing.T) {
 		defer mutex.Unlock()
 		for _, pgid := range owners {
 			_ = syscall.Kill(-pgid, syscall.SIGKILL)
-			_ = syscall.Kill(-pgid, syscall.SIGCONT)
 		}
 	})
 	rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
