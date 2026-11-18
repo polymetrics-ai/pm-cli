@@ -3,11 +3,12 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -86,6 +87,29 @@ func newBootstrapTestRequest(t *testing.T, deploymentID string, scope contract.S
 	}
 }
 
+// bootstrapCleanupLimit bounds each cleanup step of a bootstrap snapshot.
+const bootstrapCleanupLimit = 10 * time.Second
+
+// endBootstrapSnapshot rolls the snapshot back and closes its connection. Each
+// step has its own context with the limit, so a PostgreSQL that does not
+// answer cannot hold the check after its own deadline. A nil tx skips the
+// rollback.
+func endBootstrapSnapshot(
+	tx interface{ Rollback(context.Context) error },
+	connection interface{ Close(context.Context) error },
+	limit time.Duration,
+) error {
+	var rollbackErr error
+	if tx != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), limit)
+		rollbackErr = tx.Rollback(ctx)
+		cancel()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	return errors.Join(rollbackErr, connection.Close(ctx))
+}
+
 // readBootstrapRows reads every bootstrap row of the deployment and the
 // organizations in one snapshot, one JSON text for each row.
 func (s bootstrapTestStore) readBootstrapRows(t *testing.T, deploymentID string, orgIDs ...string) map[string][]string {
@@ -96,12 +120,18 @@ func (s bootstrapTestStore) readBootstrapRows(t *testing.T, deploymentID string,
 	if err != nil {
 		t.Fatalf("connect the stack administrator: %v", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
 	tx, err := connection.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
 	if err != nil {
+		if closeErr := endBootstrapSnapshot(nil, connection, bootstrapCleanupLimit); closeErr != nil {
+			t.Errorf("close the stack administrator connection: %v", closeErr)
+		}
 		t.Fatalf("begin the bootstrap snapshot: %v", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() {
+		if err := endBootstrapSnapshot(tx, connection, bootstrapCleanupLimit); err != nil {
+			t.Errorf("end the bootstrap snapshot: %v", err)
+		}
+	}()
 	rows := make(map[string][]string, len(bootstrapTables))
 	for _, table := range bootstrapTables {
 		filter := "org_id = ANY($2) AND $1 <> ''"
@@ -222,9 +252,9 @@ func TestBootstrapWritesTheFirstWorkspaceOnceForEachScope(t *testing.T) {
 }
 
 // Check: concurrent bootstraps of one scope. Exactly one commits. Defect: a
-// race makes two first workspaces or two admins. Both bootstraps pass the
-// scope check before either inserts, so only the primary key of the
-// bootstrap record can refuse the second.
+// race makes two first workspaces or two admins. The first bootstrap holds
+// its open transaction before its function call while the second commits.
+// pm.operator_bootstrap of the first then finds the committed scope.
 func TestConcurrentBootstrapsOfOneScopeCommitOnce(t *testing.T) {
 	s := prepareBootstrapTestStore(t)
 	deploymentID := "deployment-" + randomHex(t, 8)
@@ -283,6 +313,187 @@ func TestConcurrentBootstrapsOfOneScopeCommitOnce(t *testing.T) {
 	}
 }
 
+// Check: two bootstraps of one organization in two deployments, run at the
+// same time, commit once (crrao m1). Defect: each read of the organization
+// misses the uncommitted rows of the other, nothing else conflicts, and both
+// commit. The first bootstrap writes its rows and holds its transaction open.
+// The second holds the session advisory lock "arrival" and then calls
+// pm.operator_bootstrap. A trigger of this check releases "arrival" when the
+// second inserts its bootstrap record, after its reads. The check waits once
+// for "arrival", then lets the first commit. Each wait has one time limit. No
+// sleep, no poll, no retry.
+func TestConcurrentBootstrapsOfOneOrganizationInTwoDeploymentsCommitOnce(t *testing.T) {
+	s := prepareBootstrapTestStore(t)
+	firstDeployment := "deployment-" + randomHex(t, 8)
+	secondDeployment := "deployment-" + randomHex(t, 8)
+	scope := newTestScope(t)
+	t.Cleanup(func() {
+		// Without the fix both bootstraps commit. Their records and login
+		// bindings reference the rows of the organization, so they go first.
+		cleanup, cancel := context.WithTimeout(context.Background(), bootstrapWaitLimit)
+		defer cancel()
+		if connection, err := pgx.Connect(cleanup, s.admin); err != nil {
+			t.Errorf("connect the stack administrator for cleanup: %v", err)
+		} else {
+			for _, table := range []string{"workspace_audit_entries", "bootstrap_records", "auth_bootstrap_identities"} {
+				if _, err := connection.Exec(cleanup, "DELETE FROM pm."+table+" WHERE org_id = $1", scope.OrgID); err != nil {
+					t.Errorf("remove pm.%s rows: %v", table, err)
+				}
+			}
+			_ = connection.Close(context.Background())
+		}
+		s.removeBootstrapRows(t, firstDeployment, scope.OrgID)
+		s.removeBootstrapRows(t, secondDeployment, scope.OrgID)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*bootstrapWaitLimit)
+	defer cancel()
+
+	admin, err := pgx.Connect(ctx, s.admin)
+	if err != nil {
+		t.Fatalf("connect the stack administrator: %v", err)
+	}
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+	arrival := rand.Int64()
+	name := "test_bootstrap_arrival_" + randomHex(t, 8)
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION pm.%s() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.deployment_id = %s THEN
+        PERFORM pg_advisory_unlock(%d);
+    END IF;
+    RETURN NEW;
+END
+$$`, name, quoteLiteral(secondDeployment), arrival)); err != nil {
+		t.Fatalf("create the arrival trigger function: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), bootstrapWaitLimit)
+		defer cancel()
+		connection, err := pgx.Connect(cleanup, s.admin)
+		if err != nil {
+			t.Errorf("connect the stack administrator for the trigger cleanup: %v", err)
+			return
+		}
+		defer func() { _ = connection.Close(context.Background()) }()
+		if _, err := connection.Exec(cleanup, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON pm.bootstrap_records", name)); err != nil {
+			t.Errorf("drop the arrival trigger: %v", err)
+		}
+		if _, err := connection.Exec(cleanup, fmt.Sprintf("DROP FUNCTION IF EXISTS pm.%s()", name)); err != nil {
+			t.Errorf("drop the arrival trigger function: %v", err)
+		}
+	})
+	if _, err := admin.Exec(ctx, fmt.Sprintf(
+		"CREATE TRIGGER %s BEFORE INSERT ON pm.bootstrap_records FOR EACH ROW EXECUTE FUNCTION pm.%s()", name, name)); err != nil {
+		t.Fatalf("create the arrival trigger: %v", err)
+	}
+
+	first := newBootstrapTestRequest(t, firstDeployment, scope)
+	written := make(chan struct{})
+	release := make(chan struct{})
+	first.step = func(ctx context.Context, step bootstrapStep) error {
+		if step != bootstrapStepWritten {
+			return nil
+		}
+		close(written)
+		timer := time.NewTimer(bootstrapWaitLimit)
+		defer timer.Stop()
+		select {
+		case <-release:
+			return nil
+		case <-timer.C:
+			return errors.New("the check did not release the first bootstrap within the limit")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	firstResult := make(chan error, 1)
+	go func() { firstResult <- Bootstrap(ctx, s.pool, first) }()
+	awaitBootstrapSignal(t, written, firstResult, "the first bootstrap did not write its rows")
+
+	second := newBootstrapTestRequest(t, secondDeployment, contract.Scope{OrgID: scope.OrgID, WorkspaceID: "workspace-" + randomHex(t, 8)})
+	armed := make(chan struct{})
+	second.step = func(ctx context.Context, step bootstrapStep) error {
+		if step != bootstrapStepChecked {
+			return nil
+		}
+		tx, ok := ScopedTransaction(ctx)
+		if !ok {
+			return errors.New("the second bootstrap has no transaction")
+		}
+		if _, err := tx.exec(ctx, "SELECT pg_advisory_lock($1)", arrival); err != nil {
+			return fmt.Errorf("take the arrival lock: %w", err)
+		}
+		close(armed)
+		return nil
+	}
+	secondResult := make(chan error, 1)
+	go func() { secondResult <- Bootstrap(ctx, s.pool, second) }()
+	awaitBootstrapSignal(t, armed, secondResult, "the second bootstrap did not take the arrival lock")
+
+	// The second bootstrap holds "arrival" until its trigger releases it, so
+	// this lock returns only after the second has read the organization and
+	// started the insert of its bootstrap record.
+	arrived := make(chan error, 1)
+	go func() {
+		_, err := admin.Exec(ctx, "SELECT pg_advisory_lock($1)", arrival)
+		arrived <- err
+	}()
+	timer := time.NewTimer(bootstrapWaitLimit)
+	defer timer.Stop()
+	select {
+	case err := <-arrived:
+		if err != nil {
+			t.Fatalf("wait for the arrival of the second bootstrap: %v", err)
+		}
+	case err := <-secondResult:
+		t.Fatalf("the second bootstrap ended before its insert: %v", err)
+	case <-timer.C:
+		t.Fatal("the second bootstrap did not reach its insert within the limit")
+	}
+	close(release)
+	firstErr := <-firstResult
+	secondErr := <-secondResult
+	if _, err := admin.Exec(ctx, "SELECT pg_advisory_unlock($1)", arrival); err != nil {
+		t.Errorf("release the arrival lock: %v", err)
+	}
+
+	if firstErr != nil {
+		t.Fatalf("first bootstrap = %v; want success", firstErr)
+	}
+	if !errors.Is(secondErr, ErrBootstrapScopeOtherInput) {
+		t.Fatalf("second bootstrap of the organization in another deployment = %v; want %v", secondErr, ErrBootstrapScopeOtherInput)
+	}
+	var records, workspaces int
+	if err := admin.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM pm.bootstrap_records WHERE org_id = $1),
+		       (SELECT count(*) FROM pm.workspace_namespaces WHERE org_id = $1)
+	`, scope.OrgID).Scan(&records, &workspaces); err != nil {
+		t.Fatalf("count the bootstraps of the organization: %v", err)
+	}
+	if records != 1 || workspaces != 1 {
+		t.Fatalf("the organization has %d bootstrap records and %d workspaces; want one of each", records, workspaces)
+	}
+}
+
+// awaitBootstrapSignal waits once, with one limit, for signal. An early end
+// of the bootstrap is a failure.
+func awaitBootstrapSignal(t *testing.T, signal <-chan struct{}, result <-chan error, failure string) {
+	t.Helper()
+	timer := time.NewTimer(bootstrapWaitLimit)
+	defer timer.Stop()
+	select {
+	case <-signal:
+	case err := <-result:
+		t.Fatalf("%s: the bootstrap ended first: %v", failure, err)
+	case <-timer.C:
+		t.Fatalf("%s within %s", failure, bootstrapWaitLimit)
+	}
+}
+
+// quoteLiteral quotes text as an SQL string literal.
+func quoteLiteral(text string) string {
+	return "'" + strings.ReplaceAll(text, "'", "''") + "'"
+}
+
 // Check: a bootstrap that fails part of the way writes nothing, and a retry
 // starts clean. Defect: a workspace remains without its admin membership, its
 // login binding or its audit record.
@@ -317,8 +528,8 @@ func TestBootstrapThatFailsPartWayWritesNothing(t *testing.T) {
 	}
 }
 
-// Check: the bootstrap role can write only the bootstrap rows, and only in
-// the deployment and organization of its scope. Defect: a role with more
+// Check: the bootstrap role can write the bootstrap rows only through
+// pm.operator_bootstrap. It holds no table privilege. Defect: a role with more
 // rights than the bootstrap needs.
 func TestBootstrapRoleCanWriteOnlyTheBootstrapRows(t *testing.T) {
 	s := prepareBootstrapTestStore(t)
@@ -366,29 +577,11 @@ func TestBootstrapRoleCanWriteOnlyTheBootstrapRows(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("read the bootstrap role table privileges: %v", err)
 	}
-	wantInserts := slices.Clone(bootstrapTables)
-	slices.Sort(wantInserts)
-	if len(changes) != 0 || !slices.Equal(inserts, wantInserts) ||
-		!slices.Equal(selects, []string{"auth_bootstrap_identities", "bootstrap_records"}) {
-		t.Fatalf("bootstrap role privileges: change %v, insert %v, select %v; want no change, insert %v, select on the two scope tables",
-			changes, inserts, selects, wantInserts)
-	}
-	for table, want := range map[string][]string{
-		"auth_bootstrap_identities": {"deployment_id", "issuer", "subject"},
-		"bootstrap_records":         {"deployment_id", "org_id"},
-	} {
-		result, err := admin.Query(ctx, `
-			SELECT attname FROM pg_attribute
-			WHERE attrelid = ('pm.' || $1)::regclass AND attnum > 0 AND NOT attisdropped
-			  AND has_column_privilege('pm_app_bootstrap', attrelid, attnum, 'SELECT')
-			ORDER BY attname`, table)
-		if err != nil {
-			t.Fatalf("read the readable columns of pm.%s: %v", table, err)
-		}
-		columns, err := pgx.CollectRows(result, pgx.RowTo[string])
-		if err != nil || !slices.Equal(columns, want) {
-			t.Fatalf("readable columns of pm.%s = %v (%v); want %v", table, columns, err, want)
-		}
+	// The role writes only through pm.operator_bootstrap, so it holds no
+	// privilege on any table or column of the schema (ADR 0006, F1 and N1).
+	if len(changes) != 0 || len(inserts) != 0 || len(selects) != 0 {
+		t.Fatalf("bootstrap role privileges: change %v, insert %v, select %v; want none",
+			changes, inserts, selects)
 	}
 	var forbidden bool
 	if err := admin.QueryRow(ctx, `
@@ -405,16 +598,16 @@ func TestBootstrapRoleCanWriteOnlyTheBootstrapRows(t *testing.T) {
 		       OR EXISTS (
 		           SELECT 1 FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
 		           WHERE n.nspname = 'pm' AND p.prosecdef
+		             AND p.oid <> 'pm.operator_bootstrap(text, text, text, text, text, text, text, text, text, text[], text[], text[], text[], bigint[], text, text)'::regprocedure
 		             AND has_function_privilege('pm_app_bootstrap', p.oid, 'EXECUTE'))
 		FROM pg_roles AS r WHERE r.rolname = 'pm_app_bootstrap'`).Scan(&forbidden); err != nil {
 		t.Fatalf("read the bootstrap role authority: %v", err)
 	}
 	if forbidden {
-		t.Fatal("bootstrap role has a role attribute, membership, database, schema, sequence or security-definer function authority")
+		t.Fatal("bootstrap role has a role attribute, membership, database, schema, sequence or other security-definer function authority")
 	}
 
-	// Row-level security: each insert outside the scope settings is refused,
-	// and the role cannot change or remove a row.
+	// With no table grant, each direct insert, change or removal is refused.
 	deploymentID := "deployment-" + randomHex(t, 8)
 	scope := newTestScope(t)
 	other := "org-" + randomHex(t, 8)
@@ -552,4 +745,38 @@ func TestOpenBootstrapPoolRefusesAnotherCredential(t *testing.T) {
 			t.Errorf("bootstrap pool with the %s = %v; want %v", name, err, ErrBootstrapAuthority)
 		}
 	}
+}
+
+// Go developer check, not acceptance proof. The snapshot cleanup must end at
+// its limit when PostgreSQL does not answer. The two stand-ins wait for the
+// end of the context that each call gets, as the driver does on a connection
+// that does not answer. Defect: a cleanup on context.Background(), which never
+// ends.
+func TestBootstrapSnapshotCleanupEndsAtItsLimit(t *testing.T) {
+	done := make(chan error, 1)
+	go func() { done <- endBootstrapSnapshot(stalledCleanup{}, stalledCleanup{}, 100*time.Millisecond) }()
+	guard := time.NewTimer(10 * time.Second)
+	defer guard.Stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("snapshot cleanup with a PostgreSQL that does not answer = %v; want the end of its limit", err)
+		}
+	case <-guard.C:
+		t.Fatal("snapshot cleanup did not end 10 s after a PostgreSQL that does not answer; want an end at its limit")
+	}
+}
+
+// stalledCleanup stands for a rollback and a close on a connection that does
+// not answer: each call returns only when its context ends.
+type stalledCleanup struct{}
+
+func (stalledCleanup) Rollback(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (stalledCleanup) Close(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
 }

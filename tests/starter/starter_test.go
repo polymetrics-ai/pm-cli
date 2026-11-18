@@ -8,7 +8,9 @@ package starter
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -453,5 +455,129 @@ func TestStarterRunningSeesAnExitBeforeTheReaper(t *testing.T) {
 	}
 	if process.Running() {
 		t.Fatalf("Running reports a child that exited as running: %s", process.Snapshot())
+	}
+}
+
+// heldListener binds a loopback listener for a check, with port 0, and
+// returns it with a copy of its socket for Config.Listener.
+func heldListener(t *testing.T) (*net.TCPListener, *os.File) {
+	t.Helper()
+	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	file, err := listener.File()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return listener, file
+}
+
+// assertStarterCopyClosed checks that Start closed its copy of the listener.
+func assertStarterCopyClosed(t *testing.T, file *os.File) {
+	t.Helper()
+	if _, err := file.Stat(); !errors.Is(err, os.ErrClosed) {
+		t.Fatalf("the starter copy of the listener is still open (stat: %v); want it closed", err)
+	}
+}
+
+// bindOnce binds address once and closes the new listener at once.
+func bindOnce(address string) error {
+	listener, err := net.Listen("tcp4", address)
+	if err == nil {
+		_ = listener.Close()
+	}
+	return err
+}
+
+// (j) The child gets the listener as descriptor 4 and keeps it. The caller
+// closes its own copy after the ready line. The address stays taken while the
+// child runs, and it is free after the stop.
+// Defect: the starter keeps a copy of the listener, or does not give it to
+// the process (ADR 0008, "Ownership of the listener").
+func TestStarterGivesTheListenerOnlyToTheProcess(t *testing.T) {
+	f := newFakeTimers()
+	stdin, _ := heldStdin(t)
+	listener, file := heldListener(t)
+	address := listener.Addr().String()
+	process := startShell(t, f, `printf 'helper ready\n' >&3; exec cat`, stdin,
+		func(c *Config) { c.ListenFD = 4; c.Listener = file })
+	assertStarterCopyClosed(t, file)
+	awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	if ready := awaitResult(t, results, f); !ready.ok {
+		t.Fatalf("report %s, want the ready line", ready.report)
+	}
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bindOnce(address); !errors.Is(err, syscall.EADDRINUSE) {
+		t.Fatalf("a second bind while the child runs = %v; want EADDRINUSE, because the child holds the listener", err)
+	}
+	go func() { results <- result{process.Stop(), false} }()
+	if stopped := awaitResult(t, results, f); !stopped.report.Exited {
+		t.Fatalf("report %s, want the exit of the child", stopped.report)
+	}
+	if err := bindOnce(address); err != nil {
+		t.Fatalf("a bind after the stop = %v; want a free address, with no copy left", err)
+	}
+}
+
+// (k) The launch fails, or the configuration is refused. Defect: the starter
+// keeps its copy of the listener when Start returns an error.
+func TestStarterClosesTheListenerWhenTheStartIsRefused(t *testing.T) {
+	for name, change := range map[string]func(*Config){
+		"a launch failure":       func(c *Config) { c.Path = filepath.Join(t.TempDir(), "missing") },
+		"the ready descriptor":   func(c *Config) { c.ListenFD = c.ReadyFD },
+		"a listener number of 2": func(c *Config) { c.ListenFD = 2 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			listener, file := heldListener(t)
+			config := Config{
+				Path: "/bin/sh", Args: []string{"-c", "exit 0"}, ReadyFD: 3, ReadyLine: readyLine,
+				Limits: Limits{Start: fakeStart, Stop: fakeStop, Kill: fakeKill}, Timers: newFakeTimers(),
+				SnapshotBytes: snapshotMax, ListenFD: 4, Listener: file,
+			}
+			change(&config)
+			if _, err := Start(config); err == nil {
+				t.Fatal("Start() = nil error, want the refusal")
+			}
+			assertStarterCopyClosed(t, file)
+			address := listener.Addr().String()
+			if err := listener.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if err := bindOnce(address); err != nil {
+				t.Fatalf("a bind after the refused start = %v; want a free address, with no copy left", err)
+			}
+		})
+	}
+}
+
+// (l) The child gets the listener and exits with no ready line. Defect: a
+// copy of the listener outlives a failed start.
+func TestStarterLeavesNoListenerCopyAfterAFailedStart(t *testing.T) {
+	f := newFakeTimers()
+	listener, file := heldListener(t)
+	address := listener.Addr().String()
+	process := startShell(t, f, `exit 1`, nil, func(c *Config) { c.ListenFD = 4; c.Listener = file })
+	assertStarterCopyClosed(t, file)
+	awaitCreated(t, f, fakeStart)
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	got := awaitResult(t, results, f)
+	if got.ok || got.report.Outcome != OutcomeEOFBeforeReady || !got.report.Exited {
+		t.Fatalf("report %s, want end of file before the ready line and the exit", got.report)
+	}
+	// The caller closes its copy on a failed start, as the harness does.
+	if err := listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := bindOnce(address); err != nil {
+		t.Fatalf("a bind after the failed start = %v; want a free address, with no copy left", err)
 	}
 }

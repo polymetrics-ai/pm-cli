@@ -14,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/cucumber/godog"
+	"github.com/polymetrics-ai/pm-cli/tests/keycloak"
 )
 
 const (
@@ -23,12 +24,6 @@ const (
 	// secrets directory. pm-server bootstrap reads it from the secrets
 	// directory of the deployment (ADR 0006).
 	bootstrapCredentialMember = "pm-app-bootstrap-endpoint"
-	// bootstrapAdminSubject and bootstrapSecondAdminSubject are the fixed
-	// admin subjects of the bootstrap inputs. The issuer is the issuer of the
-	// identity provider of the deployment. Both are provisional (LOGIN): they
-	// change when the owner chooses the login mechanism.
-	bootstrapAdminSubject       = "pm-acceptance-admin"
-	bootstrapSecondAdminSubject = "pm-acceptance-admin-second"
 	// bootstrapUndeclaredConnector is a connector ID that no deployment
 	// declares.
 	bootstrapUndeclaredConnector = "acceptance-undeclared"
@@ -90,12 +85,20 @@ type bootstrapState map[string][]string
 // row: the input is a file, and the credential step copies a file.
 type bootstrapScenario struct {
 	shared *stackScenario
-	dir    string
-	files  int
-	runs   int
+	// lane is the lane of the scenario. The steps use its deployment when the
+	// scenario has no shared deployment (K1b).
+	lane  *lane
+	dir   string
+	files int
+	runs  int
 
 	// second is the second deployment of K5.
 	second *deployment
+	// otherUser is the second Keycloak user of the deployment: the other
+	// admin of K6. The scenario creates it with otherKeycloak, the job
+	// Keycloak of the deployment, and close removes it.
+	otherUser     *keycloak.Identity
+	otherKeycloak stackIdentity
 	// observer reads through its own read-only role. It opens at the first
 	// observer step.
 	observer *observer
@@ -114,8 +117,8 @@ type bootstrapScenario struct {
 	recordedScope string
 }
 
-func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario) {
-	s := &bootstrapScenario{shared: shared}
+func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) {
+	s := &bootstrapScenario{shared: shared, lane: l}
 	// godog keeps the step error. The hook returns only its own cleanup
 	// error, so the step error is reported once.
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
@@ -142,14 +145,25 @@ func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario) {
 	sc.Step(`^the observer sees the bootstrap state of the first scope unchanged since it recorded it$`, s.firstScopeUnchanged)
 	sc.Step(`^the observer sees exactly one new workspace, one new identity with its login binding for this deployment, one admin membership, one provider account, one bootstrap record for this deployment and organization, and one audit record that names the operator bootstrap as its actor$`, s.seesBootstrappedScope)
 	sc.Step(`^the observer sees one new workspace, identity, login binding, admin membership, provider account and bootstrap record for the second scope, and one new audit record$`, s.seesSecondScope)
+	sc.Step(`^the lane command stdout names the bootstrapped workspace and no other workspace$`, s.namesBootstrappedWorkspace)
 }
 
-// deployment returns the deployment of the shared deployment step.
+// deployment returns the deployment of the shared deployment step. A lane
+// scenario has no such deployment (K1b): then it returns the lane
+// deployment, when the lane runs.
 func (s *bootstrapScenario) deployment() (*deployment, error) {
-	if s.shared.deployment == nil {
-		return nil, errors.New("the scenario has no deployment configuration")
+	if s.shared.deployment != nil {
+		return s.shared.deployment, nil
 	}
-	return s.shared.deployment, nil
+	if s.lane != nil && s.lane.running() == nil && s.lane.deployment != nil {
+		return s.lane.deployment, nil
+	}
+	return nil, errors.New("the scenario has no deployment configuration")
+}
+
+// isLaneDeployment reports whether d is the lane deployment of the scenario.
+func (s *bootstrapScenario) isLaneDeployment(d *deployment) bool {
+	return s.lane != nil && d != nil && d == s.lane.deployment
 }
 
 // secretsDirectoryCredential copies the bootstrap credential from the stack
@@ -180,6 +194,21 @@ func bootstrapCredentialPath(root, postgresRef string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, bundle, bootstrapCredentialMember), nil
+}
+
+// copyBootstrapCredentialOnce copies the credential file unless the
+// deployment secrets directory already holds it.
+func copyBootstrapCredentialOnce(d *deployment) error {
+	path, err := bootstrapCredentialPath(d.secrets, d.stack.postgresRef)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("check the bootstrap database credential in the deployment secrets directory: %w", err)
+	}
+	return copyBootstrapCredential(d)
 }
 
 // copyBootstrapCredential copies the one credential file. It never writes
@@ -220,20 +249,29 @@ func (s *bootstrapScenario) secondDeployment() error {
 }
 
 // makeInput returns a new input for a new organization and workspace in the
-// deployment. The admin is the fixed subject at the issuer of the identity
-// provider of the deployment (LOGIN).
-func makeInput(d *deployment, subject, connector string) bootstrapInput {
+// deployment. The admin is a user of the deployment in the job Keycloak: the
+// issuer is the issuer of the test realm, and the subject is the ID that
+// Keycloak gives the user, which is the sub claim of its tokens. The input
+// names no secret of the user.
+func makeInput(d *deployment, user *keycloak.Identity, connector string) (bootstrapInput, error) {
+	if d.stack.identity.admin == nil || user == nil {
+		return bootstrapInput{}, errors.New("the deployment has no user in the job Keycloak")
+	}
+	subject := user.Subject()
+	if subject == "" {
+		return bootstrapInput{}, errors.New("the Keycloak user of the deployment has no ID")
+	}
 	suffix := randomHex(6)
 	return bootstrapInput{
 		OrgID:         "acceptance-org-" + suffix,
 		WorkspaceID:   "acceptance-workspace-" + suffix,
 		WorkspaceName: "Acceptance workspace " + suffix,
-		AdminIssuer:   d.identity.issuer,
+		AdminIssuer:   d.stack.identity.admin.Issuer(),
 		AdminSubject:  subject,
 		ProviderAccounts: []bootstrapProviderAccount{
 			{ConnectorID: connector, DisplayName: "Acceptance " + connector + " account " + suffix},
 		},
-	}
+	}, nil
 }
 
 // writeInput writes the input as a new file in the scenario directory and
@@ -274,7 +312,11 @@ func (s *bootstrapScenario) newInput(connector string) error {
 	if err != nil {
 		return err
 	}
-	return s.writeInput(makeInput(d, bootstrapAdminSubject, connector))
+	input, err := makeInput(d, d.identity, connector)
+	if err != nil {
+		return err
+	}
+	return s.writeInput(input)
 }
 
 // invalidInput is a valid input with one change of K3.
@@ -283,7 +325,10 @@ func (s *bootstrapScenario) invalidInput(change string) error {
 	if err != nil {
 		return err
 	}
-	input := makeInput(d, bootstrapAdminSubject, "postgres")
+	input, err := makeInput(d, d.identity, "postgres")
+	if err != nil {
+		return err
+	}
 	switch change {
 	case "an empty workspace name":
 		input.WorkspaceName = ""
@@ -298,7 +343,10 @@ func (s *bootstrapScenario) invalidInput(change string) error {
 }
 
 // secondOrganizationInput is the K6 input: a new organization in the same
-// deployment, with another admin subject at the same issuer.
+// deployment, with another admin subject at the same issuer. The other admin
+// is a second user of the deployment in the job Keycloak. The step creates it
+// with the scoped admin client, as the deployment step creates the first
+// user, and close removes it.
 func (s *bootstrapScenario) secondOrganizationInput(connector string) error {
 	d, err := s.deployment()
 	if err != nil {
@@ -307,7 +355,26 @@ func (s *bootstrapScenario) secondOrganizationInput(connector string) error {
 	if s.first == nil {
 		return errors.New("the operator did not bootstrap the deployment in this scenario")
 	}
-	return s.writeInput(makeInput(d, bootstrapSecondAdminSubject, connector))
+	if s.otherUser != nil {
+		return errors.New("the scenario already has a second Keycloak user")
+	}
+	if d.stack.identity.admin == nil {
+		return errors.New("the deployment has no job Keycloak")
+	}
+	// Provision keeps what it created also on an error, so that close
+	// removes it.
+	s.otherKeycloak = d.stack.identity
+	if s.otherUser, err = d.stack.identity.admin.Provision(d.origin + browserCallbackPath); err != nil {
+		return err
+	}
+	input, err := makeInput(d, s.otherUser, connector)
+	if err != nil {
+		return err
+	}
+	if input.AdminSubject == s.first.AdminSubject {
+		return errors.New("the second Keycloak user has the subject of the first admin")
+	}
+	return s.writeInput(input)
 }
 
 // secondOrganizationFirstAdmin is the K7 input: a new organization in the
@@ -320,7 +387,10 @@ func (s *bootstrapScenario) secondOrganizationFirstAdmin() error {
 	if s.first == nil {
 		return errors.New("the operator did not bootstrap the deployment in this scenario")
 	}
-	input := makeInput(d, bootstrapAdminSubject, s.first.ProviderAccounts[0].ConnectorID)
+	input, err := makeInput(d, d.identity, s.first.ProviderAccounts[0].ConnectorID)
+	if err != nil {
+		return err
+	}
 	input.AdminIssuer, input.AdminSubject = s.first.AdminIssuer, s.first.AdminSubject
 	return s.writeInput(input)
 }
@@ -405,12 +475,13 @@ func readOutputFile(file *os.File, name string) (string, error) {
 }
 
 // knownBootstrapLines are the stderr lines that a failure message may show.
-// Each is a constant of this test: the six refusal lines of ADR 0006, and
+// Each is a constant of this test: the seven refusal lines of ADR 0006, and
 // the line of an unknown flag for each flag that the step passes. A message
 // shows such a line only when the output is exactly that line, so a message
 // shows only text that the test already holds.
 var knownBootstrapLines = []string{
 	"pm-server: bootstrap scope is already bootstrapped",
+	"pm-server: bootstrap scope is already bootstrapped with another input",
 	"pm-server: bootstrap admin login is already bound",
 	"pm-server: bootstrap workspace name is required",
 	"pm-server: bootstrap admin subject is required",
@@ -436,6 +507,30 @@ func describeOutput(output string) string {
 		return "0 bytes"
 	}
 	return fmt.Sprintf("%d bytes, not shown", len(output))
+}
+
+// knownConfigurationRefusalLines are the complete pm-server configuration
+// refusal lines for identity.device_poll_interval that a bootstrap failure
+// message can show. Each is a fixed text with no secret and no configured
+// value.
+var knownConfigurationRefusalLines = []string{
+	"pm-server: configuration unknown at identity.device_poll_interval",
+	"pm-server: configuration type at identity.device_poll_interval",
+	"pm-server: configuration value at identity.device_poll_interval",
+	"pm-server: configuration bounds at identity.device_poll_interval",
+}
+
+// describeStderr describes the bootstrap stderr for the failure messages of
+// the steps "the bootstrap exits with code <n>" and "the bootstrap stderr is
+// exactly the line: <line>". When stderr is exactly one known configuration
+// refusal line and one line feed, it shows that line. It compares the whole
+// line as a string. Every other stderr has the description of
+// describeOutput.
+func describeStderr(output string) string {
+	if line, found := strings.CutSuffix(output, "\n"); found && slices.Contains(knownConfigurationRefusalLines, line) {
+		return fmt.Sprintf("%d bytes, the configuration refusal line %q", len(output), line)
+	}
+	return describeOutput(output)
 }
 
 func (s *bootstrapScenario) runWithInput(ctx context.Context) error {
@@ -473,7 +568,11 @@ func (s *bootstrapScenario) runForSecondDeployment(ctx context.Context) error {
 	if s.first == nil {
 		return errors.New("the operator did not bootstrap the deployment in this scenario")
 	}
-	if err := s.writeInput(makeInput(s.second, bootstrapAdminSubject, s.first.ProviderAccounts[0].ConnectorID)); err != nil {
+	input, err := makeInput(s.second, s.second.identity, s.first.ProviderAccounts[0].ConnectorID)
+	if err != nil {
+		return err
+	}
+	if err := s.writeInput(input); err != nil {
 		return err
 	}
 	return s.run(ctx, s.second, *s.input, s.inputFile)
@@ -489,7 +588,20 @@ func (s *bootstrapScenario) bootstrapped(ctx context.Context, connector string) 
 	if s.first != nil {
 		return errors.New("the operator already bootstrapped the deployment in this scenario")
 	}
-	if err := s.writeInput(makeInput(d, bootstrapAdminSubject, connector)); err != nil {
+	// A lane scenario has no step for the bootstrap credential. As the
+	// operator, the step copies it into the lane secrets directory for
+	// pm-server bootstrap, as the 284b credential step does. It creates no
+	// role and writes nothing to PostgreSQL.
+	if s.isLaneDeployment(d) {
+		if err := copyBootstrapCredentialOnce(d); err != nil {
+			return err
+		}
+	}
+	input, err := makeInput(d, d.identity, connector)
+	if err != nil {
+		return err
+	}
+	if err := s.writeInput(input); err != nil {
 		return err
 	}
 	if err := s.run(ctx, d, *s.input, s.inputFile); err != nil {
@@ -517,7 +629,7 @@ func (s *bootstrapScenario) exitsWithCode(want int) error {
 	}
 	if run.exitCode != want {
 		return fmt.Errorf("the bootstrap exited with code %d, want %d\nstdout: %s\nstderr: %s",
-			run.exitCode, want, describeOutput(run.stdout), describeOutput(run.stderr))
+			run.exitCode, want, describeOutput(run.stdout), describeStderr(run.stderr))
 	}
 	return nil
 }
@@ -541,7 +653,7 @@ func (s *bootstrapScenario) stderrIsExactlyLine(line string) error {
 		return err
 	}
 	if run.stderr != line+"\n" {
-		return fmt.Errorf("the bootstrap stderr is %s, want exactly the line %q", describeOutput(run.stderr), line+"\n")
+		return fmt.Errorf("the bootstrap stderr is %s, want exactly the line %q", describeStderr(run.stderr), line+"\n")
 	}
 	return nil
 }
@@ -781,7 +893,9 @@ type (
 		MembershipID    string `json:"membership_id"`
 	}
 	scopeAudit struct {
+		RequestedActorID   string `json:"requested_actor_id"`
 		RequestedActorKind string `json:"requested_actor_kind"`
+		EffectiveActorID   string `json:"effective_actor_id"`
 		EffectiveActorKind string `json:"effective_actor_kind"`
 	}
 	scope struct {
@@ -923,8 +1037,9 @@ func checkScope(state bootstrapState, run *bootstrapRun, operator bool) error {
 		"the bootstrap record is %+v, want the record of deployment %q that names the workspace, the admin identity and the admin membership", got.record, deploymentID)
 	check(got.runAudits == 0, "the observer sees %d run audit records in the scope, want none", got.runAudits)
 	if operator {
-		check(got.audit.RequestedActorKind == "operator" && got.audit.EffectiveActorKind == "operator",
-			"the audit record is %+v, want the operator as its requested and effective actor", got.audit)
+		check(got.audit.RequestedActorKind == "operator" && got.audit.EffectiveActorKind == "operator" &&
+			got.audit.RequestedActorID == "bootstrap" && got.audit.EffectiveActorID == "bootstrap",
+			"the audit record is %+v, want the operator bootstrap as its requested and effective actor", got.audit)
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "\n"))
@@ -963,14 +1078,18 @@ func (s *bootstrapScenario) seesSecondScope(ctx context.Context) error {
 	return checkScope(state, run, false)
 }
 
-// close closes the second deployment and the observer, and removes the
-// input directory.
+// close closes the second deployment and the observer, removes the second
+// Keycloak user of K6 and checks the Keycloak records for its secrets, as a
+// deployment does for its own user, and removes the input directory.
 func (s *bootstrapScenario) close() error {
 	var errs []error
 	if s.second != nil {
 		errs = append(errs, s.second.close())
 	}
 	errs = append(errs, s.observer.close())
+	if s.otherUser != nil {
+		errs = append(errs, s.otherKeycloak.admin.Remove(s.otherUser), s.otherKeycloak.checkRecords(s.dir, s.otherUser))
+	}
 	if s.dir != "" {
 		errs = append(errs, os.RemoveAll(s.dir))
 	}

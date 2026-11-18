@@ -466,3 +466,32 @@ func TestFailedReadyWritePrintsOneLineAndClosesTheHandle(t *testing.T) {
 		t.Fatalf("diagnostics %q, want exactly %q", got, want)
 	}
 }
+
+// Go developer test, not acceptance proof (review finding F2 of PR #283,
+// round 2). Defect: a ready write that fails for its own reason while Serve
+// stops serving loses the write-failure line. The events have a fixed order:
+// the write starts and waits; the drain makes Serve stop serving, and the stop
+// closes the handle; only then the write fails, with an error that is not the
+// error of a closed handle. So the failure comes while the stop is in
+// progress, and the shutdown did not cause it. The line must appear exactly
+// once. Each wait has one limit. No sleep, poll or retry.
+func TestReadyWriteFailureDuringTheStopPrintsTheLine(t *testing.T) {
+	handle := newFakeReadyHandle(nil)
+	handle.release = handle.closed
+	handle.fail = errors.New("broken pipe")
+	diagnostics := &lockedBuffer{}
+	fixture := startLifecycleWith(t, lifecycleOptions{ready: handle, diagnostics: diagnostics}, nil, func(*server.Server, *gin.Engine) {})
+	awaitLifecycleSignal(t, handle.entered)
+	drainContext, stop := context.WithTimeout(context.Background(), 4*time.Second)
+	defer stop()
+	if err := fixture.service.Drain(drainContext); err != nil {
+		t.Fatalf("drain: %v", err)
+	}
+	fixture.requireStopped(t)
+	if !handle.isClosed() {
+		t.Fatal("Serve returned with the ready handle open")
+	}
+	if got, want := diagnostics.String(), "pm-server: the ready signal write failed. The process continues.\n"; got != want {
+		t.Fatalf("diagnostics %q, want exactly %q for a write failure that the shutdown did not cause", got, want)
+	}
+}

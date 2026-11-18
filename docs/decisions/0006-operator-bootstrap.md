@@ -1,6 +1,6 @@
 # 0006: Operator bootstrap of the first workspace and admin
 
-Date: 2026-11-16. Status: accepted 2026-11-16. This record does not authorize application work. Every command, flag, role, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #284, a sub-issue of #72.
+Date: 2026-11-16. Status: accepted 2026-11-16. The three corrections of 2026-11-18 in "Corrections" wait for the owner's decision. This record does not authorize application work. Every command, flag, role, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #284, a sub-issue of #72.
 
 ## Context
 
@@ -41,17 +41,25 @@ Operator authority is a dedicated database credential for a new role, `pm_app_bo
   - it is not a member of `pm_app_migrator` or `pm_app_runtime`, and neither of those is a member of it.
 
   If a check fails, the migration fails and changes nothing. Then it applies the scoped grants.
-- **The grants.** `pm_app_bootstrap` gets `INSERT` only on the tables of the rows above, and `SELECT` only on the columns that the scope checks below need. It gets no `UPDATE`, no `DELETE` and no `TRUNCATE` on any table, and no grant on any other table. Row-level security policies for the role limit each insert to the deployment of the server configuration and to the organization of the input.
+- **The grants.** `pm_app_bootstrap` gets no grant on any table. Its only write path is one function that `pm_app_migrator` owns and that runs with the owner's rights (`SECURITY DEFINER`). The function has a fixed search path (`pg_catalog, pg_temp`), and every name in it is schema-qualified. Only `pm_app_bootstrap` may execute it. `PUBLIC` may not execute it. The role keeps `CONNECT` on `pm_app` from the deployment bootstrap. The migration grants it `USAGE` on the schema. The function:
+  - checks its inputs (length, no control characters);
+  - refuses an organization that already has any row. Examples are a bootstrap record, a workspace, an identity, a login binding, a membership, a provider account and an audit record. Only a new organization can be bootstrapped;
+  - refuses an admin issuer and subject that already have a login binding in the deployment (see "An existing login binding");
+  - inserts the rows above, the bootstrap record and the audit record in one call, and returns only the IDs that it created;
+  - stores the SHA-256 of the canonical input in the bootstrap record (see "Once").
 
 ### Scope
 
-- **One bootstrap for each deployment and organization.** The deployment comes from the server configuration. The organization comes from the input.
-- **Once.** The bootstrap record has the primary key (deployment, organization). Any second bootstrap of the same scope is refused, also when its input is the same as the first input. Two concurrent bootstraps of one scope cannot both commit, because the primary key refuses the second insert. The reasons for "once":
+- **One bootstrap for each organization, across all deployments.** The deployment comes from the server configuration. The organization comes from the input. The scope of a bootstrap is the deployment and the organization, and an organization can have a bootstrap in one deployment only.
+- **Once.** The bootstrap record has the primary key (deployment, organization) and a unique key on the organization. Any second bootstrap of the same scope is refused, also when its input is the same as the first input. A bootstrap of the same organization in another deployment is refused too. Two concurrent bootstraps of one organization cannot both commit, because the primary key or the unique key refuses the second insert. The reasons for "once":
   - The bootstrap is one transaction, so a failed bootstrap leaves no partial state, and a retry after a failure starts clean.
-  - After a lost or uncertain commit, a retry tells the operator the truth: a refusal means that the first bootstrap committed, and a success means that it did not.
-  - A clear "once" needs no stored copy of the first input and no rule for when two inputs are the same.
+  - After a lost or uncertain commit, a retry tells the operator what happened. A success means that no bootstrap of this scope had committed.
+  - A refusal of a taken scope means only that the scope is taken. A second operator, or a person with a leaked credential, can take the scope with another input. So this refusal also says whether the SHA-256 of the input in the bootstrap record equals the SHA-256 of this input.
+  - Equal means that a bootstrap with this exact input committed. The refusal is then `pm-server: bootstrap scope is already bootstrapped`.
+  - Each other taken case gives `pm-server: bootstrap scope is already bootstrapped with another input`. These cases are: another input took the scope, the organization already has rows, or another deployment bootstrapped the organization (also with the same input).
+  - A clear "once" needs no stored copy of the first input. It needs only the SHA-256 of the canonical input. Two inputs are the same when these SHA-256 values are equal.
   - An operator who lost the output can read the result through the product after login.
-- **A second organization in the same deployment.** A bootstrap of another organization in the same deployment succeeds. It inserts only the rows of the new organization. The rows of each earlier organization stay unchanged: the role can only insert, and row-level security limits each insert to the organization of the input.
+- **A second organization in the same deployment.** A bootstrap of another organization in the same deployment succeeds. It inserts only the rows of the new organization. The rows of each earlier organization stay unchanged: the function writes only the rows of a new organization, and the role has no other write authority.
 - **An existing login binding.** A login binding is the key (deployment, issuer, subject), and it names one organization. The bootstrap only inserts a new login binding. It never changes, enables again or reuses an existing one. If the input's admin issuer and subject already have a login binding in this deployment, for any organization and enabled or not, the bootstrap is refused and writes nothing. The existing binding, its organization and its principal stay unchanged. So a bootstrap of a new organization cannot move an existing user's login to that organization. The grants hold this rule too: the role has no `UPDATE` or `DELETE` on the login binding table.
 
 ### The planned interface
@@ -60,7 +68,8 @@ Operator authority is a dedicated database credential for a new role, `pm_app_bo
 - The input file holds the organization, the workspace ID and name, the admin's issuer and subject, and the provider accounts (connector ID and display name). It holds no secret, and no secret is in an argument.
 - Success: exit code 0. One JSON document on stdout names the workspace, the admin identity, the admin membership and each provider account. It holds no secret.
 - Each refusal: exit code 1, nothing on stdout, nothing written, and exactly one stderr line:
-  - `pm-server: bootstrap scope is already bootstrapped`;
+  - `pm-server: bootstrap scope is already bootstrapped` (the scope holds a bootstrap of the same input);
+  - `pm-server: bootstrap scope is already bootstrapped with another input` (the scope holds a bootstrap of another input, the organization already has rows, or another deployment bootstrapped the organization);
   - `pm-server: bootstrap admin login is already bound`;
   - `pm-server: bootstrap workspace name is required`;
   - `pm-server: bootstrap admin subject is required`;
@@ -73,7 +82,7 @@ The admin membership holds the right to manage memberships and connections. Its 
 
 | Option | Assessment for PM |
 | --- | --- |
-| `pm-server bootstrap` with a dedicated bootstrap role | Selected. No network route. The authority is a credential that only the operator holds and the running server never holds. The role can only insert the bootstrap rows. |
+| `pm-server bootstrap` with a dedicated bootstrap role | Selected. No network route. The authority is a credential that only the operator holds and the running server never holds. The role can only call the bootstrap function, which writes the rows of a new organization. |
 | `pm-server bootstrap` with the `pm_app_migrator` credential | Rejected. That role owns the database. The most privileged credential would serve a routine first-run act, against least privilege. |
 | A migration that creates the role `pm_app_bootstrap` | Rejected. The migration runs as `pm_app_migrator`, which has `NOCREATEROLE` (`deploy/postgres/bootstrap.sql:30-39`). To give it create-role authority would widen the most privileged application credential. |
 | A bootstrap section in the server configuration, applied at each start | Rejected. Authority grants would live in configuration, every start would apply them again, and no operator act would mark the bootstrap. A removed section has no defined meaning. |
@@ -86,12 +95,12 @@ The admin membership holds the right to manage memberships and connections. Its 
 - Easier: a new deployment gets its first admin through a product path. Acceptance scenarios use that path, and no test writes PM rows.
 - Harder:
   - `deploy/postgres/bootstrap.sql` and the stack fixture create the role `pm_app_bootstrap` from a new password file. An existing deployment must run its privileged deployment bootstrap again before the new migration, or the migration fails at its role check.
-  - A migration checks the role and applies its grants and row-level security policies. It adds the bootstrap record table.
+  - A migration checks the role, adds the bootstrap record table and the bootstrap function, and grants the role only the right to execute that function.
   - The operator keeps one more credential.
   - `docs/development/setup.md` states the operator duties: run the bootstrap once for each organization, then remove the bootstrap credential from the secrets directory.
-- Risk: a leaked bootstrap credential can bootstrap a new organization in the same deployment, because the scope is the deployment and the organization. It cannot change an existing organization or an existing login binding, because the role can only insert. The operator duty above limits this risk, and the stricter alternative above removes it.
+- Risk: a leaked bootstrap credential can bootstrap a new organization in the same deployment. The scope is the deployment and the organization, so one credential is not limited to one bootstrap. To use that organization, the holder also needs a login at the deployment's identity provider. The credential cannot add authority to an existing organization or change a login binding. Its only authority is the function. The function refuses an organization that has any row and an admin login that is already bound. The operator duty above limits this risk, and the stricter alternative above removes it.
 - New dependencies: none.
-- Owners who must change: `cmd/pm-server` (the subcommand), `internal/app` (the bootstrap service), `internal/store` and its migrations (the role check, the grants, the policies, the bootstrap record and the scope checks), `deploy/postgres/bootstrap.sql` (the role), the stack fixture (`tools/cmd/pm-stack-fixture`), `docs/development/setup.md`.
+- Owners who must change: `cmd/pm-server` (the subcommand), `internal/app` (the bootstrap service), `internal/store` and its migrations (the role check, the schema and function grants, the row-level security policies that the bootstrap function uses, the bootstrap record and the scope checks), `deploy/postgres/bootstrap.sql` (the role), the stack fixture (`tools/cmd/pm-stack-fixture`), `docs/development/setup.md`.
 
 ## Evidence
 
@@ -128,3 +137,20 @@ None of these exists yet. The #284 scenarios (`tests/acceptance/features/operato
 - K6: in the same deployment, a bootstrap of a second organization succeeds. The observer reads that the rows and the audit record of the first organization did not change.
 - K7: in the same deployment, a bootstrap of a second organization whose admin issuer and subject already have a login binding is refused with `pm-server: bootstrap admin login is already bound`. It writes nothing, and the existing binding, its organization and its principal do not change.
 - A developer check of the migration: it fails when `pm_app_bootstrap` is absent or has a prohibited authority.
+- Developer checks of the bootstrap authority, each run with the bootstrap credential:
+  - a direct insert into each table of the rows above is refused;
+  - the role cannot read the login bindings;
+  - the function refuses an organization that already has rows, also one without a bootstrap record;
+  - the function refuses an admin login that is already bound;
+  - no role other than `pm_app_bootstrap` may execute the function;
+  - the search path of the function is fixed;
+  - of two concurrent bootstraps of one organization in two deployments, only one commits;
+  - a retry of a taken scope reports the same input or another input, and writes nothing.
+
+## Corrections
+
+The owner accepted this record on 2026-11-16. The reviews of 2026-11-18 found statements that claimed more than the planned design held, and one gap in it. These corrections make the record true. They narrow the bootstrap authority. Correction 2 also adds one refusal line. Each must be a named change in the owner's sign-off packet.
+
+1. **Existing organizations (review finding F1).** The planned grants allowed direct inserts that were limited only by the organization that the client names. So a leaked credential could add an admin to an existing organization, and the risk statement was not true. The correction replaces the table grants with one function that refuses an organization that has rows ("The grants"), and states the remaining risk exactly ("Consequences"). It also removes the read of every login binding. The implementation is in #302.
+2. **A retry after an uncertain commit (review finding F2).** The record said that a refusal on retry proves that the first bootstrap committed. A refusal of a taken scope proves only that the scope is taken. The correction says so, and adds the SHA-256 of the input as a witness of the same input ("Scope"). The bootstrap record now stores that SHA-256. The correction adds one refusal line, `pm-server: bootstrap scope is already bootstrapped with another input` ("The planned interface"). The implementation is in #302.
+3. **One organization in two deployments (security review finding m1).** The primary key (deployment, organization) did not stop two concurrent bootstraps of one organization in two deployments. Both could commit. The correction adds a unique key on the organization, so an organization has a bootstrap in one deployment only ("Scope"). A refused bootstrap of this kind gives the refusal line of correction 2. The implementation is in #302.

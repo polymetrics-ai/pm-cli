@@ -49,7 +49,10 @@ func (s *stackScenario) runAgainstStartedServer(ctx context.Context, line string
 }
 
 // stdoutHasStartedServerDeploymentID is step 14. It reads the shared result
-// state.
+// state. It reads the one instance ID that pm printed and compares it exactly
+// with the deployment ID of the started pm-server. pm-server uses its
+// deployment ID as its instance ID. A match in another field or as a
+// substring does not pass the step.
 func (s *stackScenario) stdoutHasStartedServerDeploymentID() error {
 	if s.deployment == nil {
 		return errors.New("the scenario has no deployment configuration")
@@ -57,8 +60,12 @@ func (s *stackScenario) stdoutHasStartedServerDeploymentID() error {
 	if !s.result.ran {
 		return errors.New("no lane command ran")
 	}
-	if !strings.Contains(s.result.stdout, s.deployment.deploymentID) {
-		return fmt.Errorf("stdout does not contain the deployment ID %q of the started pm-server\nstdout: %s", s.deployment.deploymentID, s.result.stdout)
+	printed, err := instanceIDInOutput(s.result.stdout)
+	if err != nil {
+		return err
+	}
+	if printed != s.deployment.deploymentID {
+		return fmt.Errorf("the lane command printed instance ID %q, want the deployment ID %q of the started pm-server\nstdout: %s", printed, s.deployment.deploymentID, s.result.stdout)
 	}
 	return nil
 }

@@ -1,6 +1,8 @@
 package acceptance
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/tls"
 	"encoding/json"
@@ -14,16 +16,26 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime/debug"
+	"slices"
+	"strconv"
+	"sync"
+	"sync/atomic"
+	"syscall"
+	"testing"
 	"time"
+
+	"github.com/polymetrics-ai/pm-cli/tests/keycloak"
+	"github.com/polymetrics-ai/pm-cli/tests/starter"
 )
 
 // deployment is one new PM deployment configuration on the job-owned stack,
 // apart from the lane of PR #261. Each deployment has its own deployment ID,
-// loopback listen address, CA, identity provider, HTTPS edge and public
-// origin, and a Temporal namespace that is the stack namespace unless a step
-// changes it. pm-server listens on plain HTTP behind the HTTPS edge, because
-// authenticated API and browser traffic needs such an edge
-// (docs/development/setup.md:149).
+// held loopback listener, CA, HTTPS edge and public origin, its own client
+// and user in the job-owned Keycloak, and a Temporal namespace that is the
+// stack namespace unless a step changes it. pm-server listens on plain HTTP
+// behind the HTTPS edge, because authenticated API and browser traffic needs
+// such an edge (docs/development/setup.md:149).
 type deployment struct {
 	stack         stackInputs
 	dir           string
@@ -35,13 +47,28 @@ type deployment struct {
 	secrets       string
 	configuration string
 	authority     *laneAuthority
-	identity      *laneIdentityProvider
+	identity      *keycloak.Identity
 	edge          *httptest.Server
+
+	// devicePollInterval is the JSON token that a device poll interval step
+	// supplied, or nil. The configuration writer writes it unchanged as
+	// identity.device_poll_interval.
+	devicePollInterval json.RawMessage
+	// listener is the harness copy of the pm-server listener (ADR 0008). The
+	// harness binds it, writes its address into the configuration, and gives
+	// pm-server a copy with --listen-fd. releaseListener closes it once.
+	listener    *net.TCPListener
+	releaseOnce sync.Once
+	// holdListener is set by the --listen-fd scenario starts (criteria N3,
+	// N4 and N5). Then an answer through the edge does not release the
+	// listener, so the starter keeps its copy until the deployment closes
+	// (criteria N1: "No step of LF1, LF2 or LF3 closes that listener").
+	holdListener atomic.Bool
 }
 
-// newDeployment makes the deployment directory, the CA, the identity
-// provider, the HTTPS edge and the secret root. The first start writes the
-// configuration.
+// newDeployment makes the deployment directory, the CA, the HTTPS edge, the
+// client and the user of the deployment in the job-owned Keycloak, and the
+// secret root. The first start writes the configuration.
 func newDeployment(stack stackInputs) (*deployment, error) {
 	d := &deployment{stack: stack, namespace: stack.temporal.namespace}
 	if err := d.open(); err != nil {
@@ -67,16 +94,22 @@ func (d *deployment) open() error {
 	if err := writePrivateFile(d.caFile, d.authority.pem); err != nil {
 		return err
 	}
-	if d.identity, err = newLaneIdentityProvider(d.authority); err != nil {
+	if d.listener, err = holdLoopbackListener(); err != nil {
 		return err
 	}
-	if d.listen, err = reserveLoopbackAddress(); err != nil {
-		return err
-	}
-	if d.edge, err = newLaneEdge(d.authority, d.listen); err != nil {
+	d.listen = d.listener.Addr().String()
+	// The harness closes its copy of the listener after pm-server served one
+	// request through the edge (ADR 0008, "Ownership of the listener"),
+	// unless a --listen-fd scenario holds it (servedThroughEdge).
+	if d.edge, err = newLaneEdge(d.authority, d.listen, d.servedThroughEdge); err != nil {
 		return err
 	}
 	d.origin = d.edge.URL
+	// Provision keeps what it created also on an error, so that close
+	// removes it.
+	if d.identity, err = d.stack.identity.admin.Provision(d.origin + browserCallbackPath); err != nil {
+		return err
+	}
 	d.deploymentID = "pm-acceptance-" + randomHex(6)
 	d.secrets, err = d.writeSecrets(d.stack)
 	return err
@@ -117,22 +150,71 @@ func (d *deployment) processEnvironment() []string {
 	return []string{"HOME=" + d.home(), "PATH=/usr/bin:/bin", "LANG=C", "TMPDIR=" + filepath.Join(d.dir, "tmp")}
 }
 
-// close stops the edge and the identity provider and removes the deployment
-// directory. The steps stop the processes before they close the deployment.
-func (d *deployment) close() error {
-	if d.edge != nil {
-		d.edge.Close()
+// serverListenerFD is the number of the inherited listener descriptor in
+// pm-server.
+const serverListenerFD = 4
+
+// giveListener adds the held listener to a start of pm-server: the flag
+// --listen-fd 4 and a new copy of the socket as descriptor 4. Go sets
+// close-on-exec on that copy, and starter.Start closes it on every path. The
+// harness keeps its own copy until releaseListener.
+func (d *deployment) giveListener(config *starter.Config) error {
+	if d.listener == nil {
+		return errors.New("the deployment holds no pm-server listener")
 	}
-	d.identity.close()
-	if d.dir != "" {
-		return os.RemoveAll(d.dir)
+	file, err := d.listener.File()
+	if err != nil {
+		return fmt.Errorf("copy the held pm-server listener: %w", err)
 	}
+	config.Args = append(slices.Clone(config.Args), "--listen-fd", strconv.Itoa(serverListenerFD))
+	config.ListenFD = serverListenerFD
+	config.Listener = file
 	return nil
 }
 
+// releaseListener closes the harness copy of the pm-server listener. It acts
+// once. The harness calls it when pm-server served a request through the
+// edge, when the launch or the start of pm-server failed, when a step stops
+// pm-server, and when the deployment closes.
+func (d *deployment) releaseListener() {
+	d.releaseOnce.Do(func() {
+		if d.listener != nil {
+			_ = d.listener.Close()
+		}
+	})
+}
+
+// servedThroughEdge runs for each answer of pm-server through the edge. It
+// releases the listener unless a --listen-fd scenario holds it.
+func (d *deployment) servedThroughEdge() {
+	if !d.holdListener.Load() {
+		d.releaseListener()
+	}
+}
+
+// close stops the edge, removes the client and the user of the deployment
+// from Keycloak, checks the Keycloak container record and log for the
+// secrets, and removes the deployment directory. It reports each failure.
+// The steps stop the processes before they close the deployment.
+func (d *deployment) close() error {
+	d.releaseListener()
+	if d.edge != nil {
+		d.edge.Close()
+	}
+	var errs []error
+	if d.identity != nil {
+		errs = append(errs, d.stack.identity.admin.Remove(d.identity), d.stack.identity.checkRecords(d.dir, d.identity))
+	}
+	if d.dir != "" {
+		errs = append(errs, os.RemoveAll(d.dir))
+	}
+	return errors.Join(errs...)
+}
+
 // writeSecrets makes the deployment operator secret root. It copies only the
-// stack secret members that the two processes read, and it adds the
-// deployment identity provider secret, its CA and a new wrapping key.
+// stack secret members that the two processes read, and it adds the client
+// secret of the deployment, the CA of the job-owned Keycloak and a new
+// wrapping key.
 // pm-server opens the root with os.Root, so the members are copies, not links.
 func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 	root := filepath.Join(d.dir, "secrets")
@@ -163,10 +245,10 @@ func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := writeSecretMember(root, identity, "oidc-client-secret", []byte(d.identity.clientSecret)); err != nil {
+	if err := writeSecretMember(root, identity, "oidc-client-secret", []byte(d.identity.ClientSecret)); err != nil {
 		return "", err
 	}
-	if err := writeSecretMember(root, identity, "ca.pem", d.authority.pem); err != nil {
+	if err := writeSecretMember(root, identity, "ca.pem", stack.identity.ca); err != nil {
 		return "", err
 	}
 	encryption, err := secretBundlePath(laneEncryptionRef)
@@ -186,9 +268,12 @@ func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 // writeConfiguration writes the deployment copy of the stack configuration.
 // The copy keeps the stack PostgreSQL, Temporal, artifact, admission and
 // limit settings. It changes the deployment identity, the public origin, the
-// identity provider, the wrapping key reference and the Temporal namespace,
-// and adds the server and worker controls. The stack configuration file does
-// not change.
+// identity client, the wrapping key reference and the Temporal namespace,
+// and adds the server and worker controls. It adds
+// identity.device_poll_interval only when a device poll interval step
+// supplied a JSON token, and then it writes the token bytes unchanged: no
+// escaping, compaction or indentation. The stack configuration file does not
+// change.
 func (d *deployment) writeConfiguration(stack stackInputs, backend string) (string, error) {
 	document := maps.Clone(stack.document)
 	temporal := map[string]json.RawMessage{}
@@ -200,6 +285,25 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 		return "", fmt.Errorf("encode the deployment Temporal namespace: %w", err)
 	}
 	temporal["namespace"] = namespace
+	identity := map[string]any{
+		"issuer":            stack.identity.admin.Issuer(),
+		"client_id":         d.identity.ClientID,
+		"client_secret_ref": laneIdentityRef,
+		"ca_ref":            laneIdentityRef,
+	}
+	// A device poll interval step supplied a JSON token. encoding/json would
+	// compact and escape a raw value, so the writer encodes a new placeholder
+	// string in its place. After the encoding, it replaces the one quoted
+	// placeholder with the token bytes, null included. Without a token, the
+	// key is absent.
+	var placeholder []byte
+	if d.devicePollInterval != nil {
+		text := "pm-acceptance-device-poll-interval-" + randomHex(16)
+		if placeholder, err = json.Marshal(text); err != nil {
+			return "", fmt.Errorf("encode the device poll interval placeholder: %w", err)
+		}
+		identity["device_poll_interval"] = text
+	}
 	values := map[string]any{
 		"deployment_id": d.deploymentID,
 		"public_origin": d.origin,
@@ -208,12 +312,7 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 			"trusted_proxies": []string{"127.0.0.1/32"},
 			"drain_timeout":   "5s",
 		},
-		"identity": map[string]any{
-			"issuer":            d.identity.issuer,
-			"client_id":         laneOIDCClientID,
-			"client_secret_ref": laneIdentityRef,
-			"ca_ref":            laneIdentityRef,
-		},
+		"identity":   identity,
 		"encryption": map[string]any{"wrapping_key_ref": laneEncryptionRef},
 		"worker":     laneWorkerControls,
 		"temporal":   temporal,
@@ -229,6 +328,12 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 	if err != nil {
 		return "", fmt.Errorf("encode the deployment configuration: %w", err)
 	}
+	if placeholder != nil {
+		if bytes.Count(encoded, placeholder) != 1 {
+			return "", errors.New("the device poll interval placeholder does not occur exactly once in the deployment configuration")
+		}
+		encoded = bytes.Replace(encoded, placeholder, d.devicePollInterval, 1)
+	}
 	path := filepath.Join(d.dir, "pm-deployment.json")
 	if err := writePrivateFile(path, append(encoded, '\n')); err != nil {
 		return "", err
@@ -239,7 +344,7 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 // newLaneEdge starts the HTTPS edge of the lane. pm-server listens on plain
 // HTTP behind a trusted edge, as it does in a deployment. The edge keeps the
 // public Host and sets the X-Forwarded headers that pm-server checks.
-func newLaneEdge(authority *laneAuthority, backend string) (*httptest.Server, error) {
+func newLaneEdge(authority *laneAuthority, backend string, served func()) (*httptest.Server, error) {
 	certificate, err := authority.serverCertificate("PM acceptance lane edge")
 	if err != nil {
 		return nil, err
@@ -258,6 +363,12 @@ func newLaneEdge(authority *laneAuthority, backend string) (*httptest.Server, er
 			request.SetXForwarded()
 		},
 		Transport: transport,
+		// served runs for each answer of pm-server, after pm-server served
+		// the request. A failed request does not reach it.
+		ModifyResponse: func(*http.Response) error {
+			served()
+			return nil
+		},
 		ErrorHandler: func(response http.ResponseWriter, _ *http.Request, _ error) {
 			http.Error(response, "lane backend unavailable", http.StatusBadGateway)
 		},
@@ -268,16 +379,131 @@ func newLaneEdge(authority *laneAuthority, backend string) (*httptest.Server, er
 	return edge, nil
 }
 
-// reserveLoopbackAddress returns a free loopback address for the pm-server
-// listener. pm-server opens its own listener, so the lane closes this one.
-func reserveLoopbackAddress() (string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+// holdLoopbackListener binds the loopback address of the pm-server listener
+// with port 0 and keeps the listener (ADR 0008). No other socket can take the
+// port between this bind and the start of pm-server, because pm-server gets a
+// copy of this socket with --listen-fd. Go sets close-on-exec on the socket,
+// so no other child process inherits it.
+func holdLoopbackListener() (*net.TCPListener, error) {
+	listener, err := net.ListenTCP("tcp4", &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1)})
 	if err != nil {
-		return "", fmt.Errorf("reserve a loopback address for pm-server: %w", err)
+		return nil, fmt.Errorf("hold a loopback address for pm-server: %w", err)
 	}
-	address := listener.Addr().String()
-	if err := listener.Close(); err != nil {
-		return "", fmt.Errorf("release the reserved pm-server address: %w", err)
+	return listener, nil
+}
+
+// Developer check of the held pm-server listener (ADR 0008), not acceptance
+// proof. It needs no stack. Defect: the harness frees the port between its
+// bind and the start of pm-server, so another socket can take it; a copy that
+// the harness keeps has no close-on-exec; or a copy stays open after
+// releaseListener.
+func TestDeploymentHoldsThePmServerListenerUntilItsRelease(t *testing.T) {
+	listener, err := holdLoopbackListener()
+	if err != nil {
+		t.Fatal(err)
 	}
-	return address, nil
+	d := &deployment{listener: listener, listen: listener.Addr().String()}
+	t.Cleanup(d.releaseListener)
+	if err := bindAddressOnce(d.listen); !errors.Is(err, syscall.EADDRINUSE) {
+		t.Fatalf("a second bind of the held address = %v; want EADDRINUSE", err)
+	}
+	connection, err := listener.SyscallConn()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var held bool
+	if err := connection.Control(func(fd uintptr) { held = closeOnExec(t, fd) }); err != nil {
+		t.Fatal(err)
+	}
+	if !held {
+		t.Fatal("the harness copy of the listener has no close-on-exec")
+	}
+
+	config := starter.Config{Args: []string{"--ready-fd", "3"}}
+	if err := d.giveListener(&config); err != nil {
+		t.Fatal(err)
+	}
+	if config.ListenFD != serverListenerFD || config.Listener == nil ||
+		!slices.Equal(config.Args, []string{"--ready-fd", "3", "--listen-fd", "4"}) {
+		t.Fatalf("giveListener gave %q and descriptor %d, want --listen-fd 4 and a copy of the socket", config.Args, config.ListenFD)
+	}
+	if !closeOnExec(t, config.Listener.Fd()) {
+		t.Fatal("the copy for pm-server has no close-on-exec in the harness")
+	}
+	// starter.Start closes this copy. The check closes it in its place.
+	if err := config.Listener.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	d.releaseListener()
+	d.releaseListener()
+	if err := bindAddressOnce(d.listen); err != nil {
+		t.Fatalf("a bind after the release = %v; want a free address, with no copy left", err)
+	}
+	if err := d.giveListener(&starter.Config{}); err == nil {
+		t.Fatal("giveListener after the release = nil error, want a refusal")
+	}
+}
+
+// Developer check of the listener copy in startAndWait (RED review r1,
+// finding R1), not acceptance proof. It needs no stack and starts no
+// process. Defect: start returns before starter.Start takes the copy that
+// giveListener made, and nobody closes that copy, so the address stays held
+// after the harness releases its own listener. The check turns off the
+// garbage collector, so that no finalizer closes a lost copy.
+func TestStartAndWaitClosesTheListenerCopyWhenTheStartFailsEarly(t *testing.T) {
+	defer debug.SetGCPercent(debug.SetGCPercent(-1))
+	cases := []struct {
+		name    string
+		harness *stackHarness
+		started bool
+	}{
+		{"pm-server already started", &stackHarness{built: true, server: "/nonexistent/pm-server"}, true},
+		{"binary lookup failed", &stackHarness{}, false},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			listener, err := holdLoopbackListener()
+			if err != nil {
+				t.Fatal(err)
+			}
+			d := &deployment{
+				listener:      listener,
+				listen:        listener.Addr().String(),
+				dir:           t.TempDir(),
+				configuration: filepath.Join(t.TempDir(), "pm-deployment.json"),
+			}
+			t.Cleanup(d.releaseListener)
+			s := &stackScenario{harness: c.harness, deployment: d, processes: map[string]*startedProcess{}}
+			if c.started {
+				s.processes["pm-server"] = &startedProcess{}
+			}
+			if err := s.startAndWait(context.Background(), "pm-server"); err == nil {
+				t.Fatal("startAndWait = nil error, want the early start error")
+			}
+			d.releaseListener()
+			if err := bindAddressOnce(d.listen); err != nil {
+				t.Fatalf("a bind of the address after the early start error and the release = %v; want a free address, with no listener copy left open", err)
+			}
+		})
+	}
+}
+
+// bindAddressOnce binds address once and closes the new listener at once.
+func bindAddressOnce(address string) error {
+	listener, err := net.Listen("tcp4", address)
+	if err == nil {
+		_ = listener.Close()
+	}
+	return err
+}
+
+// closeOnExec reports whether descriptor fd has the close-on-exec flag.
+func closeOnExec(t *testing.T, fd uintptr) bool {
+	t.Helper()
+	flags, _, errno := syscall.Syscall(syscall.SYS_FCNTL, fd, syscall.F_GETFD, 0)
+	if errno != 0 {
+		t.Fatalf("read the descriptor flags: %v", errno)
+	}
+	return flags&syscall.FD_CLOEXEC != 0
 }
