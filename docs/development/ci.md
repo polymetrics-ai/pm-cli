@@ -431,7 +431,7 @@ Any failure stops the launcher with a fixed line, before the image build. Then t
 - It mounts `/etc/pm-live/run-kind` read-only at `/run/pm-live-run-kind`, and the step summary file at its own path.
 - It creates the empty cache folder `~/pm-live-cache/<run id>-<attempt>/`. `PMCLI_CACHE_DIR`, `HOME` and `PM_TOOLS_CACHE` point into it.
 - It always builds the image, with the tag `localhost/pmcli-live:<run id>-<attempt>`, and prints the image ID.
-- It adds `--pid host`, only in the live mode. It adds no privilege flag, no capability and no device.
+- It adds `--pid host`, only in the live mode. It adds no privilege flag, no capability and no device. It sets `--security-opt no-new-privileges`, so a set-user-ID program in the image gets no new privileges.
 
 A run root or a cache folder that exists already refuses the run. The residuals are:
 

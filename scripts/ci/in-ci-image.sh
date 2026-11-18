@@ -186,10 +186,12 @@ if [ "$mode" = live ]; then
   printf 'live image ID: %s\n' "$("$engine" image inspect --format '{{.Id}}' "$image")" >&2
   # --pid host lets the harness scan the processes of the live UID (Q2).
   # Default capabilities only: no privilege flag, no added capability or
-  # device. The container gets the inside token path only, never a value.
+  # device. no-new-privileges: a set-user-ID program in the image gets no
+  # new privileges (crrao m1). The container gets the inside token path
+  # only, never a value.
   exec "$engine" run --rm --init --pull never --name "$container" \
     --userns keep-id --user "$uid:$(id -g)" \
-    --network host --pid host \
+    --network host --pid host --security-opt no-new-privileges \
     --memory "${PMCLI_JOB_MEMORY:-8g}" --cpus "${PMCLI_JOB_CPUS:-4}" \
     --pids-limit "${PMCLI_JOB_PIDS:-4096}" \
     --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \

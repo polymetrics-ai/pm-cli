@@ -128,6 +128,7 @@ class LiveLauncher(unittest.TestCase):
         self.assertEqual(sorted(path.name for path in cache.iterdir()), ["home"])
         self.assertIn("--pid", argv)
         self.assertEqual(options(argv, "--pid"), ["host"])
+        self.assertEqual(options(argv, "--security-opt"), ["no-new-privileges"])
         self.assertEqual([word for word in argv if word.startswith(("--privileged", "--cap-add", "--device"))], [])
         values = {}
         for item in options(argv, "--env"):
@@ -228,6 +229,7 @@ class LiveLauncher(unittest.TestCase):
             "--env", "GITHUB_RUN_ID", "--env", "GITHUB_RUN_ATTEMPT", "--env", "RUNNER_TEMP", "--env", "RUNNER_NAME",
             "--env", "GITHUB_STEP_SUMMARY", image, "sh", "check.sh"])
         self.assertNotIn("build", [call["argv"][0] for call in calls])
+        self.assertNotIn("--security-opt", argv)
 
 
 if __name__ == "__main__":
