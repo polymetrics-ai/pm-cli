@@ -24,10 +24,34 @@ pm_in_image() {
 
 # pm_host_checks HOOK OS NAME... prints the check-docs.sh checks from NAME...
 # that the hook runs on the host OS (the output of `uname -s`), one per line.
-# Each host runs every named check, so it prints NAME... and writes no notice.
+# A Linux hook runs inside the job image, so it runs every named check. A macOS
+# hook runs on the host, which is not the job image. So on macOS it leaves out
+# `image` (the keyring layer of the image) and writes a notice to stderr. The
+# checks and bdd jobs and the Linux pre-push hook run `image`. The pre-commit
+# hook selects only `setup`, so it does not run `image` on any OS.
 pm_host_checks() {
+  pm_hook=$1
+  pm_os=$2
   shift 2
-  printf '%s\n' "$@"
+  for pm_name in "$@"; do
+    if [ "$pm_os" = Darwin ] && [ "$pm_name" = image ]; then
+      printf '%s: the image check runs only inside the CI job image (the checks and bdd jobs and the Linux pre-push hook), not on this macOS host\n' "$pm_hook" >&2
+      continue
+    fi
+    printf '%s\n' "$pm_name"
+  done
+}
+
+# pm_push_checks OS prints the check-docs.sh checks that the pre-push hook runs
+# on the host OS (the output of `uname -s`), one per line. The names come from
+# `check-docs.sh --list`. The hook runs the packages of the `unit` check with
+# its own `go test`, so the list never has `unit`: a push runs one local unit
+# run on every OS.
+pm_push_checks() {
+  pm_push_names=$(sh scripts/ci/check-docs.sh --list) || return 1
+  # Word splitting of the check names is intended.
+  # shellcheck disable=SC2046,SC2086
+  pm_host_checks pre-push "$1" $(printf '%s\n' $pm_push_names | grep -v -x unit)
 }
 
 # pm_python_probe passes for Python 3.11 or later that imports the modules of
@@ -64,10 +88,12 @@ pgo() {
 }
 
 # drop_stack_packages reads ./relative package paths on stdin and removes the
-# packages in scripts/ci/stack-packages.txt, which need the dependency stack.
+# packages in scripts/ci/stack-packages.txt, which need the dependency stack,
+# and the packages that CI excludes from its Go test runs. The rule is in
+# scripts/ci/go-packages.sh, which the CI jobs also use. Call it from the
+# repository root.
 drop_stack_packages() {
-  stack_list=$(mktemp)
-  grep -v '^#' scripts/ci/stack-packages.txt | sed '/^$/d' > "$stack_list"
-  grep -v -x -F -f "$stack_list" || true
-  rm -f "$stack_list"
+  # shellcheck source=scripts/ci/go-packages.sh disable=SC1091
+  . scripts/ci/go-packages.sh
+  pm_drop_stack_packages
 }
