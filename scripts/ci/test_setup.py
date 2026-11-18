@@ -4,6 +4,7 @@ import ast
 import contextlib
 import errno
 import importlib.util
+import inspect
 import io
 import json
 import os
@@ -16,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+import types
 import unittest
 from unittest import mock
 
@@ -1303,8 +1305,9 @@ class GoTestReport(unittest.TestCase):
         real, killed, exits = module.ExitWatch, [], []
 
         class InterruptedWatch:
-            def __init__(self, pid):
-                self.pid, self.real, self.exited, self.waits = pid, real(pid), False, 0
+            def __init__(self, pid, wake=None):
+                watch = real(pid) if wake is None else real(pid, wake)
+                self.pid, self.real, self.exited, self.waits = pid, watch, False, 0
 
             def wait(self, timeout):
                 self.waits += 1
@@ -1315,7 +1318,7 @@ class GoTestReport(unittest.TestCase):
                 exits.append(probe.wait(30))
                 probe.close()
                 signal.raise_signal(signal.SIGTERM)
-                raise AssertionError("the signal did not interrupt the wait")
+                return False  # the wake byte of the signal ends the wait
 
             def close(self):
                 self.real.close()
@@ -1333,6 +1336,128 @@ class GoTestReport(unittest.TestCase):
         self.assertEqual(exits, [True], "the command did not exit before the signal")
         self.assertEqual((result[0], result[3]), (128 + signal.SIGTERM, None), result)
         self.assertEqual(killed[:2], [signal.SIGTERM, signal.SIGTERM])
+
+    def run_with_signals(self, command, signals, members, exit_first, system="darwin"):
+        """run_command with each group signal refused (forced Darwin, round 6).
+
+        The first wait raises SIGNALS. Like the real wait, it then ends only on
+        a wake byte: without one, a wait with no limit would block, so the
+        check fails. Return (result, waits made inside a signal handler).
+        """
+        module = self.load_reporter()
+        real, handler_waits, started = module.ExitWatch, [], []
+
+        class Watch:
+            def __init__(self, pid, wake=None):
+                watch = real(pid) if wake is None else real(pid, wake)
+                self.pid, self.real, self.wake, self.first, self.exited = pid, watch, wake, True, False
+
+            def wait(self, timeout):
+                if any(frame.function == "on_signal" for frame in inspect.stack()):
+                    handler_waits.append(timeout)
+                if not self.first:
+                    self.exited = self.real.wait(timeout)
+                    return self.exited
+                self.first = False
+                if exit_first:  # one bounded wait for the exit event, no reap
+                    probe = real(self.pid)
+                    self.assertTrue(probe.wait(30))
+                    probe.close()
+                for signum in signals:
+                    signal.raise_signal(signum)
+                if self.wake is None or not select.select([self.wake], [], [], 0)[0]:
+                    raise AssertionError("no wake byte: this wait would not end on the first signal")
+                return self.real.wait(0)
+
+            def close(self):
+                self.real.close()
+
+        Watch.assertTrue = self.assertTrue
+
+        class Recording(subprocess.Popen):
+            def __init__(self, *arguments, **options):
+                super().__init__(*arguments, **options)
+                started.append(self)
+
+        def refused(group, signum):
+            raise PermissionError(1, "Operation not permitted")
+
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            for name, value in (("ExitWatch", Watch), ("live_group_members", members), ("KILL_GRACE", 0)):
+                stack.enter_context(mock.patch.object(module, name, value))
+            stack.enter_context(mock.patch.object(module.sys, "platform", system))
+            stack.enter_context(mock.patch.object(module.os, "killpg", refused))
+            stack.enter_context(mock.patch.object(module.subprocess, "Popen", Recording))
+            try:
+                result = module.run_command(command, Path(directory) / "out.json", None, None)
+            finally:
+                for process in started:
+                    if process.returncode is None:  # not reaped, so its ID still names it
+                        process.kill()
+                        process.wait(timeout=30)
+        return result, handler_waits
+
+    def test_a_second_signal_cannot_stop_the_first_signals_unwind(self):
+        # brahmagupta round 6 F1: the refusal wait ran in the signal handler,
+        # and a second signal there kept the reporter waiting on a live command.
+        result, handler_waits = self.run_with_signals(
+            [sys.executable, "-c", "import signal; signal.pause()"], [signal.SIGTERM, signal.SIGHUP],
+            lambda group: [], exit_first=False)  # an empty list: only an observed exit makes a refusal harmless
+        self.assertEqual(handler_waits, [], "a signal handler waited for the exit event")
+        self.assertEqual(result[:3], (128 + signal.SIGTERM, False, signal.SIGTERM), result)
+        self.assertIn("refused to send", result[3])
+        self.assertIn("did not end 0 seconds after the last SIGKILL", result[3])
+
+    def test_a_nested_signal_during_the_refusal_decision_changes_nothing(self):
+        # brahmagupta round 6: the command exited, SIGTERM interrupts the wait,
+        # and SIGHUP comes during the member list of the refusal decision.
+        nested = []
+
+        def members(group):
+            if not nested:
+                nested.append(group)
+                signal.raise_signal(signal.SIGHUP)
+            return []
+
+        result, handler_waits = self.run_with_signals(["/usr/bin/true"], [signal.SIGTERM], members, exit_first=True)
+        self.assertEqual(handler_waits, [], "a signal handler waited for the exit event")
+        self.assertEqual(len(nested), 1)
+        self.assertEqual((result[0], result[2], result[3]), (128 + signal.SIGTERM, signal.SIGTERM, None), result)
+        # Linux keeps its rule: each refusal fails the run.
+        result, _ = self.run_with_signals(["/usr/bin/true"], [signal.SIGTERM], lambda group: [], True, "linux")
+        self.assertIn("refused to send", result[3] or "")
+
+    def test_an_observed_exit_stays_recorded(self):
+        # brahmagupta round 6 F2: a nested wait consumed the one-shot exit
+        # event, and the outer wait then wrote exited = False. The event source
+        # of a real ExitWatch is replaced, so the check runs on each system.
+        module = self.load_reporter()
+        process = subprocess.Popen([sys.executable, "-c", "pass"])
+        watch, nested, calls = module.ExitWatch(process.pid), [], []
+        exit_event = types.SimpleNamespace(filter=-5, fflags=0x80000000, ident=process.pid)
+
+        class Queue:
+            def control(self, changes, count, timeout):
+                calls.append(timeout)
+                if len(calls) == 1:
+                    nested.append(watch.wait(0))  # a nested wait takes the one-shot event
+                    return []
+                return [exit_event] if len(calls) == 2 else []
+
+            def close(self):
+                pass
+
+        saved = (watch.descriptor, watch.queue)
+        watch.descriptor, watch.queue = None, Queue()
+        constants = types.SimpleNamespace(KQ_FILTER_READ=-1, KQ_FILTER_PROC=-5, KQ_NOTE_EXIT=0x80000000)
+        try:
+            with mock.patch.object(module, "select", constants):
+                self.assertTrue(watch.wait(30), "an observed exit was lost")
+            self.assertEqual((nested, watch.exited), ([True], True))
+        finally:
+            watch.descriptor, watch.queue = saved
+            watch.close()
+            process.wait(timeout=30)
 
     def test_refused_group_signal_after_the_group_is_empty(self):
         # The command exits 0 and leaves no member. Only on Darwin does the
@@ -1385,7 +1510,7 @@ class Recording(subprocess.Popen):
             signal.raise_signal(signal.SIGTERM)
 module.subprocess.Popen = Recording
 if case == "no exit watch":
-    def no_watch(pid):
+    def no_watch(pid, wake=None):
         raise OSError("no watch")
     module.ExitWatch = no_watch
 deadline = time.time() - 1 if case == "deadline" else None
