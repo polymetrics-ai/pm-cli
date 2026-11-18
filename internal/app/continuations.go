@@ -95,11 +95,12 @@ type boundContinuationCodec struct {
 	producer    continuationProducer
 	reservation store.ObjectReservation
 
-	mu          sync.Mutex
-	opened      bool
-	sealStarted bool
-	publication *objects.PreparedPublication
-	token       contract.PresentValue
+	mu             sync.Mutex
+	opened         bool
+	sealStarted    bool
+	publishStarted bool
+	envelope       []byte
+	token          contract.PresentValue
 }
 
 func (codec *boundContinuationCodec) OpenContinuation(
@@ -163,8 +164,13 @@ func (codec *boundContinuationCodec) OpenContinuation(
 	return envelope.State, nil
 }
 
+// SealContinuation runs inside the provider callback. It checks the state,
+// encodes the durable envelope and returns the reserved continuation identity
+// as the token. It performs no object-store I/O. The worker publishes the
+// envelope after the provider callback ends (publishForResult), so a slow or
+// failed object store cannot change the provider outcome of the page.
 func (codec *boundContinuationCodec) SealContinuation(
-	ctx context.Context,
+	_ context.Context,
 	binding pmruntime.ContinuationBinding,
 	state pmruntime.ContinuationState,
 ) (contract.PresentValue, error) {
@@ -216,37 +222,21 @@ func (codec *boundContinuationCodec) SealContinuation(
 	if err != nil {
 		return contract.PresentValue{}, fmt.Errorf("encode continuation envelope: %w", err)
 	}
-	if int64(len(encoded)) > codec.service.maximumBytes {
-		return contract.PresentValue{}, objects.ErrObjectLimit
-	}
-	attempt, err := objects.NewAttempt(
-		binding.Scope,
-		codec.reservation.Request.ArtifactID,
-		continuationEnvelopeMediaType,
-		encoded,
-		codec.service.maximumBytes,
-	)
-	if err != nil {
-		return contract.PresentValue{}, err
-	}
-	publication, err := codec.service.publisher.Upload(
-		ctx,
-		codec.actor,
-		binding.Scope,
-		codec.reservation.Request.ReservationID,
-		attempt,
-	)
-	if err != nil {
-		_ = attempt.Close()
-		return contract.PresentValue{}, err
-	}
 	token := contract.NewStringValue(codec.reservation.Request.ArtifactID)
-	codec.publication = &publication
+	codec.envelope = encoded
 	codec.token = token
 	return token, nil
 }
 
-func (codec *boundContinuationCodec) preparedForResult(result *contract.ActionResult) (*objects.PreparedPublication, error) {
+// publishForResult uploads the continuation envelope that the page step sealed.
+// The worker calls it after the provider callback ends, and ctx carries the
+// bound of the publication step. A failure here is a publication failure: it
+// never changes the provider member outcomes. The worker publishes a result
+// that names the continuation only when this upload is verified.
+func (codec *boundContinuationCodec) publishForResult(
+	ctx context.Context,
+	result *contract.ActionResult,
+) (*objects.PreparedPublication, error) {
 	if codec == nil {
 		if continuationResultToken(result).Presence() == contract.PresenceValue {
 			return nil, fmt.Errorf("%w: result names a continuation without a bound codec", ErrContinuationInvalid)
@@ -256,7 +246,7 @@ func (codec *boundContinuationCodec) preparedForResult(result *contract.ActionRe
 	codec.mu.Lock()
 	defer codec.mu.Unlock()
 	resultToken := continuationResultToken(result)
-	if codec.publication == nil {
+	if codec.token.Presence() != contract.PresenceValue {
 		if resultToken.Presence() == contract.PresenceValue {
 			return nil, fmt.Errorf("%w: result names an unprepared continuation", ErrContinuationInvalid)
 		}
@@ -265,7 +255,36 @@ func (codec *boundContinuationCodec) preparedForResult(result *contract.ActionRe
 	if result == nil || !resultToken.Equal(codec.token) {
 		return nil, fmt.Errorf("%w: prepared continuation does not match the worker result", ErrContinuationInvalid)
 	}
-	publication := *codec.publication
+	if codec.publishStarted {
+		return nil, fmt.Errorf("%w: continuation was published more than once", ErrContinuationInvalid)
+	}
+	codec.publishStarted = true
+	encoded := codec.envelope
+	codec.envelope = nil
+	if int64(len(encoded)) > codec.service.maximumBytes {
+		return nil, objects.ErrObjectLimit
+	}
+	attempt, err := objects.NewAttempt(
+		codec.binding.Scope,
+		codec.reservation.Request.ArtifactID,
+		continuationEnvelopeMediaType,
+		encoded,
+		codec.service.maximumBytes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer attempt.Close()
+	publication, err := codec.service.publisher.Upload(
+		ctx,
+		codec.actor,
+		codec.binding.Scope,
+		codec.reservation.Request.ReservationID,
+		attempt,
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &publication, nil
 }
 
