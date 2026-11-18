@@ -14,6 +14,7 @@ from pathlib import Path
 import platform
 import re
 import secrets
+import select
 import shutil
 import signal
 import socket
@@ -23,7 +24,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping, NoReturn, Sequence
 from urllib.parse import urlencode, urlsplit
 
 
@@ -69,11 +70,19 @@ MAX_GENERATOR_OUTPUT = 64 << 10
 DOCKER_TIMEOUT = 30
 GENERATOR_TIMEOUT = 60
 STARTUP_TIMEOUT = 10 * 60
-CHILD_TIMEOUT = 20 * 60
+CHILD_TIMEOUT = 61 * 60
 DRAIN_TIMEOUT = 2 * 60
 STOP_TIMEOUT = 75
 HELPER_TIMEOUT = 60
 PROCESS_TERM_GRACE = 10
+# One deadline for each whole fixture phase (issue #286): the fixture start,
+# the cleanup in the run step, and the cleanup of --cleanup in the workflow
+# cleanup step. Each call in a phase gets min(its own limit, the time left).
+START_PHASE_LIMIT = 12 * 60
+CLEANUP_PHASE_LIMIT = 6 * 60
+CLEANUP_STEP_PHASE_LIMIT = 5 * 60
+# The clock of the phase deadlines. The developer checks replace it.
+CLOCK = time.monotonic
 
 ENVIRONMENT_KEYS = frozenset(
     {
@@ -281,6 +290,73 @@ class CommandFailure(FixtureError):
         self.stage = stage
         self.returncode = returncode
         self.timed_out = timed_out
+        self.reported = False
+
+
+class PhaseDeadline(Exception):
+    """A whole fixture phase reached its deadline.
+
+    It is not a FixtureError, so no handler of one call failure takes it.
+    """
+
+    def __init__(self, phase: str, limit: int) -> None:
+        super().__init__(f"the fixture {phase} phase reached its deadline ({limit} s)")
+
+
+class Phase:
+    """The deadline of one whole fixture phase, while the phase is current."""
+
+    current: "Phase | None" = None
+
+    def __init__(self, name: str, limit: int) -> None:
+        self.name = name
+        self.limit = limit
+        self.end = 0.0
+        self.previous: Phase | None = None
+
+    def __enter__(self) -> "Phase":
+        self.end = CLOCK() + self.limit
+        self.previous, Phase.current = Phase.current, self
+        return self
+
+    def __exit__(self, *_exc: Any) -> None:
+        Phase.current = self.previous
+
+    def left(self) -> float:
+        return self.end - CLOCK()
+
+
+def call_limit(limit: int) -> tuple[float, bool]:
+    """Return the timeout of one call and whether the phase deadline set it.
+
+    The timeout is min(LIMIT, the time left in the current phase). A phase
+    with no time left raises PhaseDeadline before the call starts.
+    """
+    phase = Phase.current
+    if phase is None:
+        return limit, False
+    left = phase.left()
+    if left <= 0:
+        raise PhaseDeadline(phase.name, phase.limit)
+    return (left, True) if left < limit else (limit, False)
+
+
+def stop_timed_out_call(process: subprocess.Popen[bytes], stage: str, timeout: float, by_phase: bool) -> NoReturn:
+    """Stop a call that reached its timeout, and raise the cause.
+
+    In a phase, the stop grace is also limited to the time left. A call that
+    the phase deadline stopped raises PhaseDeadline. A call that reached its
+    own limit gets its own message.
+    """
+    phase = Phase.current
+    grace = None if phase is None else min(PROCESS_TERM_GRACE, max(0.0, phase.left()))
+    terminate_process_group(process, grace)
+    if by_phase and phase is not None:
+        raise PhaseDeadline(phase.name, phase.limit)
+    safe_error(f"{stage} timed out: the call reached its own limit of {timeout:g} s")
+    failure = CommandFailure(stage, timed_out=True)
+    failure.reported = True
+    raise failure
 
 
 class SignalController:
@@ -415,43 +491,161 @@ def regular_executable(path: Path, context: str) -> Path:
     return path
 
 
-def terminate_process_group(process: subprocess.Popen[bytes]) -> None:
-    def signal_group(signum: int) -> bool:
+class ExitWatch:
+    """Waits for the exit of one child process without reaping it.
+
+    While the child is not reaped, its process ID, and so the ID of its
+    process group, names no other process. Linux uses a pidfd, macOS a
+    kqueue process filter. This is the method of ExitWatch in
+    go-test-report.py.
+    """
+
+    def __init__(self, pid: int) -> None:
+        self.descriptor: int | None = None
+        self.queue: Any = None
+        self.exited = False
+        if hasattr(os, "pidfd_open"):
+            self.descriptor = os.pidfd_open(pid)
+        elif hasattr(select, "kqueue"):
+            self.queue = select.kqueue()
+            change = select.kevent(pid, filter=select.KQ_FILTER_PROC,
+                                   flags=select.KQ_EV_ADD | select.KQ_EV_ONESHOT,
+                                   fflags=select.KQ_NOTE_EXIT)
+            try:
+                self.queue.control([change], 0, 0)
+            except ProcessLookupError:
+                # The child has already exited. This script has not reaped it.
+                self.exited = True
+        else:
+            raise OSError("no process exit event: the system has neither pidfd_open nor kqueue")
+
+    def wait(self, timeout: float | None) -> bool:
+        """Wait for the exit for at most TIMEOUT seconds (None: no limit)."""
+        if not self.exited:
+            if self.descriptor is not None:
+                poller = select.poll()
+                poller.register(self.descriptor, select.POLLIN)
+                ready = poller.poll(None if timeout is None else int(timeout * 1000))
+            else:
+                ready = self.queue.control(None, 1, timeout)
+            self.exited = bool(ready)
+        return self.exited
+
+    def close(self) -> None:
+        if self.descriptor is not None:
+            os.close(self.descriptor)
+        if self.queue is not None:
+            self.queue.close()
+
+
+# The process list of Linux. The developer checks replace it.
+PROC = Path("/proc")
+# The limits of one ps run: its listing, and its collection after a kill.
+LIST_TIMEOUT = 10
+LIST_KILL_GRACE = 5
+# ps starts with this reference, so that a check that replaces
+# subprocess.Popen does not see the ps process.
+PROCESS_LIST_POPEN = subprocess.Popen
+
+
+def live_group_members(group: int) -> list[int] | None:
+    """Return the IDs of the processes in GROUP that have not exited.
+
+    Return None when the process list cannot be read. Linux reads
+    /proc/<pid>/stat, other systems read ps. This is the rule of
+    go-test-report.py: only ENOENT or ESRCH counts as an exited process, and
+    each wait for ps has a limit.
+    """
+    live: list[int] = []
+    if sys.platform.startswith("linux"):
+        try:
+            entries = [entry for entry in PROC.iterdir() if entry.name.isdigit()]
+        except OSError:
+            return None
+        for entry in entries:
+            try:
+                text = (entry / "stat").read_text()
+            except (FileNotFoundError, ProcessLookupError):
+                continue
+            except OSError:
+                return None
+            fields = text[text.rfind(")") + 1:].split()
+            if len(fields) >= 3 and fields[2] == str(group) and fields[0] not in ("Z", "X"):
+                live.append(int(entry.name))
+        return live
+    try:
+        lister = PROCESS_LIST_POPEN(["/bin/ps", "-A", "-o", "pid=,pgid=,stat="], stdin=subprocess.DEVNULL,
+                                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+    except OSError:
+        return None
+    try:
+        listing, _ = lister.communicate(timeout=LIST_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        lister.kill()
+        try:
+            lister.communicate(timeout=LIST_KILL_GRACE)
+        except subprocess.TimeoutExpired:
+            pass
+        return None
+    if lister.returncode != 0:
+        return None
+    for line in listing.splitlines():
+        fields = line.split()
+        if len(fields) >= 3 and fields[1] == str(group) and not fields[2].startswith("Z"):
+            live.append(int(fields[0]))
+    return live
+
+
+def terminate_process_group(process: subprocess.Popen[bytes], grace: float | None = None) -> None:
+    """Stop the process group of PROCESS, a child that this script has not reaped.
+
+    While the child is not reaped, the system keeps its process ID for it, so
+    no new process or process group can get that ID. The function sends SIGTERM to
+    the group, waits up to GRACE seconds (default PROCESS_TERM_GRACE) for the
+    exit of the child without reaping it, and sends SIGKILL to the group. It
+    reaps the child only after that. A child that is already reaped is
+    refused: after the reap, its process group ID can name a new group.
+
+    A group signal that the system refuses (EPERM) fails the stop, after the
+    reap of an ended child: a member can still run. Only on Darwin, the system
+    also refuses a signal to a group whose only member is the child after it
+    has exited and before the reap. Only then, and only when the member list
+    shows no live member, the refusal does not fail the stop. A member list
+    that cannot be read fails it.
+    """
+    if process.returncode is not None:
+        raise FixtureError("owned process was reaped before its process group was stopped")
+    try:
+        watch = ExitWatch(process.pid)
+    except OSError as exc:
+        raise FixtureError("cannot watch the owned process") from exc
+
+    refused: list[int] = []
+
+    def signal_group(signum: int) -> None:
         try:
             os.killpg(process.pid, signum)
-            return True
         except ProcessLookupError:
-            return False
-        except PermissionError as denied:
-            # Darwin can report EPERM while the owned leader becomes a zombie.
-            # Reap that exact child before retrying; never waive a live denial.
-            try:
-                process.wait(timeout=PROCESS_TERM_GRACE)
-            except subprocess.TimeoutExpired:
-                raise denied
-            try:
-                os.killpg(process.pid, signum)
-                return True
-            except ProcessLookupError:
-                return False
+            pass
+        except PermissionError:
+            if sys.platform == "darwin" and watch.wait(0) and live_group_members(process.pid) == []:
+                return
+            refused.append(signum)
 
-    process.poll()
-    signal_group(signal.SIGTERM)
-    deadline = time.monotonic() + PROCESS_TERM_GRACE
-    while True:
-        process.poll()
-        if not signal_group(0):
-            break
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            # A reaped leader does not prove its descendants have stopped.
-            signal_group(signal.SIGKILL)
-            break
-        time.sleep(min(0.05, remaining))
     try:
-        process.wait(timeout=PROCESS_TERM_GRACE)
-    except subprocess.TimeoutExpired as exc:
-        raise FixtureError("owned process group did not terminate") from exc
+        signal_group(signal.SIGTERM)
+        watch.wait(PROCESS_TERM_GRACE if grace is None else max(0.0, grace))
+        # Also when the child exited: a member of its group can still run.
+        signal_group(signal.SIGKILL)
+        if not watch.wait(PROCESS_TERM_GRACE):
+            raise FixtureError("owned process group did not terminate")
+    finally:
+        watch.close()
+    process.wait()
+    if refused:
+        names = ", ".join(sorted({signal.Signals(number).name for number in refused}))
+        raise FixtureError(f"the system refused to send {names} to the owned process group "
+                           f"(permission denied), so a member can still run")
 
 
 def run_capture(
@@ -464,6 +658,7 @@ def run_capture(
     max_output: int = MAX_JSON_BYTES,
     check: bool = True,
 ) -> tuple[int, bytes, bytes]:
+    timeout, by_phase = call_limit(timeout)
     try:
         process = subprocess.Popen(
             list(arguments),
@@ -478,9 +673,8 @@ def run_capture(
         raise FixtureError(f"cannot start {stage}: {exc.strerror or exc}") from exc
     try:
         stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        terminate_process_group(process)
-        raise CommandFailure(stage, timed_out=True) from exc
+    except subprocess.TimeoutExpired:
+        stop_timed_out_call(process, stage, timeout, by_phase)
     except Cancellation:
         terminate_process_group(process)
         raise
@@ -501,6 +695,7 @@ def run_quiet(
     check: bool = True,
     stderr: Any = subprocess.DEVNULL,
 ) -> int:
+    timeout, by_phase = call_limit(timeout)
     try:
         process = subprocess.Popen(
             list(arguments),
@@ -515,9 +710,8 @@ def run_quiet(
         raise FixtureError(f"cannot start {stage}: {exc.strerror or exc}") from exc
     try:
         returncode = process.wait(timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        terminate_process_group(process)
-        raise CommandFailure(stage, timed_out=True) from exc
+    except subprocess.TimeoutExpired:
+        stop_timed_out_call(process, stage, timeout, by_phase)
     except Cancellation:
         terminate_process_group(process)
         raise
@@ -2288,13 +2482,15 @@ def plain_http_refusal(host: str, port: int, realm: str) -> str:
         f"GET /realms/{realm}/.well-known/openid-configuration HTTP/1.1\r\n"
         f"Host: {host}:{port}\r\nConnection: close\r\n\r\n"
     ).encode("ascii")
+    timeout, by_phase = identity_probe_limit()
     try:
-        with socket.create_connection((host, port), timeout=IDENTITY_PROBE_TIMEOUT) as connection:
+        with socket.create_connection((host, port), timeout=timeout) as connection:
             connection.sendall(request)
             reply = connection.recv(64)
     except (ConnectionResetError, BrokenPipeError):
         return "the connection was reset without an HTTP answer"
-    except socket.timeout:
+    except socket.timeout as exc:
+        identity_probe_deadline(by_phase, exc)
         return "no HTTP answer came before the probe limit"
     except OSError as exc:
         raise FixtureError("plain HTTP probe could not reach the identity provider") from exc
@@ -2306,6 +2502,52 @@ def plain_http_refusal(host: str, port: int, realm: str) -> str:
     if status is not None:
         return f"an HTTP {status.group(1).decode('ascii')} refusal came without content"
     raise FixtureError("identity provider answered a plain HTTP request")
+
+
+def identity_probe_limit() -> tuple[float, bool]:
+    """Return the timeout of one identity provider probe and whether the phase set it.
+
+    The probes follow #370's phase rule: min(IDENTITY_PROBE_TIMEOUT, the time
+    left in the current phase). A phase with no time left raises PhaseDeadline
+    before the probe opens a socket.
+    """
+    return call_limit(IDENTITY_PROBE_TIMEOUT)
+
+
+def identity_probe_deadline(by_phase: bool, exc: BaseException) -> None:
+    """Raise PhaseDeadline for a probe timeout that the phase deadline set."""
+    phase = Phase.current
+    if by_phase and phase is not None and isinstance(exc, (socket.timeout, TimeoutError)):
+        raise PhaseDeadline(phase.name, phase.limit) from exc
+
+
+def identity_tls_name_probe(host: str, port: int, context: ssl.SSLContext) -> None:
+    """Show that TLS for another name is refused: the certificate names only its address."""
+    timeout, by_phase = identity_probe_limit()
+    try:
+        with socket.create_connection((host, port), timeout=timeout) as raw:
+            with context.wrap_socket(raw, server_hostname="localhost"):
+                pass
+        raise FixtureError("identity provider certificate verified for another name")
+    except ssl.SSLCertVerificationError:
+        pass
+    except OSError as exc:
+        identity_probe_deadline(by_phase, exc)
+        raise FixtureError("identity provider TLS name probe failed") from exc
+
+
+def identity_first_loopback_probe(port: int) -> None:
+    """Show that the first loopback address refuses the identity provider port."""
+    timeout, by_phase = identity_probe_limit()
+    try:
+        with socket.create_connection(("127.0.0.1", port), timeout=timeout):
+            pass
+        raise FixtureError("the first loopback address also serves the identity provider port")
+    except ConnectionRefusedError:
+        pass
+    except OSError as exc:
+        identity_probe_deadline(by_phase, exc)
+        raise FixtureError("first loopback probe failed") from exc
 
 
 def identity_tls_context(ca: Path) -> ssl.SSLContext:
@@ -2325,7 +2567,8 @@ def identity_request(
     body: bytes | None = None,
     headers: Mapping[str, str] | None = None,
 ) -> tuple[int, Any]:
-    connection = http.client.HTTPSConnection(host, port, timeout=IDENTITY_PROBE_TIMEOUT, context=context)
+    timeout, by_phase = identity_probe_limit()
+    connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=context)
     try:
         connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
         connection.putheader("Host", host_header or f"{host}:{port}")
@@ -2338,6 +2581,7 @@ def identity_request(
         data = response.read(MAX_JSON_BYTES + 1)
         status = response.status
     except (OSError, http.client.HTTPException) as exc:
+        identity_probe_deadline(by_phase, exc)
         raise FixtureError("identity provider HTTPS request failed") from exc
     finally:
         connection.close()
@@ -2478,23 +2722,8 @@ def verify_identity_provider(
     )
     if status != 200 or not isinstance(discovery, dict) or discovery.get("issuer") != issuer:
         raise FixtureError("identity provider derived its issuer from a request host")
-    try:
-        with socket.create_connection((host, port), timeout=IDENTITY_PROBE_TIMEOUT) as raw:
-            with context.wrap_socket(raw, server_hostname="localhost"):
-                pass
-        raise FixtureError("identity provider certificate verified for another name")
-    except ssl.SSLCertVerificationError:
-        pass
-    except OSError as exc:
-        raise FixtureError("identity provider TLS name probe failed") from exc
-    try:
-        with socket.create_connection(("127.0.0.1", port), timeout=IDENTITY_PROBE_TIMEOUT):
-            pass
-        raise FixtureError("the first loopback address also serves the identity provider port")
-    except ConnectionRefusedError:
-        pass
-    except OSError as exc:
-        raise FixtureError("first loopback probe failed") from exc
+    identity_tls_name_probe(host, port, context)
+    identity_first_loopback_probe(port)
     roles = admin_client_roles(host, port, issuer, context, client_id, secret)
     refused = operator_refusals(pm_stack, stack_env, environment, repo_root)
 
@@ -3143,6 +3372,14 @@ def cleanup_fixture(
             diagnostic=None,
         )
         return True
+    except PhaseDeadline as exc:
+        # The manifest stays for the workflow cleanup step.
+        safe_error(str(exc))
+        try:
+            manifest.update("cleanup_failed", diagnostic=safe_diagnostic("cleanup-phase-deadline"))
+        except FixtureError:
+            pass
+        return False
     except FixtureError:
         try:
             manifest.update("cleanup_failed", diagnostic=safe_diagnostic("cleanup-failed"))
@@ -3158,19 +3395,23 @@ def parse_cli(arguments: Sequence[str]) -> tuple[str, str, list[str]]:
     if list(arguments) in (["-h"], ["--help"]):
         print(
             "usage: with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND [ARGS...]\n"
-            "       with-stack-fixture.py --cleanup ABSOLUTE_PATH"
+            "       with-stack-fixture.py --cleanup ABSOLUTE_PATH\n"
+            "       with-stack-fixture.py --check-receipt ABSOLUTE_PATH"
         )
         raise SystemExit(0)
     if len(arguments) == 2 and arguments[0] == "--cleanup":
         return "cleanup", arguments[1], []
+    if len(arguments) == 2 and arguments[0] == "--check-receipt":
+        return "receipt", arguments[1], []
     if len(arguments) >= 4 and arguments[0] == "--manifest" and arguments[2] == "--":
         command = list(arguments[3:])
         if not command or not command[0]:
             raise FixtureError("requested command is required after --")
         return "run", arguments[1], command
     raise FixtureError(
-        "usage: with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND [ARGS...] "
-        "or with-stack-fixture.py --cleanup ABSOLUTE_PATH"
+        "usage: with-stack-fixture.py --manifest ABSOLUTE_PATH -- COMMAND [ARGS...], "
+        "with-stack-fixture.py --cleanup ABSOLUTE_PATH "
+        "or with-stack-fixture.py --check-receipt ABSOLUTE_PATH"
     )
 
 def resolve_repo_root() -> Path:
@@ -3231,7 +3472,33 @@ def cleanup_mode(
         return 0
     docker = resolve_docker(base_environment)
     image_refs = load_image_refs(repo_root)
-    return 0 if cleanup_fixture(manifest, docker, image_refs, base_environment) else 1
+    with Phase("cleanup", CLEANUP_STEP_PHASE_LIMIT):
+        return 0 if cleanup_fixture(manifest, docker, image_refs, base_environment) else 1
+
+
+def receipt_mode(
+    manifest_path: Path,
+    runner_temp: Path,
+    repo_root: Path,
+    run_id: str,
+    run_attempt: str,
+) -> int:
+    """Check that the manifest is a cleaned receipt of this exact job.
+
+    The check only reads the manifest. It makes no Docker call and changes no
+    file, so its time does not depend on the engine. A missing manifest, or a
+    manifest in any phase other than "cleaned", fails: the caller then keeps
+    the manifest for the cleanup step of the workflow.
+    """
+    if not os.path.lexists(manifest_path):
+        safe_error("ownership manifest is missing, so there is no cleaned receipt")
+        return 1
+    manifest = OwnershipManifest.load(manifest_path, runner_temp, repo_root, run_id, run_attempt)
+    phase = manifest.document["phase"]
+    if phase != "cleaned":
+        safe_error(f"ownership manifest phase is {phase}, not cleaned: the fixture cleanup is incomplete")
+        return 1
+    return 0
 
 
 def run_mode(
@@ -3260,112 +3527,119 @@ def run_mode(
     reservations: list[socket.socket] = []
     result = 1
     try:
-        created_parent_identity = create_private_parent(parent)
-        create_docker_config(docker_config)
-        docker_env = docker_environment(base_environment, docker_config, endpoint)
-        daemon = inspect_daemon(docker, docker_config, endpoint, docker_env, repo_root, socket_identity)
-        manifest = OwnershipManifest.create(
-            manifest_path,
-            runner_temp,
-            repo_root,
-            run_id,
-            run_attempt,
-            token,
-            parent,
-            fixture_root,
-            project,
-            daemon,
-        )
-        generator_code, stdout, _ = run_capture(
-            [
-                str(generator),
-                "--root",
-                str(fixture_root),
-                "--project",
+        # The fixture start phase: every call until the fixture runs.
+        with Phase("start", START_PHASE_LIMIT):
+            created_parent_identity = create_private_parent(parent)
+            create_docker_config(docker_config)
+            docker_env = docker_environment(base_environment, docker_config, endpoint)
+            daemon = inspect_daemon(docker, docker_config, endpoint, docker_env, repo_root, socket_identity)
+            manifest = OwnershipManifest.create(
+                manifest_path,
+                runner_temp,
+                repo_root,
+                run_id,
+                run_attempt,
+                token,
+                parent,
+                fixture_root,
                 project,
-                "--repo-root",
-                str(repo_root),
-            ],
-            env=base_environment,
-            cwd=repo_root,
-            timeout=GENERATOR_TIMEOUT,
-            stage="generate private stack fixture",
-            max_output=MAX_GENERATOR_OUTPUT,
-            check=False,
-        )
-        if generator_code != 0:
-            raise CommandFailure("generate private stack fixture", generator_code)
-        environment, environment_digest, config_digest, dynamic_config_digest = validate_generated_environment(
-            stdout,
-            fixture_root,
-            repo_root,
-            project,
-        )
-        record = fixture_record(
-            fixture_root,
-            environment,
-            environment_digest,
-            config_digest,
-            dynamic_config_digest,
-        )
-        manifest.update("generated", fixture=record)
-        reservations = reserve_ports(environment)
-        require_empty_before_start(
-            manifest,
-            environment,
-            image_refs,
-            docker,
-            docker_config,
-            endpoint,
-            docker_env,
-            repo_root,
-        )
-        manifest.update("starting", fixture=record, authorize_docker=True)
-        close_reservations(reservations)
-        stack_env = fixture_environment(base_environment, environment, docker_config, endpoint)
-        with tempfile.TemporaryFile(dir=parent) as stack_errors:
-            code = run_quiet(
-                [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]], env=stack_env, cwd=repo_root,
-                timeout=STARTUP_TIMEOUT, stage="start owned fixture", check=False, stderr=stack_errors,
+                daemon,
             )
-            if code != 0:
-                stack_errors.seek(max(0, stack_errors.seek(0, os.SEEK_END) - MAX_GENERATOR_OUTPUT))
-                step = stack_failed_step(stack_errors.read())
-                try:
-                    provider = identity_provider_state(project, docker, docker_config, endpoint, docker_env, repo_root)
-                except FixtureError:
-                    provider = "provider=unknown"
-                raise FixtureError(f"start owned fixture failed with exit status {code}: step={step} {provider}")
-        resources = discover_resources(
-            manifest,
-            environment,
-            image_refs,
-            docker,
-            docker_config,
-            endpoint,
-            docker_env,
-            repo_root,
-        )
-        verify_running_resources(resources)
-        verify_identity_provider(
-            environment,
-            resources,
-            fixture_root,
-            pm_stack,
-            stack_env,
-            manifest.daemon["rootless"],
-            docker,
-            docker_config,
-            endpoint,
-            docker_env,
-            repo_root,
-        )
-        manifest.update("running", resources=resource_manifest(resources), diagnostic=None)
+            generator_code, stdout, _ = run_capture(
+                [
+                    str(generator),
+                    "--root",
+                    str(fixture_root),
+                    "--project",
+                    project,
+                    "--repo-root",
+                    str(repo_root),
+                ],
+                env=base_environment,
+                cwd=repo_root,
+                timeout=GENERATOR_TIMEOUT,
+                stage="generate private stack fixture",
+                max_output=MAX_GENERATOR_OUTPUT,
+                check=False,
+            )
+            if generator_code != 0:
+                raise CommandFailure("generate private stack fixture", generator_code)
+            environment, environment_digest, config_digest, dynamic_config_digest = validate_generated_environment(
+                stdout,
+                fixture_root,
+                repo_root,
+                project,
+            )
+            record = fixture_record(
+                fixture_root,
+                environment,
+                environment_digest,
+                config_digest,
+                dynamic_config_digest,
+            )
+            manifest.update("generated", fixture=record)
+            reservations = reserve_ports(environment)
+            require_empty_before_start(
+                manifest,
+                environment,
+                image_refs,
+                docker,
+                docker_config,
+                endpoint,
+                docker_env,
+                repo_root,
+            )
+            manifest.update("starting", fixture=record, authorize_docker=True)
+            close_reservations(reservations)
+            stack_env = fixture_environment(base_environment, environment, docker_config, endpoint)
+            with tempfile.TemporaryFile(dir=parent) as stack_errors:
+                code = run_quiet(
+                    [str(pm_stack), "up", "--config", environment["PM_STACK_TEST_CONFIG"]], env=stack_env, cwd=repo_root,
+                    timeout=STARTUP_TIMEOUT, stage="start owned fixture", check=False, stderr=stack_errors,
+                )
+                if code != 0:
+                    stack_errors.seek(max(0, stack_errors.seek(0, os.SEEK_END) - MAX_GENERATOR_OUTPUT))
+                    step = stack_failed_step(stack_errors.read())
+                    try:
+                        provider = identity_provider_state(project, docker, docker_config, endpoint, docker_env, repo_root)
+                    except FixtureError:
+                        provider = "provider=unknown"
+                    raise FixtureError(f"start owned fixture failed with exit status {code}: step={step} {provider}")
+            resources = discover_resources(
+                manifest,
+                environment,
+                image_refs,
+                docker,
+                docker_config,
+                endpoint,
+                docker_env,
+                repo_root,
+            )
+            verify_running_resources(resources)
+            verify_identity_provider(
+                environment,
+                resources,
+                fixture_root,
+                pm_stack,
+                stack_env,
+                manifest.daemon["rootless"],
+                docker,
+                docker_config,
+                endpoint,
+                docker_env,
+                repo_root,
+            )
+            manifest.update("running", resources=resource_manifest(resources), diagnostic=None)
         result = run_child(command, env=stack_env, cwd=repo_root)
     except Cancellation as cancelled:
         result = 128 + cancelled.signum
-    except FixtureError as exc:
+    except PhaseDeadline as exc:
+        # No command starts on this fixture. Its manifest stays.
         safe_error(str(exc))
+        result = 1
+    except FixtureError as exc:
+        if not getattr(exc, "reported", False):
+            safe_error(str(exc))
         result = 1
     finally:
         SIGNALS.enter_cleanup()
@@ -3379,7 +3653,8 @@ def run_mode(
                     safe_error("pre-manifest fixture cleanup refused or failed")
                     result = 1
         else:
-            cleaned = cleanup_fixture(manifest, docker, image_refs, base_environment)
+            with Phase("cleanup", CLEANUP_PHASE_LIMIT):
+                cleaned = cleanup_fixture(manifest, docker, image_refs, base_environment)
             if not cleaned:
                 safe_error(f"cleanup incomplete; safe ownership diagnostic retained at {manifest.path}")
                 if result == 0:
@@ -3395,6 +3670,8 @@ def main(arguments: Sequence[str] | None = None) -> int:
         runner_temp = resolve_runner_temp()
         repo_root = resolve_repo_root()
         manifest_path, run_id, run_attempt = validate_manifest_path(raw_manifest, runner_temp)
+        if mode == "receipt":
+            return receipt_mode(manifest_path, runner_temp, repo_root, run_id, run_attempt)
         base_environment = sanitized_environment()
         SIGNALS.install()
         try:

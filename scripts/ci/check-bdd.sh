@@ -46,56 +46,95 @@ step() {
   printf 'check-bdd: [+%ss] %s\n' "$(($(date +%s) - started))" "$1"
 }
 
-# The time budget. The workflow step has a frozen limit of 50 minutes
+# --- functions that scripts/ci/test_setup.py runs: begin ---
+# Job cancellation. The job container's init process passes SIGHUP, SIGINT
+# and SIGTERM to this script. The script sets no trap for them, so such a
+# signal stops it at once, also while a command runs: sh in the CI image is
+# dash, which keeps the default action. A trap would run only after that
+# command ends. So when the script reaches pm_stack_ended, the job is not
+# cancelled.
+#
+# pm_stack_ended STATUS reports the end of the stack run. A status of 129, 130
+# or 143 means that the stack run command ended on a signal that this script
+# did not get. That is a stack run failure: the receipt check and the Gherkin
+# run still run, and the job fails.
+pm_stack_ended() {
+  step "stack run ended with exit $1"
+  case "$1" in
+    129 | 130 | 143)
+      printf 'check-bdd: the stack run command ended on a signal (exit %s), and this script got no signal, so the job is not cancelled. This is a stack run failure; the receipt check and the Gherkin run still run\n' "$1" >&2
+      ;;
+  esac
+}
+# --- functions that scripts/ci/test_setup.py runs: end ---
+
+# The time budget. The workflow step has a frozen limit of 90 minutes
 # (bdd.yml). The script keeps 3 minutes of it for the start and stop of the
-# job container, so its own work ends within 47 minutes of its start, on the
-# failure path too.
+# job container, so its own work ends within 87 minutes of its start, on the
+# failure path too. Owner decision of 2026-11-17: the stack go test command
+# stops one hour after the start (it stopped after 20 minutes before).
 #
 # The two deadlines stop only the go test command of each run, inside
 # go-test-report.py (--deadline). The fixture start before that command and
-# the fixture cleanup after it are outside the deadlines. A stopped command
-# gets SIGTERM, then SIGKILL after 30 seconds (the stop grace), and the run
-# still reports. --timeout 1140 also stops each go test command 19 minutes
-# after its start, before the 20-minute command limit of with-stack-fixture.py
-# (CHILD_TIMEOUT), so that the reporter, not the wrapper, ends the run.
+# the fixture cleanup after it have their own phase deadlines in
+# with-stack-fixture.py (issue #286). A stopped command gets SIGTERM, then
+# SIGKILL after 30 seconds (KILL_GRACE of go-test-report.py). After that
+# SIGKILL, the reporter lists the live members of the group and waits up to
+# 30 seconds more for the end of the command (the bounded reap). So the stop
+# grace is 60 seconds, and the run still reports. --timeout also stops each
+# go test command after its start: 3590 s for the stack run and 1140 s
+# (19 minutes) for the Gherkin run. Each one plus the 60-second stop grace
+# ends before the 61-minute command limit of with-stack-fixture.py
+# (CHILD_TIMEOUT), so that the reporter, not the wrapper, ends the run. The
+# stack --timeout can stop the stack command before its deadline only when
+# that command starts less than 10 s after the script. The tool builds and
+# the stack fixture start come before that command.
 #
-# The allowances are upper bounds of the phases of with-stack-fixture.py: a
-# fixture start (generator 60 s, `pm-stack up` 600 s and its 30-second Docker
-# calls) and a fixture cleanup (drain 120 s, container stop 75 s, cleanup
-# helper 60 s and its 30-second Docker calls). The prelude (tool builds and
-# package selection) must take 8 minutes or less. Then, in minutes after the
-# start, on the longest path:
-#   stack go test stop  <= +20   (stack deadline)
-#   stack run end       <= +20.5 (stop grace)
-#   stack cleanup end   <= +26.5 (cleanup allowance)
-#   receipt check end   <= +27.5 (finish allowance)
-#   Gherkin start end   <= +39.5 (start allowance; this is the Gherkin deadline)
-#   Gherkin run end     <= +40   (stop grace)
-#   Gherkin cleanup end <= +46   (cleanup allowance)
-#   toolchain check end <= +47   (finish allowance)
-# If the prelude and the stack fixture start end after +20, the stack go test
-# command stops at once. The end bound holds for a prelude of 8 minutes or less.
+# The start and cleanup allowances are the phase deadlines of
+# with-stack-fixture.py (720 s and 360 s) plus 10 s. A call that a phase
+# deadline stops gets SIGKILL and a wait of up to 10 s (PROCESS_TERM_GRACE),
+# and the phase does not limit that wait. Each call in a phase gets min(its
+# own limit, the time left), and a phase that reaches its deadline fails with
+# its own message.
+# The finish allowance (15 s) is for the receipt check or the toolchain
+# check, together with the member list and the report writing of the run
+# before it. Nothing enforces it. On Linux, the member list reads /proc with
+# no enforced limit.
+# The prelude (tool builds and package selection) has no enforced limit and
+# must take 8 minutes or less. Then, in seconds after the start, on the
+# longest path:
+#   stack go test stop  <= +3600 (stack deadline)
+#   stack run end       <= +3660 (stop grace)
+#   stack cleanup end   <= +4030 (cleanup allowance)
+#   receipt check end   <= +4045 (finish allowance)
+#   Gherkin start end   <= +4775 (start allowance; this is the Gherkin deadline)
+#   Gherkin run end     <= +4835 (stop grace)
+#   Gherkin cleanup end <= +5205 (cleanup allowance)
+#   toolchain check end <= +5220 (finish allowance)
+# If the prelude and the stack fixture start end after +3600, the stack go
+# test command stops at once. The end bound holds for a prelude of 2870 s or
+# less.
 #
 # gherkin_minimum is 0. A Gherkin reserve counts only on the path where the
 # stack run reaches its deadline and each fixture phase uses its whole
 # allowance, but it took that time from the stack run on every run. On that
-# one path (stack run at its deadline, stack cleanup at its full 6 minutes and
-# Gherkin fixture start at its full 12 minutes), the Gherkin run can get no
+# one path (stack run at its deadline, stack cleanup at its full 370 s and
+# Gherkin fixture start at its full 730 s), the Gherkin run can get no
 # test time. It still reports that it stopped at its deadline, and the job
 # fails (E4 narrowing). On a normal run, the Gherkin go test command keeps its
 # own 19-minute limit (--timeout 1140). See docs/development/ci.md.
 # Each live fixture stays under the one manifest path that the frozen cleanup
 # step of bdd.yml reads ($manifest below). See "Cleanup after an abrupt stop"
 # in docs/development/ci.md.
-budget=2820
-start_allowance=720
-cleanup_allowance=360
-finish_allowance=60
-stop_grace=30
+budget=5220
+start_allowance=730
+cleanup_allowance=370
+finish_allowance=15
+stop_grace=60
 gherkin_minimum=0
 gherkin_deadline=$((started + budget - finish_allowance - cleanup_allowance - stop_grace))
 stack_deadline=$((gherkin_deadline - gherkin_minimum - start_allowance - finish_allowance - cleanup_allowance - stop_grace))
-step "budget: the stack go test command stops at +$((stack_deadline - started))s, the Gherkin go test command at +$((gherkin_deadline - started))s, the script ends by +${budget}s. Fixture starts and cleanups are outside these deadlines."
+step "budget: the stack go test command stops at +$((stack_deadline - started))s, the Gherkin go test command at +$((gherkin_deadline - started))s, the script ends by +${budget}s. Each fixture start has a ${start_allowance}s allowance and each fixture cleanup a ${cleanup_allowance}s one: the phase deadline plus 10s."
 
 # The required bdd job checks the keyring layer of its own job image before
 # the stack run (#323, D1-9). The checks job runs the same check. A failure
@@ -154,6 +193,22 @@ else
   printf '%s\n' 'check-bdd: the package selection failed' >&2
   stack_status=1
 fi
+# The intended set of the Gherkin run: the packages that its go test pattern
+# selects, from go list in the same environment, before the run. The Gherkin
+# run passes it to go-test-report.py --expect, so a package with no result, a
+# second result or an unexpected result fails the run. A failed or empty
+# selection means that the Gherkin run does not run, and the job fails.
+gherkin_selected=false
+# go-packages.sh sets pm_gherkin_package.
+# shellcheck disable=SC2154
+if CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- list "$pm_gherkin_package/..." \
+  > "$RUNNER_TEMP/bdd-gherkin-expected.txt" && [ -s "$RUNNER_TEMP/bdd-gherkin-expected.txt" ]; then
+  gherkin_selected=true
+  printf 'check-bdd: Gherkin run packages (%s):\n' "$(wc -l < "$RUNNER_TEMP/bdd-gherkin-expected.txt" | tr -d ' ')"
+  sed 's/^/  /' "$RUNNER_TEMP/bdd-gherkin-expected.txt"
+else
+  printf '%s\n' 'check-bdd: the Gherkin run package selection failed or selected no package' >&2
+fi
 # shellcheck disable=SC2154
 printf 'check-bdd: Gherkin run package: %s\n' "$pm_gherkin_package"
 pm_excluded_packages | while IFS=' ' read -r package reason; do
@@ -174,19 +229,13 @@ if [ "$stack_status" -eq 0 ]; then
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-stack.json" \
     --fail-on-skip --expect "$RUNNER_TEMP/bdd-stack-expected.txt" \
-    --deadline "$stack_deadline" --timeout 1140 \
+    --deadline "$stack_deadline" --timeout 3590 \
     --summary-file "$GITHUB_STEP_SUMMARY" \
     --title 'Go developer tests: stack run (bdd job). Developer checks, not acceptance proof.' -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 15m $(cat "$RUNNER_TEMP/bdd-stack-packages.txt") ||
     stack_status=$?
-  step "stack run ended with exit $stack_status"
-  case "$stack_status" in
-    129 | 130 | 143)
-      printf 'check-bdd: the stack run stopped on a signal (exit %s)\n' "$stack_status" >&2
-      exit "$stack_status"
-      ;;
-  esac
+  pm_stack_ended "$stack_status"
 else
   printf '%s\n' 'check-bdd: the stack run did not run: its package selection failed' >&2
   stack_ran=false
@@ -195,12 +244,14 @@ fi
 # The Gherkin run starts on a fresh stack. The stack run's fixture is cleaned
 # up when its command ends, and its manifest stays as a cleaned receipt. Move
 # the receipt aside, so that the Gherkin fixture can own the manifest path that
-# the workflow's cleanup step reads. If the stack fixture is not clean, the
-# manifest stays for the cleanup step, and the Gherkin run cannot start.
+# the workflow's cleanup step reads. --check-receipt only reads the manifest
+# and checks the phase "cleaned"; it makes no Docker call and does not repeat
+# the cleanup. If the stack fixture is not clean, the manifest stays for the
+# cleanup step, and the Gherkin run does not start.
 gherkin_ready=true
 if [ -e "$manifest" ]; then
   step 'check the stack run fixture cleanup and keep its receipt'
-  if python3 scripts/ci/with-stack-fixture.py --cleanup "$manifest" &&
+  if python3 scripts/ci/with-stack-fixture.py --check-receipt "$manifest" &&
     mv "$manifest" "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.stack-run-receipt.json"; then
     :
   else
@@ -213,15 +264,24 @@ fi
 
 # Scenarios get the job-owned stack. Strict godog fails on undefined or pending
 # steps; a failed suite is never retried. The report lists each scenario and
-# the godog totals in the log and in the job summary, also on success.
+# the godog totals in the log and in the job summary, also on success. The run
+# fails on 0 scenarios, a skipped step or scenario (--scenarios) and a skipped
+# Go test or subtest (--fail-on-skip), and the log and the summary name each
+# cause (issue #350).
+# --expect checks one package result for each package of the intended set.
 # --deadline bounds the whole run.
 gherkin_status=1
-if "$gherkin_ready"; then
+gherkin_ran=false
+if ! "$gherkin_selected"; then
+  printf '%s\n' 'check-bdd: the Gherkin run did not run: its package selection failed' >&2
+elif "$gherkin_ready"; then
   step 'starting a fresh job-owned stack for the Gherkin run (acceptance suite)'
   gherkin_status=0
+  gherkin_ran=true
   python3 scripts/ci/with-stack-fixture.py --manifest "$manifest" -- \
     python3 scripts/ci/go-test-report.py --output "$RUNNER_TEMP/go-test-bdd.json" \
-    --scenarios --deadline "$gherkin_deadline" --timeout 1140 \
+    --scenarios --fail-on-skip --expect "$RUNNER_TEMP/bdd-gherkin-expected.txt" \
+    --deadline "$gherkin_deadline" --timeout 1140 \
     --summary-file "$GITHUB_STEP_SUMMARY" -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 40m "$pm_gherkin_package/..." ||
@@ -232,7 +292,7 @@ fi
 step 'compare the toolchain identity'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain-after.json"
 if "$stack_ran"; then stack_result="exit $stack_status"; else stack_result='did not run'; fi
-if "$gherkin_ready"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
+if "$gherkin_ran"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
 printf 'check-bdd: stack run (Go developer tests) %s; Gherkin run (acceptance suite) %s\n' \
   "$stack_result" "$gherkin_result"
 if ! cmp -s "$RUNNER_TEMP/bdd-toolchain.json" "$RUNNER_TEMP/bdd-toolchain-after.json"; then
