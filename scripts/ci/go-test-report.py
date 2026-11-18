@@ -512,8 +512,11 @@ def run_command(command, output, deadline, limit, errors=None):
     unsignalled = []
 
     def refusal_is_harmless(group):
+        # Ask the exit event of the command itself (a non-reaping wait of at
+        # most KILL_GRACE), not the result of an earlier wait: a signal can
+        # interrupt that wait after the exit.
         watch = state["watch"]
-        if sys.platform != "darwin" or watch is None or not watch.exited:
+        if sys.platform != "darwin" or watch is None or not watch.wait(KILL_GRACE):
             return False
         return live_group_members(group) == []
 
