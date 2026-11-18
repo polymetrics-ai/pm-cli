@@ -29,12 +29,18 @@ func (probe membershipUpdateProbe) exec(query string, arguments ...any) (pgconn.
 	if err != nil {
 		probe.t.Fatalf("connect the runtime role: %T", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
 	tx, err := connection.Begin(ctx)
 	if err != nil {
+		if closeErr := endMembershipUpdateTransaction(nil, connection, membershipUpdateCleanupLimit); closeErr != nil {
+			probe.t.Errorf("close the runtime probe connection: %v", closeErr)
+		}
 		probe.t.Fatalf("begin the runtime probe: %T", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() {
+		if err := endMembershipUpdateTransaction(tx, connection, membershipUpdateCleanupLimit); err != nil {
+			probe.t.Errorf("end the runtime probe: %v", err)
+		}
+	}()
 	if _, err := tx.Exec(ctx, `
 		SELECT set_config('pm.org_id', $1, true),
 		       set_config('pm.workspace_id', $2, true),
@@ -46,6 +52,70 @@ func (probe membershipUpdateProbe) exec(query string, arguments ...any) (pgconn.
 		probe.t.Fatalf("bind the runtime probe scope: %T", err)
 	}
 	return tx.Exec(ctx, query, arguments...)
+}
+
+// membershipUpdateCleanupLimit bounds each cleanup step of a probe or of a
+// migrator fixture transaction.
+const membershipUpdateCleanupLimit = 10 * time.Second
+
+// endMembershipUpdateTransaction rolls the transaction back and closes its
+// connection. Each step has its own context with the limit, so a PostgreSQL
+// that does not answer cannot hold the check after its own deadline. A
+// rollback after a commit (pgx.ErrTxClosed) is the normal end of a committed
+// fixture. A nil tx skips the rollback.
+func endMembershipUpdateTransaction(
+	tx interface{ Rollback(context.Context) error },
+	connection interface{ Close(context.Context) error },
+	limit time.Duration,
+) error {
+	var rollbackErr error
+	if tx != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), limit)
+		rollbackErr = tx.Rollback(ctx)
+		cancel()
+		if errors.Is(rollbackErr, pgx.ErrTxClosed) {
+			rollbackErr = nil
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	return errors.Join(rollbackErr, connection.Close(ctx))
+}
+
+// Go developer check, not acceptance proof. The probe and the migrator
+// fixture must end their cleanup at its limit when PostgreSQL does not
+// answer. The two stand-ins return only when the context of each call ends,
+// as the driver does on a connection that does not answer. Defect: a cleanup
+// on context.Background(), which never ends.
+func TestMembershipUpdateCleanupEndsAtItsLimit(t *testing.T) {
+	done := make(chan error, 1)
+	go func() {
+		done <- endMembershipUpdateTransaction(stalledMembershipCleanup{}, stalledMembershipCleanup{}, 100*time.Millisecond)
+	}()
+	guard := time.NewTimer(10 * time.Second)
+	defer guard.Stop()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("cleanup with a PostgreSQL that does not answer = %v; want the end of its limit", err)
+		}
+	case <-guard.C:
+		t.Fatal("cleanup did not end 10 s after a PostgreSQL that does not answer; want an end at its limit")
+	}
+}
+
+// stalledMembershipCleanup stands for a rollback and a close on a connection
+// that does not answer: each call returns only when its context ends.
+type stalledMembershipCleanup struct{}
+
+func (stalledMembershipCleanup) Rollback(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+func (stalledMembershipCleanup) Close(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
 }
 
 func requireInsufficientPrivilege(t *testing.T, name string, err error) {
@@ -87,12 +157,18 @@ func TestMembershipUpdateMigrationGrantsOnlyTheUpdateAuthority(t *testing.T) {
 		if err != nil {
 			t.Fatalf("connect the migrator: %T", err)
 		}
-		defer func() { _ = connection.Close(context.Background()) }()
 		tx, err := connection.Begin(ctx)
 		if err != nil {
+			if closeErr := endMembershipUpdateTransaction(nil, connection, membershipUpdateCleanupLimit); closeErr != nil {
+				t.Errorf("close the migrator connection: %v", closeErr)
+			}
 			t.Fatalf("begin the migrator fixture: %T", err)
 		}
-		defer func() { _ = tx.Rollback(context.Background()) }()
+		defer func() {
+			if err := endMembershipUpdateTransaction(tx, connection, membershipUpdateCleanupLimit); err != nil {
+				t.Errorf("end the migrator fixture: %v", err)
+			}
+		}()
 		if _, err := tx.Exec(ctx, `
 			SELECT set_config('pm.org_id', $1, true),
 			       set_config('pm.workspace_id', $2, true),
