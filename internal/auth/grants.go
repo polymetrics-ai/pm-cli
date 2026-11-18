@@ -219,9 +219,9 @@ func authorizeResource(
 		Permission:    request.Permission,
 		ConnectionID:  connectionID,
 		OperationID:   request.OperationID,
-		Permissions:   append([]string(nil), current.permissions...),
-		ConnectionIDs: append([]string(nil), current.connections...),
-		OperationIDs:  append([]string(nil), current.operations...),
+		Permissions:   grantList(current.permissions),
+		ConnectionIDs: grantList(current.connections),
+		OperationIDs:  grantList(current.operations),
 		ExpiresAt:     current.expiresAt,
 		PolicyEpochs:  current.policyEpochs,
 		AuthorityRef:  current.authorityRef,
@@ -343,6 +343,14 @@ func loadDirectAuthority(
 }
 
 var farFuture = time.Date(9999, time.December, 31, 23, 59, 59, 0, time.UTC)
+
+// grantList copies one grant list of an authorization. It returns an empty,
+// non-nil list when nothing is granted. Grant lists are explicit, so an empty
+// list means "nothing granted". The store refuses a nil list as a missing
+// bound, so a nil list here would turn "nothing granted" into an error.
+func grantList(values []string) []string {
+	return append(make([]string, 0, len(values)), values...)
+}
 
 func intersectSorted(sets ...[]string) []string {
 	if len(sets) == 0 {
