@@ -234,6 +234,21 @@ func TestComposeSourceAdmitsTheSecondLoopbackBindingOnlyForTheIdentityProvider(t
 	keycloak := func(document map[string]any) map[string]any {
 		return document["services"].(map[string]any)[identityProviderService].(map[string]any)
 	}
+	identityNetwork := func(document map[string]any) map[string]any {
+		return document["networks"].(map[string]any)[identityProviderNetwork].(map[string]any)
+	}
+	replaceIn := func(list any, old, new string) []any {
+		var out []any
+		for _, item := range list.([]any) {
+			if item == old {
+				item = new
+			}
+			out = append(out, item)
+		}
+		return out
+	}
+	buildOutput := identityProviderBuildOutput + ":size=64m,mode=0770,tmpcopyup"
+	serverKey := "${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server-key.pem:/run/secrets/identity-provider-server-key.pem:ro"
 	for _, test := range []mutation{
 		{name: "valid", wantRefuse: ""},
 		{name: "identity provider wildcard binding", identity: func(d map[string]any) {
@@ -274,21 +289,56 @@ func TestComposeSourceAdmitsTheSecondLoopbackBindingOnlyForTheIdentityProvider(t
 		}, wantRefuse: "no persisted build"},
 		{name: "development start", identity: func(d map[string]any) { keycloak(d)["command"] = []any{"start-dev"} }, wantRefuse: "no persisted build"},
 		{name: "read-only build output", identity: func(d map[string]any) { keycloak(d)["tmpfs"] = []any{"/tmp:size=64m"} }, wantRefuse: "no persisted build"},
+		// Review F1: the network definition, not only the selector.
+		{name: "identity network joins an external network", identity: func(d map[string]any) {
+			d["networks"].(map[string]any)[identityProviderNetwork] = map[string]any{"external": true, "name": "pm-stack_stack-private"}
+		}, wantRefuse: "identity provider"},
+		{name: "identity network renamed to another network", identity: func(d map[string]any) {
+			identityNetwork(d)["name"] = "pm-stack_stack-private"
+		}, wantRefuse: "identity provider"},
+		{name: "identity network with another driver", identity: func(d map[string]any) { identityNetwork(d)["driver"] = "host" }, wantRefuse: "keycloak"},
+		{name: "identity network without its definition", identity: func(d map[string]any) { delete(d, "networks") }, wantRefuse: "keycloak"},
+		// Review F2: a capability added after cap_drop ALL.
+		{name: "capability added after dropping all", identity: func(d map[string]any) { keycloak(d)["cap_add"] = []any{"NET_ADMIN"} }, wantRefuse: "keycloak"},
+		// Review F3: the complete mount set.
+		{name: "extra writable tmpfs", identity: func(d map[string]any) {
+			keycloak(d)["tmpfs"] = append(keycloak(d)["tmpfs"].([]any), "/extra:mode=1777")
+		}, wantRefuse: "keycloak"},
+		{name: "writable credential mount", identity: func(d map[string]any) {
+			keycloak(d)["volumes"] = replaceIn(keycloak(d)["volumes"], serverKey, strings.TrimSuffix(serverKey, ":ro")+":rw")
+		}, wantRefuse: "keycloak"},
+		{name: "extra mount", identity: func(d map[string]any) {
+			keycloak(d)["volumes"] = append(keycloak(d)["volumes"].([]any), "${PM_STACK_IDENTITY_PROVIDER_DIR:?}:/opt/keycloak/conf:ro")
+		}, wantRefuse: "keycloak"},
+		{name: "missing credential mount", identity: func(d map[string]any) {
+			keycloak(d)["volumes"] = keycloak(d)["volumes"].([]any)[1:]
+		}, wantRefuse: "keycloak"},
+		// Review F5: the resource limits.
+		{name: "missing cpu limit", identity: func(d map[string]any) { delete(keycloak(d), "cpus") }, wantRefuse: "keycloak"},
+		{name: "missing memory limit", identity: func(d map[string]any) { delete(keycloak(d), "mem_limit") }, wantRefuse: "keycloak"},
+		{name: "missing process limit", identity: func(d map[string]any) { delete(keycloak(d), "pids_limit") }, wantRefuse: "keycloak"},
+		{name: "cpu limit above the admitted value", identity: func(d map[string]any) { keycloak(d)["cpus"] = 4.0 }, wantRefuse: "keycloak"},
+		{name: "memory limit above the admitted value", identity: func(d map[string]any) { keycloak(d)["mem_limit"] = "2g" }, wantRefuse: "keycloak"},
+		{name: "memory limit in an unknown form", identity: func(d map[string]any) { keycloak(d)["mem_limit"] = "1.5g" }, wantRefuse: "keycloak"},
+		{name: "process limit above the admitted value", identity: func(d map[string]any) { keycloak(d)["pids_limit"] = 1024 }, wantRefuse: "keycloak"},
+		// Review F6: a writable build output that starts with the image's copy.
+		{name: "read-only build output mount", identity: func(d map[string]any) {
+			keycloak(d)["tmpfs"] = replaceIn(keycloak(d)["tmpfs"], buildOutput, buildOutput+",ro")
+		}, wantRefuse: "no persisted build"},
+		{name: "build output without copy-up", identity: func(d map[string]any) {
+			keycloak(d)["tmpfs"] = replaceIn(keycloak(d)["tmpfs"], buildOutput, identityProviderBuildOutput+":size=64m,mode=0770")
+		}, wantRefuse: "no persisted build"},
+		{name: "restart after a crash", identity: func(d map[string]any) { keycloak(d)["restart"] = "always" }, wantRefuse: "keycloak"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base := map[string]any{"services": map[string]any{"postgres": map[string]any{
 				"ports": []any{"127.0.0.1:${PM_STACK_POSTGRES_PORT:?}:5432"},
 			}}}
-			identity := map[string]any{"services": map[string]any{identityProviderService: map[string]any{
-				"user":         identityProviderUserVariable,
-				"read_only":    true,
-				"cap_drop":     []any{"ALL"},
-				"security_opt": []any{"no-new-privileges:true"},
-				"ports":        []any{identityProviderBinding},
-				"networks":     []any{identityProviderNetwork},
-				"command":      []any{"start", "--import-realm"},
-				"tmpfs":        []any{"/tmp:size=64m", identityProviderBuildOutput + ":size=64m"},
-			}}}
+			// The valid identity document is the repository overlay itself.
+			identity := map[string]any{}
+			if err := yaml.Unmarshal(contents, &identity); err != nil {
+				t.Fatal(err)
+			}
 			if test.base != nil {
 				test.base(base)
 			}
