@@ -96,11 +96,14 @@ walk() {
 # owner, group, mode, SHA-256 (or link) and path of each runner, unit and home file.
 current_list() {
   # The list has one path per line. A name with a line feed gives two lines that can each
-  # name another existing file, so the named file is never hashed (#403 R4-1).
-  feed=$(walk -name '*
-*' -print) || return 1
+  # name another existing file, so the named file is never hashed (#403 R4-1). $(readlink)
+  # drops a final line feed of a link target, so -lname tests the raw target (crrao m3).
+  # The text never names the path: a line feed in it could forge an ok: line.
+  feed=$(walk \( -name '*
+*' -o -type l -lname '*
+*' \) -print) || return 1
   if [ -n "$feed" ]; then
-    printf '%s\n' 'live-runner-check: FAILED: a runner, unit or home path holds a line feed' >&2
+    printf '%s\n' 'live-runner-check: FAILED: a listed path or link target holds a line feed' >&2
     return 1
   fi
   listing=$(/usr/bin/mktemp "$list.find.XXXXXX") || return 1

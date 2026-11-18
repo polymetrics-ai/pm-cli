@@ -533,8 +533,27 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual([path.name for path in self.list.parent.iterdir()], [self.list.name])
                 self.assertEqual(check.returncode, 1, check.stdout)
                 self.assertIn("cannot be listed, read or hashed", check.stdout)
+                self.assertNotRegex(check.stdout, "differ from the list|match the list")
                 for result in (record, check):
-                    self.assertIn("a runner, unit or home path holds a line feed", result.stderr)
+                    self.assertIn("a listed path or link target holds a line feed", result.stderr)
+
+    def test_a_link_target_with_a_line_feed_is_refused(self):
+        # crrao m3 (case E): $(readlink) drops a final line feed, so a listed home link
+        # retargeted from /outside/tool to /outside/tool<LF> matched the list.
+        link = self.host.home / "tool"
+        link.symlink_to("/outside/tool")
+        self.assertEqual(self.host.run(self.script, "--record").returncode, 0)
+        recorded = self.list.read_bytes()
+        link.unlink()
+        link.symlink_to("/outside/tool\n")
+        record, check = self.host.run(self.script, "--record"), self.check()
+        self.assertEqual(record.returncode, 1, record.stdout)
+        self.assertEqual(self.list.read_bytes(), recorded)
+        self.assertEqual(check.returncode, 1, check.stdout)
+        self.assertIn("cannot be listed, read or hashed", check.stdout)
+        self.assertNotRegex(check.stdout, "differ from the list|match the list")
+        for result in (record, check):
+            self.assertIn("a listed path or link target holds a line feed", result.stderr)
 
     def test_a_failed_or_empty_compare_listing_never_matches(self):
         # crrao's addendum to N1: an empty baseline and a failed or empty fresh listing.
