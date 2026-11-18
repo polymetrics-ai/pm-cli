@@ -1098,25 +1098,27 @@ func (service *WorkerService) settleWorkerUnit(
 		if err := recordWorkerHTTPCooldown(ctx, tx, plan, permit, observation.HTTP); err != nil {
 			return err
 		}
-		resultArtifactID, err := commitWorkerResult(ctx, tx, plan, publication, service.commitResultPublication)
+		resultCommit, err := commitWorkerResult(ctx, tx, plan, publication, service.commitResultPublication)
 		if err != nil {
 			return err
 		}
 		continuationArtifactID, err := commitWorkerContinuation(
-			ctx, tx, plan, continuationPublication, resultArtifactID,
+			ctx, tx, plan, continuationPublication, resultCommit.artifactID,
 		)
 		if err != nil {
 			return err
 		}
+		// A rejected result receipt is a publication failure. It does not
+		// change the provider-effect truth of the member outcomes.
 		commit := workerSettlementCommit(
 			plan.lease,
 			updatedTask,
 			dispatch.Intent,
 			outcomes,
 			settlementRef,
-			resultArtifactID,
+			resultCommit.artifactID,
 			continuationArtifactID,
-			publicationErr != nil,
+			publicationErr != nil || resultCommit.rejected,
 			callbackErr != nil,
 			localCompletion,
 			retry,

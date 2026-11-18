@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/objects"
@@ -76,35 +77,63 @@ func commitPreparedPublication(ctx context.Context, tx *store.Transaction, publi
 	return publication.Commit(ctx, tx)
 }
 
-func commitWorkerResult(ctx context.Context, tx *store.Transaction, plan workerUnitPlan, publication *objects.PreparedPublication, commit resultPublicationCommit) (string, error) {
+// workerResultCommit is the result publication part of one settlement.
+type workerResultCommit struct {
+	// artifactID is the published result artifact, or empty.
+	artifactID string
+	// rejected is true when the publication committed a receipt that does not
+	// match the unit's result reservation. The settlement discarded that
+	// publication: the reservation stays bound and charged, and no result
+	// artifact exists. The member outcomes still settle.
+	rejected bool
+}
+
+func commitWorkerResult(ctx context.Context, tx *store.Transaction, plan workerUnitPlan, publication *objects.PreparedPublication, commit resultPublicationCommit) (workerResultCommit, error) {
 	reservationID := plan.resultReservation.Request.ReservationID
 	if publication != nil {
 		if commit == nil {
 			commit = commitPreparedPublication
 		}
-		receipt, err := commit(ctx, tx, publication)
-		if err != nil {
-			return "", err
+		var artifactID string
+		// The savepoint discards the staged publication of a rejected receipt
+		// before the member outcomes commit in the same transaction.
+		err := store.WithinSavepoint(ctx, tx, func(ctx context.Context, tx *store.Transaction) error {
+			receipt, err := commit(ctx, tx, publication)
+			if err != nil {
+				return err
+			}
+			artifactID, err = workerResultReceiptArtifactID(plan, receipt)
+			return err
+		})
+		if errors.Is(err, errWorkerResultReceiptMismatch) {
+			return workerResultCommit{rejected: true}, nil
 		}
-		return workerResultReceiptArtifactID(plan, receipt)
+		if err != nil {
+			return workerResultCommit{}, err
+		}
+		return workerResultCommit{artifactID: artifactID}, nil
 	}
 	if reservationID == "" {
-		return "", nil
+		return workerResultCommit{}, nil
 	}
 	reservation, err := store.LoadObjectReservation(ctx, tx, reservationID)
 	if err != nil {
-		return "", err
+		return workerResultCommit{}, err
 	}
 	if reservation.State == store.ObjectReservationHeld {
-		return "", store.CancelObjectReservation(ctx, tx, reservationID)
+		return workerResultCommit{}, store.CancelObjectReservation(ctx, tx, reservationID)
 	}
 	if reservation.State == store.ObjectReservationBound {
 		// A failed or uncertain upload remains charged. Never infer absence from
 		// the callback error or cancel a bound physical attempt.
-		return "", nil
+		return workerResultCommit{}, nil
 	}
-	return "", errors.New("unsettled worker result reservation has incompatible state")
+	return workerResultCommit{}, errors.New("unsettled worker result reservation has incompatible state")
 }
+
+// errWorkerResultReceiptMismatch marks a committed publication receipt that
+// does not match the unit's result reservation.
+var errWorkerResultReceiptMismatch = fmt.Errorf("worker result receipt does not match its reservation: %w", store.ErrImmutableConflict)
 
 // workerResultReceiptArtifactID returns the result artifact ID of a committed
 // publication receipt for the unit's result reservation. A receipt that does
@@ -115,7 +144,7 @@ func workerResultReceiptArtifactID(plan workerUnitPlan, receipt store.ArtifactPu
 		receipt.ConnectionID != plan.state.input.ConnectionID ||
 		receipt.Purpose != store.ArtifactPurposePublic ||
 		receipt.Object.ArtifactID != plan.resultReservation.Request.ArtifactID {
-		return "", store.ErrImmutableConflict
+		return "", errWorkerResultReceiptMismatch
 	}
 	return receipt.Object.ArtifactID, nil
 }

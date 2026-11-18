@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/polymetrics-ai/pm-cli/internal/api"
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
@@ -288,4 +289,82 @@ func workerResultGET(t *testing.T, fixture *testfixture.Fixture, path string, ex
 		t.Fatal("fixture result exceeded its finite bound")
 	}
 	return payload
+}
+
+// TestRejectedResultReceiptKeepsValidMemberOutcomes runs one worker unit whose
+// result publication commits a receipt that does not match the unit's result
+// reservation. A real store commit returns only the receipt of the reservation
+// that it binds. So the check commits the real publication and then changes the
+// connection ID of its receipt. The settlement must refuse the publication and
+// still settle the valid member outcomes: the unit succeeds, the result
+// reservation stays bound, no public artifact exists, and the settlement
+// records that the result publication was unavailable.
+func TestRejectedResultReceiptKeepsValidMemberOutcomes(t *testing.T) {
+	temporal := newPermitTemporalHarness(t)
+	producer := testfixture.OpenArtifacts(t, testfixture.PrimaryArtifactGateway)
+	expected := contract.ActionResult{MediaType: "application/json", Data: contract.NewStringValue("rejected receipt")}
+	var calls atomic.Int32
+	fixture := testfixture.NewExecuting(t, func(_ context.Context, request app.ExecutionRequest) (app.ExecutionObservation, error) {
+		calls.Add(1)
+		observation := successfulPermitObservation(request)
+		observation.Result = &expected
+		return observation, nil
+	}, unexpectedPermitReconciliation)
+	publisher, err := objects.NewPublisher(fixture.Pool, producer.Backend, producer.Limits)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := workerResultService(t, fixture, temporal, publisher, 4096)
+	var commits atomic.Int32
+	app.SetResultPublicationCommit(service, func(
+		ctx context.Context,
+		tx *store.Transaction,
+		publication *objects.PreparedPublication,
+	) (store.ArtifactPublicationReceipt, error) {
+		commits.Add(1)
+		receipt, err := publication.Commit(ctx, tx)
+		if err != nil {
+			return store.ArtifactPublicationReceipt{}, err
+		}
+		receipt.ConnectionID = "connection-of-another-reservation"
+		return receipt, nil
+	})
+	admitted := admitPermitRun(t, fixture, fixture.Client, fixture.Scope, fixture.Connection.ConnectionID, "worker-result-receipt-rejected")
+	run := preparePermitWorkerRun(t, fixture, service, temporal, fixture.Scope, fixture.Actor, admitted)
+	unit, err := executePermitWorkerUnit(t, service, run)
+	if err != nil || unit.State != contract.RunStateSucceeded || unit.UnknownEffectCount != 0 ||
+		calls.Load() != 1 || commits.Load() != 1 {
+		t.Fatalf("unit with a rejected result receipt = %#v error=%v callback_calls=%d publication_commits=%d; "+
+			"want a succeeded settlement after one callback and one commit", unit, err, calls.Load(), commits.Load())
+	}
+	for _, outcome := range publicationCheckOutcomes(t, fixture, admitted.RunRef, run) {
+		if outcome.State != contract.OutcomeSucceeded {
+			t.Fatalf("member outcome after a rejected result receipt = %#v; want succeeded", outcome)
+		}
+	}
+	if reasons := publicationCheckSettlementReasons(t, fixture, admitted.RunRef); !slices.Contains(reasons, "result_publication_unavailable") {
+		t.Fatalf("settlement reason codes = %q; want result_publication_unavailable", reasons)
+	}
+	var states []string
+	var artifacts int
+	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `
+			SELECT
+				array(
+					SELECT reservation.state
+					FROM pm.object_reservations AS reservation
+					WHERE reservation.org_id = $1 AND reservation.workspace_id = $2
+					  AND reservation.purpose = 'public'
+					ORDER BY reservation.reserved_at, reservation.reservation_id
+				),
+				(SELECT count(*) FROM pm.artifacts AS artifact
+				 WHERE artifact.org_id = $1 AND artifact.workspace_id = $2 AND artifact.purpose = 'public')
+		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID).Scan(&states, &artifacts)
+	})
+	if !slices.Equal(states, []string{string(store.ObjectReservationBound)}) || artifacts != 0 {
+		t.Fatalf("result reservation states = %q, public artifacts = %d; "+
+			"want one bound reservation and no published artifact", states, artifacts)
+	}
+	workerResultGET(t, fixture,
+		"/v1/workspaces/"+fixture.Scope.WorkspaceID+"/runs/"+admitted.RunRef+"/result", http.StatusServiceUnavailable)
 }
