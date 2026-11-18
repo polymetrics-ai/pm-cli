@@ -107,8 +107,9 @@ type loginScenario struct {
 // registerLoginSteps registers the W1a login steps (criteria-worker v4, step
 // list lines 553 and 554, and LOGIN proposal v3, D1-12). Two phrases are
 // proposals until the W1a RED names its own text: the re-login and the
-// cookie check.
-func registerLoginSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) {
+// cookie check. It returns the scenario state, which the 284c membership
+// steps read.
+func registerLoginSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) *loginScenario {
 	s := &loginScenario{shared: shared, lane: l}
 	// godog keeps the step error. The hook returns only its own cleanup
 	// error, so the step error is reported once.
@@ -119,6 +120,7 @@ func registerLoginSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lan
 	sc.Step(`^the user logs in again through the product login flow with a fresh login$`, s.logInAgain)
 	sc.Step(`^no request to the identity provider during the login carried a PM cookie$`, s.noPMCookieToProvider)
 	sc.Step(`^I run "([^"]*)" as the user$`, s.runAsUser)
+	return s
 }
 
 // logIn is the step "the user is logged in through the product login flow".

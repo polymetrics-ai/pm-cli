@@ -97,9 +97,10 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *
 	sc.Step(`^the lane command stdout contains the lane deployment ID$`, scenario.result.stdoutHasDeploymentID)
 	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.result.stderrContains)
 	registerStartedServerSteps(sc, scenario)
-	registerBootstrapSteps(sc, scenario, lane)
+	bootstrap := registerBootstrapSteps(sc, scenario, lane)
 	registerLaneSteps(sc, scenario, lane)
-	registerLoginSteps(sc, scenario, lane)
+	login := registerLoginSteps(sc, scenario, lane)
+	registerMembershipSteps(sc, scenario, lane, bootstrap, login)
 	registerDevicePollIntervalSteps(sc, scenario)
 	registerListenerSteps(sc, scenario)
 }

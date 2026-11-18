@@ -117,7 +117,9 @@ type bootstrapScenario struct {
 	recordedScope string
 }
 
-func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) {
+// registerBootstrapSteps registers the bootstrap steps and returns their
+// scenario state, which the 284c membership steps read.
+func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) *bootstrapScenario {
 	s := &bootstrapScenario{shared: shared, lane: l}
 	// godog keeps the step error. The hook returns only its own cleanup
 	// error, so the step error is reported once.
@@ -146,6 +148,7 @@ func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario, l 
 	sc.Step(`^the observer sees exactly one new workspace, one new identity with its login binding for this deployment, one admin membership, one provider account, one bootstrap record for this deployment and organization, and one audit record that names the operator bootstrap as its actor$`, s.seesBootstrappedScope)
 	sc.Step(`^the observer sees one new workspace, identity, login binding, admin membership, provider account and bootstrap record for the second scope, and one new audit record$`, s.seesSecondScope)
 	sc.Step(`^the lane command stdout names the bootstrapped workspace and no other workspace$`, s.namesBootstrappedWorkspace)
+	return s
 }
 
 // deployment returns the deployment of the shared deployment step. A lane
