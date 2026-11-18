@@ -59,6 +59,7 @@ go_test(
         "connector_composition_test.go",
         "continuation_page_test.go",
         "earlier_attempt_reservations_test.go",
+        "export_test.go",
         "generated_github_read_test.go",
         "http_continuation_test.go",
         "http_execution_test.go",
