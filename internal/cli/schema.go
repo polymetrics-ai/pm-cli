@@ -143,7 +143,7 @@ func newSchemaSelectCommand(runtime *commandRuntime) *cobra.Command {
 	control := newMutationControl()
 	command := &cobra.Command{
 		Use:   "select",
-		Short: "Select one stored complete candidate of a declared relation of one connection",
+		Short: "Select one stored candidate of a declared relation",
 		Long: `Select one stored complete candidate snapshot of one relation that the connection declares.
 
 --revision is the selection revision that pm schema show reported for the resource. It is 1
@@ -151,7 +151,9 @@ before the first selection, and each selection adds 1. You must hold connection.
 connection. A stale revision stops the command with control_revision_mismatch and exit code 4.
 A resource that the connection does not declare, or a candidate that the resource does not
 hold, stops the command with schema_relation_unknown and exit code 3. A refusal changes no
-selection. The command never discovers metadata and requires no provider credential.`,
+selection. When the outcome is unknown, the command exits with code 7 and prints the request
+key. Run the same command, unchanged, with that --request-key to reconcile it. The command
+never discovers metadata and requires no provider credential.`,
 		Args: noArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			connection := runtime.flags.connection
@@ -223,7 +225,7 @@ func newSchemaShowCommand(runtime *commandRuntime) *cobra.Command {
 	snapshotID := singleString{name: "snapshot-id"}
 	command := &cobra.Command{
 		Use:   "show",
-		Short: "Show one resource's selected snapshot, its effective typed fields and its selection revision",
+		Short: "Show a resource's selected snapshot, fields and selection revision",
 		Long: `Show the exact binding, completeness and effective fields of the selected metadata snapshot
 of one resource of a connection, and the selection revision of that resource.
 

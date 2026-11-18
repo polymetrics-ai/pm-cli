@@ -176,7 +176,23 @@ func (service *SchemaSelectionService) Select(
 		}
 		return identity.finishMutation(ctx, tx, key, result.Mutation, result)
 	})
-	return result, err
+	return result, selectionOutcome(err)
+}
+
+// selectionOutcome maps the end of the selection transaction. A COMMIT whose
+// outcome is unknown may have taken effect, so the outcome stays unknown and
+// only a request with the same key may reconcile it, as for a membership
+// update (503 mutation_outcome_unknown). Every other error is unchanged.
+func selectionOutcome(err error) error {
+	if errors.Is(err, store.ErrCommitOutcomeUnknown) {
+		return &Failure{
+			HTTPStatus:  503,
+			Code:        "mutation_outcome_unknown",
+			RetryAction: "same_key_reconcile_only",
+			cause:       err,
+		}
+	}
+	return err
 }
 
 // requireSelectableCandidate refuses a resource that no declared relation of

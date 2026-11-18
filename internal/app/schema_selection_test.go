@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -78,6 +80,25 @@ func TestSchemaSelectionControl(t *testing.T) {
 				t.Fatalf("selection of %s %s = HTTP %d %q; want 404 schema_relation_unknown",
 					call.resource, call.schemaRef, response.status, response.problem.Code)
 			}
+		}
+		requireSchemaSelectionState(t, harness, audit, nil, 0)
+	})
+
+	// QA-401-1. A deferred trigger makes the COMMIT of the selection fail
+	// with SQLSTATE 08007, which the store keeps as an unknown commit outcome,
+	// as #332's TestMembershipUpdateKeepsAnUnknownCommitOutcome does. The real
+	// Select must answer 503 mutation_outcome_unknown, not 500 internal_error.
+	// The forced failure aborts the transaction, so nothing is written.
+	t.Run("an unknown COMMIT outcome gets 503 mutation_outcome_unknown", func(t *testing.T) {
+		failCommitOfSchemaSelectionAudit(t, audit)
+		response := harness.postSelection(t, selectionCall{
+			resource: sqlExecutionResource, schemaRef: candidate, revision: "1", ifMatch: "1",
+			requestKey: "schema-selection-unknown-commit",
+		})
+		if response.status != http.StatusServiceUnavailable || response.problem.Code != "mutation_outcome_unknown" ||
+			response.problem.SafeRetryAction != "same_key_reconcile_only" {
+			t.Fatalf("selection with an unknown COMMIT outcome = HTTP %d %q %q; want 503 mutation_outcome_unknown with same_key_reconcile_only",
+				response.status, response.problem.Code, response.problem.SafeRetryAction)
 		}
 		requireSchemaSelectionState(t, harness, audit, nil, 0)
 	})
@@ -386,7 +407,11 @@ func newWorkspaceAuditReader(t *testing.T, fixture *testfixture.Fixture) workspa
 			t.Errorf("connect the stack administrator for cleanup: %T", err)
 			return
 		}
-		defer func() { _ = connection.Close(context.Background()) }()
+		defer func() {
+			if err := closeAuditConnection(connection, auditConnectionCloseLimit); err != nil {
+				t.Errorf("close the stack administrator connection: %v", err)
+			}
+		}()
 		if _, err := connection.Exec(ctx, `DELETE FROM pm.workspace_audit_entries WHERE org_id = $1`, reader.orgID); err != nil {
 			t.Errorf("remove the workspace audit records: %v", err)
 		}
@@ -402,7 +427,11 @@ func (reader workspaceAuditReader) records(t *testing.T) []workspaceAuditRecord 
 	if err != nil {
 		t.Fatalf("connect the stack administrator: %T", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
+	defer func() {
+		if err := closeAuditConnection(connection, auditConnectionCloseLimit); err != nil {
+			t.Errorf("close the stack administrator connection: %v", err)
+		}
+	}()
 	rows, err := connection.Query(ctx, `
 		SELECT action, target_ref, requested_actor_id
 		FROM pm.workspace_audit_entries
@@ -425,4 +454,88 @@ func (reader workspaceAuditReader) records(t *testing.T) []workspaceAuditRecord 
 		t.Fatalf("read the workspace audit records: %v", err)
 	}
 	return records
+}
+
+// auditConnectionCloseLimit bounds the close of a raw audit reader connection.
+const auditConnectionCloseLimit = 10 * time.Second
+
+// closeAuditConnection closes a raw connection within its own limit, so a
+// PostgreSQL that does not answer cannot hold a check or its cleanup after
+// that limit.
+func closeAuditConnection(connection interface{ Close(context.Context) error }, limit time.Duration) error {
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	return connection.Close(ctx)
+}
+
+// stalledAuditConnection stands for a connection that does not answer: its
+// close returns only when the context of the call ends.
+type stalledAuditConnection struct{}
+
+func (stalledAuditConnection) Close(ctx context.Context) error {
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// Go developer check, not acceptance proof, with no stack. The close of a raw
+// audit reader connection must end at its limit when PostgreSQL does not
+// answer. Defect: a close on context.Background(), which never ends.
+func TestSchemaSelectionAuditCleanupEndsAtItsLimit(t *testing.T) {
+	started := time.Now()
+	err := closeAuditConnection(stalledAuditConnection{}, 100*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("close of a connection that does not answer = %v; want the end of its limit", err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("close of a connection that does not answer took %s; want an end at its limit", elapsed)
+	}
+}
+
+var schemaSelectionAuditOrgPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// failCommitOfSchemaSelectionAudit makes each COMMIT that inserts a workspace
+// audit record of the reader's organization raise SQLSTATE 08007, with a
+// deferred constraint trigger that runs at COMMIT (the method of #332's
+// failCommitOfWorkspaceAudit). Its cleanup, registered before the install,
+// drops the trigger and its function when the calling test ends. Each step has
+// a time limit.
+func failCommitOfSchemaSelectionAudit(t *testing.T, reader workspaceAuditReader) {
+	t.Helper()
+	if !schemaSelectionAuditOrgPattern.MatchString(reader.orgID) {
+		t.Fatalf("organization ID %q is not safe in the trigger condition", reader.orgID)
+	}
+	name := "pm_test_selection_commit_unknown_" + strings.ReplaceAll(strings.ToLower(reader.orgID), "-", "_")
+	if len(name) > 60 {
+		name = name[:60]
+	}
+	exec := func(statement string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		connection, err := pgx.Connect(ctx, reader.adminDSN)
+		if err != nil {
+			return fmt.Errorf("connect the stack administrator: %T", err)
+		}
+		_, execErr := connection.Exec(ctx, statement)
+		return errors.Join(execErr, closeAuditConnection(connection, auditConnectionCloseLimit))
+	}
+	t.Cleanup(func() {
+		if err := exec(fmt.Sprintf(`
+			DROP TRIGGER IF EXISTS %[1]s ON pm.workspace_audit_entries;
+			DROP FUNCTION IF EXISTS pm.%[1]s();
+		`, name)); err != nil {
+			t.Errorf("remove the commit fault: %v", err)
+		}
+	})
+	if err := exec(fmt.Sprintf(`
+		CREATE FUNCTION pm.%[1]s() RETURNS trigger LANGUAGE plpgsql AS $body$
+		BEGIN
+			RAISE EXCEPTION 'test: commit resolution unknown' USING ERRCODE = '08007';
+		END
+		$body$;
+		CREATE CONSTRAINT TRIGGER %[1]s AFTER INSERT ON pm.workspace_audit_entries
+			DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+			WHEN (NEW.org_id = '%[2]s') EXECUTE FUNCTION pm.%[1]s();
+	`, name, reader.orgID)); err != nil {
+		t.Fatalf("install the commit fault: %v", err)
+	}
 }

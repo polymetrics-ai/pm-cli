@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -95,12 +96,16 @@ func (fixture *schemaSelectionFixture) asMigrator(t *testing.T, query string, ar
 	if err != nil {
 		t.Fatalf("connect the migrator: %T", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
-	tx, err := connection.Begin(ctx)
+	var tx pgx.Tx
+	defer func() {
+		if err := endSchemaSelectionTransaction(tx, connection, schemaSelectionCleanupLimit); err != nil {
+			t.Errorf("end the migrator fixture: %v", err)
+		}
+	}()
+	tx, err = connection.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin the migrator fixture: %T", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
 	if _, err := tx.Exec(ctx, `SELECT set_config('pm.org_id', $1, true), set_config('pm.workspace_id', $2, true)`,
 		fixture.scope.OrgID, fixture.scope.WorkspaceID); err != nil {
 		t.Fatalf("bind the migrator fixture scope: %T", err)
@@ -122,7 +127,11 @@ func (fixture *schemaSelectionFixture) removeAuditRecords(t *testing.T) {
 		t.Errorf("connect the stack administrator for cleanup: %T", err)
 		return
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
+	defer func() {
+		if err := endSchemaSelectionTransaction(nil, connection, schemaSelectionCleanupLimit); err != nil {
+			t.Errorf("close the stack administrator connection: %v", err)
+		}
+	}()
 	if _, err := connection.Exec(ctx, `DELETE FROM pm.workspace_audit_entries WHERE org_id = $1`, fixture.scope.OrgID); err != nil {
 		t.Errorf("remove the workspace audit records: %v", err)
 	}
@@ -137,7 +146,11 @@ func (fixture *schemaSelectionFixture) auditActions(t *testing.T) []string {
 	if err != nil {
 		t.Fatalf("connect the stack administrator: %T", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
+	defer func() {
+		if err := endSchemaSelectionTransaction(nil, connection, schemaSelectionCleanupLimit); err != nil {
+			t.Errorf("close the stack administrator connection: %v", err)
+		}
+	}()
 	rows, err := connection.Query(ctx, `
 		SELECT action FROM pm.workspace_audit_entries
 		WHERE org_id = $1 AND workspace_id = $2 ORDER BY recorded_at, audit_id
@@ -326,6 +339,17 @@ func TestSchemaSelectionSameExpectedRevisionSucceedsOnce(t *testing.T) {
 		})
 		t.Run(path.name+" overlapping", func(t *testing.T) {
 			fixture := newSchemaSelectionFixture(t)
+			// Session 2 runs in a goroutine. Its context belongs to this
+			// subtest. This cleanup cancels and joins it. It is registered
+			// before the goroutine starts and before any later step that can
+			// fail, and after the fixture, so it runs before the fixture
+			// cleanup removes the scope.
+			session2, endSession2 := context.WithCancel(context.Background())
+			var session2Running sync.WaitGroup
+			t.Cleanup(func() {
+				endSession2()
+				session2Running.Wait()
+			})
 			candidates := fixture.prepareSelectionPath(t, path.expected)
 			done := make(chan error, 1)
 			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
@@ -336,8 +360,10 @@ func TestSchemaSelectionSameExpectedRevisionSucceedsOnce(t *testing.T) {
 				}
 				fixture.requireLockWait(t, candidates[2], path.expected)
 				request := fixture.selectionRequest(t, candidates[2], path.expected)
+				session2Running.Add(1)
 				go func() {
-					_, err := fixture.selectCandidateFrom(request)
+					defer session2Running.Done()
+					_, err := fixture.selectCandidateFrom(session2, request)
 					done <- err
 				}()
 				return nil
@@ -368,10 +394,11 @@ func (fixture *schemaSelectionFixture) prepareSelectionPath(t *testing.T, expect
 	return candidates
 }
 
-// selectCandidateFrom runs one selection in its own session. It reports no
-// test failure itself, because it runs in a goroutine.
-func (fixture *schemaSelectionFixture) selectCandidateFrom(request SelectSchemaCandidateRequest) (SchemaSelectionChange, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+// selectCandidateFrom runs one selection in its own session, within the
+// caller's context. It reports no test failure itself, because it runs in a
+// goroutine.
+func (fixture *schemaSelectionFixture) selectCandidateFrom(parent context.Context, request SelectSchemaCandidateRequest) (SchemaSelectionChange, error) {
+	ctx, cancel := context.WithTimeout(parent, time.Minute)
 	defer cancel()
 	var change SchemaSelectionChange
 	err := WithinScope(ctx, fixture.pool, fixture.scope, fixture.actor, func(ctx context.Context, tx *Transaction) error {
@@ -394,12 +421,16 @@ func (fixture *schemaSelectionFixture) requireLockWait(t *testing.T, schemaRef s
 	if err != nil {
 		t.Fatalf("connect the runtime probe: %T", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
-	tx, err := connection.Begin(ctx)
+	var tx pgx.Tx
+	defer func() {
+		if err := endSchemaSelectionTransaction(tx, connection, schemaSelectionCleanupLimit); err != nil {
+			t.Errorf("end the runtime probe: %v", err)
+		}
+	}()
+	tx, err = connection.Begin(ctx)
 	if err != nil {
 		t.Fatalf("begin the runtime probe: %T", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
 	if _, err := tx.Exec(ctx, `SELECT set_config('pm.org_id', $1, true), set_config('pm.workspace_id', $2, true),
 			set_config('lock_timeout', $3, true)`,
 		fixture.scope.OrgID, fixture.scope.WorkspaceID, selectionLockProbe); err != nil {
@@ -462,7 +493,11 @@ func TestSchemaSelectionMigrationGrantsAndDownStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("connect the stack administrator: %T", err)
 	}
-	defer func() { _ = connection.Close(context.Background()) }()
+	defer func() {
+		if err := endSchemaSelectionTransaction(nil, connection, schemaSelectionCleanupLimit); err != nil {
+			t.Errorf("close the stack administrator connection: %v", err)
+		}
+	}()
 	if _, err := connection.Exec(ctx, `DELETE FROM pm.schema_selections WHERE org_id = $1`, fixture.scope.OrgID); err != nil {
 		t.Fatalf("remove the retained selection: %v", err)
 	}
@@ -483,4 +518,36 @@ func TestSchemaSelectionMigrationGrantsAndDownStep(t *testing.T) {
 		t.Fatalf("apply migration 0024 again: %v", err)
 	}
 	requireSelection(t, fixture.currentSelection(t), "", 1)
+}
+
+// schemaSelectionCleanupLimit bounds each cleanup step of a raw pgx
+// transaction or connection in these checks.
+const schemaSelectionCleanupLimit = 10 * time.Second
+
+// endSchemaSelectionTransaction rolls back a raw transaction (a nil tx skips
+// the rollback) and closes its connection. Each step has its own context with
+// the limit, so a PostgreSQL that does not answer cannot hold a check or its
+// cleanup after that limit. It uses the bounded cleanup of the membership
+// update checks.
+func endSchemaSelectionTransaction(
+	tx interface{ Rollback(context.Context) error },
+	connection interface{ Close(context.Context) error },
+	limit time.Duration,
+) error {
+	return endMembershipUpdateTransaction(tx, connection, limit)
+}
+
+// Go developer check, not acceptance proof. The cleanup of a raw transaction
+// and connection in these checks must end at its limit when PostgreSQL does
+// not answer. The stand-ins return only when the context of each call ends.
+// Defect: a rollback or close on context.Background(), which never ends.
+func TestSchemaSelectionCleanupEndsAtItsLimit(t *testing.T) {
+	started := time.Now()
+	err := endSchemaSelectionTransaction(stalledMembershipCleanup{}, stalledMembershipCleanup{}, 100*time.Millisecond)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("cleanup with a PostgreSQL that does not answer = %v; want the end of its limit", err)
+	}
+	if elapsed := time.Since(started); elapsed > 10*time.Second {
+		t.Fatalf("cleanup with a PostgreSQL that does not answer took %s; want an end at its limit", elapsed)
+	}
 }

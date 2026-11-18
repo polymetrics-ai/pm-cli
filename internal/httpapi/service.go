@@ -626,6 +626,9 @@ func newProblem(status int, code, retryAction string, outcome *api.SafeOutcomeRe
 	if code == "admission_outcome_unknown" || code == "mutation_outcome_unknown" {
 		title, detail = "Outcome unknown", "Reconcile the original request before attempting another mutation."
 	}
+	if code == "schema_selection_absent" {
+		detail = "The declared relation has no usable schema selection. Run pm schema discover and pm schema select for its resource, then start the run again."
+	}
 	return api.Problem{
 		Type:             "https://polymetrics.ai/problems/" + code,
 		Title:            title,

@@ -341,3 +341,30 @@ func TestDiscoveryRefusesAnotherPhysicalRelationUnderTheSameBinding(t *testing.T
 		}
 	}
 }
+
+// TestSelectionCommitOutcomeUnknownIsReconcileOnly is the developer check of
+// #401 review finding QA-401-1. Defect: Select returned an unknown COMMIT
+// outcome unchanged, so the route answered 500 internal_error and pm schema
+// select exited 6. Select passes the end of its transaction through
+// selectionOutcome. The check covers that mapping only: it does not drive a
+// real lost COMMIT reply through Select. The store checks show that
+// WithinScope returns ErrCommitOutcomeUnknown on a lost reply.
+func TestSelectionCommitOutcomeUnknownIsReconcileOnly(t *testing.T) {
+	unknown := errors.Join(store.ErrCommitOutcomeUnknown, errors.New("commit the schema selection"))
+	mapped := selectionOutcome(unknown)
+	var failure *Failure
+	if !errors.As(mapped, &failure) || failure.HTTPStatus != 503 || failure.Code != "mutation_outcome_unknown" ||
+		failure.RetryAction != "same_key_reconcile_only" {
+		t.Fatalf("selection with an unknown COMMIT outcome = %#v; want 503 mutation_outcome_unknown with same_key_reconcile_only", mapped)
+	}
+	if !errors.Is(mapped, store.ErrCommitOutcomeUnknown) {
+		t.Fatalf("selection with an unknown COMMIT outcome = %v; want ErrCommitOutcomeUnknown kept as the cause", mapped)
+	}
+	known := errors.New("a known refusal")
+	if got := selectionOutcome(known); got != known {
+		t.Fatalf("selection with a known error = %v; want the error unchanged", got)
+	}
+	if got := selectionOutcome(nil); got != nil {
+		t.Fatalf("selection with no error = %v; want nil", got)
+	}
+}

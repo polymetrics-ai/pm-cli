@@ -127,3 +127,14 @@ func TestDevicePollRetryAfterNeverExceedsSixtySeconds(t *testing.T) {
 		}
 	}
 }
+
+// TestSchemaSelectionAbsentProblemNamesItsRecovery is the developer check of
+// the #401 text review finding 1. Defect: the 409 schema_selection_absent
+// problem carried only the generic conflict detail, which names no recovery.
+func TestSchemaSelectionAbsentProblemNamesItsRecovery(t *testing.T) {
+	problem := newProblem(http.StatusConflict, "schema_selection_absent", "after_capability_change", nil)
+	want := "The declared relation has no usable schema selection. Run pm schema discover and pm schema select for its resource, then start the run again."
+	if problem.Status != http.StatusConflict || problem.Code != "schema_selection_absent" || problem.Detail != want {
+		t.Fatalf("schema_selection_absent problem = %#v; want 409 with the detail %q", problem, want)
+	}
+}
