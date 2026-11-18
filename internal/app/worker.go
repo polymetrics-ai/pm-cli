@@ -60,6 +60,22 @@ func workerFailure(kind, cause error) error {
 	return &WorkerFailure{Kind: kind, Cause: cause}
 }
 
+// WorkerLeaseHeldError reports that another attempt still holds the task
+// lease of a unit, so this attempt claimed nothing and did nothing else. It
+// unwraps to store.ErrClaimLost. RetryAfter is the remaining lease time,
+// measured on the database clock from the stored lease end.
+type WorkerLeaseHeldError struct {
+	RetryAfter time.Duration
+}
+
+func (held *WorkerLeaseHeldError) Error() string {
+	return "worker task lease is held by another attempt"
+}
+
+func (held *WorkerLeaseHeldError) Unwrap() error {
+	return store.ErrClaimLost
+}
+
 type ScheduledRunAdmitter func(
 	context.Context,
 	contract.WorkflowExecution,
@@ -104,6 +120,12 @@ type WorkerService struct {
 	artifactPublisher         *objects.Publisher
 	maximumResultBytes        int64
 	sqlBounds                 SQLBoundsResolver
+	// beforeLeaseDecision runs in the prepare transaction after
+	// claimWorkerTask samples the database time for the lease decision and
+	// before it reads the stored lease. It gets that sample. Production sets
+	// no value. Only the Go developer checks set it, through
+	// lease_decision_export_test.go.
+	beforeLeaseDecision func(context.Context, time.Time) error
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -486,21 +508,30 @@ func (service *WorkerService) ExecuteUnit(
 	} else {
 		observation, callbackErr = plan.handler.Execute(callbackCtx, plan.request)
 	}
-	continuationPublication, continuationPublicationErr := plan.request.continuation.preparedForResult(observation.Result)
+	// The transport limit bounds the provider callback only. The publication of
+	// PM's own objects starts after the provider callback context ends.
+	cancel()
+
+	acceptedDeadline := plan.state.deadline
+	if plan.reconcile {
+		acceptedDeadline = time.Time{}
+	}
+	publicationCtx, publicationCancel := workerPublicationContext(
+		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+	)
+	continuationPublication, continuationPublicationErr := plan.request.continuation.publishForResult(
+		publicationCtx, observation.Result,
+	)
 	resultForPublication := observation.Result
 	if continuationPublicationErr != nil {
 		resultForPublication = nil
 	}
-	publication, resultPublicationErr := service.prepareWorkerResult(callbackCtx, plan, resultForPublication)
+	publication, resultPublicationErr := service.prepareWorkerResult(publicationCtx, plan, resultForPublication)
 	publicationErr := errors.Join(continuationPublicationErr, resultPublicationErr)
-	cancel()
+	publicationCancel()
 
-	settlementDeadline := plan.state.deadline
-	if plan.reconcile {
-		settlementDeadline = time.Time{}
-	}
 	settleCtx, settleCancel := workerSettlementContext(
-		ctx, settlementDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 	)
 	defer settleCancel()
 	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, publication, continuationPublication, publicationErr, callbackErr)
@@ -691,7 +722,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		}
 
 		lease, err := claimWorkerTask(
-			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend,
+			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend, service.beforeLeaseDecision,
 		)
 		if err != nil {
 			return err
@@ -872,6 +903,7 @@ func claimWorkerTask(
 	ref store.TaskRef,
 	maxTTL time.Duration,
 	reconciliationOnly bool,
+	beforeLeaseDecision func(context.Context, time.Time) error,
 ) (store.Lease, error) {
 	ownerID, err := workerRecordID("task-owner-v1-", struct {
 		RunID         string `json:"run_id"`
@@ -889,10 +921,26 @@ func claimWorkerTask(
 		return store.Lease{}, workerFailure(ErrWorkerAuthorization, errors.New("worker lease authority has elapsed"))
 	}
 	expectedFence := uint64(0)
+	// Preparation runs after loadWorkerRunState sampled state.now, and it can
+	// outlast the stored lease. The lease decision reads the database time
+	// again, before it reads the stored lease, and uses that one sample for
+	// the expiry comparison and for the remaining lease time. A lease that
+	// ends between the sample and the read counts as held for the rest of
+	// that short interval. ClaimTask compares the lease end with its own
+	// database time again.
+	decidedAt, err := store.ReadAuthenticationTime(ctx, tx)
+	if err != nil {
+		return store.Lease{}, err
+	}
+	if beforeLeaseDecision != nil {
+		if err := beforeLeaseDecision(ctx, decidedAt); err != nil {
+			return store.Lease{}, err
+		}
+	}
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
-		if current.ExpiresAt.After(state.now) {
-			return store.Lease{}, store.ErrClaimLost
+		if current.ExpiresAt.After(decidedAt) {
+			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(decidedAt)}
 		}
 		expectedFence = current.Fence
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -2459,20 +2507,71 @@ func workerSettlementContext(
 	heartbeatTimeout time.Duration,
 	transportTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	now := time.Now()
-	deadline := now.Add(transportTimeout)
-	if !acceptedDeadline.IsZero() && acceptedDeadline.Before(deadline) {
-		deadline = acceptedDeadline
-	}
-	if activityDeadline, ok := ctx.Deadline(); ok {
-		reserve := minWorkerDuration(heartbeatTimeout/2, transportTimeout/2)
-		if reserve <= 0 {
-			reserve = time.Nanosecond
-		}
-		activitySettlementDeadline := activityDeadline.Add(-reserve)
-		if activitySettlementDeadline.Before(deadline) {
-			deadline = activitySettlementDeadline
-		}
+	deadline := time.Now().Add(transportTimeout)
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	if cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve); ok && cutoff.Before(deadline) {
+		deadline = cutoff
 	}
 	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
+}
+
+// workerPublicationContext bounds the publication of PM's own objects for one
+// unit: the continuation envelope and the result. The transport limit
+// (worker.activity_timeouts.transport) bounds the provider callback only, so
+// this context does not inherit the callback deadline.
+//
+// The step ends one settlement reserve before the settlement cutoff. The cutoff
+// is the earlier of the accepted run deadline and one reserve before the
+// activity attempt deadline. So the publication step does not use the reserve
+// that it leaves for the settlement, whichever deadline comes first. This is a
+// nominal separation only. The provider callback can run until the accepted
+// run deadline (workerCallbackContext), so a late callback can leave the
+// settlement less than one reserve, or none. Issue #281 owns that gap.
+//
+// Each object-store request in the step keeps its own bound,
+// artifacts.execution.request_timeout, in the object-store adapter. The
+// PostgreSQL bind in objects.Publisher.Upload has no bound of its own. It
+// relies on this context.
+//
+// When ctx has no deadline and the unit has no accepted deadline, the step has
+// no bound of its own. That cannot occur in production. The worker runs
+// ExecuteUnit as a Temporal activity with a StartToClose timeout
+// (internal/workflows/options.go), and contract.ActivityTimeouts.Validate
+// requires that timeout to be positive (internal/contract/workflow.go).
+func workerPublicationContext(
+	ctx context.Context,
+	acceptedDeadline time.Time,
+	heartbeatTimeout time.Duration,
+	transportTimeout time.Duration,
+) (context.Context, context.CancelFunc) {
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve)
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, cutoff.Add(-reserve))
+}
+
+// workerSettlementCutoff is the latest time at which a unit settlement may end:
+// the accepted run deadline, or one settlement reserve before the activity
+// attempt deadline, whichever is earlier. ok is false when neither exists.
+func workerSettlementCutoff(ctx context.Context, acceptedDeadline time.Time, reserve time.Duration) (time.Time, bool) {
+	cutoff := acceptedDeadline
+	if activityDeadline, ok := ctx.Deadline(); ok {
+		activityCutoff := activityDeadline.Add(-reserve)
+		if cutoff.IsZero() || activityCutoff.Before(cutoff) {
+			cutoff = activityCutoff
+		}
+	}
+	return cutoff, !cutoff.IsZero()
+}
+
+// workerSettlementReserve is the part of the activity attempt that the worker
+// keeps free after the settlement deadline.
+func workerSettlementReserve(heartbeatTimeout, transportTimeout time.Duration) time.Duration {
+	reserve := minWorkerDuration(heartbeatTimeout/2, transportTimeout/2)
+	if reserve <= 0 {
+		reserve = time.Nanosecond
+	}
+	return reserve
 }
