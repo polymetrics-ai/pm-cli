@@ -52,6 +52,37 @@ func TestLaneGivesItsPmServerTheHeldListener(t *testing.T) {
 		}
 	})
 
+	// R13 of the W1b plan v2.1: the O4 restart stops and starts pm-server
+	// after many answers through the edge. Defect: the first answer releases
+	// the held listener, so the restarted pm-server gets no listener.
+	t.Run("a restart scenario restarts pm-server with the held listener", func(t *testing.T) {
+		l := &lane{deployment: newLaneListenerDeployment(t), restartsServer: true}
+		l.holdListenerForRestart()
+		configuration := writeLaneFakeConfiguration(t, l.deployment.listen)
+		startLaneFakeServer(t, l, fake, configuration)
+		l.deployment.servedThroughEdge()
+		if err := l.restartServerBinary(context.Background(), fake, configuration); err != nil {
+			t.Fatalf("the restart of pm-server after an answer through the edge = %v; want the ready signal", err)
+		}
+	})
+
+	t.Run("a scenario without the restart tag releases the listener after the first answer", func(t *testing.T) {
+		l := &lane{deployment: newLaneListenerDeployment(t)}
+		l.holdListenerForRestart()
+		configuration := writeLaneFakeConfiguration(t, l.deployment.listen)
+		startLaneFakeServer(t, l, fake, configuration)
+		l.deployment.servedThroughEdge()
+		if err := stopLaneProcess("pm-server", l.server); err != nil {
+			t.Fatal(err)
+		}
+		if err := bindAddressOnce(l.deployment.listen); err != nil {
+			t.Fatalf("a bind of the address after the first answer and the stop = %v; want a free address", err)
+		}
+		if err := l.restartServerBinary(context.Background(), fake, configuration); err == nil {
+			t.Fatal("a restart without the restart tag = nil error; want the refusal that names the tag")
+		}
+	})
+
 	t.Run("a failed start releases the held listener", func(t *testing.T) {
 		d := newLaneListenerDeployment(t)
 		l := &lane{deployment: d}
@@ -61,6 +92,22 @@ func TestLaneGivesItsPmServerTheHeldListener(t *testing.T) {
 		}
 		if err := bindAddressOnce(d.listen); err != nil {
 			t.Fatalf("a bind of the held address after the failed start = %v; want a free address", err)
+		}
+	})
+}
+
+// startLaneFakeServer starts the fake pm-server as the lane pm-server. The
+// cleanup stops it.
+func startLaneFakeServer(t *testing.T, l *lane, fake, configuration string) {
+	t.Helper()
+	process, err := l.startBinary(context.Background(), "pm-server", fake, configuration)
+	if err != nil {
+		t.Fatalf("the lane pm-server start = %v; want the ready signal", err)
+	}
+	l.server = process
+	t.Cleanup(func() {
+		if err := stopLaneProcess("pm-server", l.server); err != nil {
+			t.Error(err)
 		}
 	})
 }
@@ -190,4 +237,23 @@ func runLaneFakeServer(args []string, stderr io.Writer) int {
 	}()
 	<-stop
 	return 0
+}
+
+// Developer check of the harness listener read (#405 review R2), not
+// acceptance proof. Defect: the read refuses a valid held listener on a
+// system where getsockopt SO_ACCEPTCONN is not supported (Darwin), so LF1 to
+// LF3 fail there before pm-server starts.
+func TestHarnessReadsTheStateOfAHeldListener(t *testing.T) {
+	listener, err := holdLoopbackListener()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	state, err := readListenerState(listener)
+	if err != nil {
+		t.Fatalf("readListenerState of a held listener = %v; want its state", err)
+	}
+	if state.socketType != syscall.SOCK_STREAM || !state.listening || !state.inet4 || state.local.String() != listener.Addr().String() {
+		t.Fatalf("readListenerState = %+v; want a listening IPv4 stream socket at %s", state, listener.Addr())
+	}
 }
