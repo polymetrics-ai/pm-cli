@@ -57,6 +57,8 @@ Each refusal: exit code 1, nothing served, and exactly one stderr line after `pm
 | 2, after the flags are read | `--listen-fd` and `--ready-fd` name the same descriptor | `--listen-fd and --ready-fd require different descriptors` |
 | 3, after the configuration is validated | A descriptor that fails any check of "The checks of the descriptor" | `--listen-fd requires an inherited listener at the configured server address` |
 
+The order-2 checks run after the `--config` and `--secrets-directory` checks and before the process opens or reads the configuration file. So the process refuses a malformed value also when the configuration path does not exist. This is the place of the `--ready-fd` check of ADR 0005. Only the order-3 check needs the configuration, because it compares the socket with `server.listen`.
+
 ### The ready signal
 
 The ready contract of ADR 0005 does not change. The process sends its ready line through `--ready-fd`, never through the listener. With `--listen-fd`, the process serves on the inherited listener, and the readiness boundary of ADR 0005 stays exactly as it is: the admission probe passed, the state is serving, and the HTTP accept loop calls Accept for the first time, now on the inherited listener. No incoming connection is needed before the ready line.
