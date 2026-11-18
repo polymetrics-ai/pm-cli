@@ -12,6 +12,7 @@ require (
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/gin-gonic/gin v1.12.0
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jackc/puddle/v2 v2.2.2
 	github.com/oapi-codegen/nullable v1.1.0
@@ -35,6 +36,7 @@ require (
 	golang.org/x/net v0.58.0
 	golang.org/x/oauth2 v0.37.0
 	golang.org/x/sync v0.23.0
+	golang.org/x/sys v0.47.0
 	golang.org/x/time v0.16.0
 	google.golang.org/protobuf v1.36.12
 )
@@ -92,7 +94,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect
@@ -157,7 +158,6 @@ require (
 	golang.org/x/crypto v0.55.0 // indirect
 	golang.org/x/exp v0.0.0-20260824195058-e88cd73687aa // indirect
 	golang.org/x/mod v0.39.0 // indirect
-	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/tools v0.49.0 // indirect

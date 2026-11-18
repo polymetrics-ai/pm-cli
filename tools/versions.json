@@ -58,6 +58,12 @@
         "source_url": "https://github.com/gin-gonic/gin/tree/73726dc606796a025971fe451f0aa6f1b9b847f6"
       },
       {
+        "path": "github.com/godbus/dbus/v5",
+        "version": "v5.2.2",
+        "license": "BSD-2-Clause",
+        "source_url": "https://github.com/godbus/dbus/tree/a8ac15ba63645f02ffd57f4b443203279ab40b30"
+      },
+      {
         "path": "github.com/jackc/pgx/v5",
         "version": "v5.11.0",
         "license": "MIT",
@@ -194,6 +200,12 @@
         "version": "v0.23.0",
         "license": "BSD-3-Clause",
         "source_url": "https://go.googlesource.com/sync/+/f75267d8412fc1dfd12b343644a7ea46e4d9c85d"
+      },
+      {
+        "path": "golang.org/x/sys",
+        "version": "v0.47.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/sys/+/9e7e939dcafac07e8ab4cffa6e5fc74908413f00"
       },
       {
         "path": "golang.org/x/time",
