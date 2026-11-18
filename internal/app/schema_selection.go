@@ -176,7 +176,7 @@ func (service *SchemaSelectionService) Select(
 		}
 		return identity.finishMutation(ctx, tx, key, result.Mutation, result)
 	})
-	return result, selectionOutcome(err)
+	return result, err
 }
 
 // selectionOutcome maps the end of the selection transaction. A COMMIT whose
