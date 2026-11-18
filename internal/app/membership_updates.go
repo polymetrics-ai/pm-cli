@@ -127,6 +127,16 @@ func (service *IdentityService) UpdateMembership(
 		}
 		return service.finishMutation(ctx, tx, key, result.Mutation, result)
 	})
+	if errors.Is(err, store.ErrCommitOutcomeUnknown) {
+		// The COMMIT may have taken effect. The outcome stays unknown, and only
+		// a request with the same key may reconcile it, as for a run cancel.
+		return MembershipMutationResult{}, &Failure{
+			HTTPStatus:  503,
+			Code:        "mutation_outcome_unknown",
+			RetryAction: "same_key_reconcile_only",
+			cause:       err,
+		}
+	}
 	return result, err
 }
 
