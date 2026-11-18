@@ -72,6 +72,12 @@ func (service *Service) GetConnectionSchema(
 			return asProblemResponse(err, nil), nil
 		}
 	case view.Snapshot == nil:
+		// The connection has one provider account. A selector that names
+		// another one gets the concealed refusal here as well, so the same
+		// selector gets the same answer with or without a selection.
+		if request.Params.ProviderAccountId != nil && *request.Params.ProviderAccountId != connection.ProviderAccountID {
+			return asProblemResponse(concealedSchemaSelector(schema.ErrSnapshotScope), nil), nil
+		}
 		// An absent selection is explicit: this route does not invent one.
 		projected = api.ConnectionSchemaInspection{
 			OrgId:        scope.OrgID,
