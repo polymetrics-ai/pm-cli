@@ -233,7 +233,7 @@ The rule selects the packages, so a new package goes to the unit run with no lis
 The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these seven checks:
 
 - `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
-- `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
+- `python`: `test_setup.py`, `test_runner_admission.py`, `test_runner_admission_live.py`, `test_live_launcher.py`, `test_live_cleanup.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
 - `generate`: `generate.sh --check` for the API and the connectors.
 - `gofmt`: `gofmt -l` on every tracked Go file.
 - `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
@@ -456,7 +456,7 @@ The owner installs root-owned copies of [live-cleanup-check.sh](../../scripts/ci
 
 `live-cleanup-check.sh in-job` (the always-run step) and `live-cleanup-check.sh post-stop` (the owner, after the runner stops) run as the live account. The script reads no job variable and no label. Each step runs, also after a failed step, and each result stays:
 
-1. Only `in-job`: it reads the scan receipt `scan-receipt` in the run root. Each line is `sink=NAME count=N complete` or `sink=NAME count=N incomplete`, and the last line is `complete=true`. The sinks are `service-logs`, `container-logs`, `container-records`, `temporal-history`, `postgresql`, `object-store`, `step-summary`, `test-output` and `host-processes`. Each line must have exactly this form, with one space between the fields and nothing more. A missing receipt, a missing or repeated sink, an `incomplete` line, a count above 0, a line with other or extra fields or an unknown line fails. The live harness of L-e2 writes the receipt.
+1. Only `in-job`: it reads the scan receipt `scan-receipt` in the run root. Each line is `sink=NAME count=N complete` or `sink=NAME count=N incomplete`, and the last line is `complete=true`. The sinks are `service-logs`, `container-logs`, `container-records`, `temporal-history`, `postgresql`, `object-store`, `step-summary`, `test-output` and `host-processes`. Each line must have exactly this form, with one space between the fields and nothing more. A missing receipt, a missing or repeated sink, an `incomplete` line or a count above 0 fails. A line with other or extra fields, and an unknown line, also fail. The live harness of L-e2 writes the receipt.
 2. It opens the token directory once, without following a link, and checks its owner and its mode 0700 on that descriptor. It removes `w2-token` relative to the descriptor (`unlinkat`), so a symbolic link is removed itself, never its target. The token directory must then be empty, through the same descriptor. A directory that is a link, has another owner or another mode fails. The directory stays.
 3. It resets the engine of the account (`podman system reset --force`). Then no container, pod, volume or image may stay, and only the default network.
 4. It removes the run roots and the cache folder with `podman unshare rm -rf`, and checks that both are absent.
