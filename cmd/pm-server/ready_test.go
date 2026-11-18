@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"io"
 	"net"
 	"net/http"
 	"os"
@@ -81,12 +82,12 @@ func descriptorFlags(t *testing.T, fd int) uintptr {
 // 32-bit signed int, or that refuses the boundary 2147483647.
 func TestReadyDescriptorValueRule(t *testing.T) {
 	for _, value := range []string{"3", "4", "300", "2147483647"} {
-		if _, ok := parseReadyDescriptor(value); !ok {
+		if _, ok := parseDescriptor(value); !ok {
 			t.Errorf("value %q refused, want accepted", value)
 		}
 	}
 	for _, value := range []string{"", "0", "2", "03", "+3", "-3", "x", "3 ", "2147483648", "99999999999999999999"} {
-		if _, ok := parseReadyDescriptor(value); ok {
+		if _, ok := parseDescriptor(value); ok {
 			t.Errorf("value %q accepted, want refused", value)
 		}
 	}
@@ -259,8 +260,18 @@ func (buffer *lockedText) String() string {
 
 // newReadyTestServer makes a lifecycle server with a passing admission probe,
 // as the lifecycle tests of internal/server do. The drain bound is 2 s.
-func newReadyTestServer(t *testing.T, diagnostics *lockedText) *server.Server {
+func newReadyTestServer(t *testing.T, diagnostics io.Writer) *server.Server {
 	t.Helper()
+	service, err := lifecycleFixture(diagnostics)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return service
+}
+
+// lifecycleFixture makes the lifecycle server of newReadyTestServer. The
+// child process of the handover check also uses it.
+func lifecycleFixture(diagnostics io.Writer) (*server.Server, error) {
 	raw := `{
   "schema_version":"1","deployment_id":"ready-fixture","public_origin":"https://pm.example.invalid",
   "server":{"drain_timeout":"2s"},
@@ -273,15 +284,11 @@ func newReadyTestServer(t *testing.T, diagnostics *lockedText) *server.Server {
 }`
 	document, err := config.Load(strings.NewReader(raw))
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
 	configuration, err := config.Validate(document, config.Prelaunch{})
 	if err != nil {
-		t.Fatal(err)
+		return nil, err
 	}
-	service, err := server.New(configuration, func(context.Context) error { return nil }, nil, diagnostics)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return service
+	return server.New(configuration, func(context.Context) error { return nil }, nil, diagnostics)
 }

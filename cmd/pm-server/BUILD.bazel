@@ -2,7 +2,12 @@ load("@rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
     name = "pm-server_lib",
-    srcs = ["main.go"],
+    srcs = [
+        "listening_darwin.go",
+        "listening_linux.go",
+        "listening_other.go",
+        "main.go",
+    ],
     importpath = "github.com/polymetrics-ai/pm-cli/cmd/pm-server",
     visibility = ["//visibility:private"],
     deps = [

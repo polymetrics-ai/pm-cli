@@ -185,6 +185,46 @@ The starter must do these things:
 
 A supervisor of `pm-server` has this minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM. It bounds its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
 
+### Inherited listener for a starter
+
+A starter can give `pm-server` a TCP socket that the starter has already bound and set to listen at the configured `server.listen`. It passes `--listen-fd <n>`:
+
+```text
+--listen-fd fd   serve on inherited listening socket fd (3 or more) at the configured server.listen
+```
+
+- The number rules of `--ready-fd` apply. The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. When `--ready-fd` is also present, the two values must be different.
+- `pm-server` reads the raw `--listen-fd` value while it reads the flags, and checks it after that. No refusal line contains the raw value or the address, because a command line can carry private text by mistake. The `--ready-fd` refusals repeat the value, as before.
+- Without the flag, `pm-server` binds `server.listen` itself. With the flag, `pm-server` binds no address. It serves on the socket of descriptor `n`. When a check fails, `pm-server` stops. It never binds `server.listen` in place of the inherited socket.
+- `pm-server` checks descriptor `n` after it reads and checks its configuration, and before it opens the application. The descriptor must obey these rules, in this order:
+  1. It is open and has no close-on-exec flag. A descriptor with that flag belongs to `pm-server` itself.
+  2. It is a stream socket in the family of the configured address: `AF_INET` for an IPv4 address, `AF_INET6` for an IPv6 address.
+  3. It uses TCP.
+  4. It listens for connections.
+  5. Its local address is equal to `server.listen`: the same family, IP address and port (`netip.AddrPort`). An IPv4-mapped IPv6 address is not equal to the IPv4 address. A wildcard address is equal only to the same wildcard.
+- On Linux, `pm-server` reads `SO_PROTOCOL` and `SO_ACCEPTCONN` for rules 3 and 4. Darwin has no `SO_PROTOCOL` and does not give `SO_ACCEPTCONN` to `getsockopt`. On Darwin, `pm-server` reads the TCP option `TCP_CONNECTION_INFO`, which only a TCP socket gives, and its state must be `TCPS_LISTEN`. On another system, `pm-server` refuses each descriptor.
+- `pm-server` owns the descriptor from the check:
+  - A descriptor that fails rule 1 is not an inherited descriptor, so `pm-server` does not close it. When a later rule fails, `pm-server` closes the descriptor and stops.
+  - After the checks, `pm-server` sets close-on-exec on the descriptor before it opens the application. It makes its listener from a copy of the descriptor that has close-on-exec (`net.FileListener`), and it closes the descriptor. Thus the listener is the one handle of the socket in `pm-server`, and no child process holds it.
+  - `pm-server` closes the listener when serving ends, and also when the start fails after the checks.
+- The ready line goes only through `--ready-fd`, and the ready rule does not change. With `--listen-fd`, the HTTP accept loop calls Accept for the first time on the inherited listener. No connection needs to come before the ready line. The configuration stays the one source of the server address.
+
+A refusal stops `pm-server` with exit code 1 and one line on standard error. `pm-server` serves nothing:
+
+| Order | Case | Standard error line |
+| --- | --- | --- |
+| 1, while the flags are read | `--listen-fd` is the last argument and has no value | `pm-server: flag needs an argument: --listen-fd` |
+| 2, after the flags are read and before the `--config` check | `--listen-fd` is given more than once | `pm-server: --listen-fd may be supplied exactly once` |
+| 2, after the flags are read and before the `--config` check | A value that breaks the number rules | `pm-server: --listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the flags are read and before the `--config` check | `--listen-fd` and `--ready-fd` name the same descriptor | `pm-server: --listen-fd and --ready-fd require different descriptors` |
+| 3, after the configuration check and before the application opens | A descriptor that breaks a rule above | `pm-server: --listen-fd requires an inherited listener at the configured server address` |
+
+The starter must do these things:
+
+- Bind the address and set the socket to listen before it starts `pm-server`. Write that exact address into `server.listen`.
+- Give the socket only to `pm-server`, as descriptor `n` with no close-on-exec flag, as it gives the ready descriptor. Protect each copy that it keeps from inheritance by any other child.
+- Keep one copy open until `pm-server` has served one request, so that the port stays held through the handover. Then close it. Also close each copy when `pm-server` does not start or its start fails, and at the normal stop.
+
 ### Scoped event streams and artifact boundaries
 
 `GET /v1/workspaces/{workspace_id}/runs/{run_id}/events` serves authenticated SSE. Both `run.read` and `event.read` must authorize the parent run before event disclosure, and polling rechecks current authority. Foreign scopes and runs remain concealed. The stream begins with an authoritative `snapshot`; committed `run_event` frames follow in durable sequence order. Sequences, state revisions and safe-payload counts are decimal strings, including values beyond JavaScript's exact integer range.
