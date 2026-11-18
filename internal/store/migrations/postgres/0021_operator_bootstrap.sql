@@ -41,8 +41,11 @@ BEGIN
 END
 $$;
 
--- One bootstrap for each deployment and organization. The primary key refuses
--- a second bootstrap of the same scope, also a concurrent one.
+-- One bootstrap for each organization, in any deployment. The primary key
+-- refuses a second bootstrap of the same scope, and the unique organization
+-- key refuses a second bootstrap of the organization in another deployment.
+-- Each refuses a concurrent bootstrap too: its insert waits for the first
+-- transaction and then fails.
 CREATE TABLE pm.bootstrap_records (
     deployment_id text NOT NULL CHECK (deployment_id <> ''),
     org_id text NOT NULL CHECK (org_id <> ''),
@@ -54,6 +57,7 @@ CREATE TABLE pm.bootstrap_records (
     input_digest text NOT NULL CHECK (input_digest ~ '^sha256:[0-9a-f]{64}$'),
     bootstrapped_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     CONSTRAINT bootstrap_records_pkey PRIMARY KEY (deployment_id, org_id),
+    CONSTRAINT bootstrap_records_org_key UNIQUE (org_id),
     -- The bootstrap record is written first, so its references wait for the
     -- end of the transaction.
     FOREIGN KEY (org_id, workspace_id)
@@ -248,9 +252,10 @@ BEGIN
         RETURN 'login_bound';
     END IF;
 
-    -- The bootstrap record comes first: its primary key is where a concurrent
-    -- bootstrap of the same scope waits and then fails. A unique violation
-    -- undoes every insert of this block.
+    -- The bootstrap record comes first: its primary key and its unique
+    -- organization key are where a concurrent bootstrap of the same scope, or
+    -- of the organization in another deployment, waits and then fails. A
+    -- unique violation undoes every insert of this block.
     BEGIN
         INSERT INTO pm.bootstrap_records (deployment_id, org_id, workspace_id, admin_identity_id, membership_id, input_digest)
         VALUES (bootstrap_deployment_id, bootstrap_org_id, bootstrap_workspace_id, bootstrap_admin_identity_id,
@@ -295,7 +300,7 @@ BEGIN
         );
     EXCEPTION WHEN unique_violation THEN
         GET STACKED DIAGNOSTICS conflict_name = CONSTRAINT_NAME;
-        IF conflict_name = 'bootstrap_records_pkey' THEN
+        IF conflict_name IN ('bootstrap_records_pkey', 'bootstrap_records_org_key') THEN
             SELECT stored.input_digest INTO stored_digest
             FROM pm.bootstrap_records AS stored
             WHERE stored.deployment_id = bootstrap_deployment_id AND stored.org_id = bootstrap_org_id;
