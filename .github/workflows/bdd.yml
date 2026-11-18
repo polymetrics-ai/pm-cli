@@ -58,7 +58,7 @@ jobs:
           set-safe-directory: false
           submodules: false
       - name: Run stack shard 2
-        timeout-minutes: 90
+        timeout-minutes: 3
         run: sh scripts/ci/in-ci-image.sh run stack-2 -- sh scripts/ci/check-bdd.sh --shard 2
       - name: Clean up the job container and dependency fixture
         if: always()

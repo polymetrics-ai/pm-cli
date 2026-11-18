@@ -1992,9 +1992,12 @@ class BddTimeBudget(unittest.TestCase):
                                      block).group(1))
                 cleanup = int(re.search(r"- name: Clean up the job container and dependency fixture\n"
                                         r"        if: always\(\)\n        timeout-minutes: (\d+)\n", block).group(1))
-                self.assertEqual((step, job, cleanup), (90, 100, 6))
-                self.assertEqual(step * 60, budget + 3 * 60)
-                self.assertEqual(job, step + cleanup + 4)
+                # Canary K7 (throwaway branch agent/286a-canary-k7-3, never merges):
+                # only the stack-2 run step has 3 minutes. The planned 90 keeps its rules.
+                planned = 90
+                self.assertEqual((step, job, cleanup), (3 if shard == "2" else planned, 100, 6))
+                self.assertEqual(planned * 60, budget + 3 * 60)
+                self.assertEqual(job, planned + cleanup + 4)
         aggregate = workflow[workflow.index("\n  bdd:\n"):workflow.index("\n  checks:\n")]
         self.assertEqual(int(re.search(r"\n    timeout-minutes: (\d+)\n", aggregate).group(1)), 5)
 

@@ -382,8 +382,12 @@ def workflow_check(path, actionlint):
     require(isinstance(obj["jobs"], dict) and set(obj["jobs"]) ==
             {"stack-1", "stack-2", "stack-3", "bdd", "checks"}, "unapproved job membership")
     for shard in SHARDS:
+        # Deliberate fault for the #286a canary K7, only on the throwaway branch
+        # agent/286a-canary-k7-3, which never merges: the stack-2 run step has a
+        # limit of 3 minutes, so it stops before its stack run ends.
         frozen_job(obj["jobs"], f"stack-{shard}", "100",
-                   {"name": STACK_STEP_NAMES[shard], "timeout-minutes": "90", "run": stack_run(shard)},
+                   {"name": STACK_STEP_NAMES[shard], "timeout-minutes": "3" if shard == "2" else "90",
+                    "run": stack_run(shard)},
                    {"name": "Clean up the job container and dependency fixture",
                     "if": "always()", "timeout-minutes": "6", "run": stack_cleanup_run(shard)})
     aggregate_job(obj["jobs"])
