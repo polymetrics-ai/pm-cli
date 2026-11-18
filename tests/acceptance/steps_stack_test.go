@@ -102,7 +102,9 @@ func (s *stackScenario) newConfiguration(ctx context.Context) error {
 }
 
 // startAndWait is step 5. The starter gives the write end of a new ready pipe
-// as descriptor 3, with --ready-fd 3.
+// as descriptor 3, with --ready-fd 3. pm-server also gets the held listener
+// of the deployment as descriptor 4, with --listen-fd 4. The harness closes
+// its copy of the listener when the launch or the start fails.
 func (s *stackScenario) startAndWait(ctx context.Context, name string) error {
 	if s.deployment == nil {
 		return errors.New("the scenario has no deployment configuration")
@@ -111,12 +113,23 @@ func (s *stackScenario) startAndWait(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.start(ctx, name, starter.Config{
+	config := starter.Config{
 		Args:    []string{"--config", configuration, "--secrets-directory", s.deployment.secrets, "--ready-fd", "3"},
 		Env:     s.deployment.processEnvironment(),
 		Dir:     s.deployment.home(),
 		ReadyFD: 3,
-	})
+	}
+	if name != "pm-server" {
+		_, err = s.start(ctx, name, config)
+		return err
+	}
+	if err := s.deployment.giveListener(&config); err != nil {
+		return err
+	}
+	started, err := s.start(ctx, name, config)
+	if err != nil || started.report.Outcome != starter.OutcomeReady {
+		s.deployment.releaseListener()
+	}
 	return err
 }
 
@@ -229,6 +242,9 @@ func (s *stackScenario) sendSIGTERM(ctx context.Context, name string) error {
 		return err
 	}
 	started.report = started.process.Stop()
+	if name == "pm-server" && s.deployment != nil {
+		s.deployment.releaseListener()
+	}
 	godog.Logf(ctx, "%s stop: %s", name, started.report.Stop)
 	return nil
 }
