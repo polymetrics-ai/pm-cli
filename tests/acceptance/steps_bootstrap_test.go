@@ -85,9 +85,12 @@ type bootstrapState map[string][]string
 // row: the input is a file, and the credential step copies a file.
 type bootstrapScenario struct {
 	shared *stackScenario
-	dir    string
-	files  int
-	runs   int
+	// lane is the lane of the scenario. The steps use its deployment when the
+	// scenario has no shared deployment (K1b).
+	lane  *lane
+	dir   string
+	files int
+	runs  int
 
 	// second is the second deployment of K5.
 	second *deployment
@@ -114,8 +117,8 @@ type bootstrapScenario struct {
 	recordedScope string
 }
 
-func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario) {
-	s := &bootstrapScenario{shared: shared}
+func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) {
+	s := &bootstrapScenario{shared: shared, lane: l}
 	// godog keeps the step error. The hook returns only its own cleanup
 	// error, so the step error is reported once.
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
@@ -142,14 +145,25 @@ func registerBootstrapSteps(sc *godog.ScenarioContext, shared *stackScenario) {
 	sc.Step(`^the observer sees the bootstrap state of the first scope unchanged since it recorded it$`, s.firstScopeUnchanged)
 	sc.Step(`^the observer sees exactly one new workspace, one new identity with its login binding for this deployment, one admin membership, one provider account, one bootstrap record for this deployment and organization, and one audit record that names the operator bootstrap as its actor$`, s.seesBootstrappedScope)
 	sc.Step(`^the observer sees one new workspace, identity, login binding, admin membership, provider account and bootstrap record for the second scope, and one new audit record$`, s.seesSecondScope)
+	sc.Step(`^the lane command stdout names the bootstrapped workspace and no other workspace$`, s.namesBootstrappedWorkspace)
 }
 
-// deployment returns the deployment of the shared deployment step.
+// deployment returns the deployment of the shared deployment step. A lane
+// scenario has no such deployment (K1b): then it returns the lane
+// deployment, when the lane runs.
 func (s *bootstrapScenario) deployment() (*deployment, error) {
-	if s.shared.deployment == nil {
-		return nil, errors.New("the scenario has no deployment configuration")
+	if s.shared.deployment != nil {
+		return s.shared.deployment, nil
 	}
-	return s.shared.deployment, nil
+	if s.lane != nil && s.lane.running() == nil && s.lane.deployment != nil {
+		return s.lane.deployment, nil
+	}
+	return nil, errors.New("the scenario has no deployment configuration")
+}
+
+// isLaneDeployment reports whether d is the lane deployment of the scenario.
+func (s *bootstrapScenario) isLaneDeployment(d *deployment) bool {
+	return s.lane != nil && d != nil && d == s.lane.deployment
 }
 
 // secretsDirectoryCredential copies the bootstrap credential from the stack
@@ -180,6 +194,21 @@ func bootstrapCredentialPath(root, postgresRef string) (string, error) {
 		return "", err
 	}
 	return filepath.Join(root, bundle, bootstrapCredentialMember), nil
+}
+
+// copyBootstrapCredentialOnce copies the credential file unless the
+// deployment secrets directory already holds it.
+func copyBootstrapCredentialOnce(d *deployment) error {
+	path, err := bootstrapCredentialPath(d.secrets, d.stack.postgresRef)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Lstat(path); err == nil {
+		return nil
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("check the bootstrap database credential in the deployment secrets directory: %w", err)
+	}
+	return copyBootstrapCredential(d)
 }
 
 // copyBootstrapCredential copies the one credential file. It never writes
@@ -557,6 +586,15 @@ func (s *bootstrapScenario) bootstrapped(ctx context.Context, connector string) 
 	}
 	if s.first != nil {
 		return errors.New("the operator already bootstrapped the deployment in this scenario")
+	}
+	// A lane scenario has no step for the bootstrap credential. As the
+	// operator, the step copies it into the lane secrets directory for
+	// pm-server bootstrap, as the 284b credential step does. It creates no
+	// role and writes nothing to PostgreSQL.
+	if s.isLaneDeployment(d) {
+		if err := copyBootstrapCredentialOnce(d); err != nil {
+			return err
+		}
 	}
 	input, err := makeInput(d, d.identity, connector)
 	if err != nil {

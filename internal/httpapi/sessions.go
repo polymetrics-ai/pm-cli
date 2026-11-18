@@ -267,9 +267,9 @@ func (service *Service) GetCurrentSession(ctx context.Context, request GetCurren
 }
 
 // maximumDevicePollRetryAfterSeconds is the largest Retry-After value that the
-// public contract allows (DevicePollRetryAfter in api/pm.openapi.yaml) and that
-// the client accepts. auth.NewService already refuses a poll interval above
-// one minute.
+// public contract allows (DevicePollRetryAfterSeconds in api/pm.openapi.yaml)
+// and that the client accepts. auth.NewService already refuses a poll
+// interval above one minute.
 const maximumDevicePollRetryAfterSeconds = 60
 
 // setRetryAfter states the stored device poll cadence. The value is the time

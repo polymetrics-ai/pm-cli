@@ -10,6 +10,10 @@ import (
 	"github.com/polymetrics-ai/pm-cli/tests/starter"
 )
 
+// laneConnectorBundle is the checked-in connector bundle that the lane
+// configuration declares.
+const laneConnectorBundle = "postgres"
+
 // lane runs the real pm-server binary, with its API and relay, and the real
 // pm-worker binary on the job-owned dependency stack. Each scenario gets its
 // own lane: a new deployment, with a new deployment ID, and its own pm-server
@@ -101,6 +105,14 @@ func (l *lane) start(ctx context.Context) error {
 		return err
 	}
 	if l.deployment, err = newDeployment(stack); err != nil {
+		return err
+	}
+	// The lane configuration is real operator setup and holds the connector
+	// bundles (criteria-worker v4, line 54, and the 284b bundle addendum,
+	// line 231). The lane declares the checked-in "postgres" bundle, so that
+	// the operator can bootstrap the lane deployment with a "postgres"
+	// provider account (K1b). The declaration writes the configuration.
+	if err := declareCheckedInBundle(l.deployment, l.harness.bins.root, laneConnectorBundle); err != nil {
 		return err
 	}
 	configuration, err := l.deployment.configurationPath()
