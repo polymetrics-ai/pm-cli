@@ -322,3 +322,21 @@ func TestOperatorBootstrapSeesEveryRowOfTheOrganization(t *testing.T) {
 		})
 	}
 }
+
+// Go developer check, not acceptance proof. pm.operator_bootstrap compares the
+// input digest when the bootstrap record key refuses its insert. A refusal of
+// that key outside the function had no such compare. Defect: the store
+// reports "the same input" (or "another input") with no digest as witness.
+// The store must report an unknown outcome, so that the operator runs the
+// bootstrap again with the same input and gets the digest compare.
+func TestBootstrapRecordConflictOutsideTheFunctionClaimsNoInput(t *testing.T) {
+	err := bootstrapStoreError("run the operator bootstrap", &pgconn.PgError{
+		Code: "23505", ConstraintName: "bootstrap_records_pkey",
+	})
+	if errors.Is(err, ErrBootstrapScopeExists) || errors.Is(err, ErrBootstrapScopeOtherInput) {
+		t.Fatalf("bootstrap record conflict outside the function = %v; want no claim about the input", err)
+	}
+	if !errors.Is(err, ErrCommitOutcomeUnknown) {
+		t.Fatalf("bootstrap record conflict outside the function = %v; want %v", err, ErrCommitOutcomeUnknown)
+	}
+}

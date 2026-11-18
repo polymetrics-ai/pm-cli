@@ -211,7 +211,10 @@ func (request BootstrapRequest) runStep(ctx context.Context, step bootstrapStep)
 // bootstrapStoreError maps the PostgreSQL refusals that have a bootstrap
 // meaning. pm.operator_bootstrap already turns a unique violation of the
 // bootstrap record or of the login binding into its outcome. These two cases
-// stay for a refusal outside the function.
+// stay for a refusal outside the function. A bootstrap record conflict
+// outside the function had no input digest compare, so it does not claim the
+// same input or another input. Its outcome is unknown: a run with the same
+// input gets the digest compare of the function.
 func bootstrapStoreError(action string, err error) error {
 	var databaseError *pgconn.PgError
 	if !errors.As(err, &databaseError) {
@@ -219,7 +222,7 @@ func bootstrapStoreError(action string, err error) error {
 	}
 	switch {
 	case databaseError.Code == "23505" && databaseError.ConstraintName == "bootstrap_records_pkey":
-		return ErrBootstrapScopeExists
+		return fmt.Errorf("%s: bootstrap record conflict with no input digest compare: %w", action, ErrCommitOutcomeUnknown)
 	case databaseError.Code == "23505" && databaseError.ConstraintName == "auth_bootstrap_identities_pkey":
 		return ErrBootstrapLoginBound
 	case databaseError.Code == "42501" || strings.HasPrefix(databaseError.Code, "28"):
