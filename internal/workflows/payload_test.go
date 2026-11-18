@@ -430,36 +430,58 @@ func TestHistoryAndPayloadBounds(t *testing.T) {
 		controller := newTimeoutExecutionController()
 		fixture := testfixture.NewExecuting(t, controller.Execute, controller.Reconcile)
 		harness := newProductionWorkflowHarness(t, fixture, "")
+		// This cleanup runs before the harness stops the worker.
+		t.Cleanup(controller.stopWaiting)
 		admitted := admitWorkflowInput(t, fixture, "actual-timeout-contract")
 		run, input := harness.relayAdmitted(t, admitted)
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-		var result contract.WorkflowProjectionResult
-		if err := run.Get(ctx, &result); err != nil {
-			t.Fatal(err)
+		// The first provider callback runs in the registered production
+		// activity and waits until that activity ends its context.
+		callback, calls, stopped := controller.waitFirstStop(ctx)
+		if !stopped {
+			t.Fatalf("provider callback did not stop within 30s (callbacks = %d)", calls)
 		}
-		// The checks below use only what the callback context holds when the
-		// callback starts. The time at which the callback stops depends on an
-		// answer to every heartbeat in the transport window, which a shared
-		// Temporal server does not bound (issue #292).
-		// TestWorkerCallbackStopsAtTransportDeadline in internal/app checks the
-		// stop against a fake frontend.
-		callback, calls := controller.firstCall()
-		if calls == 0 {
-			t.Fatal("provider callback did not run")
-		}
-		t.Logf("provider callbacks = %d; first callback context at start: error %v, cause %v",
-			calls, callback.err, callback.cause)
+		t.Logf("provider callbacks = %d; first callback stopped after %s with error %v, cause %T(%v)",
+			calls, callback.elapsed, callback.err, callback.cause, callback.cause)
 		if callback.problem != nil {
 			t.Fatal(callback.problem)
 		}
+		if callback.errAtStart != nil {
+			t.Fatalf("provider callback context ended before the callback started: %v", callback.errAtStart)
+		}
 		if callback.remaining < 4500*time.Millisecond || callback.remaining > 5*time.Second {
-			t.Fatalf("provider callback deadline remaining = %s (context error %v, cause %v); want the explicit 5s transport bound",
-				callback.remaining, callback.err, callback.cause)
+			t.Fatalf("provider callback deadline remaining = %s; want the explicit 5s transport bound", callback.remaining)
 		}
 		if !callback.deadline.Before(callback.attemptDeadline) {
-			t.Fatalf("provider callback deadline %s is not before the activity attempt deadline %s (context error %v, cause %v); want the transport bound inside the 10s attempt",
-				callback.deadline, callback.attemptDeadline, callback.err, callback.cause)
+			t.Fatalf("provider callback deadline %s is not before the activity attempt deadline %s; want the transport bound inside the 10s attempt",
+				callback.deadline, callback.attemptDeadline)
+		}
+		// Each stop must come before the attempt deadline. A callback that
+		// still runs at attempt expiry can overlap a retried attempt.
+		if !callback.stoppedAt.Before(callback.attemptDeadline) {
+			t.Fatalf("provider callback stopped at %s after %s (error %v, cause %v); want a stop before the activity attempt deadline %s",
+				callback.stoppedAt, callback.elapsed, callback.err, callback.cause, callback.attemptDeadline)
+		}
+		switch {
+		case errors.Is(callback.err, context.DeadlineExceeded) && errors.Is(callback.cause, context.DeadlineExceeded):
+			// The transport deadline stopped the callback. The remaining time
+			// check above makes this stop at least 4.5s after the start.
+			if callback.stoppedAt.Before(callback.deadline) {
+				t.Fatalf("provider callback stopped at %s, before its transport deadline %s", callback.stoppedAt, callback.deadline)
+			}
+		case errors.Is(callback.err, context.Canceled) && callback.cause != nil && !errors.Is(callback.cause, context.Canceled):
+			// The SDK canceled the activity attempt and named the reason, for
+			// example a heartbeat RPC without an answer in time (issue #292).
+			// Such a stop can come before the transport deadline, so the 4.5s
+			// minimum of a transport stop does not apply.
+		default:
+			t.Fatalf("provider callback stopped after %s with error %v, cause %T(%v); want its transport deadline or an activity attempt that the SDK canceled with a reason",
+				callback.elapsed, callback.err, callback.cause, callback.cause)
+		}
+		var result contract.WorkflowProjectionResult
+		if err := run.Get(ctx, &result); err != nil {
+			t.Fatal(err)
 		}
 		history := readWorkflowHistory(t, ctx, harness.client, input.WorkflowID, run.GetRunID())
 		var executeSchedules int

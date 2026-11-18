@@ -2578,11 +2578,14 @@ func minWorkerDuration(left, right time.Duration) time.Duration {
 // that the callback and the publication step take to return after their
 // deadlines.
 //
-// The publication step (workerPublicationContext) ends at the same time as
-// this bound, so the callback and the publication step share the time before
-// it. A callback that uses its whole bound leaves the publication step no
-// time. The worker then settles the unit with a publication failure, which
-// does not change the provider member outcomes.
+// The publication step (workerPublicationContext) ends one settlement reserve
+// before the settlement cutoff. When the settlement cutoff limits this bound,
+// the callback and the publication step end at the same time and share the
+// time before it. A callback that then uses its whole bound leaves the
+// publication step no time. The worker then settles the unit with a
+// publication failure, which does not change the provider member outcomes.
+// When the transport limit ends this bound first, the publication step keeps
+// the time between the callback deadline and its own deadline.
 func workerCallbackContext(
 	ctx context.Context,
 	acceptedDeadline time.Time,
