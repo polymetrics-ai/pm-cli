@@ -2015,9 +2015,12 @@ def validate_stack_container(
     if (
         value.get("user") != expected_user
         or value.get("privileged") is not False
+        # The container is attached to its own network only, in both
+        # accepted forms: the named network, and Podman's bridge record
+        # (review #316 round 2 F3, D1-8).
         or not (
-            value.get("network_mode") == network
-            or (podman and value.get("network_mode") == "bridge" and attached_networks == {network})
+            (value.get("network_mode") == network or (podman and value.get("network_mode") == "bridge"))
+            and attached_networks == {network}
         )
         or not default_namespaces(value, podman)
         or value.get("readonly_rootfs") is not readonly

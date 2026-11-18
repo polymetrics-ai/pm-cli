@@ -1080,6 +1080,25 @@ class IdentityProviderTests(unittest.TestCase):
         with self.assertRaises(FIXTURE.FixtureError):
             self.validate(dict(docker, cap_drop=sorted(FIXTURE.PODMAN_DEFAULT_CAPABILITIES)), refs, podman=False)
 
+    def test_named_network_container_must_have_only_its_network(self):
+        # Review #316 round 2 F3 (D1-8): a record whose network_mode names the
+        # expected network must be attached to that network only. The Podman
+        # bridge record already needed the exact one-network set.
+        network = f"{self.PROJECT}_identity-private"
+        for podman in (False, True):
+            value, refs = self.keycloak(podman=podman)
+            named = dict(value, network_mode=network, networks={network: {}})
+            with self.subTest(podman=podman, networks="its network only"):
+                self.validate(named, refs, podman=podman)
+            for networks in (
+                {network: {}, f"{self.PROJECT}_stack-private": {}},
+                {network: {}, "external-network": {}},
+                {},
+                None,
+            ):
+                with self.subTest(podman=podman, networks=networks), self.assertRaises(FIXTURE.FixtureError):
+                    self.validate(dict(named, networks=networks), refs, podman=podman)
+
     def test_keycloak_realm_import_is_a_directory_mount(self):
         # Review #316 F2: the provider mounts the import directory, not the
         # import file. A file bind mount keeps a removed file visible in the
