@@ -382,22 +382,38 @@ func TestStartGroupOwnerEndsWithTheStartContext(t *testing.T) {
 
 	t.Run("a cancellation during the ready wait", func(t *testing.T) {
 		running := makeFIFO(t, filepath.Join(t.TempDir(), "running"))
+		// The test holds the FIFO open for read and write, so no open of it
+		// waits. The cleanup writes its own stop byte, so the reader ends on
+		// every exit, and then it waits once for the reader, with one limit.
+		pipe, err := os.OpenFile(running, os.O_RDWR, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mark := make(chan byte, 1)
+		finished := make(chan struct{})
+		go func() {
+			defer close(finished)
+			read := make([]byte, 1)
+			if _, err := pipe.Read(read); err == nil {
+				mark <- read[0]
+			}
+		}()
+		t.Cleanup(func() {
+			_, _ = pipe.Write([]byte("s"))
+			select {
+			case <-finished:
+			case <-time.After(checkLimit):
+				t.Errorf("the reader of the running mark did not end within %s", checkLimit)
+			}
+			_ = pipe.Close()
+		})
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
 		result := start(t, ctx, fmt.Sprintf(`trap "" TERM; printf r > '%s'; exec cat`, running))
-		line := make(chan error, 1)
-		go func() {
-			reader, err := os.Open(running)
-			if err == nil {
-				_, err = reader.Read(make([]byte, 1))
-				_ = reader.Close()
-			}
-			line <- err
-		}()
 		select {
-		case err := <-line:
-			if err != nil {
-				t.Fatalf("read the running mark of the owner: %v", err)
+		case read := <-mark:
+			if read != 'r' {
+				t.Fatalf("the running mark of the owner = %q, want %q", read, 'r')
 			}
 		case <-time.After(checkLimit):
 			t.Fatalf("the owner did not run within %s", checkLimit)
