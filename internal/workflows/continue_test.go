@@ -748,38 +748,61 @@ func (controller *blockingExecutionController) Reconcile(
 	return successfulExecutionObservation(request), nil
 }
 
-// callbackDeadlines is what the provider callback context holds when the
-// callback starts. The controller reads it at once and does not wait for the
-// context to end, so no value here depends on an answer to a heartbeat.
-type callbackDeadlines struct {
+// callbackStop is what the first provider callback saw through the registered
+// production activity: its context deadline and the attempt deadline when it
+// started, and when and why its context ended.
+type callbackStop struct {
 	deadline        time.Time
 	remaining       time.Duration
 	attemptDeadline time.Time
+	errAtStart      error
+	stoppedAt       time.Time
+	elapsed         time.Duration
 	err             error
 	cause           error
 	problem         error
 }
 
-// errCallbackDeadlinesRecorded ends the controlled callback. Settlement reads
-// only that the callback returned an error, as it did for the context error
-// that this callback returned before issue #292.
-var errCallbackDeadlinesRecorded = errors.New("controlled provider callback returns after it records its deadlines")
+// errLaterCallback ends a callback after the first one. A later callback
+// belongs to a retried attempt. It returns at once, so a retry does not wait
+// for a second transport window. Settlement reads only that the callback
+// returned an error.
+var errLaterCallback = errors.New("controlled provider callback of a retried attempt returns at once")
 
+// timeoutExecutionController is the provider callback of R12 C09. The first
+// callback waits until the production activity ends its context. The wait has
+// two bounds: the activity attempt deadline, which ends the parent context, and
+// stopWaiting, which the test calls at cleanup.
 type timeoutExecutionController struct {
-	mu    sync.Mutex
-	calls int
-	first callbackDeadlines
+	mu           sync.Mutex
+	calls        int
+	first        callbackStop
+	firstStopped chan struct{}
+	abandon      chan struct{}
+	abandonOnce  sync.Once
 }
 
 func newTimeoutExecutionController() *timeoutExecutionController {
-	return &timeoutExecutionController{}
+	return &timeoutExecutionController{
+		firstStopped: make(chan struct{}),
+		abandon:      make(chan struct{}),
+	}
 }
 
 func (controller *timeoutExecutionController) Execute(
 	ctx context.Context,
 	_ app.ExecutionRequest,
 ) (app.ExecutionObservation, error) {
-	observed := callbackDeadlines{err: ctx.Err(), cause: context.Cause(ctx)}
+	started := time.Now()
+	controller.mu.Lock()
+	controller.calls++
+	first := controller.calls == 1
+	controller.mu.Unlock()
+	if !first {
+		return app.ExecutionObservation{}, errLaterCallback
+	}
+
+	observed := callbackStop{errAtStart: ctx.Err()}
 	deadline, ok := ctx.Deadline()
 	switch {
 	case !ok:
@@ -791,21 +814,45 @@ func (controller *timeoutExecutionController) Execute(
 		observed.remaining = time.Until(deadline)
 		observed.attemptDeadline = activity.GetInfo(ctx).Deadline
 	}
-	controller.mu.Lock()
-	defer controller.mu.Unlock()
-	controller.calls++
-	if controller.calls == 1 {
-		controller.first = observed
+	if observed.problem == nil {
+		select {
+		case <-ctx.Done():
+			observed.stoppedAt = time.Now()
+			observed.elapsed = observed.stoppedAt.Sub(started)
+			observed.err = ctx.Err()
+			observed.cause = context.Cause(ctx)
+		case <-controller.abandon:
+			observed.problem = errors.New("the test ended before the provider callback context ended")
+		}
 	}
-	return app.ExecutionObservation{}, errCallbackDeadlinesRecorded
+	controller.mu.Lock()
+	controller.first = observed
+	controller.mu.Unlock()
+	close(controller.firstStopped)
+	if observed.problem != nil {
+		return app.ExecutionObservation{}, observed.problem
+	}
+	return app.ExecutionObservation{}, observed.err
 }
 
-// firstCall returns the deadlines of the first callback and the number of
-// callbacks. A later callback belongs to a retried attempt.
-func (controller *timeoutExecutionController) firstCall() (callbackDeadlines, int) {
+// waitFirstStop waits until the first callback has stopped, or until ctx ends.
+// It returns the first callback and the number of callbacks.
+func (controller *timeoutExecutionController) waitFirstStop(ctx context.Context) (callbackStop, int, bool) {
+	select {
+	case <-controller.firstStopped:
+	case <-ctx.Done():
+		controller.mu.Lock()
+		defer controller.mu.Unlock()
+		return callbackStop{}, controller.calls, false
+	}
 	controller.mu.Lock()
 	defer controller.mu.Unlock()
-	return controller.first, controller.calls
+	return controller.first, controller.calls, true
+}
+
+// stopWaiting releases a first callback that still waits for its context.
+func (controller *timeoutExecutionController) stopWaiting() {
+	controller.abandonOnce.Do(func() { close(controller.abandon) })
 }
 
 func (controller *timeoutExecutionController) Reconcile(
