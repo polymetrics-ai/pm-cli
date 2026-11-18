@@ -147,11 +147,18 @@ class WorkflowPolicy(unittest.TestCase):
         self.assertEqual(workflow["on"], {"push": {"branches": ["**"]}})
         self.assertEqual(workflow["concurrency"]["cancel-in-progress"],
                          "${{ github.ref != 'refs/heads/main' }}")
-        job = workflow["jobs"]["bdd"]
-        self.assertIn("github.event_name == 'push'", job["if"])
-        self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
-        self.assertIn("github.event.forced == false", job["if"])
-        self.assertEqual(job["steps"][0]["with"]["ref"], "${{ github.sha }}")
+        # Each job, also the aggregate bdd (issue #286), runs only on an owner
+        # push. Each checkout takes the exact pushed revision.
+        self.assertEqual(set(workflow["jobs"]), {"stack-1", "stack-2", "stack-3", "bdd", "checks"})
+        for name, job in workflow["jobs"].items():
+            with self.subTest(job=name):
+                self.assertIn("github.event_name == 'push'", job["if"])
+                self.assertIn("github.actor == 'karthik-sivadas'", job["if"])
+                self.assertIn("github.event.forced == false", job["if"])
+                checkouts = [step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@")]
+                for step in checkouts:
+                    self.assertEqual(step["with"]["ref"], "${{ github.sha }}")
+                self.assertEqual(len(checkouts), 0 if name == "bdd" else 1)
 
     def test_agent_pr_never_runs_pushed_code(self):
         workflow = self.load("agent-pr.yml")
