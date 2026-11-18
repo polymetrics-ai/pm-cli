@@ -8,7 +8,11 @@
 // limit, counted from the start of the process. The deadline covers the whole
 // read, the ready line and the end of file after it. Readiness is the ready
 // line. When the deadline passes before the read ended, the starter closes
-// its ready read end, so the read ends. A wait for the ready line or for the
+// its ready read end, so the read ends. The reader queues each event under
+// the lock with which the watcher marks the deadline. So a ready line that
+// came before the deadline stays readiness, also when a step reads it after
+// the deadline, and an event that comes after the deadline counts as the
+// passed deadline. A wait for the ready line or for the
 // end of file that the deadline ends runs the stop sequence: SIGTERM, one exit
 // observation up to the stop limit, then SIGKILL and the same exit
 // observation up to the kill limit. Each signal goes at most once, and each
@@ -245,6 +249,9 @@ type Process struct {
 	readyData    []byte
 	readyEOF     bool
 	readyStopped bool
+	// expired is true when the start deadline passed. The watcher sets it
+	// under readyMu before it closes deadline.
+	expired bool
 
 	outcome   Outcome
 	outcomeAt time.Time
@@ -346,6 +353,9 @@ func (p *Process) watchReady() {
 	case <-p.readerDone:
 		p.startTimer.Stop()
 	case <-p.startTimer.C():
+		p.readyMu.Lock()
+		p.expired = true
+		p.readyMu.Unlock()
 		close(p.deadline)
 		_ = p.readyRead.Close()
 	case <-p.unwatch:
@@ -426,22 +436,34 @@ func (p *Process) AwaitReady() (Report, bool) {
 	}
 	select {
 	case event := <-p.ready:
-		switch event.kind {
-		case eventLine:
-			p.outcome, p.outcomeAt = OutcomeReady, event.at
-			return p.report(OutcomeReady, StopNone, event.at), true
-		case eventEOF:
-			p.outcome, p.outcomeAt = OutcomeEOFBeforeReady, event.at
-			return p.awaitExit(), false
-		case eventStopped:
-			p.outcome = OutcomeStartLimitPassed
-			return p.stopSequence(), false
-		default:
-			p.outcome, p.outcomeAt = OutcomeProtocolError, event.at
-			return p.stopSequence(), false
-		}
+		return p.readyEvent(event)
 	case <-p.deadline:
+	}
+	// The deadline passed. An event that the reader queued before it is in
+	// p.ready already (queue), and it decides.
+	select {
+	case event := <-p.ready:
+		return p.readyEvent(event)
+	default:
 		p.outcome = OutcomeStartLimitPassed
+		return p.stopSequence(), false
+	}
+}
+
+// readyEvent ends AwaitReady with the first event of the ready reader.
+func (p *Process) readyEvent(event readyEvent) (Report, bool) {
+	switch event.kind {
+	case eventLine:
+		p.outcome, p.outcomeAt = OutcomeReady, event.at
+		return p.report(OutcomeReady, StopNone, event.at), true
+	case eventEOF:
+		p.outcome, p.outcomeAt = OutcomeEOFBeforeReady, event.at
+		return p.awaitExit(), false
+	case eventStopped:
+		p.outcome = OutcomeStartLimitPassed
+		return p.stopSequence(), false
+	default:
+		p.outcome, p.outcomeAt = OutcomeProtocolError, event.at
 		return p.stopSequence(), false
 	}
 }
@@ -462,19 +484,32 @@ func (p *Process) AwaitClose() (Report, bool) {
 	}
 	select {
 	case event := <-p.ready:
-		switch event.kind {
-		case eventEOF:
-			p.outcome, p.outcomeAt = OutcomeReadyClosed, event.at
-			return p.report(OutcomeReadyClosed, StopNone, event.at), true
-		case eventStopped:
-			p.outcome = OutcomeCloseLimitPassed
-			return p.stopSequence(), false
-		default:
-			p.outcome, p.outcomeAt = OutcomeProtocolError, event.at
-			return p.stopSequence(), false
-		}
+		return p.closeEvent(event)
 	case <-p.deadline:
+	}
+	// The deadline passed. An end of file that the reader queued before it is
+	// in p.ready already (queue), and it decides.
+	select {
+	case event := <-p.ready:
+		return p.closeEvent(event)
+	default:
 		p.outcome = OutcomeCloseLimitPassed
+		return p.stopSequence(), false
+	}
+}
+
+// closeEvent ends AwaitClose with the event of the ready reader after the
+// ready line.
+func (p *Process) closeEvent(event readyEvent) (Report, bool) {
+	switch event.kind {
+	case eventEOF:
+		p.outcome, p.outcomeAt = OutcomeReadyClosed, event.at
+		return p.report(OutcomeReadyClosed, StopNone, event.at), true
+	case eventStopped:
+		p.outcome = OutcomeCloseLimitPassed
+		return p.stopSequence(), false
+	default:
+		p.outcome, p.outcomeAt = OutcomeProtocolError, event.at
 		return p.stopSequence(), false
 	}
 }
@@ -624,23 +659,44 @@ func (p *Process) readReady(source *os.File) {
 			p.noteReady(nil, eof, stopped)
 			switch {
 			case stopped:
-				p.ready <- readyEvent{kind: eventStopped, at: time.Now()}
+				p.queue(eventStopped)
 			case eof && (index == 0 || index == len(line)):
-				p.ready <- readyEvent{kind: eventEOF, at: time.Now()}
+				p.queue(eventEOF)
 			default:
-				p.ready <- readyEvent{kind: eventBadData, at: time.Now()}
+				p.queue(eventBadData)
 			}
 			return
 		}
 		p.noteReady(one[:], false, false)
 		if index == len(line) || one[0] != line[index] {
-			p.ready <- readyEvent{kind: eventBadData, at: time.Now()}
+			p.queue(eventBadData)
 			return
 		}
-		if index == len(line)-1 {
-			p.ready <- readyEvent{kind: eventLine, at: time.Now()}
+		if index == len(line)-1 && !p.queue(eventLine) {
+			return
 		}
 	}
+}
+
+// queue sends one ready event under readyMu, the lock with which the watcher
+// marks the deadline. So each event has one order against the deadline. An
+// event queued before the deadline is in p.ready when p.deadline closes. An
+// event after the deadline goes as eventStopped. A ready line after the
+// deadline also ends the read. The send does not wait: p.ready holds two
+// events, and the reader sends at most two. queue reports whether it sent the
+// event kind that it got.
+func (p *Process) queue(kind readyEventKind) bool {
+	p.readyMu.Lock()
+	defer p.readyMu.Unlock()
+	sent := kind
+	if p.expired {
+		sent = eventStopped
+		if kind == eventLine {
+			p.readyStopped = true
+		}
+	}
+	p.ready <- readyEvent{kind: sent, at: time.Now()}
+	return sent == kind
 }
 
 func (p *Process) noteReady(data []byte, eof, stopped bool) {

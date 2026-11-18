@@ -455,3 +455,41 @@ func TestStarterRunningSeesAnExitBeforeTheReaper(t *testing.T) {
 		t.Fatalf("Running reports a child that exited as running: %s", process.Snapshot())
 	}
 }
+
+// (i) The child writes the ready line and keeps the ready descriptor open.
+// The test takes the queued ready line from the starter's event channel and
+// puts it back, so the line is queued before the deadline. Then the test
+// fires the start timer and waits until the watcher closed the deadline and
+// the ready read ended. Only then does the step call AwaitReady.
+// Defect: AwaitReady takes the passed deadline over a ready line that came
+// before it.
+func TestStarterKeepsAReadyLineThatCameBeforeTheStartDeadline(t *testing.T) {
+	f := newFakeTimers()
+	stdin, _ := heldStdin(t)
+	process := startShell(t, f, `printf 'helper ready\n' >&3; exec cat`, stdin, nil)
+	start := awaitCreated(t, f, fakeStart)
+
+	var line readyEvent
+	select {
+	case line = <-process.ready:
+	case <-time.After(testLimit):
+		t.Fatalf("the starter queued no ready event within %s", testLimit)
+	}
+	if line.kind != eventLine {
+		t.Fatalf("first ready event %d, want the ready line %d", line.kind, eventLine)
+	}
+	process.ready <- line
+	f.fire(start)
+	awaitSignal(t, process.deadline, "the closed start deadline")
+	awaitSignal(t, process.readerDone, "end of the ready read after the start deadline")
+
+	results := make(chan result, 1)
+	go func() { r, ok := process.AwaitReady(); results <- result{r, ok} }()
+	got := awaitResult(t, results, f)
+	if !got.ok || got.report.Outcome != OutcomeReady || got.report.Stop != StopNone {
+		t.Fatalf("report %s, want the ready line that came before the deadline and no stop sequence", got.report)
+	}
+	if !process.Running() {
+		t.Fatalf("Running reports a running child as not running: %s", got.report)
+	}
+}
