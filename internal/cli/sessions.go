@@ -105,11 +105,18 @@ func newDeviceExchangeCommand(runtime *commandRuntime) *cobra.Command {
 		Short: "Read a device proof from stdin and store the resulting PM session",
 		Long: "Read one device proof line from stdin, exchange it for a PM session, and store the session. " +
 			"The command reads stdin until end-of-file. Close stdin after the proof line. " +
-			"Without --wait=true, the command sends one exchange request. " +
-			"With --wait=true, the command repeats the request while the server answers " +
+			"When the wait setting is false, the command sends one exchange request. " +
+			"When the wait setting is true, the command repeats the request while the server answers " +
 			"device_authorization_pending or device_poll_too_soon. " +
 			"Before each repeat, the command waits for the Retry-After time of the server answer. " +
-			"The --request-timeout value limits the whole wait.",
+			"After device_poll_too_soon, it waits 5 seconds more. " +
+			"The request timeout limits the whole wait. " +
+			"For each setting, the flag overrides the environment variable, " +
+			"and the environment variable overrides the server profile. " +
+			"The wait setting reads --wait, PM_WAIT and the server profile. " +
+			"The request timeout reads --request-timeout, PM_REQUEST_TIMEOUT and the server profile. " +
+			"The command pm server profiles add sets the two profile values with --default-wait and --default-request-timeout. " +
+			"Without a value, the wait setting is false and the request timeout is 30s.",
 		Args: noArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			if !challengeID.set {

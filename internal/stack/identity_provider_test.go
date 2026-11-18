@@ -299,6 +299,14 @@ func TestComposeSourceAdmitsTheSecondLoopbackBindingOnlyForTheIdentityProvider(t
 		}, wantRefuse: "identity provider"},
 		{name: "identity network with another driver", identity: func(d map[string]any) { identityNetwork(d)["driver"] = "host" }, wantRefuse: "keycloak"},
 		{name: "identity network without its definition", identity: func(d map[string]any) { delete(d, "networks") }, wantRefuse: "keycloak"},
+		// crrao m1: the image is the digest-pinned reference, never a tag.
+		{name: "image tag in place of the pinned image", identity: func(d map[string]any) {
+			keycloak(d)["image"] = "quay.io/keycloak/keycloak:latest"
+		}, wantRefuse: "keycloak"},
+		{name: "pinned version tag in place of the pinned image", identity: func(d map[string]any) {
+			keycloak(d)["image"] = "docker.io/keycloak/keycloak:26.8.1"
+		}, wantRefuse: "keycloak"},
+		{name: "image missing", identity: func(d map[string]any) { delete(keycloak(d), "image") }, wantRefuse: "keycloak"},
 		// Review F2: a capability added after cap_drop ALL.
 		{name: "capability added after dropping all", identity: func(d map[string]any) { keycloak(d)["cap_add"] = []any{"NET_ADMIN"} }, wantRefuse: "keycloak"},
 		// Review F3: the complete mount set.

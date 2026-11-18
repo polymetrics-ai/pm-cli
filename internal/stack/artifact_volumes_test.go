@@ -1,8 +1,11 @@
 package stack
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -155,27 +158,45 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 // TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit runs the grow step
 // against a fake master whose /vol/grow call never answers: the fake starts a
 // child that waits on a FIFO that no process writes, and the child keeps the
-// output of the call open. Defect it catches: a master call that has no time
-// limit of its own, or that waits for the output of a child after its limit,
+// output of the call open. Defect it catches: a grow call that does not end
+// when its context ends, or that waits for the output of a child after that,
 // blocks pm-stack up until the caller stops it. The step must end with an
 // error that does not say that no volume grew, after exactly one grow call.
+//
+// The call limit here is one hour, so no call of the step can meet it: the
+// status read and the start of each fake process take as long as the host
+// needs. The grow call ends because the test ends the context of the step at
+// one product event: the fake has recorded the grow call. An earlier version
+// used a 3 s call limit for every call, so on a loaded host the status read
+// met that limit on correct code. TestSeaweedMasterEndsAHungCallAtItsLimit
+// checks the call limit itself.
 func TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit(t *testing.T) {
 	fake := installHungGrowMaster(t, freshMasterStatus)
-	// The limit leaves room for the status read of the fake, which ends at
-	// once, and ends the grow call, which never ends.
 	rt := &runtime{root: fake, project: "pm-artifact-volumes-test", stdout: io.Discard, stderr: io.Discard,
-		masterCallLimit: 3 * time.Second}
+		masterCallLimit: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := growStarted(t, fake)
 	done := make(chan error, 1)
 	go func() {
-		done <- ensureArtifactVolumes(context.Background(), noRecreateTestConfiguration(t), rt, true)
+		done <- ensureArtifactVolumes(ctx, noRecreateTestConfiguration(t), rt, true)
 	}()
 	var err error
-	// The one guard: a call that never returns fails the test. It measures no
-	// time of the call.
+	// The one guard: a step that never returns fails the test. It measures no
+	// time of a call.
+	guard := time.After(30 * time.Second)
+	select {
+	case <-started:
+		cancel()
+	case err = <-done:
+		t.Fatalf("the grow step returned %v before the fake recorded a grow call", err)
+	case <-guard:
+		t.Fatal("the fake recorded no grow call")
+	}
 	select {
 	case err = <-done:
-	case <-time.After(30 * time.Second):
-		t.Fatal("the grow step did not return: the hung master call has no effective time limit")
+	case <-guard:
+		t.Fatal("the grow step did not return after its context ended: the hung master call does not end")
 	}
 	const want = bucketGrowFailedError
 	if err == nil || err.Error() != want {
@@ -186,9 +207,66 @@ func TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit(t *testing.T) {
 	}
 }
 
+// TestSeaweedMasterEndsAHungCallAtItsLimit calls the master once, with a
+// call limit of 1 s and no deadline of the caller, against the fake whose
+// /vol/grow call never answers and whose child keeps the output open.
+// Defect it catches: a master call with no time limit of its own, or one that
+// waits for the output of a child after its limit. Whichever process of the
+// call runs when the limit comes (docker or python3), the call must end with
+// an error. The result does not depend on how fast a process starts.
+func TestSeaweedMasterEndsAHungCallAtItsLimit(t *testing.T) {
+	fake := installHungGrowMaster(t, freshMasterStatus)
+	rt := &runtime{root: fake, project: "pm-artifact-volumes-test", stdout: io.Discard, stderr: io.Discard,
+		masterCallLimit: time.Second}
+	// Read the start signal, so that a fast call reaches the child that keeps
+	// the output open, and the output wait after the limit is in the check.
+	growStarted(t, fake)
+	done := make(chan error, 1)
+	go func() {
+		query := url.Values{"collection": {"pm-development-artifacts"}, "count": {"1"}}
+		_, err := rt.seaweedMaster(context.Background(), noRecreateTestConfiguration(t), "/vol/grow", query)
+		done <- err
+	}()
+	// The one guard: a call that never returns fails the test. The limit is
+	// 1 s and the output wait after it is masterCallWaitDelay.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the hung master call succeeded, want an error at its limit")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the master call did not return: the hung call has no effective time limit")
+	}
+}
+
+// growStarted returns a channel that closes when the fake master has recorded
+// a grow call. The fake writes to the FIFO grow.started after it records the
+// call and before it waits. The read ends at that write, or at the cleanup.
+func growStarted(t *testing.T, directory string) <-chan struct{} {
+	t.Helper()
+	fifo := filepath.Join(directory, "grow.started")
+	started := make(chan struct{})
+	go func() {
+		if reader, err := os.Open(fifo); err == nil {
+			buffer := make([]byte, 1)
+			if n, _ := reader.Read(buffer); n == 1 {
+				close(started)
+			}
+			_ = reader.Close()
+		}
+	}()
+	t.Cleanup(func() {
+		if writer, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+	})
+	return started
+}
+
 // installHungGrowMaster writes fake python3 and docker programs and puts them
 // first on PATH. /dir/status prints the status document. /vol/grow records
-// its URL and then runs cat on a FIFO that no process writes, so the call
+// its URL, writes to the FIFO grow.started (it waits there until a reader
+// opens it), and then runs cat on a FIFO that no process writes, so the call
 // never ends and cat keeps its output open. A cleanup opens the FIFO for
 // writing once, so a waiting cat ends with the test.
 func installHungGrowMaster(t *testing.T, status string) string {
@@ -200,6 +278,9 @@ func installHungGrowMaster(t *testing.T, status string) string {
 	}
 	fifo := filepath.Join(directory, "grow.fifo")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(directory, "grow.started"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
@@ -218,6 +299,7 @@ case "$url" in
     ;;
   */vol/grow\?*)
     printf '%s\n' "$url" >> "$FAKE_MASTER_DIR/grow.log"
+    printf 'started' > "$FAKE_MASTER_DIR/grow.started"
     cat "$FAKE_MASTER_DIR/grow.fifo"
     ;;
   *)
@@ -338,18 +420,20 @@ func TestArtifactStartFailuresReportTheirStep(t *testing.T) {
 		name     string
 		before   string
 		after    string
-		limit    time.Duration
+		capacity bool
 		bucket   bool
 		wantStep string
 		wantLog  []string
 	}{
 		{
-			// The context limit ends the capacity wait. Both possible end
-			// points, the service starts and the wait, are artifacts-start.
+			// The first capacity request that reaches the fake master
+			// ends the wait (#336 round 3 F2). So both service starts are
+			// complete, and the wait ends in the capacity check, not at a
+			// time limit.
 			name:     "the capacity wait ends before the volume server joins",
 			before:   notJoined,
 			after:    notJoined,
-			limit:    2 * time.Second,
+			capacity: true,
 			wantStep: "artifacts-start",
 			wantLog:  []string{"up seaweed-master", "up seaweed-volume"},
 		},
@@ -379,10 +463,13 @@ func TestArtifactStartFailuresReportTheirStep(t *testing.T) {
 			rt := &runtime{root: fake, project: "pm-artifact-store-test", stdout: io.Discard, stderr: io.Discard}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if test.limit > 0 {
-				var stop context.CancelFunc
-				ctx, stop = context.WithTimeout(ctx, test.limit)
-				defer stop()
+			// A deadlock guard only. A correct run ends at an observed
+			// event long before it.
+			ctx, stop := context.WithTimeout(ctx, artifactStartDeadlockGuard)
+			defer stop()
+			var capacityRequested func() bool
+			if test.capacity {
+				capacityRequested = cancelAtFirstCapacityRequest(t, cancel)
 			}
 			ensureBucket := func(context.Context) error {
 				if err := appendTestLine(filepath.Join(fake, "order.log"), "bucket"); err != nil {
@@ -404,10 +491,89 @@ func TestArtifactStartFailuresReportTheirStep(t *testing.T) {
 			if step != test.wantStep {
 				t.Fatalf("failed step = %q, want %q (error: %v)", step, test.wantStep, err)
 			}
+			if test.capacity {
+				if !capacityRequested() {
+					t.Fatalf("no capacity request reached the fake master (error: %v)", err)
+				}
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("the capacity wait did not end at the observed capacity request: %v", err)
+				}
+			}
 			if got := recordedMasterCalls(t, fake, "order.log"); !slices.Equal(got, test.wantLog) {
 				t.Fatalf("artifact store calls = %q, want %q", got, test.wantLog)
 			}
 		})
+	}
+}
+
+// artifactStartDeadlockGuard ends a broken artifact start test. A correct
+// run never reaches it.
+const artifactStartDeadlockGuard = time.Minute
+
+// cancelAtFirstCapacityRequest puts a python3 wrapper first on PATH, before
+// the fake of installFakeArtifactStore. When a /dir/status request (the
+// capacity check) reaches the fake master, the wrapper writes one line to a
+// named pipe, then runs the fake. A goroutine opens the pipe, which waits
+// until that first request, reads the line and calls cancel. The returned
+// function reports whether a capacity request came. It also ends the wait
+// of the goroutine when no request came.
+func cancelAtFirstCapacityRequest(t *testing.T, cancel context.CancelFunc) func() bool {
+	t.Helper()
+	directory := t.TempDir()
+	signal := filepath.Join(directory, "capacity")
+	if err := syscall.Mkfifo(signal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(directory, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
+for argument in "$@"; do
+  last=$argument
+done
+case "$last" in
+  */dir/status)
+    printf 'capacity\n' > "$FAKE_CAPACITY_SIGNAL"
+    ;;
+esac
+exec "$FAKE_STORE_DIR/bin/python3" "$@"
+`, 0o700)
+	t.Setenv("FAKE_CAPACITY_SIGNAL", signal)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	seen := make(chan bool, 1)
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		file, err := os.OpenFile(signal, os.O_RDONLY, 0)
+		if err != nil {
+			seen <- false
+			return
+		}
+		defer file.Close()
+		line, _ := bufio.NewReader(file).ReadString('\n')
+		requested := line == "capacity\n"
+		if requested {
+			cancel()
+		}
+		seen <- requested
+		// The read end stays open until the test ends, so that a later
+		// capacity request never waits for a reader.
+		<-done
+	}()
+	return func() bool {
+		// When no capacity request came, the goroutine still waits in
+		// open. A writer that opens and closes the pipe ends that wait.
+		if writer, err := os.OpenFile(signal, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+		select {
+		case requested := <-seen:
+			return requested
+		case <-time.After(artifactStartDeadlockGuard):
+			t.Fatal("the capacity signal reader did not end")
+			return false
+		}
 	}
 }
 

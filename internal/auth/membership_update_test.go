@@ -3,10 +3,13 @@ package auth_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -504,4 +507,102 @@ func TestMembershipUpdateRefusesADelegatedActorBeforeTheConnectionRule(t *testin
 	if err != nil || direct.Mutation.Unchanged || !slices.Contains(direct.Membership.ConnectionIDs, fixture.connection) {
 		t.Fatalf("direct add of the same connection = %#v, %v; want an update", direct.Mutation, err)
 	}
+}
+
+// Go developer check, not acceptance proof. A deferred constraint trigger
+// raises SQLSTATE 08007 (transaction resolution unknown) at the COMMIT of a
+// membership update. The store then reports an unknown commit outcome. The
+// update must keep that outcome unknown: HTTP 503 mutation_outcome_unknown with
+// the retry action same_key_reconcile_only, which the CLI shows as exit 7 with
+// a reconcile step. Defect: UpdateMembership returned the store error
+// unchanged, and the HTTP layer answered 500 internal_error (CLI exit 6). No
+// Gherkin scenario covers this outcome.
+func TestMembershipUpdateKeepsAnUnknownCommitOutcome(t *testing.T) {
+	fixture := newAuthFixture(t)
+	audit := newWorkspaceAuditReader(t, fixture)
+	authService := fixture.newAuthService(t)
+	identityService, err := app.NewIdentityService(app.IdentityServiceConfig{
+		Pool: fixture.pool, DeploymentID: fixture.deployment,
+		Authorize:        authService.AuthorizeResource,
+		ReceiptRetention: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewIdentityService(): %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	ada := directTestActor(fixture.ada)
+	existing, err := identityService.InspectConnection(ctx, ada, fixture.alpha, fixture.connection)
+	if err != nil {
+		t.Fatalf("InspectConnection(): %v", err)
+	}
+	created, err := identityService.CreateConnection(ctx, ada, fixture.alpha, app.CreateConnection{
+		ConnectorID: existing.ConnectorID, ProviderAccountID: existing.ProviderAccountID,
+		DisplayName: "membership-update-unknown",
+		Control:     mutationControl("create-membership-update-unknown", 1, true),
+	})
+	if err != nil {
+		t.Fatalf("CreateConnection(): %v", err)
+	}
+
+	failCommitOfWorkspaceAudit(t, audit.adminDSN, fixture.alpha.OrgID)
+	_, err = identityService.UpdateMembership(ctx, ada, fixture.alpha, app.UpdateMembership{
+		MembershipID:  "membership-" + fixture.ada.PrincipalID,
+		ConnectionIDs: []string{created.Connection.ConnectionID},
+		Control:       mutationControl("update-unknown-outcome", 1, true),
+	})
+	var failure *app.Failure
+	if !errors.As(err, &failure) || failure.HTTPStatus != http.StatusServiceUnavailable ||
+		failure.Code != "mutation_outcome_unknown" || failure.RetryAction != "same_key_reconcile_only" {
+		t.Fatalf("UpdateMembership with an unknown commit outcome = %v; want 503 mutation_outcome_unknown with same_key_reconcile_only", err)
+	}
+}
+
+var auditOrgIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
+
+// failCommitOfWorkspaceAudit makes each COMMIT that inserts a workspace audit
+// record of the organization raise SQLSTATE 08007. It uses a deferred
+// constraint trigger, which runs at COMMIT. The test drops the trigger and its
+// function when it ends, each step with a time limit.
+func failCommitOfWorkspaceAudit(t *testing.T, adminDSN, orgID string) {
+	t.Helper()
+	if !auditOrgIDPattern.MatchString(orgID) {
+		t.Fatalf("organization ID %q is not safe in the trigger condition", orgID)
+	}
+	name := "pm_test_commit_unknown_" + strings.ReplaceAll(strings.ToLower(orgID), "-", "_")
+	if len(name) > 60 {
+		name = name[:60]
+	}
+	exec := func(statement string) error {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		connection, err := pgx.Connect(ctx, adminDSN)
+		if err != nil {
+			return fmt.Errorf("connect the stack administrator: %T", err)
+		}
+		_, execErr := connection.Exec(ctx, statement)
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer closeCancel()
+		return errors.Join(execErr, connection.Close(closeCtx))
+	}
+	if err := exec(fmt.Sprintf(`
+		CREATE FUNCTION pm.%[1]s() RETURNS trigger LANGUAGE plpgsql AS $body$
+		BEGIN
+			RAISE EXCEPTION 'test: commit resolution unknown' USING ERRCODE = '08007';
+		END
+		$body$;
+		CREATE CONSTRAINT TRIGGER %[1]s AFTER INSERT ON pm.workspace_audit_entries
+			DEFERRABLE INITIALLY DEFERRED FOR EACH ROW
+			WHEN (NEW.org_id = '%[2]s') EXECUTE FUNCTION pm.%[1]s();
+	`, name, orgID)); err != nil {
+		t.Fatalf("install the commit fault: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := exec(fmt.Sprintf(`
+			DROP TRIGGER %[1]s ON pm.workspace_audit_entries;
+			DROP FUNCTION pm.%[1]s();
+		`, name)); err != nil {
+			t.Errorf("remove the commit fault: %v", err)
+		}
+	})
 }

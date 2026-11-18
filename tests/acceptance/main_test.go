@@ -30,16 +30,10 @@ type binaries struct {
 func TestFeatures(t *testing.T) {
 	bins := buildBinaries(t)
 	stack := newStackHarness(bins, t.TempDir())
-	lane := newLane(stack)
-	t.Cleanup(func() {
-		if err := lane.close(); err != nil {
-			t.Errorf("stop the acceptance lane: %v", err)
-		}
-	})
 	suite := godog.TestSuite{
 		Name: "pm",
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
-			registerCLISteps(sc, bins, stack, lane)
+			registerCLISteps(sc, bins, stack, newLane(sc, stack))
 		},
 		Options: &godog.Options{
 			Format:   "pretty",
