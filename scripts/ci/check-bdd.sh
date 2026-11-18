@@ -136,6 +136,12 @@ gherkin_deadline=$((started + budget - finish_allowance - cleanup_allowance - st
 stack_deadline=$((gherkin_deadline - gherkin_minimum - start_allowance - finish_allowance - cleanup_allowance - stop_grace))
 step "budget: the stack go test command stops at +$((stack_deadline - started))s, the Gherkin go test command at +$((gherkin_deadline - started))s, the script ends by +${budget}s. Each fixture start has a ${start_allowance}s allowance and each fixture cleanup a ${cleanup_allowance}s one: the phase deadline plus 10s."
 
+# The required bdd job checks the keyring layer of its own job image before
+# the stack run (#323, D1-9). The checks job runs the same check. A failure
+# fails the job.
+step 'check-ci-image.py (the keyring layer of the job image)'
+python3 -I -B scripts/ci/check-ci-image.py
+
 step 'build pm-stack, pm-stack-fixture and pm-api-generate from the candidate'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain.json"
 mkdir -p .cache/bin

@@ -10,7 +10,9 @@
 #
 # PMCLI_PYTHON names the Python interpreter for the checks (default python3).
 # The macOS git hooks set it. CI ignores it and uses python3.
-# Checks: setup python generate gofmt boundaries tools unit.
+# Checks: setup python generate gofmt boundaries tools image unit.
+# `image` checks the keyring layer of the job image (scripts/ci/check-ci-image.py).
+# It runs only inside the image, so the macOS hooks do not select it.
 # `unit` runs `go test` of every root-module package outside the stack list
 # (scripts/ci/go-packages.sh). The pre-push hook runs the same packages itself
 # and does not select `unit`.
@@ -19,7 +21,7 @@
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 cd "$repo_root"
-all='setup python generate gofmt boundaries tools unit'
+all='setup python generate gofmt boundaries tools image unit'
 if [ "$#" -eq 1 ] && [ "$1" = --list ]; then
   # shellcheck disable=SC2086
   printf '%s\n' $all
@@ -100,7 +102,7 @@ check_python() {
     "$py" -I -B scripts/dev/secret_scan.py install
   fi
   for test in scripts/ci/test_setup.py scripts/ci/test_runner_admission.py \
-    scripts/ci/test_stack_fixture.py tools/test_bootstrap.py scripts/dev/test_secret_scan.py; do
+    scripts/ci/test_ci_image.py scripts/ci/test_stack_fixture.py tools/test_bootstrap.py scripts/dev/test_secret_scan.py; do
     step "$test"
     "$py" -I -B "$test"
   done
@@ -125,6 +127,11 @@ check_gofmt() {
 check_boundaries() {
   step 'check-boundaries.sh'
   sh scripts/check-boundaries.sh
+}
+
+check_image() {
+  step 'check-ci-image.py (the keyring layer of the job image)'
+  "$py" -I -B scripts/ci/check-ci-image.py
 }
 
 check_tools() {
