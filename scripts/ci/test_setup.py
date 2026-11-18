@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Exercise the public setup checker against isolated, real file inventories."""
 import ast
+import contextlib
+import errno
 import importlib.util
+import io
 import json
 import os
 from pathlib import Path
@@ -353,6 +356,13 @@ GO_PACKAGES = ROOT / "scripts/ci/go-packages.sh"
 CHECK_BDD = ROOT / "scripts/ci/check-bdd.sh"
 
 
+# The tests of test_stack_fixture.py that hold processes without a timed pause:
+# the receipt tests of #278 and the tests that #286 adds or changes.
+FIXTURE_TESTS_WITHOUT_PAUSE = ("test_receipt_check", "test_group_signal", "test_phase_deadline",
+                               "PhaseFixture", "test_cancellation_stops_descendant", "ExitedLeader",
+                               "test_exited_leader")
+
+
 def gherkin_caller_options(values):
     """The go-test-report.py options of the Gherkin run in check-bdd.sh.
 
@@ -370,6 +380,39 @@ def gherkin_caller_options(values):
     if unknown:
         raise AssertionError(f"no test value for the Gherkin caller words {unknown}")
     return [values.get(word, word) for word in options]
+
+
+def processes_holding(text):
+    """Return each live process whose command line holds TEXT.
+
+    The teardown check of the tests that start processes: no process that
+    names the temporary folder of a test case may stay after the case. Linux
+    reads /proc. Other systems read ps. A process that ends during the
+    listing is not listed.
+    """
+    if sys.platform.startswith("linux"):
+        found = []
+        for entry in Path("/proc").iterdir():
+            if entry.name.isdigit():
+                try:
+                    arguments = (entry / "cmdline").read_bytes()
+                except (FileNotFoundError, ProcessLookupError):
+                    continue
+                if text.encode() in arguments:
+                    found.append(entry.name + " " + arguments.replace(b"\0", b" ").decode(errors="replace"))
+        return found
+    listing = subprocess.run(["/bin/ps", "-A", "-ww", "-o", "pid=,args="], capture_output=True,
+                             text=True, timeout=10, check=True)
+    return [line.strip() for line in listing.stdout.splitlines() if text in line]
+
+
+def no_fifo_reader(path):
+    """Return True when no process has the FIFO PATH open for reading (ENXIO)."""
+    try:
+        os.close(os.open(path, os.O_WRONLY | os.O_NONBLOCK))
+    except OSError as error:
+        return error.errno == errno.ENXIO
+    return False
 
 
 class HeldProcess:
@@ -429,6 +472,70 @@ class HeldProcess:
             self.queue.close()
 
 
+class FifoHold:
+    """The ownership and the release of a process that reads a FIFO that the test holds.
+
+    The command gets the arguments ARGS: the FIFO "hold" ($0), the FIFO
+    "ack" ($1) and the file "pid" ($2). The reader opens "hold" first,
+    writes its process ID to "pid" and then writes "opened" to "ack". The
+    test holds both FIFOs open for reading and writing, so no open blocks,
+    and it never writes "hold". So the reader blocks until the release.
+
+    The release takes the identity of the reader (HeldProcess) while it still
+    blocks, closes the FIFOs and waits once for its exit. It sends no signal.
+    Use it as a context manager, so that the release also runs when an
+    assertion fails. READER says whether the reader acknowledged, was alive
+    at the release and then ended.
+
+    FifoHold owns a reader only after its acknowledgement. Before that, the
+    starter of the command owns it and must collect it before the release
+    (brahmagupta F2 at 52a87ec, REFUSED_KILL_CHILD).
+    """
+
+    # The reader steps of a command, in their order.
+    READER = 'exec 3<"$0"; echo $$ > "$2"; echo opened > "$1"'
+
+    def __init__(self, directory):
+        self.hold, self.ack, self.pid = (Path(directory) / name for name in ("hold", "ack", "pid"))
+        os.mkfifo(self.hold)
+        os.mkfifo(self.ack)
+        self.ends = [os.open(self.hold, os.O_RDWR), os.open(self.ack, os.O_RDWR)]
+        self.args = [str(self.hold), str(self.ack), str(self.pid)]
+        self.reader = {"acknowledged": False, "alive": False, "ended": False}
+        self.released = False
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.release()
+        return False
+
+    def release(self):
+        if self.released:
+            return self.reader
+        self.released = True
+        handle = None
+        try:
+            if self.pid.exists() and self.pid.read_text().strip():
+                # The reader wrote its ID before its acknowledgement, and it
+                # blocks on the open FIFO, so its ID names no other process.
+                self.reader["acknowledged"] = True
+                handle = HeldProcess(int(self.pid.read_text().strip()))
+                self.reader["alive"] = not handle.exits_within(0)
+        finally:
+            # The reader reads the end of the FIFO and stops.
+            for end in self.ends:
+                os.close(end)
+            if handle is not None:
+                try:
+                    # One wait for the exit event of the held reader.
+                    self.reader["ended"] = handle.exits_within(30)
+                finally:
+                    handle.close()
+        return self.reader
+
+
 def gated_background_script(pid_fifo, gate_fifo, release_fifo, work, last):
     """The shell command of the process cleanup test.
 
@@ -455,15 +562,31 @@ def go_event(action, package, test=None, **extra):
 class GoTestReport(unittest.TestCase):
     """Developer checks of scripts/ci/go-test-report.py with synthetic events."""
 
+    # The fake commands are script files, not "python -c CODE": with --expect,
+    # the reporter refuses each option that the CI commands do not use.
+    @classmethod
+    def setUpClass(cls):
+        cls.programs = tempfile.TemporaryDirectory()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.programs.cleanup()
+
+    def program(self, code):
+        """Return the command words that run the Python CODE from a file."""
+        path = Path(self.programs.name) / f"program-{len(os.listdir(self.programs.name))}.py"
+        path.write_text(code)
+        return [sys.executable, str(path)]
+
     def report(self, events, *options, exit_status=0, raw=None, expect=None, command=None,
                env=None):
         with tempfile.TemporaryDirectory() as directory:
             stream = Path(directory) / "events.json"
             stream.write_text(raw if raw is not None else "\n".join(events) + ("\n" if events else ""))
             summary = Path(directory) / "summary.md"
-            fake = command or [sys.executable, "-c",
-                               "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))",
-                               str(stream), str(exit_status), "-count=1"]
+            fake = command or [*self.program(
+                "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))"),
+                str(stream), str(exit_status), "-count=1"]
             if expect is not None:
                 expected = Path(directory) / "expected.txt"
                 expected.write_text("".join(f"{line}\n" for line in expect))
@@ -637,6 +760,156 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("- a test started and has no result: m/acc TestFeatures/second\n", summary)
         self.assertIn("Summary error: the godog scenario total is missing.", summary)
 
+    # Issue #350. The godog v0.16.0 pretty format prints each step keyword and
+    # text in the color of the step status: green passed, cyan skipped. A data
+    # table row is cyan too, but it starts with "|".
+    @staticmethod
+    def step_line(color, keyword, text):
+        return f"    \x1b[{color}m{keyword}\x1b[0m \x1b[{color}m{text}\x1b[0m \x1b[1;30m# steps.go:9\x1b[0m\n"
+
+    def gherkin_suite(self, scenarios, totals, extra=()):
+        """A Gherkin run stream. SCENARIOS maps a name to (result, step lines)."""
+        events = [go_event("run", "m/acc", "TestFeatures")]
+        for line, (name, (result, steps)) in enumerate(scenarios.items(), 3):
+            key = "TestFeatures/" + name
+            events += [go_event("run", "m/acc", key),
+                       go_event("output", "m/acc", key,
+                                Output=f"  \x1b[1;37mScenario:\x1b[0m {name} \x1b[1;30m# a.feature:{line}\x1b[0m\n")]
+            events += [go_event("output", "m/acc", key, Output=step) for step in steps]
+            events.append(go_event(result, "m/acc", key))
+        events += [go_event("output", "m/acc", "TestFeatures", Output=total + "\n") for total in totals]
+        events += [go_event("pass", "m/acc", "TestFeatures"), *extra, go_event("pass", "m/acc", Elapsed=1.0)]
+        return events
+
+    def gherkin_report(self, events):
+        """Run the reporter with the exact options of the Gherkin caller in check-bdd.sh."""
+        with tempfile.TemporaryDirectory() as directory:
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("m/acc\n")
+            options = gherkin_caller_options({
+                "$gherkin_deadline": str(int(time.time()) + 600),
+                "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+            return self.report(events, *options)
+
+    def test_gherkin_skip_causes_come_from_the_totals(self):
+        # C0 of #286b (run 44133272339) named skips while the totals had none:
+        # godog prints outline template steps in cyan. The stream is the local
+        # `PM_ACCEPTANCE_TAGS=@pmgen go test -json ./tests/acceptance/` output.
+        real = (ROOT / "scripts/ci/testdata/godog-pmgen-outlines.jsonl").read_text().splitlines()
+
+        def gherkin(events, raw=None):
+            with tempfile.TemporaryDirectory() as directory:
+                expected = Path(directory) / "expected.txt"
+                expected.write_text(("github.com/polymetrics-ai/pm-cli/tests/acceptance" if raw else "m/acc") + "\n")
+                options = gherkin_caller_options({
+                    "$gherkin_deadline": str(int(time.time()) + 600),
+                    "$GITHUB_STEP_SUMMARY": "SUMMARY",
+                    "$RUNNER_TEMP/bdd-gherkin-expected.txt": str(expected)})
+                return self.report(events, *options, raw=raw)
+
+        with self.subTest(case="real outlines, no skip in the totals"):
+            result, summary = gherkin([], "\n".join(real) + "\n")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("12 scenarios (12 passed)\n77 steps (77 passed)\n", result.stdout)
+            self.assertNotIn("skipped", result.stdout.replace("0 skipped tests", ""))
+            self.assertNotIn("Problems:", summary)
+        with self.subTest(case="cyan step names alone do not fail a run"):
+            events = self.gherkin_suite({"first": ("pass", [self.step_line(36, "Given", "a state")])},
+                                        ["1 scenarios (\x1b[32m1 passed\x1b[0m)", "1 steps (\x1b[32m1 passed\x1b[0m)"])
+            result, _ = gherkin(events)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertNotIn("skipped step", result.stdout)
+        with self.subTest(case="real outlines and one real skipped step"):
+            # One more scenario with one skipped step, before the godog totals,
+            # and the totals changed to match. Only that step is named.
+            package = "github.com/polymetrics-ai/pm-cli/tests/acceptance"
+            key = "TestFeatures/Synthetic_skip"
+            extra = [go_event("run", package, key),
+                     go_event("output", package, key,
+                              Output="  [1;37mScenario:[0m Synthetic skip [1;30m# features/synthetic.feature:3[0m\n"),
+                     go_event("output", package, key, Output=self.step_line(32, "When", "a step passes")),
+                     go_event("output", package, key, Output=self.step_line(36, "Then", "the step is skipped")),
+                     go_event("pass", package, key)]
+            at = next(index for index, line in enumerate(real) if "12 scenarios (" in line)
+            changed = real[:at] + extra + real[at:]
+            text = "\n".join(changed).replace("12 scenarios (", "13 scenarios (").replace(
+                "12 passed", "13 passed").replace("77 steps (", "79 steps (").replace(
+                "77 passed", "78 passed, \\u001b[36m1 skipped\\u001b[0m") + "\n"
+            result, summary = gherkin([], text)
+            self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+            causes = [line for line in result.stdout.splitlines() if "skipped step" in line or "skipped scenario" in line]
+            self.assertEqual(causes, ["go test: the godog step total has 1 skipped steps",
+                                      "go test: skipped step: Synthetic skip / Then the step is skipped"])
+            self.assertIn("- skipped step: Synthetic skip / Then the step is skipped\n", summary)
+
+    def test_gherkin_run_passes_with_a_cyan_table_row(self):
+        table = "      | \x1b[36mname\x1b[0m | \x1b[36mvalue\x1b[0m |\n"
+        events = self.gherkin_suite(
+            {"first": ("pass", [self.step_line(32, "Given", "a table"), table,
+                                self.step_line(32, "Then", "it passes")])},
+            ["1 scenarios (\x1b[32m1 passed\x1b[0m)", "2 steps (\x1b[32m2 passed\x1b[0m)"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("| PASS | first | `a.feature:3` |", summary)
+        self.assertNotIn("Problems:", summary)
+
+    def test_gherkin_run_fails_on_zero_scenarios(self):
+        events = self.gherkin_suite({}, ["No scenarios", "No steps"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("go test: 0 scenarios ran\n", result.stdout)
+        self.assertIn("- 0 scenarios ran\n", summary)
+        self.assertIn("No scenarios", summary)
+
+    def test_gherkin_run_fails_on_a_skipped_step(self):
+        events = self.gherkin_suite(
+            {"first": ("pass", [self.step_line(32, "Given", "a state"),
+                                self.step_line(36, "Then", "it is skipped")])},
+            ["1 scenarios (\x1b[32m1 passed\x1b[0m)",
+             "2 steps (\x1b[32m1 passed\x1b[0m, \x1b[36m1 skipped\x1b[0m)"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for cause in ("skipped step: first / Then it is skipped",
+                      "the godog step total has 1 skipped steps"):
+            self.assertIn(f"go test: {cause}\n", result.stdout)
+            self.assertIn(f"- {cause}\n", summary)
+        self.assertIn("1 scenarios (1 passed)", summary)
+
+    def test_gherkin_run_fails_on_a_skipped_scenario(self):
+        events = self.gherkin_suite(
+            {"first": ("pass", [self.step_line(32, "Given", "a state")]),
+             "second": ("pass", [self.step_line(36, "Given", "a state"), self.step_line(36, "Then", "more")]),
+             "third": ("skip", [])},
+            ["3 scenarios (\x1b[32m3 passed\x1b[0m)",
+             "3 steps (\x1b[32m1 passed\x1b[0m, \x1b[36m2 skipped\x1b[0m)"])
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        for cause in ("skipped scenario: second", "the godog step total has 2 skipped steps"):
+            self.assertIn(f"go test: {cause}\n", result.stdout)
+            self.assertIn(f"- {cause}\n", summary)
+        self.assertNotIn("skipped scenario: first", result.stdout)
+        # A Go test skip event of "third": --fail-on-skip names it, not godog.
+        self.assertIn("go test: skipped test fails this run: m/acc TestFeatures/third\n", result.stdout)
+        self.assertIn("- `m/acc TestFeatures/third`\n", summary)
+        self.assertIn("3 scenarios (3 passed)", summary)
+
+    def test_gherkin_run_fails_on_a_skipped_go_test(self):
+        # A Gherkin package test calls t.Skip: the untitled summary names it.
+        skipped = [go_event("run", "m/acc", "TestOther"),
+                   go_event("output", "m/acc", "TestOther", Output="    other_test.go:5: canary\n"),
+                   go_event("skip", "m/acc", "TestOther")]
+        events = self.gherkin_suite({"first": ("pass", [self.step_line(32, "Given", "a state")])},
+                                    ["1 scenarios (\x1b[32m1 passed\x1b[0m)", "1 steps (\x1b[32m1 passed\x1b[0m)"],
+                                    skipped)
+        result, summary = self.gherkin_report(events)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("go test: skipped test fails this run: m/acc TestOther\n", result.stdout)
+        self.assertIn("Skipped tests (each one fails this run):\n\n- `m/acc TestOther`\n", summary)
+        self.assertIn("1 scenarios (1 passed)", summary)
+        self.assertIn("| PASS | first | `a.feature:3` |", summary)
+        self.assertNotIn("Summary error", summary)
+
     def test_paused_parallel_tests_with_results_pass(self):
         events = [go_event("run", "m/p", "TestA"),
                   go_event("output", "m/p", "TestA", Output="=== RUN   TestA\n"),
@@ -710,11 +983,11 @@ class GoTestReport(unittest.TestCase):
     def test_test_filters_are_refused(self):
         for options, env in ((["-run=TestOK"], None), (["-tags", "x"], None), ([], {"GOFLAGS": "-p=2 -short"})):
             with self.subTest(options=options, env=env):
-                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                command = [*self.program("raise SystemExit(0)"), "-count=1", *options]
                 result, _ = self.report([], expect=["m/a"], command=command, env=env)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("refused: the command selects or filters tests", result.stderr)
-        command = [sys.executable, "-c", "raise SystemExit(0)"]
+        command = self.program("raise SystemExit(0)")
         result, _ = self.report([], expect=["m/a"], command=command)
         self.assertEqual(result.returncode, 2)
         self.assertIn("refused: the command does not contain -count=1", result.stderr)
@@ -732,7 +1005,7 @@ class GoTestReport(unittest.TestCase):
             os.mkfifo(hold)
             hold_end = os.open(hold, os.O_RDWR)
             try:
-                command = [sys.executable, "-c", self.HELD_CHILD, str(hold), "-count=1"]
+                command = [*self.program(self.HELD_CHILD), str(hold), "-count=1"]
                 return self.report([], *options, expect=expect, command=command)
             finally:
                 os.close(hold_end)
@@ -752,7 +1025,7 @@ class GoTestReport(unittest.TestCase):
         ]
         for options, env in refused:
             with self.subTest(options=options, env=env):
-                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                command = [*self.program("raise SystemExit(0)"), "-count=1", *options]
                 result, _ = self.report([], expect=["m/a"], command=command, env=env)
                 self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
                 self.assertIn("refused: the command", result.stderr)
@@ -760,10 +1033,107 @@ class GoTestReport(unittest.TestCase):
         # fake command then prints no event, so the run fails later.
         for options, env in (([], {"GOFLAGS": "-p=2"}), (["-p", "1", "-timeout", "15m", "-json"], None)):
             with self.subTest(accepted=options, env=env):
-                command = [sys.executable, "-c", "raise SystemExit(0)", "-count=1", *options]
+                command = [*self.program("raise SystemExit(0)"), "-count=1", *options]
                 result, _ = self.report([], expect=["m/a"], command=command, env=env)
                 self.assertNotIn("refused:", result.stderr)
                 self.assertIn("go test: the go test event stream is empty", result.stdout)
+
+    def test_goflags_forms_that_go_reads_differently_are_refused(self):
+        # Deferred item (b): go reads a quoted GOFLAGS field without its
+        # quotes. The guard refuses each quoted form, each field that is not
+        # an option, and a GOFLAGS -count with no =value. -p=2 and -race stay
+        # accepted.
+        program = [*self.program("raise SystemExit(0)"), "-json", "-count=1"]
+        for goflags in ("'-run=^$'", '"-run=^$"', "-p=2 '-run=^$'", "-p=2\t'-short'", "-p=2 '-p=2'",
+                        "-p=2 x", "-p 2", "-timeout 10m", "-count"):
+            with self.subTest(goflags=goflags):
+                result, _ = self.report([], expect=["m/a"], command=program, env={"GOFLAGS": goflags})
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn("refused: GOFLAGS has", result.stderr)
+        for goflags, extra in (("-p=2", []), ("-p=2 -race", []), ("-p=2\t-race", []), ("-p=2", ["-race"])):
+            with self.subTest(accepted=goflags, extra=extra):
+                result, _ = self.report([], expect=["m/a"], command=[*program, *extra], env={"GOFLAGS": goflags})
+                self.assertNotIn("refused:", result.stderr)
+
+    def test_only_the_ci_go_test_options_pass_the_guard(self):
+        # crrao N1 at 958cd5e: `go test -exec /usr/bin/true` runs no test, and
+        # each package passes. With --expect, the reporter accepts only the
+        # options of the CI commands, and -race for #312.
+        module = self.load_reporter()
+
+        def command_words(path, marker):
+            text = path.read_text().replace("\\\n", " ")
+            line = next(line for line in text.splitlines() if marker in line)
+            words = shlex.split(line.split("||")[0])
+            # The command starts after the "--" that ends the reporter options.
+            return words[words.index("--", words.index("scripts/ci/go-test-report.py")) + 1:]
+
+        callers = {
+            "unit run": command_words(CHECK_DOCS, '"$py" -I -B scripts/ci/go-test-report.py'),
+            "stack run": command_words(CHECK_BDD, '--output "$RUNNER_TEMP/go-test-stack.json"'),
+            "Gherkin run": command_words(CHECK_BDD, '--output "$RUNNER_TEMP/go-test-bdd.json"'),
+        }
+        for name, words in callers.items():
+            self.assertIn("test", words)
+            self.assertIn("-count=1", words)
+            for goflags, extra in (("-p=2", []), ("-p=2", ["-race"]), ("-p=2 -race", [])):
+                with self.subTest(caller=name, goflags=goflags, extra=extra), \
+                        mock.patch.dict(os.environ, {"GOFLAGS": goflags}):
+                    self.assertIsNone(module.filter_problem([*words, *extra]), words)
+        base = [*self.program("raise SystemExit(0)"), "-json", "-count=1"]
+        refused = []
+        for option in ("exec", "overlay", "toolexec", "unknownoption"):
+            refused += [([f"-{option}=/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([f"-{option}", "/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([f"--{option}=/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([f"-test.{option}=/usr/bin/true"], None, "refused: the command uses the option"),
+                        ([], {"GOFLAGS": f"-p=2 -{option}=/usr/bin/true"}, "refused: the command uses the option")]
+        # Every GOFLAGS option with a value needs "=value", as go reads it.
+        for goflags in ("-p", "-timeout", "-p=2 -timeout"):
+            refused.append(([], {"GOFLAGS": goflags}, "refused: GOFLAGS has"))
+        for options, env, message in refused:
+            with self.subTest(options=options, env=env):
+                result, _ = self.report([], expect=["m/a"], command=[*base, *options], env=env)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(message, result.stderr)
+
+    def test_quoted_goflags_are_refused_for_a_real_go_package(self):
+        # Deferred item (b), with a real Go package. go removes the quotes of
+        # a GOFLAGS field, so '-run=^$' selects no test, and the package still
+        # reports a pass. The reporter must refuse the run before go starts.
+        # GOFLAGS=-p=2 must still run the real test. The go command comes from
+        # the shared toolchain through tools/bootstrap.py, with GOPROXY=off,
+        # GOTOOLCHAIN=local and no module to download.
+        with tempfile.TemporaryDirectory() as directory:
+            package = Path(directory) / "quoted"
+            package.mkdir()
+            (package / "go.mod").write_text("module example.com/quoted\n\ngo 1.22\n")
+            (package / "quoted_test.go").write_text(
+                'package quoted\n\nimport "testing"\n\nfunc TestRuns(t *testing.T) { t.Log("ran") }\n')
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("example.com/quoted\n")
+            go_test = [sys.executable, str(ROOT / "tools/bootstrap.py"), "exec", "go", "--",
+                       "test", "-json", "-count=1", "./..."]
+
+            def run(goflags):
+                env = dict(os.environ, CGO_ENABLED="0", GOPROXY="off", GOWORK="off",
+                           GOTOOLCHAIN="local", GOFLAGS=goflags)
+                return subprocess.run(
+                    [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                     "--expect", str(expected), "--", *go_test],
+                    cwd=package, env=env, capture_output=True, text=True, timeout=600)
+
+            for goflags in ("'-run=^$'", "-p=2 '-run=^$'", '"-run=^$"'):
+                with self.subTest(goflags=goflags):
+                    result = run(goflags)
+                    self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                    self.assertIn("refused: GOFLAGS has a quote character", result.stderr)
+                    self.assertNotIn("PASS", result.stdout)
+            result = run("-p=2")
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            self.assertIn("go test: intended set: 1 packages from go list; package results: 1", result.stdout)
+            events = [json.loads(line) for line in (Path(directory) / "out.json").read_text().splitlines()]
+            self.assertIn({"pass"}, [{event["Action"]} for event in events if event.get("Test") == "TestRuns"])
 
     def test_deadline_stops_the_command_and_still_reports(self):
         started = time.monotonic()
@@ -800,6 +1170,8 @@ class GoTestReport(unittest.TestCase):
             script = gated_background_script(
                 fifos["pid"], fifos["gate"], fifos["release"], 'cat < "%s"' % fifos["hold"],
                 "echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+            command_file = Path(directory) / "command.sh"
+            command_file.write_text(script + "\n")
             # The test holds each FIFO open for reading and writing, so no open
             # blocks and no write meets a closed FIFO.
             ends = {name: os.open(path, os.O_RDWR) for name, path in fifos.items()}
@@ -807,7 +1179,7 @@ class GoTestReport(unittest.TestCase):
             try:
                 reporter = subprocess.Popen(
                     [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
-                     "--expect", str(expected), "--", "/bin/sh", "-c", script, "sh", "-count=1"],
+                     "--expect", str(expected), "--", "/bin/sh", str(command_file), "-count=1"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
                     # One bounded read of the process ID.
@@ -869,11 +1241,11 @@ class GoTestReport(unittest.TestCase):
                            str(hold)]
                 with mock.patch.object(module.subprocess, "Popen", RecordingPopen), \
                         mock.patch.object(module.os, "killpg", recording_killpg):
-                    status, timed_out, received = module.run_command(
+                    status, timed_out, received, cleanup = module.run_command(
                         command, Path(directory) / "out.json", None, None)
             finally:
                 os.close(hold_end)
-        self.assertEqual((status, timed_out, received), (0, False, None))
+        self.assertEqual((status, timed_out, received, cleanup), (0, False, None, None))
         reaped = [event for event in events if event[0] == "reaped"]
         self.assertEqual(len(reaped), 1, events)
         leader = reaped[0][1]
@@ -882,6 +1254,405 @@ class GoTestReport(unittest.TestCase):
         self.assertIn(("killpg", leader, signal.SIGKILL), events)
         self.assertEqual([index for index in kills if index > reaped_at], [],
                          f"killpg after the command was reaped: {events}")
+
+    # The command that leaves a live member: the FifoHold reader. The command
+    # exits only after its acknowledgement (brahmagupta F2 at 333e804).
+    LIVE_MEMBER = ("sh -c '" + FifoHold.READER + "; exec cat <&3 > /dev/null' \"$0\" \"$1\" \"$2\" & "
+                   "read ack < \"$1\"; echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+
+    def run_with_refused_group_signals(self, script):
+        """Run run_command with a killpg that the system refuses (EPERM).
+
+        SCRIPT is a /bin/sh command with the FifoHold arguments. Return
+        (status, cleanup problem or None, reader) with the FifoHold reader
+        result.
+        """
+        module = self.load_reporter()
+
+        def refused_killpg(group, signum):
+            raise PermissionError(1, "Operation not permitted")
+
+        with tempfile.TemporaryDirectory() as directory, FifoHold(directory) as fifo:
+            with mock.patch.object(module.os, "killpg", refused_killpg):
+                result = module.run_command(["/bin/sh", "-c", script, *fifo.args],
+                                            Path(directory) / "out.json", None, None)
+            reader = fifo.release()
+            self.assertEqual(processes_holding(directory), [])
+        return result[0], (result[3] if len(result) > 3 else None), reader
+
+    def test_refused_group_signal_with_a_live_member_fails_the_run(self):
+        # security cross-review r2 N-R2-1: the command exits 0, a member of its
+        # group still runs, and the system refuses the group signal. The exit
+        # of the command does not make the refusal harmless, so the run fails
+        # and names the refused signal, on every platform.
+        status, cleanup, _ = self.run_with_refused_group_signals(self.LIVE_MEMBER)
+        self.assertNotEqual(status, 0)
+        self.assertIsNotNone(cleanup)
+        self.assertIn("refused to send SIGKILL to the process group of the command", cleanup)
+
+    def test_refused_signal_reader_opens_before_the_command_exits(self):
+        # brahmagupta F2 at 333e804: the reader must open, write its ID and
+        # acknowledge before the command exits and the test closes the FIFO.
+        # The command text holds that order. The run shows the outcome only.
+        script = self.LIVE_MEMBER
+        steps = ['exec 3<"$0"', 'echo $$ > "$2"', 'echo opened > "$1"', 'exec cat <&3',
+                 'read ack < "$1"', "echo '{"]
+        self.assertEqual([step for step in steps if step in script], steps, script)
+        self.assertEqual([script.index(step) for step in steps], sorted(script.index(step) for step in steps))
+        _, _, reader = self.run_with_refused_group_signals(script)
+        self.assertEqual(reader, {"acknowledged": True, "alive": True, "ended": True})
+
+    def test_refusal_after_an_interrupted_wait_of_an_exited_command(self):
+        # Pre-push failure of 2026-11-18: SIGTERM interrupts the wait after the command
+        # exited, and Darwin refuses a signal to its group. Forced on each system.
+        module = self.load_reporter()
+        real, killed, exits = module.ExitWatch, [], []
+
+        class InterruptedWatch:
+            def __init__(self, pid):
+                self.pid, self.real, self.exited, self.waits = pid, real(pid), False, 0
+
+            def wait(self, timeout):
+                self.waits += 1
+                if self.waits > 1:
+                    self.exited = self.real.wait(timeout)
+                    return self.exited
+                probe = real(self.pid)  # one bounded wait for the exit event, no reap
+                exits.append(probe.wait(30))
+                probe.close()
+                signal.raise_signal(signal.SIGTERM)
+                raise AssertionError("the signal did not interrupt the wait")
+
+            def close(self):
+                self.real.close()
+
+        def refused(group, signum):
+            killed.append(signum)
+            raise PermissionError(1, "Operation not permitted")
+
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            for name, value in (("ExitWatch", InterruptedWatch), ("live_group_members", lambda group: [])):
+                stack.enter_context(mock.patch.object(module, name, value))
+            stack.enter_context(mock.patch.object(module.sys, "platform", "darwin"))
+            stack.enter_context(mock.patch.object(module.os, "killpg", refused))
+            result = module.run_command(["/usr/bin/true"], Path(directory) / "out.json", None, None)
+        self.assertEqual(exits, [True], "the command did not exit before the signal")
+        self.assertEqual((result[0], result[3]), (128 + signal.SIGTERM, None), result)
+        self.assertEqual(killed[:2], [signal.SIGTERM, signal.SIGTERM])
+
+    def test_refused_group_signal_after_the_group_is_empty(self):
+        # The command exits 0 and leaves no member. Only on Darwin does the
+        # system refuse a signal to a group whose only member is the exited,
+        # unreaped command; ps then shows no live member, so the run passes.
+        # On Linux each refusal fails the run.
+        status, cleanup, _ = self.run_with_refused_group_signals("echo '{\"Action\":\"pass\",\"Package\":\"m/a\"}'")
+        if sys.platform == "darwin":
+            self.assertEqual((status, cleanup), (0, None))
+        else:
+            self.assertNotEqual(status, 0)
+            self.assertIn("refused to send SIGKILL", cleanup)
+
+    # brahmagupta F1 at 333e804: run_command installs signal handlers, so it
+    # runs in this child. The child prints the result and the reap state.
+    REFUSED_KILL_CHILD = """\
+import importlib.util, json, os, select, signal, subprocess, sys, time
+from pathlib import Path
+report, out, case, command, hold, ack, pid, ack_limit = sys.argv[1:9]
+spec = importlib.util.spec_from_file_location("go_test_report", report)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.KILL_GRACE = 0
+real_killpg = module.os.killpg
+def refused(group, signum):
+    raise PermissionError(1, "Operation not permitted")
+module.os.killpg = refused
+started = []
+class Recording(subprocess.Popen):
+    def __init__(self, *arguments, **options):
+        super().__init__(*arguments, **options)
+        started.append(self)
+        # The child owns the command from its start. Its wait for the
+        # acknowledgement has a limit. Without it, the child kills the group
+        # of the unreaped command and collects it before the test releases.
+        try:
+            with open(ack) as acknowledgement:
+                ready = select.select([acknowledgement], [], [], float(ack_limit))[0]
+                if not (ready and acknowledgement.readline() == "opened\\n"):
+                    raise TimeoutError("no acknowledgement")
+        except BaseException:
+            real_killpg(self.pid, signal.SIGKILL)
+            try:
+                self.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+            print(json.dumps({"acknowledged": False, "status": self.returncode}), flush=True)
+            os._exit(3)
+        if case == "received":
+            signal.raise_signal(signal.SIGTERM)
+module.subprocess.Popen = Recording
+if case == "no exit watch":
+    def no_watch(pid):
+        raise OSError("no watch")
+    module.ExitWatch = no_watch
+deadline = time.time() - 1 if case == "deadline" else None
+result = module.run_command(["/bin/sh", "-c", command, hold, ack, pid], Path(out), deadline, None)
+print(json.dumps({"result": list(result), "reaped": started[0].returncode is not None}))
+"""
+
+    # The command of the refused-kill test reads the hold FIFO itself, after
+    # the FifoHold reader steps.
+    REFUSED_KILL_COMMAND = FifoHold.READER + "; read line <&3"
+
+    def test_refused_kill_of_a_live_command_has_a_bounded_wait(self):
+        # Each group signal is refused, and the command blocks on a held FIFO.
+        # The reporter must not wait with no limit or reap the live command,
+        # and must fail. FifoHold then releases the command (F4 at 3b6e71f).
+        steps = ['exec 3<"$0"', 'echo $$ > "$2"', 'echo opened > "$1"', "read line <&3"]
+        command = self.REFUSED_KILL_COMMAND
+        for step in steps:
+            self.assertIn(step, command, "the command must open, write its ID and acknowledge first")
+        self.assertEqual([command.index(step) for step in steps], sorted(command.index(step) for step in steps))
+        child_code = self.REFUSED_KILL_CHILD
+        self.assertIn("acknowledgement.readline()", child_code, "the child must wait for the acknowledgement")
+        self.assertLess(child_code.index("acknowledgement.readline()"), child_code.index("module.run_command("))
+        self.assertLess(child_code.index("started.append(self)"), child_code.index("acknowledgement.readline()"),
+                        "the child must own the command before it waits for the acknowledgement")
+        expected = {"deadline": 124, "received": 128 + signal.SIGTERM, "no exit watch": 1}
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "child.py"
+            child.write_text(child_code)
+            for case, status in expected.items():
+                case_directory = Path(directory) / case.replace(" ", "-")
+                case_directory.mkdir()
+                with self.subTest(case=case), FifoHold(case_directory) as fifo:
+                    # The live command inherits the standard error of the child,
+                    # so it goes to a file, not to a pipe that the wait reads.
+                    errors = case_directory / "errors"
+                    try:
+                        with errors.open("w") as error_file:
+                            result = subprocess.run(
+                                [sys.executable, "-I", "-B", str(child), str(REPORT),
+                                 str(case_directory / "out.json"), case, command, *fifo.args, "5"],
+                                stdout=subprocess.PIPE, stderr=error_file, text=True, timeout=20)
+                    except subprocess.TimeoutExpired:
+                        self.fail(f"{case}: the reporter waited with no limit after a refused SIGKILL")
+                    self.assertEqual(result.returncode, 0, result.stdout + errors.read_text())
+                    report = json.loads(result.stdout.splitlines()[-1])
+                    self.assertEqual(report["result"][0], status, report)
+                    self.assertFalse(report["reaped"], "the reporter reaped a live command")
+                    self.assertIn("refused to send SIGKILL", report["result"][3])
+                    self.assertIn("after the last SIGKILL, so the reporter did not reap it", report["result"][3])
+                    self.assertEqual(fifo.release(), {"acknowledged": True, "alive": True, "ended": True})
+                self.assertEqual(processes_holding(str(case_directory)), [])
+
+    def test_teardown_check_finds_a_live_process(self):
+        # The teardown check must see a live process that names the folder.
+        # The process blocks on its standard input, which the test holds.
+        with tempfile.TemporaryDirectory() as directory:
+            process = subprocess.Popen(["/bin/sh", "-c", "read line", directory], stdin=subprocess.PIPE)
+            try:
+                self.assertEqual(len(processes_holding(directory)), 1)
+            finally:
+                process.stdin.write(b"go\n")
+                process.stdin.close()
+                self.assertEqual(process.wait(timeout=30), 0)
+            self.assertEqual(processes_holding(directory), [])
+
+    def test_refused_kill_child_collects_a_command_with_no_acknowledgement(self):
+        # brahmagupta F2 at 52a87ec and process 5352: a command that never
+        # acknowledges blocks on a FIFO with no writer. The child must collect
+        # it. No reporter, command or FIFO reader may stay.
+        with tempfile.TemporaryDirectory() as directory:
+            child = Path(directory) / "child.py"
+            child.write_text(self.REFUSED_KILL_CHILD)
+            never = Path(directory) / "hold.never"
+            os.mkfifo(never)
+            with FifoHold(directory) as fifo:
+                errors = Path(directory) / "errors"
+                with errors.open("w") as error_file:
+                    result = subprocess.run(
+                        [sys.executable, "-I", "-B", str(child), str(REPORT), str(Path(directory) / "out.json"),
+                         "deadline", 'read line < "$0.never"', *fifo.args, "1"],
+                        stdout=subprocess.PIPE, stderr=error_file, text=True, timeout=20)
+                self.assertEqual(result.returncode, 3, result.stdout + errors.read_text())
+                self.assertEqual(json.loads(result.stdout.splitlines()[-1]),
+                                 {"acknowledged": False, "status": -signal.SIGKILL})
+                self.assertEqual(fifo.release(), {"acknowledged": False, "alive": False, "ended": False})
+            self.assertEqual([path.name for path in (never, fifo.hold, fifo.ack) if not no_fifo_reader(path)], [])
+            self.assertEqual(processes_holding(directory), [])
+
+    def test_signal_after_the_reap_is_recorded_and_not_forwarded(self):
+        # Deferred item (a): after the real reap of the command, the
+        # reporter's handlers are still in place. A signal then must not reach
+        # killpg, because the old process ID can name a new group, and it must
+        # still fail the run. The check calls the installed SIGTERM handler
+        # directly, right after the real reap, so it needs no timing. It covers
+        # the normal path and the path where ExitWatch cannot start.
+        module = self.load_reporter()
+        command = [sys.executable, "-c",
+                   "print('{\"Action\":\"pass\",\"Package\":\"m/a\"}', flush=True)", "-count=1"]
+        for path in ("normal", "no exit watch"):
+            events = []
+            real_killpg = os.killpg
+
+            class SignalAfterReap(subprocess.Popen):
+                # Only the command of the reporter. The reporter can also
+                # start ps (the Darwin path), which must not count here.
+                def wait(self, timeout=None):
+                    status = super().wait(timeout)
+                    if list(self.args) == command:
+                        events.append(("reaped", self.pid))
+                        signal.getsignal(signal.SIGTERM)(signal.SIGTERM, None)
+                    return status
+
+            def recording_killpg(group, signum):
+                reaped = any(event[0] == "reaped" for event in events)
+                events.append(("killpg", group, signum))
+                if not reaped:
+                    real_killpg(group, signum)
+
+            patches = [mock.patch.object(module.subprocess, "Popen", SignalAfterReap),
+                       mock.patch.object(module.os, "killpg", recording_killpg)]
+            if path == "no exit watch":
+                patches.append(mock.patch.object(module, "ExitWatch", side_effect=OSError("no watch")))
+            with self.subTest(path=path), tempfile.TemporaryDirectory() as directory, \
+                    contextlib.ExitStack() as stack:
+                for patch in patches:
+                    stack.enter_context(patch)
+                stack.enter_context(contextlib.redirect_stdout(io.StringIO()))
+                result = module.run_command(command, Path(directory) / "out.json", None, None)
+                status, received = result[0], result[2]
+                reaped = [index for index, event in enumerate(events) if event[0] == "reaped"]
+                self.assertEqual(len(reaped), 1, events)
+                self.assertEqual([event for event in events[reaped[0]:] if event[0] == "killpg"], [],
+                                 f"killpg after the reap: {events}")
+                self.assertEqual(received, signal.SIGTERM)
+                self.assertEqual(status, 128 + signal.SIGTERM)
+
+    def test_member_list_is_unknown_for_an_unreadable_record(self):
+        # brahmagupta F1 at 3b6e71f: only ENOENT or ESRCH proves an exit. The
+        # fake /proc entry 4194002 fails to read in each case.
+        module = self.load_reporter()
+        group = 4194001
+        real_read_text = Path.read_text
+        cases = {"permission denied": PermissionError(13, "Permission denied"),
+                 "input/output error": OSError(5, "Input/output error"),
+                 "vanished (ENOENT)": FileNotFoundError(2, "No such file or directory"),
+                 "vanished (ESRCH)": ProcessLookupError(3, "No such process")}
+        for case, error in cases.items():
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                proc = Path(directory)
+                for pid in (group, 4194002):
+                    (proc / str(pid)).mkdir()
+                    (proc / str(pid) / "stat").write_text(f"{pid} (held name) S 1 {group} {group} 0\n")
+                broken = proc / "4194002" / "stat"
+
+                def read_text(path, *arguments, **options):
+                    if path == broken:
+                        raise error
+                    return real_read_text(path, *arguments, **options)
+
+                with mock.patch.object(module.sys, "platform", "linux"), \
+                        mock.patch.object(module, "PROC", proc, create=True), \
+                        mock.patch.object(type(proc), "read_text", read_text):
+                    members = module.live_group_members(group)
+                    unsignalled = module.unsignalled_members(group)
+                if case.startswith("vanished"):
+                    self.assertEqual(members, [group])
+                    self.assertEqual(unsignalled, 0)
+                else:
+                    self.assertIsNone(members, case)
+                    self.assertIsNone(unsignalled, case)
+
+    def test_member_list_ps_shutdown_has_a_limit(self):
+        # brahmagupta F2 at 3b6e71f: each wait for a ps that never ends has a
+        # limit, and the list is unknown. The fake refuses a wait with no limit.
+        module = self.load_reporter()
+        events = []
+
+        class StuckLister:
+            def __init__(self, *arguments, **options):
+                self.returncode = None
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                events.append("context exit")
+                raise AssertionError("the context exit waits for ps with no limit")
+
+            def communicate(self, timeout=None):
+                events.append(("communicate", timeout))
+                if timeout is None:
+                    raise AssertionError("communicate waits for ps with no limit")
+                raise subprocess.TimeoutExpired("ps", timeout)
+
+            def wait(self, timeout=None):
+                events.append(("wait", timeout))
+                if timeout is None:
+                    raise AssertionError("wait waits for ps with no limit")
+                raise subprocess.TimeoutExpired("ps", timeout)
+
+            def kill(self):
+                events.append("kill")
+
+        with mock.patch.object(module.sys, "platform", "darwin"), \
+                mock.patch.object(module, "PROCESS_LIST_POPEN", StuckLister):
+            self.assertIsNone(module.live_group_members(4194001))
+            self.assertIsNone(module.unsignalled_members(4194001))
+        self.assertIn("kill", events)
+        self.assertNotIn("context exit", events)
+        self.assertTrue(all(event == "kill" or event[1] is not None for event in events), events)
+
+    def test_unsignalled_group_member_fails_the_run(self):
+        # crrao R1: a real member blocks on a FIFO, and the real SIGKILL stops
+        # it. A fake /proc (forced Linux path) also lists a member that gives
+        # EPERM to signal 0. The run must fail with the fixed message. Only
+        # Linux CI can show a real member that refuses a successful killpg.
+        module = self.load_reporter()
+        refusing = 4194000
+        real_kill = os.kill
+        message = {"refused": "remain that the reporter may not signal (permission denied)",
+                   "unreadable": "could not list the process group of the command"}
+        for case in ("refused", "signalled", "unreadable"):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as directory:
+                proc = Path(directory) / "proc"
+                hold = Path(directory) / "hold"
+                os.mkfifo(hold)
+                hold_end = os.open(hold, os.O_RDWR)
+
+                class FakeProcPopen(subprocess.Popen):
+                    def __init__(self, *arguments, **options):
+                        super().__init__(*arguments, **options)
+                        if case == "unreadable":
+                            return
+                        for pid, state in ((self.pid, "Z"), (refusing, "S")):
+                            (proc / str(pid)).mkdir(parents=True)
+                            (proc / str(pid) / "stat").write_text(
+                                f"{pid} (held name) {state} 1 {self.pid} {self.pid} 0 -1 4194560\n")
+
+                def kill(pid, signum):
+                    if pid == refusing:
+                        if case == "refused":
+                            raise PermissionError(1, "Operation not permitted")
+                        return None
+                    return real_kill(pid, signum)
+
+                command = ["/bin/sh", "-c", 'cat < "$0" > /dev/null 2>&1 & echo \'{"Action":"pass","Package":"m/a"}\'',
+                           str(hold)]
+                try:
+                    with mock.patch.object(module.subprocess, "Popen", FakeProcPopen), \
+                            mock.patch.object(module.sys, "platform", "linux"), \
+                            mock.patch.object(module, "PROC", proc, create=True), \
+                            mock.patch.object(module.os, "kill", side_effect=kill):
+                        result = module.run_command(command, Path(directory) / "out.json", None, None)
+                finally:
+                    os.close(hold_end)
+                self.assertEqual(result[0], 0 if case == "signalled" else 1, result)
+                if case == "signalled":
+                    self.assertIsNone(result[3])
+                else:
+                    self.assertIn(message[case], result[3])
 
     def test_signal_to_the_reporter_fails_the_run(self):
         # The child prints a complete, passing stream, exits 0 on SIGTERM and
@@ -907,7 +1678,7 @@ class GoTestReport(unittest.TestCase):
             try:
                 reporter = subprocess.Popen(
                     [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
-                     "--expect", str(expected), "--", sys.executable, "-c", child, str(hold), str(ready),
+                     "--expect", str(expected), "--", *self.program(child), str(hold), str(ready),
                      "-count=1"],
                     stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
                 try:
@@ -926,21 +1697,18 @@ class GoTestReport(unittest.TestCase):
         self.assertIn("go test: intended set: 1 packages from go list; package results: 1", stdout)
 
     def test_new_tests_hold_processes_without_a_timed_pause(self):
-        # Hard rule 5: no timed pause in a test. The tests and test children of this
-        # file, and the receipt tests that #278 adds to test_stack_fixture.py,
-        # hold a process on a FIFO or a pipe, never on a timed pause. The
-        # word is built from two parts, so that this check does not match
-        # itself.
+        # Hard rule 5: this file and the listed fixture tests hold a process on
+        # a FIFO or a pipe, never on a timed pause. The word is split in two.
         token = re.compile(r"\b" + "sl" + "eep" + r"\b")
         texts = {"test_setup.py": Path(__file__).read_text()}
         fixture_tests = ROOT / "scripts/ci/test_stack_fixture.py"
         tree = ast.parse(fixture_tests.read_text())
         for node in ast.walk(tree):
-            if isinstance(node, ast.FunctionDef) and (
-                    node.name.startswith("test_receipt_check") or node.name == "receipt_manifest"):
+            if isinstance(node, (ast.FunctionDef, ast.ClassDef)) and (
+                    node.name.startswith(FIXTURE_TESTS_WITHOUT_PAUSE) or node.name == "receipt_manifest"):
                 texts[f"test_stack_fixture.py {node.name}"] = ast.get_source_segment(
                     fixture_tests.read_text(), node)
-        self.assertGreaterEqual(len(texts), 5, texts.keys())
+        self.assertGreaterEqual(len(texts), 8, texts.keys())
         found = [f"{name}:{number}: {line.strip()}" for name, text in texts.items()
                  for number, line in enumerate(text.splitlines(), 1) if token.search(line)]
         self.assertEqual(found, [])
@@ -1018,8 +1786,7 @@ class GoTestReport(unittest.TestCase):
             child.wait(timeout=30)
 
     def test_command_stopped_by_a_signal_fails(self):
-        command = [sys.executable, "-c", "import os, signal; os.kill(os.getpid(), signal.SIGTERM)",
-                   "-count=1"]
+        command = [*self.program("import os, signal; os.kill(os.getpid(), signal.SIGTERM)"), "-count=1"]
         result, _ = self.report([], expect=["m/a"], command=command)
         self.assertEqual(result.returncode, 143)
 
@@ -1108,21 +1875,17 @@ class BddTimeBudget(unittest.TestCase):
                              r"gherkin_minimum|gherkin_deadline|stack_deadline)=", line)]
         self.assertEqual(len(lines), 8, lines)
         result = subprocess.run(["/bin/sh", "-c", "started=0\n" + "\n".join(lines)
-                                 + '\necho "$budget $stack_deadline $gherkin_deadline"'],
+                                 + '\necho "$budget $stack_deadline $gherkin_deadline $start_allowance'
+                                 + ' $cleanup_allowance $finish_allowance $stop_grace $gherkin_minimum"'],
                                 capture_output=True, text=True, timeout=30)
-        budget, stack_deadline, gherkin_deadline = map(int, result.stdout.split())
-        self.assertEqual((budget, stack_deadline, gherkin_deadline), (5220, 3600, 4770))
+        (budget, stack_deadline, gherkin_deadline, start_allowance, cleanup_allowance,
+         finish_allowance, stop_grace, gherkin_minimum) = map(int, result.stdout.split())
         text = script.replace("\\\n", " ")
         stack = re.search(r'--deadline "\$stack_deadline" --timeout (\d+) .* -timeout (\w+) \$\(cat', text)
         gherkin = re.search(r'--deadline "\$gherkin_deadline" --timeout (\d+) ', text)
         stack_timeout, gherkin_timeout = int(stack.group(1)), int(gherkin.group(1))
-        self.assertEqual((stack_timeout, stack.group(2), gherkin_timeout), (3600, "15m", 1140))
-        child_timeout = self.module("stack_fixture", ROOT / "scripts/ci/with-stack-fixture.py").CHILD_TIMEOUT
+        fixture = self.module("stack_fixture", ROOT / "scripts/ci/with-stack-fixture.py")
         kill_grace = self.module("go_test_report", REPORT).KILL_GRACE
-        self.assertEqual(child_timeout, 3660)
-        # The reporter, not the wrapper, ends each run.
-        self.assertLess(stack_timeout + kill_grace, child_timeout)
-        self.assertLess(gherkin_timeout + kill_grace, child_timeout)
         workflow = (ROOT / WORKFLOW).read_text()
         bdd = workflow[workflow.index("\n  bdd:\n"):workflow.index("\n  checks:\n")]
         job = int(re.search(r"\n    timeout-minutes: (\d+)\n", bdd).group(1))
@@ -1130,11 +1893,34 @@ class BddTimeBudget(unittest.TestCase):
                              bdd).group(1))
         cleanup = int(re.search(r"- name: Clean up the job container and dependency fixture\n"
                                 r"        if: always\(\)\n        timeout-minutes: (\d+)\n", bdd).group(1))
-        self.assertEqual((step, job, cleanup), (90, 100, 6))
+        # The allowances are the real worst cases. A stopped go test command
+        # gets the TERM grace and then the bounded reap after SIGKILL. A phase
+        # can end PROCESS_TERM_GRACE after its deadline, because the wait
+        # after the SIGKILL of a stopped call has no phase limit.
+        self.assertEqual(stop_grace, 2 * kill_grace)
+        self.assertEqual(start_allowance, fixture.START_PHASE_LIMIT + fixture.PROCESS_TERM_GRACE)
+        self.assertEqual(cleanup_allowance, fixture.CLEANUP_PHASE_LIMIT + fixture.PROCESS_TERM_GRACE)
+        # The reporter, not the wrapper, ends each run.
+        self.assertLess(stack_timeout + 2 * kill_grace, fixture.CHILD_TIMEOUT)
+        self.assertLess(gherkin_timeout + 2 * kill_grace, fixture.CHILD_TIMEOUT)
         # The step keeps 3 minutes for the job container; the job keeps the
         # cleanup step and 4 minutes for the checkout and the runner.
         self.assertEqual(step * 60, budget + 3 * 60)
         self.assertEqual(job, step + cleanup + 4)
+        # The longest path ends at the budget for a prelude end P of 2870 s
+        # or less, and the 8-minute prelude of the budget is inside that.
+        for prelude, end in ((480, budget), (2870, budget), (2871, budget + 1)):
+            stack_start_end = prelude + start_allowance
+            gherkin_start_end = (max(stack_deadline, stack_start_end) + stop_grace + cleanup_allowance
+                                 + finish_allowance + start_allowance)
+            gherkin_end = max(gherkin_deadline, gherkin_start_end) + stop_grace + cleanup_allowance
+            self.assertEqual(gherkin_end + finish_allowance, end, prelude)
+        self.assertEqual((budget, stack_deadline, gherkin_deadline, gherkin_minimum), (5220, 3600, 4775, 0))
+        self.assertEqual((start_allowance, cleanup_allowance, finish_allowance, stop_grace), (730, 370, 15, 60))
+        self.assertEqual((stack_timeout, stack.group(2), gherkin_timeout), (3590, "15m", 1140))
+        self.assertEqual((fixture.CHILD_TIMEOUT, kill_grace, fixture.PROCESS_TERM_GRACE), (3660, 30, 10))
+        self.assertEqual((fixture.START_PHASE_LIMIT, fixture.CLEANUP_PHASE_LIMIT), (720, 360))
+        self.assertEqual((step, job, cleanup), (90, 100, 6))
 
 
 class GoPackageSelection(unittest.TestCase):

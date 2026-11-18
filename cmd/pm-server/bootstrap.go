@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"syscall"
 
 	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/config"
@@ -43,6 +44,22 @@ func newBootstrapCommand(ctx context.Context, stdout io.Writer) *cobra.Command {
 	return command
 }
 
+// openBootstrapInput opens the input without blocking and accepts only a
+// regular file. A FIFO, a device or a directory is refused at once, so the
+// bootstrap never waits for a writer.
+func openBootstrapInput(path string) (*os.File, error) {
+	file, err := os.OpenFile(path, os.O_RDONLY|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, app.ErrBootstrapInput
+	}
+	info, err := file.Stat()
+	if err != nil || !info.Mode().IsRegular() {
+		_ = file.Close()
+		return nil, app.ErrBootstrapInput
+	}
+	return file, nil
+}
+
 // bootstrap writes one JSON document to stdout on success, and nothing on a
 // refusal. main writes the one stderr line of a refusal.
 func bootstrap(ctx context.Context, configurationPath, secretsDirectory, inputPath string, stdout io.Writer) error {
@@ -50,9 +67,9 @@ func bootstrap(ctx context.Context, configurationPath, secretsDirectory, inputPa
 	if err != nil {
 		return err
 	}
-	file, err := os.Open(inputPath)
+	file, err := openBootstrapInput(inputPath)
 	if err != nil {
-		return app.ErrBootstrapInput
+		return err
 	}
 	input, err := app.DecodeBootstrapInput(file)
 	closeErr := file.Close()

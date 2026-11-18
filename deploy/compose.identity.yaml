@@ -42,7 +42,11 @@ services:
     volumes:
       - ${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server.pem:/run/secrets/identity-provider-server.pem:ro
       - ${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server-key.pem:/run/secrets/identity-provider-server-key.pem:ro
-      - ${PM_STACK_IDENTITY_PROVIDER_DIR:?}/realm.json:/opt/keycloak/data/import/realm.json:ro
+      # The realm import has its own directory, which holds no other
+      # credential. The job removes the import after the ready line. With a
+      # directory mount, the removal also removes the file from the container
+      # view; a file bind mount keeps a removed file visible there.
+      - ${PM_STACK_IDENTITY_PROVIDER_DIR:?}/import:/opt/keycloak/data/import:ro
     tmpfs:
       - /tmp:size=64m,mode=1777
       - /opt/keycloak/data:size=128m,mode=1777

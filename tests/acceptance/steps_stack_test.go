@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,9 @@ type stackScenario struct {
 	keyring    *keyring.Keyring
 	workspace  string
 	result     commandResult
+	// secondListener is the listener of step N2. The scenario close step
+	// closes it.
+	secondListener *net.TCPListener
 }
 
 // startedProcess is one process that the starter started, with the report of
@@ -87,6 +91,7 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *
 	registerBootstrapSteps(sc, scenario)
 	registerLaneSteps(sc, scenario, lane)
 	registerDevicePollIntervalSteps(sc, scenario)
+	registerListenerSteps(sc, scenario)
 }
 
 // newConfiguration is step 1. It runs the shared build and migration step,
@@ -109,7 +114,9 @@ func (s *stackScenario) newConfiguration(ctx context.Context) error {
 }
 
 // startAndWait is step 5. The starter gives the write end of a new ready pipe
-// as descriptor 3, with --ready-fd 3.
+// as descriptor 3, with --ready-fd 3. pm-server also gets the held listener
+// of the deployment as descriptor 4, with --listen-fd 4. The harness closes
+// its copy of the listener when the launch or the start fails.
 func (s *stackScenario) startAndWait(ctx context.Context, name string) error {
 	if s.deployment == nil {
 		return errors.New("the scenario has no deployment configuration")
@@ -118,12 +125,23 @@ func (s *stackScenario) startAndWait(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.start(ctx, name, starter.Config{
+	config := starter.Config{
 		Args:    []string{"--config", configuration, "--secrets-directory", s.deployment.secrets, "--ready-fd", "3"},
 		Env:     s.deployment.processEnvironment(),
 		Dir:     s.deployment.home(),
 		ReadyFD: 3,
-	})
+	}
+	if name != "pm-server" {
+		_, err = s.start(ctx, name, config)
+		return err
+	}
+	if err := s.deployment.giveListener(&config); err != nil {
+		return err
+	}
+	started, err := s.start(ctx, name, config)
+	if err != nil || started.report.Outcome != starter.OutcomeReady {
+		s.deployment.releaseListener()
+	}
 	return err
 }
 
@@ -164,12 +182,17 @@ func (s *stackScenario) runWithDescriptor(ctx context.Context, name, arguments, 
 // process limits and the real timer source, and waits once for its ready line
 // or end of file. Only the start limit fails the step. The Then steps check
 // every other result. The step output records the duration of the start.
+// start owns the listener copy in config.Listener until starter.Start takes
+// it. It closes that copy when it returns before starter.Start, and
+// starter.Start closes it on every other path.
 func (s *stackScenario) start(ctx context.Context, name string, config starter.Config) (*startedProcess, error) {
 	if _, ok := s.processes[name]; ok {
+		closeListenerCopy(config)
 		return nil, fmt.Errorf("the scenario already started %s", name)
 	}
 	binary, err := s.harness.binary(name)
 	if err != nil {
+		closeListenerCopy(config)
 		return nil, err
 	}
 	config.Path = binary
@@ -190,6 +213,14 @@ func (s *stackScenario) start(ctx context.Context, name string, config starter.C
 		return nil, fmt.Errorf("%s: %s: %s", name, started.report.Outcome, started.report)
 	}
 	return started, nil
+}
+
+// closeListenerCopy closes the listener copy of a start that did not reach
+// starter.Start.
+func closeListenerCopy(config starter.Config) {
+	if config.Listener != nil {
+		_ = config.Listener.Close()
+	}
 }
 
 func (s *stackScenario) started(name string) (*startedProcess, error) {
@@ -236,6 +267,9 @@ func (s *stackScenario) sendSIGTERM(ctx context.Context, name string) error {
 		return err
 	}
 	started.report = started.process.Stop()
+	if name == "pm-server" && s.deployment != nil {
+		s.deployment.releaseListener()
+	}
 	godog.Logf(ctx, "%s stop: %s", name, started.report.Stop)
 	return nil
 }
@@ -336,6 +370,9 @@ func (s *stackScenario) close() error {
 		if report.Stop != starter.StopNone && (report.Stop != starter.StopAfterSIGTERM || report.ExitCode != 0) {
 			errs = append(errs, fmt.Errorf("stop %s at the end of the scenario: %s", name, report))
 		}
+	}
+	if s.secondListener != nil {
+		errs = append(errs, s.secondListener.Close())
 	}
 	if s.deployment != nil {
 		errs = append(errs, s.deployment.close())
