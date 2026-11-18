@@ -15,15 +15,17 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/polymetrics-ai/pm-cli/tests/keycloak"
 )
 
 // deployment is one new PM deployment configuration on the job-owned stack,
 // apart from the lane of PR #261. Each deployment has its own deployment ID,
-// loopback listen address, CA, identity provider, HTTPS edge and public
-// origin, and a Temporal namespace that is the stack namespace unless a step
-// changes it. pm-server listens on plain HTTP behind the HTTPS edge, because
-// authenticated API and browser traffic needs such an edge
-// (docs/development/setup.md:149).
+// loopback listen address, CA, HTTPS edge and public origin, its own client
+// and user in the job-owned Keycloak, and a Temporal namespace that is the
+// stack namespace unless a step changes it. pm-server listens on plain HTTP
+// behind the HTTPS edge, because authenticated API and browser traffic needs
+// such an edge (docs/development/setup.md:149).
 type deployment struct {
 	stack         stackInputs
 	dir           string
@@ -35,13 +37,13 @@ type deployment struct {
 	secrets       string
 	configuration string
 	authority     *laneAuthority
-	identity      *laneIdentityProvider
+	identity      *keycloak.Identity
 	edge          *httptest.Server
 }
 
-// newDeployment makes the deployment directory, the CA, the identity
-// provider, the HTTPS edge and the secret root. The first start writes the
-// configuration.
+// newDeployment makes the deployment directory, the CA, the HTTPS edge, the
+// client and the user of the deployment in the job-owned Keycloak, and the
+// secret root. The first start writes the configuration.
 func newDeployment(stack stackInputs) (*deployment, error) {
 	d := &deployment{stack: stack, namespace: stack.temporal.namespace}
 	if err := d.open(); err != nil {
@@ -67,9 +69,6 @@ func (d *deployment) open() error {
 	if err := writePrivateFile(d.caFile, d.authority.pem); err != nil {
 		return err
 	}
-	if d.identity, err = newLaneIdentityProvider(d.authority); err != nil {
-		return err
-	}
 	if d.listen, err = reserveLoopbackAddress(); err != nil {
 		return err
 	}
@@ -77,6 +76,11 @@ func (d *deployment) open() error {
 		return err
 	}
 	d.origin = d.edge.URL
+	// Provision keeps what it created also on an error, so that close
+	// removes it.
+	if d.identity, err = d.stack.identity.admin.Provision(d.origin + browserCallbackPath); err != nil {
+		return err
+	}
 	d.deploymentID = "pm-acceptance-" + randomHex(6)
 	d.secrets, err = d.writeSecrets(d.stack)
 	return err
@@ -117,22 +121,28 @@ func (d *deployment) processEnvironment() []string {
 	return []string{"HOME=" + d.home(), "PATH=/usr/bin:/bin", "LANG=C", "TMPDIR=" + filepath.Join(d.dir, "tmp")}
 }
 
-// close stops the edge and the identity provider and removes the deployment
-// directory. The steps stop the processes before they close the deployment.
+// close stops the edge, removes the client and the user of the deployment
+// from Keycloak, checks the Keycloak container record and log for the
+// secrets, and removes the deployment directory. It reports each failure.
+// The steps stop the processes before they close the deployment.
 func (d *deployment) close() error {
 	if d.edge != nil {
 		d.edge.Close()
 	}
-	d.identity.close()
-	if d.dir != "" {
-		return os.RemoveAll(d.dir)
+	var errs []error
+	if d.identity != nil {
+		errs = append(errs, d.stack.identity.admin.Remove(d.identity), d.stack.identity.checkRecords(d.dir, d.identity))
 	}
-	return nil
+	if d.dir != "" {
+		errs = append(errs, os.RemoveAll(d.dir))
+	}
+	return errors.Join(errs...)
 }
 
 // writeSecrets makes the deployment operator secret root. It copies only the
-// stack secret members that the two processes read, and it adds the
-// deployment identity provider secret, its CA and a new wrapping key.
+// stack secret members that the two processes read, and it adds the client
+// secret of the deployment, the CA of the job-owned Keycloak and a new
+// wrapping key.
 // pm-server opens the root with os.Root, so the members are copies, not links.
 func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 	root := filepath.Join(d.dir, "secrets")
@@ -163,10 +173,10 @@ func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := writeSecretMember(root, identity, "oidc-client-secret", []byte(d.identity.clientSecret)); err != nil {
+	if err := writeSecretMember(root, identity, "oidc-client-secret", []byte(d.identity.ClientSecret)); err != nil {
 		return "", err
 	}
-	if err := writeSecretMember(root, identity, "ca.pem", d.authority.pem); err != nil {
+	if err := writeSecretMember(root, identity, "ca.pem", stack.identity.ca); err != nil {
 		return "", err
 	}
 	encryption, err := secretBundlePath(laneEncryptionRef)
@@ -186,7 +196,7 @@ func (d *deployment) writeSecrets(stack stackInputs) (string, error) {
 // writeConfiguration writes the deployment copy of the stack configuration.
 // The copy keeps the stack PostgreSQL, Temporal, artifact, admission and
 // limit settings. It changes the deployment identity, the public origin, the
-// identity provider, the wrapping key reference and the Temporal namespace,
+// identity client, the wrapping key reference and the Temporal namespace,
 // and adds the server and worker controls. The stack configuration file does
 // not change.
 func (d *deployment) writeConfiguration(stack stackInputs, backend string) (string, error) {
@@ -209,8 +219,8 @@ func (d *deployment) writeConfiguration(stack stackInputs, backend string) (stri
 			"drain_timeout":   "5s",
 		},
 		"identity": map[string]any{
-			"issuer":            d.identity.issuer,
-			"client_id":         laneOIDCClientID,
+			"issuer":            stack.identity.admin.Issuer(),
+			"client_id":         d.identity.ClientID,
 			"client_secret_ref": laneIdentityRef,
 			"ca_ref":            laneIdentityRef,
 		},

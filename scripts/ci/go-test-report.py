@@ -1,25 +1,58 @@
 #!/usr/bin/env python3
 """Run `go test -json`, keep the event stream and print a short summary.
 
-Usage: go-test-report.py --output FILE [--scenarios] [--summary-file FILE] -- COMMAND...
+Usage: go-test-report.py --output FILE [--scenarios] [--title TEXT]
+                         [--fail-on-skip] [--expect FILE] [--deadline TIME]
+                         [--timeout SECONDS] [--summary-file FILE] -- COMMAND...
 
 COMMAND must print `go test -json` events. The summary lists each package
 with its result and elapsed time (input for shard balancing) and repeats the
-output of failed tests and packages. The exit status is the command's status,
-or 1 when the stream records a failure the command did not report.
+output of failed tests and packages. It also lists each skipped test with its
+output. A package-level skip means that the package has no test files. It is
+not a test skip. The exit status is the command's status, or 1 when the
+stream records a failure the command did not report. A command that a signal
+stops gives 128 plus the signal number.
+
+With --fail-on-skip, a skipped test (a test or subtest that calls t.Skip) is a
+failure: the exit status is 1, and the log and the summary name the test.
+
+With --expect FILE, FILE lists one import path on each line. Each listed
+package must have exactly one package result in the stream. A missing,
+duplicated or unexpected package result, an empty stream or a line that is not
+a JSON event fails the run. The log and the summary give the size of the
+intended set and the number of package results. The command must contain
+-count=1 and must not
+select or filter tests (-run, -skip, -list, -short, -failfast, -tags), also not
+through GOFLAGS. Such a command is refused before it runs.
+
+With --deadline TIME (Unix time in seconds) or --timeout SECONDS, the command
+stops at TIME or SECONDS after its start, whichever comes first: the script
+sends SIGTERM to its process group, then SIGKILL after 30 seconds. The exit
+status is then 124, and the report still lists the results in the stream.
+The script runs COMMAND in its own process group and forwards SIGTERM, SIGINT
+and SIGHUP to it. When COMMAND exits, the script sends SIGKILL to the rest of
+that process group, so that no test process of the run stays alive.
+
+With --title, --summary-file appends a Markdown section with that title: the
+result, the totals, each package with its result and elapsed time, each failed
+or skipped test and each problem that --expect or --deadline found.
 
 With --scenarios, the summary also lists each godog scenario with its result
 and repeats the godog totals (`N scenarios (...)`, `N steps (...)`), also when
 the suite passes. A passing run without godog totals, or with a scenario count
 that differs from the godog total, fails. --summary-file appends the same
 report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
+--summary-file requires --title, --scenarios or both.
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import re
+import signal
 import subprocess
 import sys
+import time
 
 # godog colors its output. The escape byte can be absent from the event text,
 # so the color codes match with and without it.
@@ -88,32 +121,177 @@ def markdown(rows, totals, problem):
     return "\n".join(lines) + "\n"
 
 
+
+# Options that select or filter tests. A run with --expect refuses them, so
+# that each listed package runs all of its tests.
+FILTER = re.compile(r"^--?(run|skip|list|short|failfast|tags)(=.*)?$")
+DEADLINE_STATUS = 124
+KILL_GRACE = 30
+
+
+def package_result(action):
+    """Name a package result. A package-level skip means no test files."""
+    return "SKIP (no test files)" if action == "skip" else action.upper()
+
+
+def test_name(key):
+    return key[0] + (f" {key[1]}" if key[1] else "")
+
+
+def filter_problem(command):
+    """Describe a test filter in COMMAND or GOFLAGS, or return None."""
+    words = list(command) + os.environ.get("GOFLAGS", "").split()
+    for word in words:
+        if FILTER.match(word):
+            return f"the command selects or filters tests with {word.split('=')[0]}"
+    if "-count=1" not in command:
+        return "the command does not contain -count=1"
+    return None
+
+
+def run_command(command, output, deadline, limit):
+    """Run COMMAND with stdout in OUTPUT. Return (status, timed_out)."""
+    with output.open("wb") as stream:
+        try:
+            process = subprocess.Popen(command, stdout=stream, start_new_session=True)
+        except OSError as exc:
+            print(f"go test: cannot start the command: {exc}")
+            return 1, False
+        if limit is not None:
+            relative = time.time() + limit
+            deadline = relative if deadline is None else min(deadline, relative)
+
+        def forward(signum, _frame):
+            try:
+                os.killpg(process.pid, signum)
+            except ProcessLookupError:
+                pass
+
+        previous = {number: signal.signal(number, forward)
+                    for number in (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)}
+        timed_out = False
+        try:
+            try:
+                timeout = None if deadline is None else max(0.0, deadline - time.time())
+                status = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                forward(signal.SIGTERM, None)
+                try:
+                    process.wait(timeout=KILL_GRACE)
+                except subprocess.TimeoutExpired:
+                    forward(signal.SIGKILL, None)
+                    process.wait()
+                status = DEADLINE_STATUS
+        finally:
+            for number, handler in previous.items():
+                signal.signal(number, handler)
+            # A test process that outlives the command must not keep running.
+            forward(signal.SIGKILL, None)
+    if status < 0:
+        status = 128 - status
+    return status, timed_out
+
+
+def expect_problems(expected, counts, events, malformed):
+    """Compare the package results with the expected import paths."""
+    problems = []
+    if events == 0:
+        problems.append("the go test event stream is empty")
+    if malformed:
+        problems.append(f"the stream has {malformed} lines that are not JSON events")
+    seen = set()
+    for package in expected:
+        if package in seen:
+            problems.append(f"the expected package list names {package} more than once")
+        seen.add(package)
+        if counts.get(package, 0) == 0:
+            problems.append(f"no package result for {package}")
+    for package, count in sorted(counts.items()):
+        if count > 1:
+            problems.append(f"{count} package results for {package}")
+        if package not in seen:
+            problems.append(f"a package result for {package}, which is not in the expected list")
+    return problems
+
+
+def package_markdown(title, packages, failures, skips, fail_on_skip, status, problems,
+                     intended=None):
+    failed = bool(status or failures or problems or (fail_on_skip and skips))
+    lines = [f"### {title}", "", f"Result: {'FAILED' if failed else 'PASSED'}.  "]
+    if intended:
+        lines.append(f"The {intended}.  ")
+    counts = {}
+    for action, _ in packages.values():
+        counts[action] = counts.get(action, 0) + 1
+    lines.append(
+        f"{len(packages)} packages: {counts.get('pass', 0)} passed, {counts.get('fail', 0)} failed, "
+        f"{counts.get('skip', 0)} with no test files. {len(failures)} failures. "
+        f"{len(skips)} skipped tests{' (each one is a failure)' if fail_on_skip and skips else ''}. "
+        f"Exit {status}.  ")
+    lines.append("")
+    if packages:
+        lines += ["| Result | Time | Package |", "| --- | --- | --- |"]
+        for package, (action, elapsed) in sorted(packages.items(), key=lambda item: -item[1][1]):
+            lines.append(f"| {package_result(action)} | {elapsed:.1f}s | `{package}` |")
+        lines.append("")
+    for heading, items in (("Failed", [f"`{test_name(key)}`" for key in failures]),
+                           ("Skipped tests", [f"`{test_name(key)}`" for key in skips]),
+                           ("Problems", problems)):
+        if items:
+            lines += [f"{heading}:", ""]
+            lines += [f"- {item}" for item in items]
+            lines.append("")
+    return "\n".join(lines) + "\n"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--scenarios", action="store_true",
                         help="list each godog scenario and the godog totals")
+    parser.add_argument("--title",
+                        help="the title of the package section in the summary file")
+    parser.add_argument("--fail-on-skip", action="store_true",
+                        help="a skipped test is a failure")
+    parser.add_argument("--expect", type=Path,
+                        help="a file of import paths that must each have exactly one package result")
+    parser.add_argument("--deadline", type=int,
+                        help="Unix time in seconds at which the command stops")
+    parser.add_argument("--timeout", type=int,
+                        help="seconds after its start at which the command stops")
     parser.add_argument("--summary-file", type=Path,
-                        help="append the scenario report as Markdown (requires --scenarios)")
+                        help="append the report as Markdown (requires --title or --scenarios)")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("missing go test command")
-    if args.summary_file and not args.scenarios:
-        parser.error("--summary-file requires --scenarios")
-    with args.output.open("wb") as stream:
-        status = subprocess.run(command, stdout=stream, check=False).returncode
+    if args.summary_file and not (args.scenarios or args.title):
+        parser.error("--summary-file requires --title or --scenarios")
+    expected = None
+    if args.expect:
+        expected = [line.strip() for line in args.expect.read_text().splitlines() if line.strip()]
+        if not expected:
+            parser.error(f"--expect {args.expect} lists no package")
+        refused = filter_problem(command)
+        if refused:
+            parser.error(f"refused: {refused}")
+    status, timed_out = run_command(command, args.output, args.deadline, args.timeout)
     packages, failures, output = {}, [], {}
-    order, results = [], {}
+    order, results, skips = [], {}, []
+    counts, events, malformed = {}, 0, 0
     for line in args.output.read_text(errors="replace").splitlines():
         try:
             event = json.loads(line)
         except ValueError:
             print(line)
+            malformed += 1
             continue
         if not isinstance(event, dict):
+            malformed += 1
             continue
+        events += 1
         action = event.get("Action")
         key = (event.get("Package") or event.get("ImportPath") or "", event.get("Test"))
         if key not in output:
@@ -123,17 +301,44 @@ def main():
             output[key].append(event.get("Output", ""))
         elif action in ("pass", "fail", "skip") and key[1] is None:
             packages[key[0]] = (action, float(event.get("Elapsed") or 0))
+            counts[key[0]] = counts.get(key[0], 0) + 1
         if action in ("pass", "fail", "skip") and key[1] is not None:
             results[key] = action
+        if action == "skip" and key[1] is not None:
+            skips.append(key)
         if action in ("fail", "build-fail"):
             failures.append(key)
+    problems = []
+    if timed_out:
+        problems.append(f"the command did not end before its deadline and was stopped (exit {status})")
+    if expected is not None:
+        problems += expect_problems(expected, counts, events, malformed)
+        intended = (f"intended set: {len(set(expected))} packages from go list; "
+                    f"package results: {sum(counts.values())}")
+    if args.title:
+        print(args.title)
     for package, (action, elapsed) in sorted(packages.items(), key=lambda item: -item[1][1]):
-        print(f"{action.upper():4} {elapsed:8.1f}s {package}")
+        print(f"{action.upper():4} {elapsed:8.1f}s {package}" + (" (no test files)" if action == "skip" else ""))
     for key in failures:
-        name = key[0] + (f" {key[1]}" if key[1] else "")
-        print(f"::group::FAIL {name}")
+        print(f"::group::FAIL {test_name(key)}")
         sys.stdout.write("".join(output.get(key, [])))
         print("::endgroup::")
+    for key in skips:
+        print(f"::group::SKIP {test_name(key)}")
+        sys.stdout.write("".join(output.get(key, [])))
+        print("::endgroup::")
+        if args.fail_on_skip:
+            print(f"go test: skipped test fails this run: {test_name(key)}")
+    if expected is not None:
+        print(f"go test: {intended}")
+    for problem in problems:
+        print(f"go test: {problem}")
+    skip_failure = bool(args.fail_on_skip and skips)
+    if args.title and args.summary_file:
+        with args.summary_file.open("a", encoding="utf-8") as summary:
+            summary.write(package_markdown(args.title, packages, failures, skips,
+                                           args.fail_on_skip, status, problems,
+                                           intended if expected is not None else None))
     problem = None
     if args.scenarios:
         rows, totals = scenario_report(order, results, output)
@@ -148,8 +353,9 @@ def main():
         if args.summary_file:
             with args.summary_file.open("a", encoding="utf-8") as summary:
                 summary.write(markdown(rows, totals, problem))
-    print(f"go test: {len(packages)} packages, {len(failures)} failures, exit {status}")
-    return status or (1 if failures or problem else 0)
+    print(f"go test: {len(packages)} packages, {len(failures)} failures, "
+          f"{len(skips)} skipped tests, exit {status}")
+    return status or (1 if failures or problem or problems or skip_failure else 0)
 
 
 if __name__ == "__main__":

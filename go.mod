@@ -12,6 +12,7 @@ require (
 	github.com/duckdb/duckdb-go/v2 v2.10505.0
 	github.com/getkin/kin-openapi v0.149.0
 	github.com/gin-gonic/gin v1.12.0
+	github.com/godbus/dbus/v5 v5.2.2
 	github.com/jackc/pgx/v5 v5.11.0
 	github.com/jackc/puddle/v2 v2.2.2
 	github.com/oapi-codegen/nullable v1.1.0
@@ -92,7 +93,6 @@ require (
 	github.com/go-viper/mapstructure/v2 v2.5.0 // indirect
 	github.com/goccy/go-json v0.10.5 // indirect
 	github.com/goccy/go-yaml v1.19.2 // indirect
-	github.com/godbus/dbus/v5 v5.2.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/mock v1.6.0 // indirect
 	github.com/google/flatbuffers v25.12.19+incompatible // indirect

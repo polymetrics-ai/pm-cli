@@ -3,6 +3,7 @@ package acceptance
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -15,20 +16,23 @@ import (
 
 	"github.com/cucumber/godog"
 
+	"github.com/polymetrics-ai/pm-cli/tests/keyring"
 	"github.com/polymetrics-ai/pm-cli/tests/starter"
 )
 
 const laneCommandTimeout = 60 * time.Second
 
 // stackScenario is the state of one scenario that uses the shared steps: its
-// deployment configuration, the processes that the starter started, and the
-// shared result state of the last pm command.
+// deployment configuration, the processes that the starter started, the pm
+// client HOME and private keyring, and the shared result state of the last pm
+// command.
 type stackScenario struct {
 	harness    *stackHarness
 	deployment *deployment
 	processes  map[string]*startedProcess
 	runDir     string
 	home       string
+	keyring    *keyring.Keyring
 	workspace  string
 	result     commandResult
 }
@@ -57,8 +61,10 @@ type commandResult struct {
 // starter, and the result steps of the shared result state.
 func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness) {
 	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}}
-	sc.After(func(ctx context.Context, _ *godog.Scenario, err error) (context.Context, error) {
-		return ctx, errors.Join(err, scenario.close())
+	// godog keeps the step error. The hook returns only its own cleanup
+	// error, so the step error is reported once.
+	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
+		return ctx, scenario.close()
 	})
 	sc.Step(`^a new PM deployment configuration on the job-owned stack$`, scenario.newConfiguration)
 	sc.Step(`^the starter starts (pm-server|pm-worker) and waits for its ready signal or its exit$`, scenario.startAndWait)
@@ -228,7 +234,8 @@ func (s *stackScenario) sendSIGTERM(ctx context.Context, name string) error {
 }
 
 // stillRunning is step 11. It makes one observation of the exit, with no
-// wait.
+// wait. Running does not depend on the reaper goroutine: a process that
+// exited right after its ready line does not count as running.
 func (s *stackScenario) stillRunning(name string) error {
 	started, err := s.started(name)
 	if err != nil {
@@ -306,7 +313,8 @@ func (s *stackScenario) runDirectory() (string, error) {
 }
 
 // close runs the stop sequence for each started process that the starter has
-// not finished, closes the deployment and removes the scenario directories.
+// not finished, closes the deployment, stops the private keyring and removes
+// its directory, and removes the scenario directories.
 // A process that the stop sequence stopped, but not with exit code 0 after
 // SIGTERM, is an error. A process that exited by itself is not: the steps
 // check it.
@@ -325,6 +333,7 @@ func (s *stackScenario) close() error {
 	if s.deployment != nil {
 		errs = append(errs, s.deployment.close())
 	}
+	errs = append(errs, s.keyring.Stop())
 	for _, directory := range []string{s.runDir, s.home} {
 		if directory != "" {
 			errs = append(errs, os.RemoveAll(directory))
@@ -334,9 +343,10 @@ func (s *stackScenario) close() error {
 }
 
 // addServerProfile adds a pm server profile for the deployment with the real
-// pm binary, in a new HOME for this scenario. It also selects a new workspace
-// ID for the scenario. The server never creates that workspace unless a
-// scenario runs an authenticated command.
+// pm binary, in a new HOME for this scenario. With the HOME, it starts the
+// private keyring of the scenario's pm client and selects a new workspace ID
+// for the scenario. The server never creates that workspace unless a scenario
+// runs an authenticated command.
 func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d *deployment) error {
 	if s.home == "" {
 		home, err := os.MkdirTemp("", "pm-acceptance-stack-home-")
@@ -345,6 +355,9 @@ func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d 
 		}
 		s.home = home
 		s.workspace = "acceptance-workspace-" + randomHex(6)
+		if s.keyring, err = startKeyring(ctx); err != nil {
+			return err
+		}
 	}
 	code, stdout, stderr, err := s.runPM(ctx, d.caFile, []string{
 		"server", "profiles", "add", profile,
@@ -382,13 +395,34 @@ func (s *stackScenario) runAgainst(ctx context.Context, line, profile string, d 
 	return nil
 }
 
+// startKeyring starts the private Secret Service of the scenario's pm
+// client. Its directory is in the job directory, RUNNER_TEMP, and the stop
+// step removes it (D1-10). The start checks the owner of
+// org.freedesktop.secrets (D1-11). The start waits use the start limit.
+func startKeyring(ctx context.Context) (*keyring.Keyring, error) {
+	job := os.Getenv("RUNNER_TEMP")
+	if !filepath.IsAbs(job) {
+		return nil, errors.New("RUNNER_TEMP must name the job directory: run the @stack scenarios through scripts/ci/check-bdd.sh")
+	}
+	started, err := keyring.Start(job, keyring.Limits{Start: startLimit, Stop: stopLimit, Kill: killLimit})
+	if err != nil {
+		return nil, err
+	}
+	godog.Logf(ctx, "private keyring: org.freedesktop.secrets is owned by the keyring daemon that the harness started (process %d)", started.KeyringPID())
+	return started, nil
+}
+
 // runPM runs the built pm binary with the scenario HOME. SSL_CERT_FILE makes
-// the deployment CA the only trusted root of this pm process.
+// the deployment CA the only trusted root of this pm process. The pm process
+// is the only process that gets the private bus address of the keyring.
 func (s *stackScenario) runPM(parent context.Context, caFile string, args []string) (int, string, string, error) {
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, s.harness.bins.pm, args...)
 	command.Env = []string{"HOME=" + s.home, "PATH=/usr/bin:/bin", "LANG=C", "SSL_CERT_FILE=" + caFile}
+	if s.keyring != nil {
+		command.Env = append(command.Env, s.keyring.Environment()...)
+	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
@@ -417,16 +451,55 @@ func (r *commandResult) exitCodeIs(want int) error {
 	return nil
 }
 
-// stdoutHasDeploymentID checks the deployment ID of the server that the lane
-// command ran against.
+// stdoutHasDeploymentID reads the one instance ID that the lane command
+// printed and compares it exactly with the deployment ID of the server that
+// the command ran against. pm-server uses its deployment ID as its instance
+// ID. The deployment ID in another field, or as a part of a longer value,
+// does not count. An empty deployment ID fails.
 func (r *commandResult) stdoutHasDeploymentID() error {
 	if !r.ran {
 		return errors.New("no lane command ran")
 	}
-	if r.deploymentID == "" || !strings.Contains(r.stdout, r.deploymentID) {
-		return fmt.Errorf("stdout does not contain the lane deployment ID %q\nstdout: %s", r.deploymentID, r.stdout)
+	if r.deploymentID == "" {
+		return errors.New("the lane command ran against a server with no deployment ID")
+	}
+	printed, err := r.printedInstanceID()
+	if err != nil {
+		return err
+	}
+	if printed != r.deploymentID {
+		return fmt.Errorf("the lane command printed instance ID %q, want the lane deployment ID %q\nstdout: %s", printed, r.deploymentID, r.stdout)
 	}
 	return nil
+}
+
+// printedInstanceID reads the instance ID from the server information
+// document that pm server info prints: one JSON object (JSON output), or one
+// "key<TAB>JSON value" line for each field (text output). It fails unless the
+// output has exactly one nonempty instance ID.
+func (r *commandResult) printedInstanceID() (string, error) {
+	var document struct {
+		InstanceID string `json:"instance_id"`
+	}
+	if json.Unmarshal([]byte(r.stdout), &document) == nil && document.InstanceID != "" {
+		return document.InstanceID, nil
+	}
+	var found []string
+	for _, line := range strings.Split(r.stdout, "\n") {
+		key, value, ok := strings.Cut(line, "\t")
+		if !ok || key != "instance_id" {
+			continue
+		}
+		var instanceID string
+		if json.Unmarshal([]byte(value), &instanceID) != nil || instanceID == "" {
+			return "", fmt.Errorf("the instance ID line in the lane command stdout is not a nonempty JSON string: %q", line)
+		}
+		found = append(found, instanceID)
+	}
+	if len(found) != 1 {
+		return "", fmt.Errorf("the lane command stdout has %d instance ID lines, want 1\nstdout: %s", len(found), r.stdout)
+	}
+	return found[0], nil
 }
 
 func (r *commandResult) stderrContains(want string) error {

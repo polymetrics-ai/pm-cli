@@ -15,6 +15,9 @@ func main() {
 	defer stop()
 	if err := stack.Run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		fmt.Fprintf(os.Stderr, "pm-stack: %v\n", err)
+		if step := stack.FailedStep(err); step != "" {
+			fmt.Fprintf(os.Stderr, "pm-stack: failed step %s\n", step)
+		}
 		os.Exit(1)
 	}
 }

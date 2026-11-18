@@ -1,0 +1,60 @@
+# The job-owned test identity provider for issue #72. It is not part of the
+# bundled deployment layout. pm-stack loads this overlay only when the job
+# environment sets every PM_STACK_IDENTITY_PROVIDER_* variable, and only this
+# service may publish on the second loopback address (internal/stack).
+#
+# Image: docker.io/keycloak/keycloak 26.8.1, pinned by the digest of its OCI
+# image index in deploy/images.lock.json. The registry read of 2026-11-16 gave
+# the linux/amd64 manifest
+# sha256:de6ed510b59cfcd25f129ba4118696fa10d4165eee921a8d846178b6d35d30f7.
+services:
+  keycloak:
+    image: ${PM_STACK_IMAGE_KEYCLOAK:?}
+    # A restart would lose the memory-backed realm, so a crash stays visible.
+    restart: "no"
+    init: true
+    user: "${PM_STACK_IDENTITY_PROVIDER_USER:?}"
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    # Production start mode. HTTPS only. The strict hostname is the exact
+    # issuer origin. The dev-file database is in the memory-backed
+    # /opt/keycloak/data and goes with the container. Health and metrics stay
+    # disabled, so no management listener starts. No bootstrap administrator
+    # is configured.
+    #
+    # No --optimized: the stock image has no persisted Keycloak build, and
+    # Keycloak 26.8.1 refuses --optimized on the first start of such a server.
+    # start builds once into the /opt/keycloak/lib/quarkus tmpfs, which starts
+    # with a copy of the image's build output (tmpcopyup), then starts the
+    # server. The rest of the root file system stays read-only.
+    command:
+      - start
+      - --import-realm
+      - --http-enabled=false
+      - --https-port=8443
+      - --https-certificate-file=/run/secrets/identity-provider-server.pem
+      - --https-certificate-key-file=/run/secrets/identity-provider-server-key.pem
+      - --hostname=https://${PM_STACK_IDENTITY_PROVIDER_HOST:?}:${PM_STACK_IDENTITY_PROVIDER_PORT:?}
+      - --hostname-strict=true
+    ports:
+      - "${PM_STACK_IDENTITY_PROVIDER_HOST:?}:${PM_STACK_IDENTITY_PROVIDER_PORT:?}:8443"
+    volumes:
+      - ${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server.pem:/run/secrets/identity-provider-server.pem:ro
+      - ${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server-key.pem:/run/secrets/identity-provider-server-key.pem:ro
+      - ${PM_STACK_IDENTITY_PROVIDER_DIR:?}/realm.json:/opt/keycloak/data/import/realm.json:ro
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+      - /opt/keycloak/data:size=128m,mode=1777
+      - /opt/keycloak/lib/quarkus:size=64m,mode=0770,tmpcopyup
+    networks: [identity-private]
+    cpus: 2.0
+    mem_limit: 1536m
+    pids_limit: 512
+    stop_grace_period: 30s
+
+networks:
+  identity-private:
+    driver: bridge
+    labels:
+      ai.polymetrics.pm-stack: "true"

@@ -13,8 +13,10 @@ concurrency:
 
 jobs:
   # The behavior gate: the Gherkin acceptance suite runs real PM binaries in the
-  # pinned CI image on a rootless Podman runner. Go developer tests run in the
-  # git hooks. See docs/development/ci.md.
+  # pinned CI image on a rootless Podman runner. Before it, the same step runs
+  # the stack run: the Go developer tests of the stack packages, on their own
+  # stack. Go tests are developer checks, not acceptance proof. See
+  # docs/development/ci.md.
   bdd:
     if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
     runs-on: [self-hosted, Linux, X64, pm-cli-vps]
@@ -41,8 +43,9 @@ jobs:
             --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
 
   # The static checks: setup, the Python script tests, generated code, gofmt,
-  # import boundaries and the tools module tests. They run no behavior test
-  # and do not wait for bdd. See docs/development/ci.md.
+  # import boundaries, the tools module tests and the unit run of the Go
+  # developer tests. They run no behavior test and do not wait for bdd. See
+  # docs/development/ci.md.
   checks:
     if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
     runs-on: [self-hosted, Linux, X64, pm-cli-vps]
