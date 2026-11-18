@@ -29,8 +29,7 @@ RUNNER_FIXED = CLEANUP_FIXED[:2] + [
     'uid_of() { /usr/bin/id -u "$1"; }\n', CLEANUP_FIXED[4],
     "entry_of() { /usr/bin/stat -c '%u %g %f' -- \"$1\"; }\n",
     'sha256_of() { /usr/bin/sha256sum -- "$1"; }\n',
-    'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n',
-    "at_jobs() { if [ -x /usr/bin/atq ]; then /usr/bin/atq; fi; }\n"]
+    'crontab_of() { /usr/bin/crontab -u "$1" -l; }\n']
 FAKE_PODMAN = """import os, subprocess, sys
 state, args = STATE, sys.argv[1:]
 with open(os.path.join(state, "log"), "a") as log:
@@ -282,8 +281,7 @@ class RunnerCheck(unittest.TestCase):
             f'home_of() {{ echo "{host.home}"; }}\n', f'entry_of() {{ "{host.bin / "entry"}" "$1"; }}\n',
             f'sha256_of() {{ "{host.bin / "sha"}" "$1"; }}\n',
             f'crontab_of() {{ if [ -f "{state}/crontab" ]; then cat "{state}/crontab"; '
-            'else echo "no crontab for $1" >&2; return 1; fi; }\n',
-            f'at_jobs() {{ cat "{state}/atq" 2> /dev/null; true; }}\n'])
+            'else echo "no crontab for $1" >&2; return 1; fi; }\n'])
         host.run_root.parent.parent.rename(host.root / "runtime-gone")  # the gate needs no runtime folder
         self.runner = host.root / "opt/pm-live/actions-runner"
         for path, text in (("run.sh", "#!/bin/sh\n"), (".env", "A=1\n"), ("bin/Runner.Listener", "binary\n"),
@@ -333,7 +331,8 @@ class RunnerCheck(unittest.TestCase):
                                   (home() / ".config/systemd/user/x.timer").write_text("")),
             "ssh folder": lambda: (home() / ".ssh").mkdir(),
             "crontab": lambda: self.host.flag("crontab", "* * * * * true\n"),
-            "at job": lambda: self.host.flag("atq", "3\tThu Nov 19 10:00:00 2026 a pmlive\n"),
+            "at job": lambda: (self.host.root / "usr/bin").mkdir(parents=True) or self.host.tool(
+                "../usr/bin/atq", "print('3\\tThu Nov 19 10:00:00 2026 a pmlive')"),
             "mode": lambda: (self.runner / ".env").chmod(0o664),
             "owner": lambda: self.host.flag("owner", str(self.runner / ".env")),
             "no disableupdate": lambda: (self.runner / ".runner").write_text("{}\n"),
@@ -449,6 +448,19 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(check.returncode, 1, check.stdout)
                 self.assertIn("cannot be listed, read or hashed", check.stdout)
                 (self.host.state / "sha-fails").unlink(missing_ok=True)
+
+    def test_the_at_check_without_atq(self):
+        # #403 F5: no atq is "no at job" only when no at scheduler and no at
+        # spool exist. The production at_jobs runs here, in the temporary root.
+        for path, expected in (("", 0), ("var/spool/cron/atjobs", 1), ("var/spool/at", 1), ("usr/sbin/atd", 1)):
+            with self.subTest(path=path or "nothing"):
+                self.tearDown()
+                self.setUp()
+                if path:
+                    (self.host.root / path).mkdir(parents=True)
+                result = self.check()
+                self.assertEqual(result.returncode, expected, result.stdout)
+                self.assertIn("no at job" if expected == 0 else "the at job check cannot run", result.stdout)
 
     def test_record_refuses_a_forbidden_file(self):
         (self.host.home / ".ssh").mkdir()

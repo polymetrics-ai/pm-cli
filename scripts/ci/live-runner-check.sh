@@ -26,9 +26,19 @@ home_of() { /usr/bin/getent passwd "$1" | /usr/bin/cut -d: -f6; }
 entry_of() { /usr/bin/stat -c '%u %g %f' -- "$1"; }
 sha256_of() { /usr/bin/sha256sum -- "$1"; }
 crontab_of() { /usr/bin/crontab -u "$1" -l; }
-at_jobs() { if [ -x /usr/bin/atq ]; then /usr/bin/atq; fi; }
 
 user=pmlive
+# The at jobs, from atq. Without atq, the check passes only when no at
+# scheduler and no at spool exist; else it cannot run (#403 F5).
+at_jobs() {
+  if [ -x "$root/usr/bin/atq" ]; then
+    "$root/usr/bin/atq"
+    return
+  fi
+  for path in /usr/sbin/atd /usr/bin/atd /var/spool/cron/atjobs /var/spool/cron/atspool /var/spool/at /var/spool/atjobs; do
+    if [ -e "$root$path" ] || [ -L "$root$path" ]; then return 1; fi
+  done
+}
 runner="$root/opt/pm-live/actions-runner"
 work="$root/var/lib/pm-live/work"
 unit="$root/etc/systemd/system/pm-live-runner.service"
