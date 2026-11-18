@@ -897,7 +897,13 @@ func projectServerBoundary(source string) ([]byte, error) {
 		}
 		receiver := visitor.Recv.List[0]
 		receiverType, ok := receiver.Type.(*ast.Ident)
-		if !ok || aliases[receiverType.Name] == nil {
+		if !ok {
+			continue
+		}
+		if aliases[receiverType.Name] == nil {
+			if err := projectHeaderedUnionPayload(visitor, receiverType.Name); err != nil {
+				return nil, err
+			}
 			continue
 		}
 		definition := aliases[receiverType.Name]
@@ -935,6 +941,51 @@ func projectServerBoundary(source string) ([]byte, error) {
 		return nil, err
 	}
 	return output.Bytes(), nil
+}
+
+// projectHeaderedUnionPayload serializes the body of a strict response that
+// declares response headers through the canonical API DTO. Such a response is a
+// local struct with Body and Headers members, so it is not an alias of the DTO.
+// The generated visitor encodes the payload of a union body as Body.union, an
+// unexported member of the DTO in internal/api. The projection encodes Body
+// itself, which serializes through the DTO's own generated MarshalJSON. A
+// visitor that refers to a union payload in any other form is refused.
+func projectHeaderedUnionPayload(visitor *ast.FuncDecl, receiverType string) error {
+	receiver := visitor.Recv.List[0]
+	if len(receiver.Names) != 1 {
+		return nil
+	}
+	receiverName := receiver.Names[0].Name
+	projected, unprojected := 0, 0
+	ast.Inspect(visitor.Body, func(node ast.Node) bool {
+		if call, ok := node.(*ast.CallExpr); ok && len(call.Args) == 1 {
+			method, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok || method.Sel.Name != "Encode" {
+				return true
+			}
+			union, ok := call.Args[0].(*ast.SelectorExpr)
+			if !ok || union.Sel.Name != "union" {
+				return true
+			}
+			body, ok := union.X.(*ast.SelectorExpr)
+			if !ok || body.Sel.Name != "Body" {
+				return true
+			}
+			if instance, ok := body.X.(*ast.Ident); ok && instance.Name == receiverName {
+				call.Args[0] = body
+				projected++
+			}
+			return true
+		}
+		if selector, ok := node.(*ast.SelectorExpr); ok && selector.Sel.Name == "union" {
+			unprojected++
+		}
+		return true
+	})
+	if projected > 1 || unprojected != 0 {
+		return fmt.Errorf("strict response %s has an unsupported canonical payload projection", receiverType)
+	}
+	return nil
 }
 
 func addGeneratedNamedImport(source, name, importPath string) (string, error) {

@@ -155,9 +155,17 @@ func (service *Service) decideDeviceLoginFromBrowser(
 }
 
 func (service *Service) ExchangeDeviceProof(ctx context.Context, proof DeviceProof) (PMSession, error) {
+	session, _, err := service.ExchangeDeviceProofWithCadence(ctx, proof)
+	return session, err
+}
+
+// ExchangeDeviceProofWithCadence is ExchangeDeviceProof plus the server-held
+// poll cadence. With ErrChallengePending or ErrPollTooSoon it also returns the
+// time until the stored next poll time. Otherwise the wait is zero.
+func (service *Service) ExchangeDeviceProofWithCadence(ctx context.Context, proof DeviceProof) (PMSession, time.Duration, error) {
 	if service == nil || service.pool == nil || rejectNilContext(ctx) != nil ||
 		!validOpaque(proof.ChallengeID, 512) || !validOpaque(proof.Proof, maximumTokenBytes) {
-		return PMSession{}, ErrChallengeInvalid
+		return PMSession{}, 0, ErrChallengeInvalid
 	}
 	var session PMSession
 	var outcome error
@@ -198,10 +206,15 @@ func (service *Service) ExchangeDeviceProof(ctx context.Context, proof DevicePro
 		}
 	})
 	if err != nil {
-		return PMSession{}, mapStoreChallengeError(err)
+		return PMSession{}, 0, mapStoreChallengeError(err)
 	}
 	if outcome != nil {
-		return PMSession{}, mapStoreChallengeError(outcome)
+		var wait time.Duration
+		var cadence *store.DevicePollWait
+		if errors.As(outcome, &cadence) {
+			wait = cadence.Wait
+		}
+		return PMSession{}, wait, mapStoreChallengeError(outcome)
 	}
-	return session, nil
+	return session, 0, nil
 }

@@ -61,6 +61,11 @@ type ServicesConfig struct {
 	// default provider user agent for every operation that declares no
 	// user-agent field of its own.
 	ClientIdentity pmruntime.ClientIdentity
+	// DevicePollInterval is the resolved device login poll interval that each
+	// new challenge stores. It has no default here: a zero value fails the
+	// bounds of the authentication service, so missing wiring stops
+	// composition.
+	DevicePollInterval time.Duration
 }
 
 func (ServicesConfig) String() string                 { return "application services configuration [REDACTED]" }
@@ -75,8 +80,11 @@ type Services struct {
 	Catalog        *CatalogService
 	Admission      *AdmissionService
 	Runs           *RunService
-	pool           *store.Pool
-	publicOrigin   string
+	// SchemaSelection selects a stored candidate of a relation that the
+	// customer SQL declaration of this process names.
+	SchemaSelection *SchemaSelectionService
+	pool            *store.Pool
+	publicOrigin    string
 }
 
 // OpenServices observes an existing compatible store; it never provisions or
@@ -134,7 +142,7 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		DeploymentID: configuration.DeploymentID,
 		Device: auth.DevicePolicy{
 			ChallengeTTL:     10 * time.Minute,
-			PollInterval:     5 * time.Second,
+			PollInterval:     configuration.DevicePollInterval,
 			StartWindow:      time.Minute,
 			MaximumStarts:    10,
 			MaximumBodyBytes: 64 << 10,
@@ -205,6 +213,8 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 		ResolveOperation:  composition.Resolver(),
 		Policy:            configuration.RunPolicy,
 		ResolveHTTPPolicy: configuration.ResolveHTTPPolicy,
+		ResolveDiscovery:  sqlComposition.ResolveDiscovery,
+		ResolveRelation:   sqlComposition.ResolveRelationBinding,
 	})
 	if err != nil {
 		return nil, errors.New("durable admission composition failed")
@@ -218,16 +228,21 @@ func OpenServices(ctx context.Context, configuration ServicesConfig) (*Services,
 	if err != nil {
 		return nil, errors.New("run control composition failed")
 	}
+	schemaSelection, err := NewSchemaSelectionService(identity, sqlComposition.ResolveDiscovery)
+	if err != nil {
+		return nil, errors.New("schema selection composition failed")
+	}
 	constructed = true
 	return &Services{
-		Authentication: authentication,
-		Identity:       identity,
-		Credentials:    ingress,
-		Catalog:        catalog,
-		Admission:      admission,
-		Runs:           runs,
-		pool:           pool,
-		publicOrigin:   publicOrigin,
+		Authentication:  authentication,
+		Identity:        identity,
+		Credentials:     ingress,
+		Catalog:         catalog,
+		Admission:       admission,
+		Runs:            runs,
+		SchemaSelection: schemaSelection,
+		pool:            pool,
+		publicOrigin:    publicOrigin,
 	}, nil
 }
 

@@ -81,8 +81,20 @@
       "disposition": "confirmed_refusal"
     },
     {
+      "status": 404,
+      "code": "schema_relation_unknown",
+      "safe_retry_action": "correct_input",
+      "disposition": "confirmed_refusal"
+    },
+    {
       "status": 409,
       "code": "foundation_incompatible",
+      "safe_retry_action": "after_capability_change",
+      "disposition": "confirmed_refusal"
+    },
+    {
+      "status": 409,
+      "code": "schema_selection_absent",
       "safe_retry_action": "after_capability_change",
       "disposition": "confirmed_refusal"
     },
@@ -614,6 +626,15 @@
       "requires_if_match": true
     },
     {
+      "operation_id": "updateMembership",
+      "method": "PATCH",
+      "path": "/v1/workspaces/{workspace_id}/memberships/{id}",
+      "required_body_fields": ["membership", "protocol"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
+    },
+    {
       "operation_id": "uploadArtifact",
       "method": "POST",
       "path": "/v1/workspaces/{workspace_id}/artifacts",
@@ -639,6 +660,24 @@
       "optional_body_fields": [],
       "requires_idempotency_key": false,
       "requires_if_match": false
+    },
+    {
+      "operation_id": "discoverConnectionSchema",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries",
+      "required_body_fields": ["resource"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": false
+    },
+    {
+      "operation_id": "selectConnectionSchema",
+      "method": "POST",
+      "path": "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections",
+      "required_body_fields": ["protocol", "selection"],
+      "optional_body_fields": [],
+      "requires_idempotency_key": true,
+      "requires_if_match": true
     },
     {
       "operation_id": "getWarehouseDataset",

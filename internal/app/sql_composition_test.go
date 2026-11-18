@@ -244,14 +244,53 @@ func TestSQLExecutionCompositionWorkerBehavior(t *testing.T) {
 		}
 	})
 
-	t.Run("an unusable relation binding refuses before any send", func(t *testing.T) {
+	// ADR 0007 (line 87) moves this refusal from pm-worker to admission. The
+	// oracle is stronger than before: no run is accepted at all, and the
+	// customer endpoint sees no dial. The worker refusal of a run that pins no
+	// snapshot stays covered by TestBindRefusesARunWithoutAUsablePinnedSnapshot.
+	t.Run("a read of a declared relation with no selection is refused at admission before any run", func(t *testing.T) {
 		harness := newSQLExecutionHarness(t, temporal, sqlExecutionSelectID, sqlExecutionTuning{declared: true, noSnapshot: true})
-		run := harness.executeOperation(
-			t, temporal, sqlExecutionSelectID, contract.LaneDirectRead, sqlExecutionEmptyInput(), "sql-execution-unusable-binding",
+		harness.requireSchemaSelectionAbsent(t, "sql-execution-no-selection")
+	})
+
+	t.Run("a selection of another binding than the declared one is refused at admission before any run", func(t *testing.T) {
+		harness := newSQLExecutionHarness(t, temporal, sqlExecutionSelectID, sqlExecutionTuning{declared: true, noSnapshot: true})
+		other := sqlExecutionSnapshotBinding(testfixture.ServiceDependencies{
+			Scope: harness.fixture.Scope, Connection: harness.fixture.Connection,
+		})
+		other.PermissionRevision = "permissions-v0"
+		harness.selectSQLExecutionSnapshot(t, harness.seedSQLExecutionSnapshot(t, other, sqlExecutionSnapshotFields(t)))
+		harness.requireSchemaSelectionAbsent(t, "sql-execution-other-binding")
+	})
+
+	t.Run("an accepted run keeps its pinned snapshot after a later selection, and a new run binds the new one", func(t *testing.T) {
+		harness := newSQLExecutionHarness(t, temporal, sqlExecutionMetadataID, sqlExecutionTuning{declared: true})
+		accepted := harness.admitRun(
+			t, sqlExecutionUpsertID, contract.LaneDirectWrite, sqlExecutionUpsertInput(t), "sql-execution-pinned-first",
 		)
-		if run.state != contract.RunStateBlocked || run.unknownEffects != 0 ||
-			run.outcome != contract.OutcomeUnsent || run.attempts != 1 || run.dials != 0 {
-			t.Fatalf("unusable binding settlement = %#v; want a known-unsent refusal", run)
+		// Candidate B declares the same live columns, but its note column is
+		// not writable. A mapped upsert of note binds under A and is refused
+		// before any send under B.
+		fields := sqlExecutionSnapshotFields(t)
+		for index := range fields {
+			if fields[index].Name == "note" {
+				fields[index].Writable = false
+			}
+		}
+		harness.selectSQLExecutionSnapshot(t, harness.seedSQLExecutionSnapshot(t, sqlExecutionSnapshotBinding(
+			testfixture.ServiceDependencies{Scope: harness.fixture.Scope, Connection: harness.fixture.Connection},
+		), fields))
+		first := harness.executeAdmitted(t, temporal, sqlExecutionUpsertID, accepted)
+		if first.state != contract.RunStateSucceeded || first.outcome != contract.OutcomeSucceeded ||
+			first.unknownEffects != 0 || first.dials != 1 {
+			t.Fatalf("run accepted under candidate A = %#v; want one succeeded upsert bound to A", first)
+		}
+		second := harness.executeOperation(
+			t, temporal, sqlExecutionUpsertID, contract.LaneDirectWrite, sqlExecutionUpsertInput(t), "sql-execution-pinned-second",
+		)
+		if second.state == contract.RunStateSucceeded || second.outcome != contract.OutcomeUnsent ||
+			second.unknownEffects != 0 || second.dials != 0 {
+			t.Fatalf("run accepted under candidate B = %#v; want a known-unsent refusal of the unwritable column", second)
 		}
 	})
 
@@ -274,6 +313,11 @@ type sqlExecutionTuning struct {
 	wrongWorkspace  bool
 	noSnapshot      bool
 	wrongCredential bool
+	noCredential    bool
+	// execute, when set, replaces the shared SQL callback with a controlled
+	// callback that has the same registered lanes, foundations and
+	// capabilities as the declared composition.
+	execute app.ExecutionCallback
 }
 
 // sqlExecutionRun is the durable settlement of one executed unit together with
@@ -444,6 +488,19 @@ func (harness *sqlExecutionHarness) executeOperation(
 ) sqlExecutionRun {
 	t.Helper()
 	admitted := harness.admitRun(t, operationID, lane, input, requestKey)
+	return harness.executeAdmitted(t, temporal, operationID, admitted)
+}
+
+// executeAdmitted drives the production planner and the shared SQL callback
+// for one admitted run, settles the unit, and reports the durable outcome and
+// the physical facts this case observed from outside the transport.
+func (harness *sqlExecutionHarness) executeAdmitted(
+	t *testing.T,
+	temporal *permitTemporalHarness,
+	operationID string,
+	admitted api.AdmissionResponse,
+) sqlExecutionRun {
+	t.Helper()
 	before := harness.customer.dials.Load()
 	run := preparePermitWorkerRun(
 		t, harness.fixture, harness.service, temporal, harness.fixture.Scope, harness.fixture.Actor, admitted,
@@ -668,9 +725,6 @@ func newSQLExecutionHarness(
 		if err != nil {
 			return err
 		}
-		if !tuning.noSnapshot {
-			harness.customer.promoteSnapshot(t, dependencies)
-		}
 		composition, err = app.OpenSQLComposition(app.SQLCompositionConfig{
 			Declarations: resolved.ProviderSQL(),
 			Bundles:      connectorComposition.Registry(),
@@ -680,8 +734,26 @@ func newSQLExecutionHarness(
 		if err != nil {
 			return err
 		}
-		if tuning.declared {
+		if tuning.declared && tuning.execute == nil {
 			if err := composition.Register(registry); err != nil {
+				return err
+			}
+		}
+		if tuning.declared && tuning.execute != nil {
+			declared := &app.HandlerRegistry{}
+			if err := composition.Register(declared); err != nil {
+				return err
+			}
+			manifest := app.BuildHandlerManifest(declared)
+			if len(manifest.Handlers) != 1 || manifest.Handlers[0].Kind != app.HandlerSQL {
+				return errors.New("the declared SQL composition registers no single SQL handler")
+			}
+			if err := registry.RegisterSQL(app.HandlerRegistration{
+				Lanes:        manifest.Handlers[0].Lanes,
+				Foundations:  manifest.Handlers[0].Foundations,
+				Capabilities: manifest.Handlers[0].Capabilities,
+				Execute:      tuning.execute,
+			}); err != nil {
 				return err
 			}
 		}
@@ -713,6 +785,8 @@ func newSQLExecutionHarness(
 			Registry:          registry,
 			ResolveOperation:  resolver,
 			ResolveHTTPPolicy: nil,
+			ResolveDiscovery:  composition.ResolveDiscovery,
+			ResolveRelation:   composition.ResolveRelationBinding,
 			Policy:            httpDirectReadAdmissionPolicy(),
 			Random:            rand.Reader,
 		})
@@ -721,6 +795,10 @@ func newSQLExecutionHarness(
 		}
 		configuration.Admission = admission
 		configuration.Artifacts = consumer.Backend
+		configuration.SchemaSelection, err = app.NewSchemaSelectionService(configuration.Identity, composition.ResolveDiscovery)
+		if err != nil {
+			return err
+		}
 		return nil
 	})
 	if composition == nil {
@@ -728,6 +806,11 @@ func newSQLExecutionHarness(
 	}
 	harness.fixture = fixture
 	grantSQLExecutionDeclaredOperations(t, fixture)
+	if !tuning.noSnapshot {
+		harness.selectSQLExecutionSnapshot(t, harness.seedSQLExecutionSnapshot(t, sqlExecutionSnapshotBinding(
+			testfixture.ServiceDependencies{Scope: fixture.Scope, Connection: fixture.Connection},
+		), sqlExecutionSnapshotFields(t)))
+	}
 	publisher, err := objects.NewPublisher(fixture.Pool, producer.Backend, producer.Limits)
 	if err != nil {
 		t.Fatalf("compose the shared result publisher: %v", err)
@@ -736,7 +819,9 @@ func newSQLExecutionHarness(
 	key := []byte("0123456789abcdef0123456789abcdef")
 	t.Cleanup(func() { clear(key) })
 	loader := &sqlExecutionKeyLoader{key: key}
-	seedSQLExecutionCredential(t, fixture, key, []byte(harness.customer.rolePassword))
+	if !tuning.noCredential {
+		seedSQLExecutionCredential(t, fixture, key, []byte(harness.customer.rolePassword))
+	}
 	service, err := app.NewWorkerService(app.WorkerServiceConfig{
 		Pool:                      fixture.Pool,
 		DeploymentID:              fixture.DeploymentID,
@@ -823,7 +908,6 @@ type sqlCustomerDatabase struct {
 	database     string
 	trustPEM     []byte
 	stateDir     string
-	snapshots    *schema.Store
 	cluster      *pgconn.PgConn
 	owner        *pgconn.PgConn
 	dialAddress  string
@@ -869,11 +953,6 @@ func newSQLCustomerDatabase(t *testing.T) *sqlCustomerDatabase {
 	}
 	customer.dialAddress = net.JoinHostPort(customer.host, strconv.Itoa(int(customer.port)))
 	t.Cleanup(customer.close)
-	snapshots, err := schema.NewStore(customer.stateDir)
-	if err != nil {
-		t.Fatalf("open the connection schema state directory: %v", err)
-	}
-	customer.snapshots = snapshots
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	superuser := string(sqlExecutionSecret(t, absolute, sqlExecutionSuperuserMember))
@@ -912,20 +991,113 @@ func (customer *sqlCustomerDatabase) provisionStatements() []string {
 	}
 }
 
-// promoteSnapshot binds the declared relation's discovered metadata: the exact
-// declared columns with the exact declared logical types. The composed relation
-// therefore derives its transport columns from this selected snapshot, never
-// from an unsnapshotted guess.
-func (customer *sqlCustomerDatabase) promoteSnapshot(t *testing.T, dependencies testfixture.ServiceDependencies) {
+// requireSchemaSelectionAbsent requires that admission of a select of the
+// declared relation answers 409 schema_selection_absent, accepts no run and
+// dials nothing.
+func (harness *sqlExecutionHarness) requireSchemaSelectionAbsent(t *testing.T, requestKey string) {
 	t.Helper()
-	candidate := schema.Candidate{
-		Binding:      sqlExecutionSnapshotBinding(dependencies),
-		Fields:       sqlExecutionSnapshotFields(t),
+	runs := harness.runSpecCount(t)
+	_, err := harness.admitOperation(t, sqlExecutionSelectID, contract.LaneDirectRead, sqlExecutionEmptyInput(), requestKey)
+	var problem *sqlExecutionProblem
+	if !errors.As(err, &problem) || problem.status != http.StatusConflict || problem.code != "schema_selection_absent" {
+		t.Fatalf("admission error = %v; want 409 schema_selection_absent", err)
+	}
+	if after := harness.runSpecCount(t); after != runs {
+		t.Fatalf("accepted runs = %d after the refusal; want %d", after, runs)
+	}
+	if dials := harness.customer.dials.Load(); dials != 0 {
+		t.Fatalf("the refused admission dialed the customer endpoint %d times", dials)
+	}
+}
+
+// seedSQLExecutionSnapshot stores one complete candidate of the declared
+// relation in PM PostgreSQL, with the rows that a discovery run writes: its
+// accepted run, its discovery intent and the candidate. It returns the
+// candidate's content digest. The composed relation derives its transport
+// columns from the snapshot that a run pins, never from an unsnapshotted
+// guess.
+func (harness *sqlExecutionHarness) seedSQLExecutionSnapshot(
+	t *testing.T,
+	binding schema.Binding,
+	fields []schema.Field,
+) string {
+	t.Helper()
+	snapshot, err := schema.Candidate{
+		Binding:      binding,
+		Fields:       fields,
 		Completeness: schema.Completeness{Complete: true, Gaps: []schema.Gap{}},
+	}.Snapshot()
+	if err != nil {
+		t.Fatalf("project the declared relation snapshot: %v", err)
 	}
-	if _, err := customer.snapshots.Promote(candidate.Binding, candidate, ""); err != nil {
-		t.Fatalf("promote the declared relation snapshot: %v", err)
+	document, err := schema.EncodeSnapshot(snapshot)
+	if err != nil {
+		t.Fatalf("encode the declared relation snapshot: %v", err)
 	}
+	reference := string(snapshot.Fingerprint)
+	runID := "schema-seed-" + reference[len("sha256:"):len("sha256:")+16]
+	scope := harness.fixture.Scope
+	harness.fixture.SetupSQL(t, scope, func(ctx context.Context, tx pgx.Tx) error {
+		for _, statement := range []struct {
+			query     string
+			arguments []any
+		}{
+			{`INSERT INTO pm.run_specs (
+					org_id, workspace_id, run_id, intent_digest, idempotency_fingerprint, spec, accepted_at
+				) VALUES ($1, $2, $3, $4, $4, '{"fixture":"schema snapshot seed"}'::jsonb, clock_timestamp())`,
+				[]any{scope.OrgID, scope.WorkspaceID, runID, reference}},
+			{`INSERT INTO pm.schema_discoveries (
+					org_id, workspace_id, run_id, connection_id, connector_id, resource, relation_binding,
+					relation_schema, relation_table, provider_account_id, permission_revision, source_revision
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+				[]any{scope.OrgID, scope.WorkspaceID, runID, binding.ConnectionID, binding.ConnectorID, binding.Resource,
+					sqlExecutionBinding, sqlExecutionSchema, sqlExecutionRelation,
+					binding.ProviderAccountID, binding.PermissionRevision, binding.SourceRevision}},
+			{`INSERT INTO pm.schema_snapshots (
+					org_id, workspace_id, connection_id, schema_ref, connector_id, provider_account_id,
+					permission_revision, resource, source_revision, complete, field_count, document,
+					discovered_by_run_id
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, true, $10, $11::jsonb, $12)`,
+				[]any{scope.OrgID, scope.WorkspaceID, binding.ConnectionID, reference, binding.ConnectorID,
+					binding.ProviderAccountID, binding.PermissionRevision, binding.Resource, binding.SourceRevision,
+					len(snapshot.Fields), string(document), runID}},
+		} {
+			if _, err := tx.Exec(ctx, statement.query, statement.arguments...); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return reference
+}
+
+// selectSQLExecutionSnapshot selects one stored candidate of the declared
+// resource: the first selection gives revision 2, and each later one adds 1,
+// as a product selection does.
+func (harness *sqlExecutionHarness) selectSQLExecutionSnapshot(t *testing.T, reference string) {
+	t.Helper()
+	scope := harness.fixture.Scope
+	harness.fixture.SetupSQL(t, scope, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO pm.schema_selections (
+				org_id, workspace_id, connection_id, resource, schema_ref, selection_revision
+			) VALUES ($1, $2, $3, $4, $5, 2)
+			ON CONFLICT (org_id, workspace_id, connection_id, resource) DO UPDATE
+			SET schema_ref = EXCLUDED.schema_ref,
+			    selection_revision = pm.schema_selections.selection_revision + 1
+		`, scope.OrgID, scope.WorkspaceID, harness.fixture.Connection.ConnectionID, sqlExecutionResource, reference)
+		return err
+	})
+}
+
+// runSpecCount counts the accepted runs of the fixture scope.
+func (harness *sqlExecutionHarness) runSpecCount(t *testing.T) int {
+	t.Helper()
+	var count int
+	harness.fixture.SetupSQL(t, harness.fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		return tx.QueryRow(ctx, `SELECT count(*) FROM pm.run_specs`).Scan(&count)
+	})
+	return count
 }
 
 func sqlExecutionSnapshotBinding(dependencies testfixture.ServiceDependencies) schema.Binding {
@@ -964,7 +1136,7 @@ func sqlExecutionSnapshotFields(t *testing.T) []schema.Field {
 }
 
 // resources supplies the composed capability with this connection's process
-// resources: the declared strict trust anchor and the selected snapshot store.
+// resources: the declared strict trust anchor.
 // It never reads the declared password reference: credential material is
 // resolved only at the execution boundary.
 func (customer *sqlCustomerDatabase) resources(
@@ -979,7 +1151,7 @@ func (customer *sqlCustomerDatabase) resources(
 	}); err != nil {
 		return app.SQLConnectionResources{}, err
 	}
-	return app.SQLConnectionResources{TrustAnchorPEM: customer.trustPEM, Snapshots: customer.snapshots}, nil
+	return app.SQLConnectionResources{TrustAnchorPEM: customer.trustPEM}, nil
 }
 
 func (customer *sqlCustomerDatabase) connect(

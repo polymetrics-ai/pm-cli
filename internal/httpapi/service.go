@@ -38,23 +38,23 @@ const (
 var errInvalidHTTPInput = errors.New("invalid HTTP application input")
 
 type Service struct {
-	publicOrigin           string
-	auth                   *auth.Service
-	identity               *app.IdentityService
-	credentials            *app.CredentialIngress
-	catalog                *app.CatalogService
-	instanceID             string
-	oidcHTTPClient         *http.Client
-	admission              *app.AdmissionService
-	runs                   *app.RunService
-	artifacts              *app.ArtifactService
-	warehouse              *warehouseSurface
-	connectionMetadataRoot string
-	resolveEventCursorKey  func(context.Context) ([]byte, error)
-	eventBufferSize        uint64
-	eventWriteTimeout      time.Duration
-	draining               <-chan struct{}
-	cursorKey              [sha256.Size]byte
+	publicOrigin          string
+	auth                  *auth.Service
+	identity              *app.IdentityService
+	credentials           *app.CredentialIngress
+	catalog               *app.CatalogService
+	instanceID            string
+	oidcHTTPClient        *http.Client
+	admission             *app.AdmissionService
+	runs                  *app.RunService
+	artifacts             *app.ArtifactService
+	warehouse             *warehouseSurface
+	schemaSelection       *app.SchemaSelectionService
+	resolveEventCursorKey func(context.Context) ([]byte, error)
+	eventBufferSize       uint64
+	eventWriteTimeout     time.Duration
+	draining              <-chan struct{}
+	cursorKey             [sha256.Size]byte
 }
 
 var _ StrictServerInterface = (*Service)(nil)
@@ -111,22 +111,22 @@ func NewService(configuration ServiceConfig) (*Service, error) {
 	}
 	client := *configuration.OIDCHTTPClient
 	service := &Service{
-		publicOrigin:           configuration.PublicOrigin,
-		auth:                   configuration.Auth,
-		identity:               configuration.Identity,
-		credentials:            configuration.Credentials,
-		catalog:                configuration.Catalog,
-		instanceID:             configuration.InstanceID,
-		oidcHTTPClient:         &client,
-		admission:              configuration.Admission,
-		runs:                   configuration.Runs,
-		artifacts:              artifacts,
-		warehouse:              warehouse,
-		connectionMetadataRoot: configuration.ConnectionMetadataRoot,
-		resolveEventCursorKey:  configuration.ResolveEventCursorKey,
-		eventBufferSize:        configuration.EventBufferSize,
-		eventWriteTimeout:      configuration.EventWriteTimeout,
-		draining:               configuration.Draining,
+		publicOrigin:          configuration.PublicOrigin,
+		auth:                  configuration.Auth,
+		identity:              configuration.Identity,
+		credentials:           configuration.Credentials,
+		catalog:               configuration.Catalog,
+		instanceID:            configuration.InstanceID,
+		oidcHTTPClient:        &client,
+		admission:             configuration.Admission,
+		runs:                  configuration.Runs,
+		artifacts:             artifacts,
+		warehouse:             warehouse,
+		schemaSelection:       configuration.SchemaSelection,
+		resolveEventCursorKey: configuration.ResolveEventCursorKey,
+		eventBufferSize:       configuration.EventBufferSize,
+		eventWriteTimeout:     configuration.EventWriteTimeout,
+		draining:              configuration.Draining,
 	}
 	if _, err := io.ReadFull(rand.Reader, service.cursorKey[:]); err != nil {
 		return nil, fmt.Errorf("initialize HTTP cursor authentication: %w", err)
@@ -274,11 +274,14 @@ func policyForRequest(method, path string) (requestPolicy, bool) {
 		"GET /v1/workspaces/:workspace_id/artifacts/:artifact_id/content",
 		"GET /v1/workspaces/:workspace_id/tasks/:task_id",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id/schema",
+		"POST /v1/workspaces/:workspace_id/connections/:connection_id/schema/discoveries",
+		"POST /v1/workspaces/:workspace_id/connections/:connection_id/schema/selections",
 		"GET /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset",
 		"POST /v1/workspaces/:workspace_id/connections/:connection_id/warehouse/datasets/:dataset/query",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/cancel",
 		"POST /v1/workspaces/:workspace_id/runs/:run_id/resume",
 		"GET /v1/workspaces/:workspace_id/memberships", "POST /v1/workspaces/:workspace_id/memberships",
+		"PATCH /v1/workspaces/:workspace_id/memberships/:id",
 		"POST /v1/workspaces/:workspace_id/memberships/:id/revoke",
 		"GET /v1/workspaces/:workspace_id/service-accounts", "POST /v1/workspaces/:workspace_id/service-accounts",
 		"POST /v1/workspaces/:workspace_id/service-accounts/:id/revoke":
@@ -480,8 +483,14 @@ func setETag(ctx context.Context, revision uint64) {
 		return
 	}
 	if state, ok := stateFromContext(ctx); ok && state.writer != nil {
-		state.writer.Header().Set("ETag", `"`+strconv.FormatUint(revision, 10)+`"`)
+		state.writer.Header().Set("ETag", revisionETag(revision))
 	}
+}
+
+// revisionETag is the ETag value of one positive revision: the decimal
+// revision in double quotes.
+func revisionETag(revision uint64) string {
+	return `"` + strconv.FormatUint(revision, 10) + `"`
 }
 
 func nullableTime(value *time.Time) nullable.Nullable[time.Time] {
@@ -617,6 +626,9 @@ func newProblem(status int, code, retryAction string, outcome *api.SafeOutcomeRe
 	if code == "admission_outcome_unknown" || code == "mutation_outcome_unknown" {
 		title, detail = "Outcome unknown", "Reconcile the original request before attempting another mutation."
 	}
+	if code == "schema_selection_absent" {
+		detail = "The declared relation has no usable schema selection. Run pm schema discover and pm schema select for its resource, then start the run again."
+	}
 	return api.Problem{
 		Type:             "https://polymetrics.ai/problems/" + code,
 		Title:            title,
@@ -734,6 +746,9 @@ func (r problemResponse) VisitSubmitInvocationResponse(w http.ResponseWriter) er
 func (r problemResponse) VisitListMembershipsResponse(w http.ResponseWriter) error { return r.write(w) }
 func (r problemResponse) VisitGrantMembershipResponse(w http.ResponseWriter) error { return r.write(w) }
 func (r problemResponse) VisitRevokeMembershipResponse(w http.ResponseWriter) error {
+	return r.write(w)
+}
+func (r problemResponse) VisitUpdateMembershipResponse(w http.ResponseWriter) error {
 	return r.write(w)
 }
 func (r problemResponse) VisitListServiceAccountsResponse(w http.ResponseWriter) error {

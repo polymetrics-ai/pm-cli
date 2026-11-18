@@ -172,7 +172,8 @@ func openWithOIDCFactory(
 		SQLResources: func(connection config.ProviderSQLConnection) (app.SQLConnectionResources, error) {
 			return app.LoadProviderSQLResources(secrets, connection)
 		},
-		ClientIdentity: clientIdentity,
+		ClientIdentity:     clientIdentity,
+		DevicePollInterval: identitySettings.DevicePollInterval,
 		CredentialIngress: app.CredentialIngressConfig{
 			StepUpMaximumAge: identitySettings.StepUpMaximumAge,
 			WrappingKeyRef:   wrappingKeyRef,
@@ -187,16 +188,17 @@ func openWithOIDCFactory(
 		return fail(errors.New("server lifecycle composition failed"), services, oidcTransport)
 	}
 	service, err := httpapi.NewService(httpapi.ServiceConfig{
-		PublicOrigin:   services.PublicOrigin(),
-		Auth:           services.Authentication,
-		Identity:       services.Identity,
-		Credentials:    services.Credentials,
-		Catalog:        services.Catalog,
-		Admission:      services.Admission,
-		Runs:           services.Runs,
-		Artifacts:      artifactBackend,
-		InstanceID:     configuration.DeploymentID(),
-		OIDCHTTPClient: oidcClient,
+		PublicOrigin:    services.PublicOrigin(),
+		Auth:            services.Authentication,
+		Identity:        services.Identity,
+		Credentials:     services.Credentials,
+		Catalog:         services.Catalog,
+		Admission:       services.Admission,
+		Runs:            services.Runs,
+		Artifacts:       artifactBackend,
+		SchemaSelection: services.SchemaSelection,
+		InstanceID:      configuration.DeploymentID(),
+		OIDCHTTPClient:  oidcClient,
 		ResolveEventCursorKey: func(ctx context.Context) ([]byte, error) {
 			key, err := loadWrappingKey(ctx, wrappingKeyRef)
 			if err != nil {
@@ -265,12 +267,16 @@ func (application *Application) Handler() http.Handler {
 	return application.handler
 }
 
-// Serve transfers listener ownership to the bounded lifecycle server.
-func (application *Application) Serve(ctx context.Context, listener net.Listener) error {
+// Serve transfers listener ownership, and ownership of a non-nil ready handle,
+// to the bounded lifecycle server (see Server.Serve).
+func (application *Application) Serve(ctx context.Context, listener net.Listener, ready io.WriteCloser) error {
 	if application == nil || application.lifecycle == nil || application.handler == nil {
+		if ready != nil {
+			_ = ready.Close()
+		}
 		return errors.New("open server application is required")
 	}
-	return application.lifecycle.Serve(ctx, listener, application.handler)
+	return application.lifecycle.Serve(ctx, listener, application.handler, ready)
 }
 
 // Close drains requests, stops the bounded relay, closes its Temporal client,

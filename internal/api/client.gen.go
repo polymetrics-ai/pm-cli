@@ -267,10 +267,46 @@ type ClientInterface interface {
 
 	// GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
 	//
-	// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+	// Reports the selected snapshot reference of one resource of the connection, that snapshot's declared binding and completeness, the effective typed fields built from it, and the selection revision of the resource. The selection revision is 1 while the resource has no selection, and each selection adds 1. The ETag header carries the same revision. An absent selection is explicit. This read never discovers or selects, and it never requires provider credentials. A failed or partial discovery never replaces the last complete valid snapshot.
 	//
 	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
 	GetConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DiscoverConnectionSchemaWithBody Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchemaWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SelectConnectionSchemaWithBody Select one complete candidate of a declared relation of the connection
+	//
+	// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+	SelectConnectionSchemaWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SelectConnectionSchema Select one complete candidate of a declared relation of the connection
+	//
+	// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+	SelectConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, body SelectConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetWarehouseDataset Inspect the committed read view of one warehouse dataset
 	//
@@ -372,6 +408,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/workspaces/{workspace_id}/memberships (the `GrantMembership` operationId).
 	GrantMembership(ctx context.Context, workspaceId WorkspaceID, params *GrantMembershipParams, body GrantMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateMembershipWithBody Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembershipWithBody(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateMembership Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembership(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// RevokeMembershipWithBody Revoke a workspace membership
 	//
@@ -937,11 +991,87 @@ func (c *Client) UpdateConnection(ctx context.Context, workspaceId WorkspaceID, 
 
 // GetConnectionSchema Inspect the connection's selected metadata snapshot and its effective schema
 //
-// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+// Reports the selected snapshot reference of one resource of the connection, that snapshot's declared binding and completeness, the effective typed fields built from it, and the selection revision of the resource. The selection revision is 1 while the resource has no selection, and each selection adds 1. The ETag header carries the same revision. An absent selection is explicit. This read never discovers or selects, and it never requires provider credentials. A failed or partial discovery never replaces the last complete valid snapshot.
 //
 // Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
 func (c *Client) GetConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetConnectionSchemaRequest(c.Server, workspaceId, connectionId, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DiscoverConnectionSchemaWithBody Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *Client) DiscoverConnectionSchemaWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDiscoverConnectionSchemaRequestWithBody(c.Server, workspaceId, connectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DiscoverConnectionSchema Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *Client) DiscoverConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDiscoverConnectionSchemaRequest(c.Server, workspaceId, connectionId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SelectConnectionSchemaWithBody Select one complete candidate of a declared relation of the connection
+//
+// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+func (c *Client) SelectConnectionSchemaWithBody(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSelectConnectionSchemaRequestWithBody(c.Server, workspaceId, connectionId, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// SelectConnectionSchema Select one complete candidate of a declared relation of the connection
+//
+// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+func (c *Client) SelectConnectionSchema(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, body SelectConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSelectConnectionSchemaRequest(c.Server, workspaceId, connectionId, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -1193,6 +1323,44 @@ func (c *Client) GrantMembershipWithBody(ctx context.Context, workspaceId Worksp
 // Corresponds with POST /v1/workspaces/{workspace_id}/memberships (the `GrantMembership` operationId).
 func (c *Client) GrantMembership(ctx context.Context, workspaceId WorkspaceID, params *GrantMembershipParams, body GrantMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGrantMembershipRequest(c.Server, workspaceId, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateMembershipWithBody Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *Client) UpdateMembershipWithBody(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateMembershipRequestWithBody(c.Server, workspaceId, id, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateMembership Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *Client) UpdateMembership(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateMembershipRequest(c.Server, workspaceId, id, params, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2619,6 +2787,173 @@ func NewGetConnectionSchemaRequest(server string, workspaceId WorkspaceID, conne
 	return req, nil
 }
 
+// NewDiscoverConnectionSchemaRequest calls the generic DiscoverConnectionSchema builder with application/json body
+func NewDiscoverConnectionSchemaRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDiscoverConnectionSchemaRequestWithBody(server, workspaceId, connectionId, params, "application/json", bodyReader)
+}
+
+// NewDiscoverConnectionSchemaRequestWithBody constructs an http.Request for the DiscoverConnectionSchema method, with any body, and a specified content type
+func NewDiscoverConnectionSchemaRequestWithBody(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s/schema/discoveries", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.XCSRFToken != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam1)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewSelectConnectionSchemaRequest calls the generic SelectConnectionSchema builder with application/json body
+func NewSelectConnectionSchemaRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, body SelectConnectionSchemaJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSelectConnectionSchemaRequestWithBody(server, workspaceId, connectionId, params, "application/json", bodyReader)
+}
+
+// NewSelectConnectionSchemaRequestWithBody constructs an http.Request for the SelectConnectionSchema method, with any body, and a specified content type
+func NewSelectConnectionSchemaRequestWithBody(server string, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "connection_id", connectionId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/connections/%s/schema/selections", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
 // NewGetWarehouseDatasetRequest constructs an http.Request for the GetWarehouseDataset method
 func NewGetWarehouseDatasetRequest(server string, workspaceId WorkspaceID, connectionId ConnectionID, dataset DatasetName, params *GetWarehouseDatasetParams) (*http.Request, error) {
 	var err error
@@ -3310,6 +3645,95 @@ func NewGrantMembershipRequestWithBody(server string, workspaceId WorkspaceID, p
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "Idempotency-Key", params.IdempotencyKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("Idempotency-Key", headerParam0)
+
+		if params.IfMatch != nil {
+			var headerParam1 string
+
+			headerParam1, err = runtime.StyleParamWithOptions("simple", false, "If-Match", *params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("If-Match", headerParam1)
+		}
+
+		if params.XCSRFToken != nil {
+			var headerParam2 string
+
+			headerParam2, err = runtime.StyleParamWithOptions("simple", false, "X-CSRF-Token", *params.XCSRFToken, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-CSRF-Token", headerParam2)
+		}
+
+	}
+
+	return req, nil
+}
+
+// NewUpdateMembershipRequest calls the generic UpdateMembership builder with application/json body
+func NewUpdateMembershipRequest(server string, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateMembershipRequestWithBody(server, workspaceId, id, params, "application/json", bodyReader)
+}
+
+// NewUpdateMembershipRequestWithBody constructs an http.Request for the UpdateMembership method, with any body, and a specified content type
+func NewUpdateMembershipRequestWithBody(server string, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "workspace_id", workspaceId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/workspaces/%s/memberships/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
 	if err != nil {
 		return nil, err
 	}
@@ -4392,12 +4816,48 @@ type ClientWithResponsesInterface interface {
 
 	// GetConnectionSchemaWithResponse Inspect the connection's selected metadata snapshot and its effective schema
 	//
-	// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+	// Reports the selected snapshot reference of one resource of the connection, that snapshot's declared binding and completeness, the effective typed fields built from it, and the selection revision of the resource. The selection revision is 1 while the resource has no selection, and each selection adds 1. The ETag header carries the same revision. An absent selection is explicit. This read never discovers or selects, and it never requires provider credentials. A failed or partial discovery never replaces the last complete valid snapshot.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/workspaces/{workspace_id}/connections/{connection_id}/schema (the `GetConnectionSchema` operationId).
 	GetConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *GetConnectionSchemaParams, reqEditors ...RequestEditorFn) (*GetConnectionSchemaResponse, error)
+
+	// DiscoverConnectionSchemaWithBodyWithResponse Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchemaWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error)
+
+	// DiscoverConnectionSchemaWithResponse Start one discovery of a declared relation of the connection
+	//
+	// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+	DiscoverConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error)
+
+	// SelectConnectionSchemaWithBodyWithResponse Select one complete candidate of a declared relation of the connection
+	//
+	// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+	SelectConnectionSchemaWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectConnectionSchemaResponse, error)
+
+	// SelectConnectionSchemaWithResponse Select one complete candidate of a declared relation of the connection
+	//
+	// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+	SelectConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, body SelectConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectConnectionSchemaResponse, error)
 
 	// GetWarehouseDatasetWithResponse Inspect the committed read view of one warehouse dataset
 	//
@@ -4509,6 +4969,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/workspaces/{workspace_id}/memberships (the `GrantMembership` operationId).
 	GrantMembershipWithResponse(ctx context.Context, workspaceId WorkspaceID, params *GrantMembershipParams, body GrantMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*GrantMembershipResponse, error)
+
+	// UpdateMembershipWithBodyWithResponse Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembershipWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error)
+
+	// UpdateMembershipWithResponse Add connections to a workspace membership
+	//
+	// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+	UpdateMembershipWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error)
 
 	// RevokeMembershipWithBodyWithResponse Revoke a workspace membership
 	//
@@ -5108,6 +5586,16 @@ func (r DenyDeviceLoginResponse) ContentType() string {
 	return ""
 }
 
+// ExchangeDeviceLoginResponse409Headers the declared response headers of an HTTP 409 response for ExchangeDeviceLogin
+type ExchangeDeviceLoginResponse409Headers struct {
+	RetryAfter *DevicePollRetryAfterSeconds
+}
+
+// ExchangeDeviceLoginResponse429Headers the declared response headers of an HTTP 429 response for ExchangeDeviceLogin
+type ExchangeDeviceLoginResponse429Headers struct {
+	RetryAfter *DevicePollRetryAfterSeconds
+}
+
 type ExchangeDeviceLoginResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -5120,13 +5608,17 @@ type ExchangeDeviceLoginResponse struct {
 	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
 	ApplicationproblemJSON403 *Problem403
 	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
-	ApplicationproblemJSON409 *Problem409
+	ApplicationproblemJSON409 *DevicePoll409
 	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
 	ApplicationproblemJSON410 *Problem410
 	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
-	ApplicationproblemJSON429 *Problem429
+	ApplicationproblemJSON429 *DevicePoll429
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *Problem503
+	// Headers409 the parsed response headers for an HTTP 409 response
+	Headers409 *ExchangeDeviceLoginResponse409Headers
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ExchangeDeviceLoginResponse429Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -5150,7 +5642,7 @@ func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON403() *Problem403 
 }
 
 // GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
-func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON409() *Problem409 {
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON409() *DevicePoll409 {
 	return r.ApplicationproblemJSON409
 }
 
@@ -5160,7 +5652,7 @@ func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON410() *Problem410 
 }
 
 // GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
-func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON429() *Problem429 {
+func (r ExchangeDeviceLoginResponse) GetApplicationproblemJSON429() *DevicePoll429 {
 	return r.ApplicationproblemJSON429
 }
 
@@ -6014,6 +6506,11 @@ func (r UpdateConnectionResponse) ContentType() string {
 	return ""
 }
 
+// GetConnectionSchemaResponse200Headers the declared response headers of an HTTP 200 response for GetConnectionSchema
+type GetConnectionSchemaResponse200Headers struct {
+	ETag *string
+}
+
 type GetConnectionSchemaResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -6029,6 +6526,8 @@ type GetConnectionSchemaResponse struct {
 	ApplicationproblemJSON404 *Problem404
 	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
 	ApplicationproblemJSON503 *Problem503
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetConnectionSchemaResponse200Headers
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
@@ -6084,6 +6583,214 @@ func (r GetConnectionSchemaResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetConnectionSchemaResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type DiscoverConnectionSchemaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *AdmissionResponse
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON429 the response for an HTTP 429 `application/problem+json` response
+	ApplicationproblemJSON429 *Problem429
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r DiscoverConnectionSchemaResponse) GetJSON202() *AdmissionResponse {
+	return r.JSON202
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON429 returns the response for an HTTP 429 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON429() *Problem429 {
+	return r.ApplicationproblemJSON429
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r DiscoverConnectionSchemaResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DiscoverConnectionSchemaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DiscoverConnectionSchemaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DiscoverConnectionSchemaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DiscoverConnectionSchemaResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// SelectConnectionSchemaResponse200Headers the declared response headers of an HTTP 200 response for SelectConnectionSchema
+type SelectConnectionSchemaResponse200Headers struct {
+	ETag *string
+}
+
+type SelectConnectionSchemaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *SelectConnectionSchema200JSONResponseBody
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *SelectConnectionSchemaResponse200Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r SelectConnectionSchemaResponse) GetJSON200() *SelectConnectionSchema200JSONResponseBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r SelectConnectionSchemaResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r SelectConnectionSchemaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r SelectConnectionSchemaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SelectConnectionSchemaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r SelectConnectionSchemaResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -6977,6 +7684,110 @@ func (r GrantMembershipResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GrantMembershipResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+type UpdateMembershipResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *UpdateMembership200JSONResponseBody
+	// ApplicationproblemJSON400 the response for an HTTP 400 `application/problem+json` response
+	ApplicationproblemJSON400 *Problem400
+	// ApplicationproblemJSON401 the response for an HTTP 401 `application/problem+json` response
+	ApplicationproblemJSON401 *Problem401
+	// ApplicationproblemJSON403 the response for an HTTP 403 `application/problem+json` response
+	ApplicationproblemJSON403 *Problem403
+	// ApplicationproblemJSON404 the response for an HTTP 404 `application/problem+json` response
+	ApplicationproblemJSON404 *Problem404
+	// ApplicationproblemJSON409 the response for an HTTP 409 `application/problem+json` response
+	ApplicationproblemJSON409 *Problem409
+	// ApplicationproblemJSON410 the response for an HTTP 410 `application/problem+json` response
+	ApplicationproblemJSON410 *Problem410
+	// ApplicationproblemJSON412 the response for an HTTP 412 `application/problem+json` response
+	ApplicationproblemJSON412 *Problem412
+	// ApplicationproblemJSON428 the response for an HTTP 428 `application/problem+json` response
+	ApplicationproblemJSON428 *Problem428
+	// ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+	ApplicationproblemJSON503 *Problem503
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateMembershipResponse) GetJSON200() *UpdateMembership200JSONResponseBody {
+	return r.JSON200
+}
+
+// GetApplicationproblemJSON400 returns the response for an HTTP 400 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON400() *Problem400 {
+	return r.ApplicationproblemJSON400
+}
+
+// GetApplicationproblemJSON401 returns the response for an HTTP 401 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON401() *Problem401 {
+	return r.ApplicationproblemJSON401
+}
+
+// GetApplicationproblemJSON403 returns the response for an HTTP 403 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON403() *Problem403 {
+	return r.ApplicationproblemJSON403
+}
+
+// GetApplicationproblemJSON404 returns the response for an HTTP 404 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON404() *Problem404 {
+	return r.ApplicationproblemJSON404
+}
+
+// GetApplicationproblemJSON409 returns the response for an HTTP 409 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON409() *Problem409 {
+	return r.ApplicationproblemJSON409
+}
+
+// GetApplicationproblemJSON410 returns the response for an HTTP 410 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON410() *Problem410 {
+	return r.ApplicationproblemJSON410
+}
+
+// GetApplicationproblemJSON412 returns the response for an HTTP 412 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON412() *Problem412 {
+	return r.ApplicationproblemJSON412
+}
+
+// GetApplicationproblemJSON428 returns the response for an HTTP 428 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON428() *Problem428 {
+	return r.ApplicationproblemJSON428
+}
+
+// GetApplicationproblemJSON503 returns the response for an HTTP 503 `application/problem+json` response
+func (r UpdateMembershipResponse) GetApplicationproblemJSON503() *Problem503 {
+	return r.ApplicationproblemJSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateMembershipResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateMembershipResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateMembershipResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateMembershipResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -8344,7 +9155,7 @@ func (c *ClientWithResponses) UpdateConnectionWithResponse(ctx context.Context, 
 
 // GetConnectionSchemaWithResponse Inspect the connection's selected metadata snapshot and its effective schema
 //
-// Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.
+// Reports the selected snapshot reference of one resource of the connection, that snapshot's declared binding and completeness, the effective typed fields built from it, and the selection revision of the resource. The selection revision is 1 while the resource has no selection, and each selection adds 1. The ETag header carries the same revision. An absent selection is explicit. This read never discovers or selects, and it never requires provider credentials. A failed or partial discovery never replaces the last complete valid snapshot.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -8355,6 +9166,66 @@ func (c *ClientWithResponses) GetConnectionSchemaWithResponse(ctx context.Contex
 		return nil, err
 	}
 	return ParseGetConnectionSchemaResponse(rsp)
+}
+
+// DiscoverConnectionSchemaWithBodyWithResponse Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *ClientWithResponses) DiscoverConnectionSchemaWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error) {
+	rsp, err := c.DiscoverConnectionSchemaWithBody(ctx, workspaceId, connectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDiscoverConnectionSchemaResponse(rsp)
+}
+
+// DiscoverConnectionSchemaWithResponse Start one discovery of a declared relation of the connection
+//
+// Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries (the `DiscoverConnectionSchema` operationId).
+func (c *ClientWithResponses) DiscoverConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *DiscoverConnectionSchemaParams, body DiscoverConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*DiscoverConnectionSchemaResponse, error) {
+	rsp, err := c.DiscoverConnectionSchema(ctx, workspaceId, connectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDiscoverConnectionSchemaResponse(rsp)
+}
+
+// SelectConnectionSchemaWithBodyWithResponse Select one complete candidate of a declared relation of the connection
+//
+// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+func (c *ClientWithResponses) SelectConnectionSchemaWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SelectConnectionSchemaResponse, error) {
+	rsp, err := c.SelectConnectionSchemaWithBody(ctx, workspaceId, connectionId, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSelectConnectionSchemaResponse(rsp)
+}
+
+// SelectConnectionSchemaWithResponse Select one complete candidate of a declared relation of the connection
+//
+// Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections (the `SelectConnectionSchema` operationId).
+func (c *ClientWithResponses) SelectConnectionSchemaWithResponse(ctx context.Context, workspaceId WorkspaceID, connectionId ConnectionID, params *SelectConnectionSchemaParams, body SelectConnectionSchemaJSONRequestBody, reqEditors ...RequestEditorFn) (*SelectConnectionSchemaResponse, error) {
+	rsp, err := c.SelectConnectionSchema(ctx, workspaceId, connectionId, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSelectConnectionSchemaResponse(rsp)
 }
 
 // GetWarehouseDatasetWithResponse Inspect the committed read view of one warehouse dataset
@@ -8556,6 +9427,36 @@ func (c *ClientWithResponses) GrantMembershipWithResponse(ctx context.Context, w
 		return nil, err
 	}
 	return ParseGrantMembershipResponse(rsp)
+}
+
+// UpdateMembershipWithBodyWithResponse Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *ClientWithResponses) UpdateMembershipWithBodyWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error) {
+	rsp, err := c.UpdateMembershipWithBody(ctx, workspaceId, id, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateMembershipResponse(rsp)
+}
+
+// UpdateMembershipWithResponse Add connections to a workspace membership
+//
+// Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/workspaces/{workspace_id}/memberships/{id} (the `UpdateMembership` operationId).
+func (c *ClientWithResponses) UpdateMembershipWithResponse(ctx context.Context, workspaceId WorkspaceID, id ResourceID, params *UpdateMembershipParams, body UpdateMembershipJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateMembershipResponse, error) {
+	rsp, err := c.UpdateMembership(ctx, workspaceId, id, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateMembershipResponse(rsp)
 }
 
 // RevokeMembershipWithBodyWithResponse Revoke a workspace membership
@@ -9201,7 +10102,7 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 		response.ApplicationproblemJSON403 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest Problem409
+		var dest DevicePoll409
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -9215,7 +10116,7 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 		response.ApplicationproblemJSON410 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
-		var dest Problem429
+		var dest DevicePoll429
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -9228,6 +10129,29 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 		}
 		response.ApplicationproblemJSON503 = &dest
 
+	}
+
+	switch {
+	case rsp.StatusCode == 409:
+		var headers ExchangeDeviceLoginResponse409Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value DevicePollRetryAfterSeconds
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers409 = &headers
+	case rsp.StatusCode == 429:
+		var headers ExchangeDeviceLoginResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value DevicePollRetryAfterSeconds
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
 	}
 
 	return response, nil
@@ -9957,6 +10881,203 @@ func ParseGetConnectionSchemaResponse(rsp *http.Response) (*GetConnectionSchemaR
 
 	}
 
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetConnectionSchemaResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDiscoverConnectionSchemaResponse parses an HTTP response from a DiscoverConnectionSchemaWithResponse call
+func ParseDiscoverConnectionSchemaResponse(rsp *http.Response) (*DiscoverConnectionSchemaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DiscoverConnectionSchemaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest AdmissionResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Problem429
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSelectConnectionSchemaResponse parses an HTTP response from a SelectConnectionSchemaWithResponse call
+func ParseSelectConnectionSchemaResponse(rsp *http.Response) (*SelectConnectionSchemaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SelectConnectionSchemaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest SelectConnectionSchema200JSONResponseBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers SelectConnectionSchemaResponse200Headers
+		if values := rsp.Header.Values("ETag"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "ETag", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.ETag = &value
+		}
+		response.Headers200 = &headers
+	}
+
 	return response, nil
 }
 
@@ -10634,6 +11755,95 @@ func ParseGrantMembershipResponse(rsp *http.Response) (*GrantMembershipResponse,
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest Problem400
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Problem401
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Problem403
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest Problem404
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest Problem409
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 410:
+		var dest Problem410
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON410 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest Problem412
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 428:
+		var dest Problem428
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON428 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Problem503
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUpdateMembershipResponse parses an HTTP response from a UpdateMembershipWithResponse call
+func ParseUpdateMembershipResponse(rsp *http.Response) (*UpdateMembershipResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateMembershipResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpdateMembership200JSONResponseBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest Problem400

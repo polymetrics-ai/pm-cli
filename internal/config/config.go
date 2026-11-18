@@ -116,6 +116,10 @@ type IdentityConfiguration struct {
 	ClientSecretRef  string
 	StepUpMaximumAge time.Duration
 
+	// DevicePollInterval is the interval that each new device login
+	// challenge stores. Omission selects 5 seconds.
+	DevicePollInterval time.Duration
+
 	caTrustRootRef      string
 	caTrustRootDeclared bool
 }
@@ -500,7 +504,7 @@ func decodeArtifacts(raw json.RawMessage) (ArtifactsConfiguration, error) {
 }
 
 func decodeIdentity(raw json.RawMessage) (IdentityConfiguration, error) {
-	fields := []string{"issuer", "client_id", "client_secret_ref", "step_up_maximum_age", "ca_ref"}
+	fields := []string{"issuer", "client_id", "client_secret_ref", "step_up_maximum_age", "ca_ref", "device_poll_interval"}
 	object, err := decodeObject(raw, "identity", fields, fields[:3])
 	if err != nil {
 		return IdentityConfiguration{}, err
@@ -524,8 +528,16 @@ func decodeIdentity(raw json.RawMessage) (IdentityConfiguration, error) {
 			return IdentityConfiguration{}, err
 		}
 	}
+	pollInterval := 5 * time.Second
+	if _, present := object["device_poll_interval"]; present {
+		pollInterval, err = decodeDuration(object, "device_poll_interval", "identity.device_poll_interval")
+		if err != nil {
+			return IdentityConfiguration{}, err
+		}
+	}
 	result := IdentityConfiguration{
 		Issuer: issuer, ClientID: clientID, ClientSecretRef: clientSecretRef, StepUpMaximumAge: maximumAge,
+		DevicePollInterval: pollInterval,
 	}
 	if _, declared := object["ca_ref"]; declared {
 		result.caTrustRootDeclared = true

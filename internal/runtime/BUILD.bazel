@@ -37,6 +37,7 @@ go_test(
         "response_open_test.go",
         "retry_test.go",
         "sqltls_test.go",
+        "sqltypes_metadata_test.go",
         "sqltypes_test.go",
     ],
     embed = [":runtime"],

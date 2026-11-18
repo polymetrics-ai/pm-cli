@@ -299,6 +299,22 @@ func (snapshot Snapshot) Validate() error {
 	return nil
 }
 
+// EncodeSnapshot encodes one valid snapshot document within the document
+// bound. DecodeSnapshot reads the same document back.
+func EncodeSnapshot(snapshot Snapshot) ([]byte, error) {
+	if err := snapshot.Validate(); err != nil {
+		return nil, err
+	}
+	document, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, errorf(ErrInvalidSnapshot, "$", "document could not be encoded")
+	}
+	if len(document) > MaxSnapshotDocumentBytes {
+		return nil, errorf(ErrInvalidSnapshot, "$", "document exceeds the supported bound")
+	}
+	return document, nil
+}
+
 // DecodeSnapshot decodes one closed snapshot document through the shared
 // contract duplicate, unknown-field, presence and trailing-data checks.
 func DecodeSnapshot(document []byte) (Snapshot, error) {

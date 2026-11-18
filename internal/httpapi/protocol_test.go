@@ -1,10 +1,12 @@
 package httpapi
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -84,5 +86,55 @@ func TestBodylessOperationBoundary(t *testing.T) {
 				t.Fatalf("HTTP status = %d, want %d", response.Code, test.status)
 			}
 		})
+	}
+}
+
+// D4-2: the device poll cadence goes out as whole seconds, rounded up, so a
+// client that follows Retry-After never polls before the stored next poll time.
+func TestDevicePollRetryAfterRoundsUp(t *testing.T) {
+	for _, test := range []struct {
+		wait time.Duration
+		want string
+	}{
+		{wait: time.Nanosecond, want: "1"},
+		{wait: 999 * time.Millisecond, want: "1"},
+		{wait: time.Second, want: "1"},
+		{wait: time.Second + time.Millisecond, want: "2"},
+		{wait: 2500 * time.Millisecond, want: "3"},
+		{wait: 5 * time.Second, want: "5"},
+		{wait: time.Minute, want: "60"},
+		{wait: 0, want: ""},
+		{wait: -time.Second, want: ""},
+	} {
+		recorder := httptest.NewRecorder()
+		ctx := context.WithValue(context.Background(), requestStateKey{}, requestState{writer: recorder})
+		setRetryAfter(ctx, test.wait)
+		if got := recorder.Header().Values("Retry-After"); len(got) > 1 || recorder.Header().Get("Retry-After") != test.want {
+			t.Errorf("wait %v: Retry-After = %q, want %q", test.wait, got, test.want)
+		}
+	}
+}
+
+// The device poll Retry-After never leaves the public 1 to 60 second contract
+// that the client enforces, even when the stored wait is longer.
+func TestDevicePollRetryAfterNeverExceedsSixtySeconds(t *testing.T) {
+	for _, wait := range []time.Duration{time.Minute + time.Nanosecond, 61 * time.Second, 10 * time.Minute} {
+		recorder := httptest.NewRecorder()
+		ctx := context.WithValue(context.Background(), requestStateKey{}, requestState{writer: recorder})
+		setRetryAfter(ctx, wait)
+		if got := recorder.Header().Values("Retry-After"); len(got) != 1 || got[0] != "60" {
+			t.Errorf("wait %v: Retry-After = %q, want the contract bound \"60\"", wait, got)
+		}
+	}
+}
+
+// TestSchemaSelectionAbsentProblemNamesItsRecovery is the developer check of
+// the #401 text review finding 1. Defect: the 409 schema_selection_absent
+// problem carried only the generic conflict detail, which names no recovery.
+func TestSchemaSelectionAbsentProblemNamesItsRecovery(t *testing.T) {
+	problem := newProblem(http.StatusConflict, "schema_selection_absent", "after_capability_change", nil)
+	want := "The declared relation has no usable schema selection. Run pm schema discover and pm schema select for its resource, then start the run again."
+	if problem.Status != http.StatusConflict || problem.Code != "schema_selection_absent" || problem.Detail != want {
+		t.Fatalf("schema_selection_absent problem = %#v; want 409 with the detail %q", problem, want)
 	}
 }

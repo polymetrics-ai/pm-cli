@@ -7,6 +7,7 @@ go_library(
         "admission.go",
         "artifact_resources.go",
         "artifacts.go",
+        "bootstrap.go",
         "cancel.go",
         "capabilities.go",
         "catalog.go",
@@ -18,10 +19,13 @@ go_library(
         "http_execution.go",
         "http_observation.go",
         "http_retry.go",
+        "membership_updates.go",
         "provider_http_tls.go",
         "revocation.go",
         "runs.go",
         "runtime.go",
+        "schema_discovery.go",
+        "schema_selection.go",
         "service_accounts.go",
         "sql_composition.go",
         "worker.go",
@@ -55,16 +59,27 @@ go_test(
         "account_permits_test.go",
         "capabilities_test.go",
         "catalog_test.go",
+        "claim_lost_retry_test.go",
         "connector_composition_test.go",
+        "continuation_page_test.go",
+        "credentials_stepup_test.go",
         "generated_github_read_test.go",
         "http_continuation_test.go",
         "http_execution_test.go",
+        "http_publication_test.go",
         "http_retry_test.go",
         "lifecycle_test.go",
         "load_boundary_test.go",
+        "permit_expiry_test.go",
         "physical_boundary_test.go",
         "provider_http_tls_test.go",
+        "schema_discovery_internal_test.go",
+        "schema_discovery_test.go",
+        "schema_selection_test.go",
+        "sql_composition_bind_internal_test.go",
         "sql_composition_test.go",
+        "unadmitted_recovery_test.go",
+        "worker_callback_deadline_test.go",
         "worker_plan_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
@@ -72,6 +87,7 @@ go_test(
     data = [
         "//:connectors/github/lanes/direct_read.json",
         "//internal/connectors:data/github.bundle.json",
+        "//internal/connectors:data/postgres.bundle.json",
     ],
     embed = [":app"],
     env_inherit = [
@@ -102,14 +118,39 @@ go_test(
         "//internal/runtime",
         "//internal/schema",
         "//internal/store",
+        "//internal/sync",
         "//internal/temporal",
         "//internal/testfixture",
         "//internal/testfixture/githubcompat",
         "//internal/workflows",
         "@com_github_jackc_pgx_v5//:pgx",
         "@com_github_jackc_pgx_v5//pgconn",
+        "@io_temporal_go_api//common/v1:common",
+        "@io_temporal_go_api//enums/v1:enums",
+        "@io_temporal_go_api//history/v1:history",
+        "@io_temporal_go_api//namespace/v1:namespace",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//activity",
         "@io_temporal_go_sdk//client",
         "@io_temporal_go_sdk//worker",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//test/bufconn",
+        "@org_golang_google_protobuf//types/known/durationpb",
+        "@org_golang_google_protobuf//types/known/timestamppb",
+    ],
+)
+
+go_test(
+    name = "continuation_page_test",
+    srcs = ["continuation_page_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/contract",
+        "//internal/objects",
+        "//internal/runtime",
+        "//internal/store",
+        "//internal/sync",
     ],
 )
 
@@ -121,11 +162,57 @@ go_test(
 )
 
 go_test(
+    name = "schema_discovery_internal_test",
+    srcs = ["schema_discovery_internal_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/config",
+        "//internal/contract",
+        "//internal/runtime",
+        "//internal/schema",
+        "//internal/store",
+    ],
+)
+
+go_test(
+    name = "sql_composition_bind_internal_test",
+    srcs = ["sql_composition_bind_internal_test.go"],
+    data = ["//internal/connectors:data/postgres.bundle.json"],
+    embed = [":app"],
+    deps = [
+        "//internal/config",
+        "//internal/connectors",
+        "//internal/contract",
+        "//internal/schema",
+    ],
+)
+
+go_test(
     name = "provider_http_tls_test",
     srcs = ["provider_http_tls_test.go"],
     embed = [":app"],
     deps = [
         "//internal/config",
         "//internal/credentials",
+    ],
+)
+
+go_test(
+    name = "worker_callback_deadline_test",
+    srcs = ["worker_callback_deadline_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/contract",
+        "@io_temporal_go_api//common/v1:common",
+        "@io_temporal_go_api//namespace/v1:namespace",
+        "@io_temporal_go_api//serviceerror",
+        "@io_temporal_go_api//workflowservice/v1:workflowservice",
+        "@io_temporal_go_sdk//activity",
+        "@io_temporal_go_sdk//client",
+        "@io_temporal_go_sdk//worker",
+        "@org_golang_google_grpc//:grpc",
+        "@org_golang_google_grpc//test/bufconn",
+        "@org_golang_google_protobuf//types/known/durationpb",
+        "@org_golang_google_protobuf//types/known/timestamppb",
     ],
 )

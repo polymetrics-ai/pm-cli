@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"path"
+	"slices"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -80,7 +82,7 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 		}
 		pool.Close()
 
-		for version := ControlSchemaVersion; version > 12; version-- {
+		for _, version := range storeMigrationVersionsAbove(12) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return owned retained-event fixture to v12: %v", err)
 			}
@@ -243,7 +245,7 @@ func TestEventWatermarkMigrationRetainedData(t *testing.T) {
 		}
 		pool.Close()
 
-		for version := ControlSchemaVersion; version > 12; version-- {
+		for _, version := range storeMigrationVersionsAbove(12) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained-tail fixture to v12: %v", err)
 			}
@@ -300,7 +302,7 @@ func TestArtifactAuthorityMigrationRetainedData(t *testing.T) {
 	}
 	pool.Close()
 
-	for version := ControlSchemaVersion; version > 12; version-- {
+	for _, version := range storeMigrationVersionsAbove(12) {
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 			t.Fatalf("return retained artifact fixture to v12: %v", err)
 		}
@@ -380,7 +382,7 @@ func TestAccountCooldownMigrationRetainedData(t *testing.T) {
 		t.Fatalf("retain migration cooldown: %v", err)
 	}
 	pool.Close()
-	for version := ControlSchemaVersion; version > 13; version-- {
+	for _, version := range storeMigrationVersionsAbove(13) {
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 			t.Fatalf("return retained cooldown fixture to v13: %v", err)
 		}
@@ -425,7 +427,7 @@ func TestObjectPublicationMigrationRetainedData(t *testing.T) {
 	}
 	pool.Close()
 	for pass := range 2 {
-		for version := ControlSchemaVersion; version > 14; version-- {
+		for _, version := range storeMigrationVersionsAbove(14) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained object fixture to v14: %v", err)
 			}
@@ -479,7 +481,7 @@ func TestHTTPBudgetMigrationRetainedData(t *testing.T) {
 	plainRequest := testAdmissionRequest(t, plainScope, "plain-budget-migration", "plain-budget-migration")
 	admitForTest(t, pool, plainScope, plainRequest)
 	pool.Close()
-	for version := ControlSchemaVersion; version > 15; version-- {
+	for _, version := range storeMigrationVersionsAbove(15) {
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 			t.Fatalf("return retained HTTP budget fixture to v15: %v", err)
 		}
@@ -510,7 +512,7 @@ func TestHTTPBudgetMigrationRetainedData(t *testing.T) {
 	// Legacy absent-policy snapshots survive a real down/up round trip once no
 	// retained HTTP authority would be destroyed by the older closed shape.
 	cleanupTestScope(t, credentials, httpScope)
-	for version := ControlSchemaVersion; version > 15; version-- {
+	for _, version := range storeMigrationVersionsAbove(15) {
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 			t.Fatalf("return legacy HTTP budget fixture to v15: %v", err)
 		}
@@ -570,7 +572,7 @@ func TestArtifactPurposeMigrationRetainedData(t *testing.T) {
 			t.Fatalf("register public artifact before purpose round trip: %v", err)
 		}
 		pool.Close()
-		for version := ControlSchemaVersion; version > 16; version-- {
+		for _, version := range storeMigrationVersionsAbove(16) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return public artifact fixture to v16: %v", err)
 			}
@@ -627,7 +629,7 @@ func TestArtifactPurposeMigrationRetainedData(t *testing.T) {
 			t.Fatalf("register retained continuation artifact: %v", err)
 		}
 		pool.Close()
-		for version := ControlSchemaVersion; version > 16; version-- {
+		for _, version := range storeMigrationVersionsAbove(16) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return continuation artifact fixture to v16: %v", err)
 			}
@@ -715,7 +717,7 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 			t.Fatalf("reserve public migration fixture: %v", err)
 		}
 		pool.Close()
-		for version := ControlSchemaVersion; version > 18; version-- {
+		for _, version := range storeMigrationVersionsAbove(18) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained fixture to the v18 shape: %v", err)
 			}
@@ -766,7 +768,7 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 			t.Fatalf("reserve private migration fixture: %v", err)
 		}
 		pool.Close()
-		for version := ControlSchemaVersion; version > 18; version-- {
+		for _, version := range storeMigrationVersionsAbove(18) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained fixture to the v18 shape: %v", err)
 			}
@@ -825,7 +827,7 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 			t.Fatalf("release migration permit = %#v, %v", released, err)
 		}
 		pool.Close()
-		for version := ControlSchemaVersion; version > 18; version-- {
+		for _, version := range storeMigrationVersionsAbove(18) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained fixture to the v18 shape: %v", err)
 			}
@@ -881,7 +883,7 @@ func TestDurableContinuationMigrationRetainedData(t *testing.T) {
 		registerRunViewFixture(t, pool, scope, absentRequest)
 		pool.Close()
 
-		for version := ControlSchemaVersion; version > 18; version-- {
+		for _, version := range storeMigrationVersionsAbove(18) {
 			if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained fixture to the v18 shape: %v", err)
 			}
@@ -939,7 +941,7 @@ func TestWorkerRetryMigrationRetainedData(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		fixture.pool.Close()
-		for version := ControlSchemaVersion; version > 18; version-- {
+		for _, version := range storeMigrationVersionsAbove(18) {
 			if err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained retry fixture to the v18 shape: %v", err)
 			}
@@ -981,7 +983,7 @@ func TestWorkerRetryMigrationRetainedData(t *testing.T) {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 		defer cancel()
 		fixture.pool.Close()
-		for version := ControlSchemaVersion; version > 18; version-- {
+		for _, version := range storeMigrationVersionsAbove(18) {
 			if err := migrateOneStoreVersionDown(ctx, fixture.credentials.migratorDSN, version); err != nil {
 				t.Fatalf("return retained retry fixture to the v18 shape: %v", err)
 			}
@@ -1162,6 +1164,29 @@ func restoreEventWatermarkMigrationFixture(
 	cleanupTestScope(t, credentials, scopes...)
 }
 
+// storeMigrationVersionsAbove lists the embedded migration versions above floor,
+// newest first. Migration numbers can have gaps (a number reserved for another
+// slice), so a step-down walks the versions that exist, not every integer.
+func storeMigrationVersionsAbove(floor int64) []int64 {
+	names, err := fs.Glob(migrationFiles, "migrations/postgres/*.sql")
+	if err != nil {
+		panic(fmt.Sprintf("list embedded store migrations: %v", err))
+	}
+	versions := make([]int64, 0, len(names))
+	for _, name := range names {
+		var version int64
+		if _, err := fmt.Sscanf(path.Base(name), "%04d_", &version); err != nil {
+			panic(fmt.Sprintf("embedded store migration %q has no version prefix", name))
+		}
+		if version > floor {
+			versions = append(versions, version)
+		}
+	}
+	slices.Sort(versions)
+	slices.Reverse(versions)
+	return versions
+}
+
 func migrateOneStoreVersionDown(ctx context.Context, connectionString string, expectedCurrent int64) error {
 	configuration, err := pgx.ParseConfig(connectionString)
 	if err != nil {
@@ -1328,7 +1353,7 @@ func TestWarehouseSegmentMigrationRetainedData(t *testing.T) {
 
 	// A downgrade that would erase registered membership is refused, and the
 	// refused migration leaves the retained rows exactly as they were.
-	for version := ControlSchemaVersion; version > 19; version-- {
+	for _, version := range storeMigrationVersionsAbove(19) {
 		if err := migrateOneStoreVersionDown(ctx, credentials.migratorDSN, version); err != nil {
 			t.Fatalf("return retained warehouse fixture to v19: %v", err)
 		}

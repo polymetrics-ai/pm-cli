@@ -275,6 +275,12 @@
       "version": "1.31.2",
       "index_digest": "sha256:b5ecdb8282bededae2a10c36e8d862e27d0bc2d247fc73c5416025997ab4a1da",
       "source_url": "https://hub.docker.com/r/temporalio/server"
+    },
+    {
+      "name": "docker.io/keycloak/keycloak",
+      "version": "26.8.1",
+      "index_digest": "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332",
+      "source_url": "https://hub.docker.com/r/keycloak/keycloak"
     }
   ]
 }

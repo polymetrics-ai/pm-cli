@@ -12,6 +12,7 @@ import (
 	"github.com/polymetrics-ai/pm-cli/internal/credentials"
 	pmruntime "github.com/polymetrics-ai/pm-cli/internal/runtime"
 	"github.com/polymetrics-ai/pm-cli/internal/schema"
+	"github.com/polymetrics-ai/pm-cli/internal/store"
 )
 
 var (
@@ -20,8 +21,9 @@ var (
 	// substitutes another connection.
 	ErrSQLConnectionUnavailable = errors.New("declared customer SQL connection is unavailable")
 	// ErrSQLBindingUnavailable reports that the operation's declared relation
-	// binding is not permitted for this connection or that its selected relation
-	// metadata is unusable. No relation, table or column is ever substituted.
+	// binding is not permitted for this connection, or that the run pins no
+	// usable schema snapshot of it. No relation, table or column is ever
+	// substituted.
 	ErrSQLBindingUnavailable = errors.New("declared customer SQL relation binding is unavailable")
 	// ErrSQLCredentialUnavailable reports that the one-use credential material
 	// resolved for this attempt is not the credential the connection declares.
@@ -49,14 +51,13 @@ const sqlInstantLayout = "2006-01-02T15:04:05.999999999Z07:00"
 type SQLBoundsResolver func(contract.Scope, string) (config.ProviderSQLBounds, bool)
 
 // SQLConnectionResources are the process-static resources of one declared
-// customer SQL connection: the declared strict trust anchor and the
-// connection's own schema state. Credential material is deliberately absent
-// here; it is resolved only at the execution boundary.
+// customer SQL connection: the declared strict trust anchor. Credential
+// material is deliberately absent here; it is resolved only at the execution
+// boundary. The selected relation metadata lives in PM PostgreSQL, and each
+// run pins its snapshot at admission (ADR 0007).
 type SQLConnectionResources struct {
 	// TrustAnchorPEM is the exact declared PEM trust-anchor bundle.
 	TrustAnchorPEM []byte
-	// Snapshots resolves the selected relation metadata of this connection.
-	Snapshots *schema.Store
 }
 
 // SQLCompositionConfig declares the customer SQL connections one process admits.
@@ -80,10 +81,14 @@ type sqlDeclaredOperation struct {
 	operationID string
 }
 
+type sqlDeclaredRelation struct {
+	connectorID     string
+	relationBinding string
+}
+
 type sqlBoundConnection struct {
 	declaration config.ProviderSQLConnection
 	trustAnchor []byte
-	snapshots   *schema.Store
 	bindings    map[string]config.ProviderSQLRelationBinding
 }
 
@@ -93,10 +98,13 @@ type sqlBoundConnection struct {
 // credential material and never executes a statement outside one admitted
 // worker callback.
 type SQLComposition struct {
-	declared     bool
-	bounds       config.ProviderSQLBounds
-	connections  map[sqlConnectionKey]sqlBoundConnection
-	operations   map[sqlDeclaredOperation]struct{}
+	declared    bool
+	bounds      config.ProviderSQLBounds
+	connections map[sqlConnectionKey]sqlBoundConnection
+	operations  map[sqlDeclaredOperation]struct{}
+	// metadata names the declared metadata operation of each connector and
+	// relation binding. A discovery runs only that operation.
+	metadata     map[sqlDeclaredRelation]string
 	lanes        []contract.Lane
 	capabilities []contract.CapabilityRequirement
 	foundations  []contract.FoundationContract
@@ -124,6 +132,7 @@ func OpenSQLComposition(configuration SQLCompositionConfig) (*SQLComposition, er
 		bounds:      configuration.Declarations.Bounds(),
 		connections: make(map[sqlConnectionKey]sqlBoundConnection),
 		operations:  make(map[sqlDeclaredOperation]struct{}),
+		metadata:    make(map[sqlDeclaredRelation]string),
 		dialer:      configuration.Dialer,
 		now:         configuration.Now,
 	}
@@ -157,6 +166,15 @@ func OpenSQLComposition(configuration SQLCompositionConfig) (*SQLComposition, er
 			composition.operations[sqlDeclaredOperation{
 				connectorID: connection.ConnectorID, operationID: operation.OperationID,
 			}] = struct{}{}
+			if operation.Transport.StatementKind == contract.PostgreSQLStatementMetadata {
+				relation := sqlDeclaredRelation{
+					connectorID: connection.ConnectorID, relationBinding: operation.Transport.RelationBinding,
+				}
+				if _, duplicate := composition.metadata[relation]; duplicate {
+					return nil, errors.New("declared customer SQL connector declares two metadata operations for one relation binding")
+				}
+				composition.metadata[relation] = operation.OperationID
+			}
 			if err := composition.declareOperation(operation); err != nil {
 				return nil, err
 			}
@@ -218,12 +236,13 @@ func (composition *SQLComposition) Register(handlers *HandlerRegistry) error {
 }
 
 // LoadProviderSQLResources opens the process-static resources of one declared
-// customer connection: the declared operator trust anchor and the connection's
-// own schema state directory. A declared trust anchor that is missing, empty,
-// oversized or unusable fails this call with a constant bounded error that
-// never contains secret material. The declared password reference is
-// deliberately not read here: credential material has exactly one path, the
-// one-use resolution at the execution boundary.
+// customer connection: the declared operator trust anchor. A declared trust
+// anchor that is missing, empty, oversized or unusable fails this call with a
+// constant bounded error that never contains secret material. The declared
+// password reference is deliberately not read here: credential material has
+// exactly one path, the one-use resolution at the execution boundary. The
+// declared state directory holds no snapshot and no selection: those live in
+// PM PostgreSQL (ADR 0007).
 func LoadProviderSQLResources(
 	secrets *credentials.OperatorSecrets,
 	connection config.ProviderSQLConnection,
@@ -235,17 +254,11 @@ func LoadProviderSQLResources(
 	if err != nil {
 		return SQLConnectionResources{}, errors.New("customer SQL trust anchor is unavailable")
 	}
-	snapshots, err := schema.NewScopedStore(connection.StateDirectory, connection.Scope(), connection.ConnectionID)
-	if err != nil {
-		clear(trustAnchor)
-		return SQLConnectionResources{}, errors.New("customer SQL connection state directory is unavailable")
-	}
-	return SQLConnectionResources{TrustAnchorPEM: trustAnchor, Snapshots: snapshots}, nil
+	return SQLConnectionResources{TrustAnchorPEM: trustAnchor}, nil
 }
 
 // bindSQLConnection validates one declared connection against its process
-// resources. Only a strict, verifiable trust anchor and an existing private
-// schema state directory produce a usable binding.
+// resources. Only a strict, verifiable trust anchor produces a usable binding.
 func bindSQLConnection(
 	connection config.ProviderSQLConnection,
 	resources SQLConnectionResources,
@@ -256,13 +269,9 @@ func bindSQLConnection(
 	}); err != nil {
 		return sqlBoundConnection{}, errors.New("declared customer SQL trust anchor is not a strict usable anchor")
 	}
-	if resources.Snapshots == nil {
-		return sqlBoundConnection{}, errors.New("declared customer SQL connection requires its schema state")
-	}
 	bound := sqlBoundConnection{
 		declaration: connection,
 		trustAnchor: append([]byte(nil), resources.TrustAnchorPEM...),
-		snapshots:   resources.Snapshots,
 		bindings:    make(map[string]config.ProviderSQLRelationBinding, len(connection.Bindings)),
 	}
 	for _, binding := range connection.Bindings {
@@ -334,7 +343,12 @@ func (composition *SQLComposition) execute(
 		return ExecutionObservation{}, err
 	}
 	observedAt := composition.observationTime()
-	bound, err := composition.bind(request.Scope, request.ConnectionID, request.Operation)
+	var bound sqlBoundOperation
+	if request.discovery != nil {
+		bound, err = composition.bindDiscovery(request.Scope, request.ConnectionID, request.Operation, *request.discovery)
+	} else {
+		bound, err = composition.bind(request.Scope, request.ConnectionID, request.Operation, request.selectedSchema)
+	}
 	if err != nil {
 		return refusedSQLObservation(request, observedAt, err)
 	}
@@ -368,16 +382,22 @@ func (composition *SQLComposition) execute(
 		Input:    input,
 		Limits:   limits,
 	})
+	if request.discovery != nil {
+		return bound.projectDiscovery(request, observation, executeErr)
+	}
 	return bound.project(request, observation, executeErr)
 }
 
 // bind resolves the declared connection and the operation's declared relation
-// binding for the exact scope. It never substitutes another connection, table,
-// relation or column, and a missing selected discovery refuses explicitly.
+// binding for the exact scope, with the schema snapshot that the run pinned at
+// admission. It never substitutes another connection, table, relation or
+// column. A run that pins no snapshot, or a snapshot of another binding or an
+// incomplete one, is refused before any send (ADR 0007).
 func (composition *SQLComposition) bind(
 	scope contract.Scope,
 	connectionID string,
 	operation contract.Operation,
+	selected *schema.Snapshot,
 ) (sqlBoundOperation, error) {
 	if composition == nil || !composition.declared {
 		return sqlBoundOperation{}, ErrSQLConnectionUnavailable
@@ -400,29 +420,36 @@ func (composition *SQLComposition) bind(
 			ErrSQLBindingUnavailable, operation.Transport.RelationBinding,
 		)
 	}
-	// The snapshot binding names the declared connection's own organization and
-	// workspace, so a snapshot of another workspace's same-named connection is
-	// never selected here.
-	snapshot, present, err := connection.snapshots.Active(schema.Binding{
-		OrgID:              connection.declaration.Scope().OrgID,
-		WorkspaceID:        connection.declaration.Scope().WorkspaceID,
+	if selected == nil {
+		return sqlBoundOperation{}, fmt.Errorf(
+			"%w: the run records no schema selection for relation binding %q",
+			ErrSQLBindingUnavailable, binding.Binding,
+		)
+	}
+	// The expected binding names the exact scope of this declared connection,
+	// so a snapshot of another workspace's same-named connection never binds.
+	if selected.Binding != (schema.Binding{
+		OrgID:              scope.OrgID,
+		WorkspaceID:        scope.WorkspaceID,
 		ConnectorID:        connection.declaration.ConnectorID,
 		ConnectionID:       connection.declaration.ConnectionID,
 		ProviderAccountID:  binding.Snapshot.ProviderAccountID,
 		PermissionRevision: binding.Snapshot.PermissionRevision,
 		Resource:           binding.Snapshot.Resource,
 		SourceRevision:     binding.Snapshot.SourceRevision,
-	})
-	if err != nil {
-		return sqlBoundOperation{}, fmt.Errorf("%w: selected relation metadata is unusable", ErrSQLBindingUnavailable)
-	}
-	if !present {
+	}) {
 		return sqlBoundOperation{}, fmt.Errorf(
-			"%w: no complete selected discovery is active for relation binding %q",
+			"%w: the pinned schema snapshot is bound to another scope than relation binding %q",
 			ErrSQLBindingUnavailable, binding.Binding,
 		)
 	}
-	relation, writable, err := sqlRelation(binding, snapshot)
+	if !selected.Completeness.Complete {
+		return sqlBoundOperation{}, fmt.Errorf(
+			"%w: the pinned schema snapshot of relation binding %q is not complete",
+			ErrSQLBindingUnavailable, binding.Binding,
+		)
+	}
+	relation, writable, err := sqlRelation(binding, *selected)
 	if err != nil {
 		return sqlBoundOperation{}, err
 	}
@@ -431,6 +458,142 @@ func (composition *SQLComposition) bind(
 		trustAnchor: connection.trustAnchor,
 		relation:    relation,
 		writable:    writable,
+	}, nil
+}
+
+// ResolveDiscovery resolves the one declared relation binding of a connection
+// whose snapshot binding names the resource, and the connector's declared
+// metadata operation for that relation binding. It reports false when no
+// binding, or more than one binding, names the resource, or when the
+// connector declares no metadata operation for it. It reads no selection.
+func (composition *SQLComposition) ResolveDiscovery(
+	scope contract.Scope,
+	connectionID string,
+	resource string,
+) (DeclaredDiscovery, bool) {
+	if composition == nil || !composition.declared {
+		return DeclaredDiscovery{}, false
+	}
+	connection, present := composition.connections[sqlConnectionKey{
+		orgID: scope.OrgID, workspaceID: scope.WorkspaceID, connectionID: connectionID,
+	}]
+	if !present {
+		return DeclaredDiscovery{}, false
+	}
+	var found *config.ProviderSQLRelationBinding
+	for index := range connection.declaration.Bindings {
+		if connection.declaration.Bindings[index].Snapshot.Resource != resource {
+			continue
+		}
+		if found != nil {
+			return DeclaredDiscovery{}, false
+		}
+		found = &connection.declaration.Bindings[index]
+	}
+	if found == nil {
+		return DeclaredDiscovery{}, false
+	}
+	operationID, declared := composition.metadata[sqlDeclaredRelation{
+		connectorID: connection.declaration.ConnectorID, relationBinding: found.Binding,
+	}]
+	if !declared {
+		return DeclaredDiscovery{}, false
+	}
+	return DeclaredDiscovery{
+		ConnectorID:        connection.declaration.ConnectorID,
+		OperationID:        operationID,
+		RelationBinding:    found.Binding,
+		Schema:             found.Schema,
+		Table:              found.Table,
+		Resource:           found.Snapshot.Resource,
+		ProviderAccountID:  found.Snapshot.ProviderAccountID,
+		PermissionRevision: found.Snapshot.PermissionRevision,
+		SourceRevision:     found.Snapshot.SourceRevision,
+	}, true
+}
+
+// ResolveRelationBinding resolves the declared relation binding of one
+// connection that a PostgreSQL operation names, with the snapshot binding
+// that it reads. It reports false when the connection declares no such
+// binding. Admission uses it to require a usable schema selection.
+func (composition *SQLComposition) ResolveRelationBinding(
+	scope contract.Scope,
+	connectionID string,
+	relationBinding string,
+) (DeclaredRelation, bool) {
+	if composition == nil || !composition.declared {
+		return DeclaredRelation{}, false
+	}
+	connection, present := composition.connections[sqlConnectionKey{
+		orgID: scope.OrgID, workspaceID: scope.WorkspaceID, connectionID: connectionID,
+	}]
+	if !present {
+		return DeclaredRelation{}, false
+	}
+	binding, present := connection.bindings[relationBinding]
+	if !present {
+		return DeclaredRelation{}, false
+	}
+	return DeclaredRelation{
+		ConnectorID:        connection.declaration.ConnectorID,
+		RelationBinding:    binding.Binding,
+		Resource:           binding.Snapshot.Resource,
+		ProviderAccountID:  binding.Snapshot.ProviderAccountID,
+		PermissionRevision: binding.Snapshot.PermissionRevision,
+		SourceRevision:     binding.Snapshot.SourceRevision,
+	}, true
+}
+
+// bindDiscovery binds the first discovery of one declared relation from the
+// operator's relation binding, not from a selected snapshot. The relation
+// names only the declared schema and table, which the metadata statement binds
+// as parameter values. A declaration that differs from the accepted discovery
+// intent, also in its physical schema or table, is refused before any send.
+func (composition *SQLComposition) bindDiscovery(
+	scope contract.Scope,
+	connectionID string,
+	operation contract.Operation,
+	discovery store.SchemaDiscovery,
+) (sqlBoundOperation, error) {
+	if composition == nil || !composition.declared {
+		return sqlBoundOperation{}, ErrSQLConnectionUnavailable
+	}
+	connection, present := composition.connections[sqlConnectionKey{
+		orgID: scope.OrgID, workspaceID: scope.WorkspaceID, connectionID: connectionID,
+	}]
+	if !present {
+		return sqlBoundOperation{}, fmt.Errorf("%w: no customer SQL connection is declared for this scope", ErrSQLConnectionUnavailable)
+	}
+	operationID, declared := composition.metadata[sqlDeclaredRelation{
+		connectorID: connection.declaration.ConnectorID, relationBinding: operation.Transport.RelationBinding,
+	}]
+	if !declared || operationID != operation.OperationID ||
+		operation.Transport.StatementKind != contract.PostgreSQLStatementMetadata {
+		return sqlBoundOperation{}, fmt.Errorf("%w: a discovery runs only the declared metadata operation", ErrSQLConnectionUnavailable)
+	}
+	binding, present := connection.bindings[discovery.RelationBinding]
+	if !present || discovery.ConnectionID != connectionID ||
+		discovery.ConnectorID != connection.declaration.ConnectorID ||
+		discovery.RelationBinding != operation.Transport.RelationBinding ||
+		discovery.Schema != binding.Schema || discovery.Table != binding.Table ||
+		binding.Snapshot != (config.ProviderSQLSnapshotBinding{
+			ProviderAccountID:  discovery.ProviderAccountID,
+			PermissionRevision: discovery.PermissionRevision,
+			Resource:           discovery.Resource,
+			SourceRevision:     discovery.SourceRevision,
+		}) {
+		return sqlBoundOperation{}, fmt.Errorf("%w: the declared relation differs from the accepted discovery", ErrSQLBindingUnavailable)
+	}
+	snapshotBinding := discoveryBinding(connection.declaration.Scope(), discovery)
+	if err := snapshotBinding.Validate(); err != nil {
+		return sqlBoundOperation{}, fmt.Errorf("%w: the discovery binding is unusable", ErrSQLBindingUnavailable)
+	}
+	return sqlBoundOperation{
+		declaration: connection.declaration,
+		trustAnchor: connection.trustAnchor,
+		relation:    pmruntime.SQLRelation{Binding: binding.Binding, Schema: binding.Schema, Name: binding.Table},
+		writable:    map[string]struct{}{},
+		discovery:   &snapshotBinding,
 	}, nil
 }
 
@@ -467,6 +630,9 @@ type sqlBoundOperation struct {
 	trustAnchor []byte
 	relation    pmruntime.SQLRelation
 	writable    map[string]struct{}
+	// discovery is the snapshot binding of a first discovery. It is set only
+	// by bindDiscovery, whose relation names no columns.
+	discovery *schema.Binding
 }
 
 // sqlRelation builds the transport relation from the declared binding and the
@@ -762,6 +928,67 @@ func (bound sqlBoundOperation) project(
 	return ExecutionObservation{
 		Result:   result,
 		Outcomes: sqlMemberOutcomes(request, state, observedAt),
+	}, errors.Join(projectionErr, executeErr)
+}
+
+// projectDiscovery settles one discovery attempt. Only a committed, complete
+// observation succeeds and carries the observed snapshot; a truncated, empty,
+// partial or failed observation is rejected and carries no snapshot.
+func (bound sqlBoundOperation) projectDiscovery(
+	request ExecutionRequest,
+	observation pmruntime.SQLObservation,
+	executeErr error,
+) (ExecutionObservation, error) {
+	observedAt := observation.ObservedAt
+	if observedAt.IsZero() {
+		observedAt = time.Now().UTC()
+	}
+	observedAt = observedAt.UTC()
+	state := contract.OutcomeUnsent
+	var result *contract.ActionResult
+	var observed *schema.Snapshot
+	var projectionErr error
+	switch observation.Outcome {
+	case pmruntime.SQLOutcomeKnownCommit:
+		state = contract.OutcomeRejected
+		if observation.Truncated {
+			projectionErr = ErrSQLRowBoundExceeded
+			break
+		}
+		if bound.discovery == nil {
+			projectionErr = fmt.Errorf("%w: the discovery has no snapshot binding", ErrSQLBindingUnavailable)
+			break
+		}
+		candidate, err := discoverRelation(*bound.discovery, request.Operation.OperationID, observation.Rows)
+		if err != nil {
+			projectionErr = fmt.Errorf("%w: %v", ErrSchemaDiscoveryIncomplete, err)
+			break
+		}
+		if !candidate.Completeness.Complete {
+			projectionErr = ErrSchemaDiscoveryIncomplete
+			break
+		}
+		snapshot, err := candidate.Snapshot()
+		if err != nil {
+			projectionErr = fmt.Errorf("%w: %v", ErrSchemaDiscoveryIncomplete, err)
+			break
+		}
+		result, projectionErr = bound.result(observation)
+		if projectionErr != nil {
+			result = nil
+			break
+		}
+		observed = &snapshot
+		state = contract.OutcomeSucceeded
+	case pmruntime.SQLOutcomeUnknownCommit:
+		state = contract.OutcomeUnknown
+	default:
+		state = contract.OutcomeUnsent
+	}
+	return ExecutionObservation{
+		Result:    result,
+		Outcomes:  sqlMemberOutcomes(request, state, observedAt),
+		Discovery: observed,
 	}, errors.Join(projectionErr, executeErr)
 }
 

@@ -297,6 +297,42 @@
       }
     },
     "responses": {
+      "DevicePoll409": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Device login conflict. A device_authorization_pending answer carries Retry-After. A login_challenge_used answer does not.",
+        "headers": {
+          "Retry-After": {
+            "description": "Whole seconds until the next permitted poll of the device challenge. A device_authorization_pending answer carries it. A login_challenge_used answer does not.",
+            "schema": {
+              "$ref": "#/components/schemas/DevicePollRetryAfterSeconds"
+            }
+          }
+        }
+      },
+      "DevicePoll429": {
+        "content": {
+          "application/problem+json": {
+            "schema": {
+              "$ref": "#/components/schemas/Problem"
+            }
+          }
+        },
+        "description": "Device login limit. A device_poll_too_soon answer carries Retry-After. An authentication_rate_limited answer does not.",
+        "headers": {
+          "Retry-After": {
+            "description": "Whole seconds until the next permitted poll of the device challenge. A device_poll_too_soon answer carries it. An authentication_rate_limited answer does not.",
+            "schema": {
+              "$ref": "#/components/schemas/DevicePollRetryAfterSeconds"
+            }
+          }
+        }
+      },
       "Problem400": {
         "content": {
           "application/problem+json": {
@@ -1134,6 +1170,12 @@
               "null"
             ]
           },
+          "selection_revision": {
+            "description": "The selection revision of the resource. It is 1 while the resource has no selection.",
+            "format": "int64",
+            "minimum": 1,
+            "type": "integer"
+          },
           "snapshot": {
             "$ref": "#/components/schemas/ConnectionSchemaSnapshot"
           },
@@ -1147,6 +1189,7 @@
           "connector_id",
           "connection_id",
           "selected",
+          "selection_revision",
           "snapshot",
           "fields"
         ],
@@ -1532,6 +1575,13 @@
           "poll_interval_seconds"
         ],
         "type": "object"
+      },
+      "DevicePollRetryAfterSeconds": {
+        "description": "Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it in Retry-After with device_authorization_pending and device_poll_too_soon only.",
+        "maxLength": 2,
+        "minLength": 1,
+        "pattern": "^([1-9]|[1-5][0-9]|60)$",
+        "type": "string"
       },
       "DeviceProof": {
         "additionalProperties": false,
@@ -2016,6 +2066,46 @@
         ],
         "type": "object"
       },
+      "MembershipUpdateRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "membership": {
+            "additionalProperties": false,
+            "properties": {
+              "add_connection_ids": {
+                "description": "Connection IDs to add, in strictly ascending byte order.",
+                "items": {
+                  "maxLength": 512,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "maxItems": 256,
+                "minItems": 1,
+                "type": "array",
+                "uniqueItems": true
+              },
+              "membership_ref": {
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "membership_ref",
+              "add_connection_ids"
+            ],
+            "type": "object"
+          },
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          }
+        },
+        "required": [
+          "protocol",
+          "membership"
+        ],
+        "type": "object"
+      },
       "MutationReplayResponse": {
         "additionalProperties": false,
         "properties": {
@@ -2063,6 +2153,7 @@
       "MutationResultDisposition": {
         "enum": [
           "created",
+          "updated",
           "revoked",
           "unchanged"
         ],
@@ -3253,6 +3344,21 @@
         ],
         "type": "object"
       },
+      "SchemaDiscoveryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "resource": {
+            "description": "The resource that one declared relation binding of the connection names.",
+            "maxLength": 512,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "resource"
+        ],
+        "type": "object"
+      },
       "SchemaField": {
         "additionalProperties": false,
         "properties": {
@@ -3303,6 +3409,40 @@
           "type",
           "precision",
           "scale"
+        ],
+        "type": "object"
+      },
+      "SchemaSelectionRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "protocol": {
+            "$ref": "#/components/schemas/ProtocolMetadata"
+          },
+          "selection": {
+            "additionalProperties": false,
+            "properties": {
+              "resource": {
+                "description": "The resource that one declared relation binding of the connection names.",
+                "maxLength": 512,
+                "minLength": 1,
+                "type": "string"
+              },
+              "schema_ref": {
+                "description": "The content digest of one stored complete candidate of that resource.",
+                "pattern": "^sha256:[0-9a-f]{64}$",
+                "type": "string"
+              }
+            },
+            "required": [
+              "resource",
+              "schema_ref"
+            ],
+            "type": "object"
+          }
+        },
+        "required": [
+          "protocol",
+          "selection"
         ],
         "type": "object"
       },
@@ -4610,13 +4750,13 @@
             "$ref": "#/components/responses/Problem403"
           },
           "409": {
-            "$ref": "#/components/responses/Problem409"
+            "$ref": "#/components/responses/DevicePoll409"
           },
           "410": {
             "$ref": "#/components/responses/Problem410"
           },
           "429": {
-            "$ref": "#/components/responses/Problem429"
+            "$ref": "#/components/responses/DevicePoll429"
           },
           "503": {
             "$ref": "#/components/responses/Problem503"
@@ -5459,7 +5599,7 @@
     },
     "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema": {
       "get": {
-        "description": "Reports the connection's single selected snapshot reference, that snapshot's declared binding and completeness, and the effective typed fields built from it. An absent selection is explicit. Help and this read never require provider credentials, and a failed or partial discovery never replaces the last complete valid snapshot.",
+        "description": "Reports the selected snapshot reference of one resource of the connection, that snapshot's declared binding and completeness, the effective typed fields built from it, and the selection revision of the resource. The selection revision is 1 while the resource has no selection, and each selection adds 1. The ETag header carries the same revision. An absent selection is explicit. This read never discovers or selects, and it never requires provider credentials. A failed or partial discovery never replaces the last complete valid snapshot.",
         "operationId": "getConnectionSchema",
         "parameters": [
           {
@@ -5487,7 +5627,12 @@
                 }
               }
             },
-            "description": "Selected snapshot identity, completeness and effective typed fields"
+            "description": "Selected snapshot identity, completeness, effective typed fields and selection revision",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
           },
           "400": {
             "$ref": "#/components/responses/Problem400"
@@ -5526,6 +5671,184 @@
           "$ref": "#/components/parameters/ConnectionID"
         }
       ]
+    },
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectionID"
+        }
+      ],
+      "post": {
+        "description": "Admits one durable discovery run of one relation that the connection declares. The run executes only the connector's declared metadata operation in a worker activity and stores one complete candidate snapshot. A discovery never selects a snapshot. A resource that the connection does not declare is refused with schema_relation_unknown before any run starts.",
+        "operationId": "discoverConnectionSchema",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaDiscoveryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdmissionResponse"
+                }
+              }
+            },
+            "description": "Durably accepted, nonterminal discovery run identity"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "429": {
+            "$ref": "#/components/responses/Problem429"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Start one discovery of a declared relation of the connection",
+        "tags": [
+          "schema"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ConnectionID"
+        }
+      ],
+      "post": {
+        "description": "Selects one stored complete candidate snapshot of one relation that the connection declares. The request must name the current selection revision of that resource, which the schema route reports. The revision is 1 before the first selection, and each selection adds 1 and writes one audit record. The actor must hold connection.manage on the connection. A resource that the connection does not declare, or a candidate that the resource does not hold, is refused with schema_relation_unknown. A stale revision is refused with control_revision_mismatch. A refusal changes no selection.",
+        "operationId": "selectConnectionSchema",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SchemaSelectionRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MutationResultResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MutationReplayResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Original selection result, or exact safe replay",
+            "headers": {
+              "ETag": {
+                "$ref": "#/components/headers/ETag"
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Select one complete candidate of a declared relation of the connection",
+        "tags": [
+          "schema"
+        ]
+      }
     },
     "/v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}": {
       "get": {
@@ -6221,6 +6544,99 @@
           }
         ],
         "summary": "Grant a workspace membership",
+        "tags": [
+          "access"
+        ]
+      }
+    },
+    "/v1/workspaces/{workspace_id}/memberships/{id}": {
+      "parameters": [
+        {
+          "$ref": "#/components/parameters/WorkspaceID"
+        },
+        {
+          "$ref": "#/components/parameters/ResourceID"
+        }
+      ],
+      "patch": {
+        "description": "Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.",
+        "operationId": "updateMembership",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/IdempotencyKey"
+          },
+          {
+            "$ref": "#/components/parameters/IfMatch"
+          },
+          {
+            "$ref": "#/components/parameters/CSRFToken"
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MembershipUpdateRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "oneOf": [
+                    {
+                      "$ref": "#/components/schemas/MutationResultResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/MutationReplayResponse"
+                    }
+                  ]
+                }
+              }
+            },
+            "description": "Original updated or unchanged result, or exact safe replay"
+          },
+          "400": {
+            "$ref": "#/components/responses/Problem400"
+          },
+          "401": {
+            "$ref": "#/components/responses/Problem401"
+          },
+          "403": {
+            "$ref": "#/components/responses/Problem403"
+          },
+          "404": {
+            "$ref": "#/components/responses/Problem404"
+          },
+          "409": {
+            "$ref": "#/components/responses/Problem409"
+          },
+          "410": {
+            "$ref": "#/components/responses/Problem410"
+          },
+          "412": {
+            "$ref": "#/components/responses/Problem412"
+          },
+          "428": {
+            "$ref": "#/components/responses/Problem428"
+          },
+          "503": {
+            "$ref": "#/components/responses/Problem503"
+          }
+        },
+        "security": [
+          {
+            "PMSession": []
+          },
+          {
+            "PMBrowserSession": []
+          }
+        ],
+        "summary": "Add connections to a workspace membership",
         "tags": [
           "access"
         ]

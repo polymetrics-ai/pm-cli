@@ -46,7 +46,9 @@ go_test(
         "admin_test.go",
         "artifacts_test.go",
         "events_test.go",
+        "membership_update_test.go",
         "protocol_test.go",
+        "route_policy_test.go",
         "strict_test.go",
     ],
     embed = [":httpapi"],
@@ -70,4 +72,11 @@ go_test(
         "@com_github_gin_gonic_gin//:gin",
         "@com_github_jackc_pgx_v5//:pgx",
     ],
+)
+
+go_test(
+    name = "route_policy_test",
+    srcs = ["route_policy_test.go"],
+    embed = [":httpapi"],
+    deps = ["@com_github_gin_gonic_gin//:gin"],
 )

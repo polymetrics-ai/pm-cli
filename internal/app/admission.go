@@ -53,8 +53,14 @@ type AdmissionServiceConfig struct {
 	Registry          *HandlerRegistry
 	ResolveOperation  OperationResolver
 	ResolveHTTPPolicy HTTPPolicyResolver
-	Policy            store.RunBudgetPolicy
-	Random            io.Reader
+	// ResolveDiscovery resolves the declared relation of a schema discovery.
+	// Nil admits no discovery: every resource is unknown.
+	ResolveDiscovery DiscoveryResolver
+	// ResolveRelation resolves the declared relation binding of a PostgreSQL
+	// operation. Nil declares no relation, so admission requires no selection.
+	ResolveRelation RelationResolver
+	Policy          store.RunBudgetPolicy
+	Random          io.Reader
 }
 
 // AdmissionService owns authenticated acceptance only. Handler resolution proves
@@ -66,6 +72,8 @@ type AdmissionService struct {
 	registry          *HandlerRegistry
 	resolveOperation  OperationResolver
 	resolveHTTPPolicy HTTPPolicyResolver
+	resolveDiscovery  DiscoveryResolver
+	resolveRelation   RelationResolver
 	policy            store.RunBudgetPolicy
 	random            io.Reader
 }
@@ -99,6 +107,8 @@ func NewAdmissionService(configuration AdmissionServiceConfig) (*AdmissionServic
 		registry:          configuration.Registry,
 		resolveOperation:  configuration.ResolveOperation,
 		resolveHTTPPolicy: configuration.ResolveHTTPPolicy,
+		resolveDiscovery:  configuration.ResolveDiscovery,
+		resolveRelation:   configuration.ResolveRelation,
 		policy:            configuration.Policy,
 		random:            configuration.Random,
 	}, nil
@@ -268,6 +278,13 @@ func (service *AdmissionService) AcceptRun(
 		if err != nil {
 			return err
 		}
+		// The last refusal before the write: a declared PostgreSQL relation
+		// needs a usable schema selection (ADR 0007). Every earlier refusal,
+		// and the replay above, keeps its precedence.
+		schemaRefs, err := service.selectedRelationSchema(ctx, tx, scope, invocation.ConnectionRef, selection.Operation)
+		if err != nil {
+			return err
+		}
 		if hasContinuation {
 			invocation, err = restoreContinuationInvocation(ctx, tx, invocation, selection.Operation, policy)
 			if err != nil {
@@ -302,6 +319,9 @@ func (service *AdmissionService) AcceptRun(
 		if err != nil {
 			return err
 		}
+		// The accepted run pins the selected snapshot. A later selection does
+		// not change it.
+		request.Spec.SchemaRefs = mergeSchemaRefs(request.Spec.SchemaRefs, schemaRefs)
 		result, err = store.AdmitRun(ctx, tx, request)
 		if err != nil {
 			return mapAdmissionFailure(err)

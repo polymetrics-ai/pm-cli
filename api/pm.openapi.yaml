@@ -85,11 +85,11 @@ paths:
         "403":
           $ref: "#/components/responses/Problem403"
         "409":
-          $ref: "#/components/responses/Problem409"
+          $ref: "#/components/responses/DevicePoll409"
         "410":
           $ref: "#/components/responses/Problem410"
         "429":
-          $ref: "#/components/responses/Problem429"
+          $ref: "#/components/responses/DevicePoll429"
         "503":
           $ref: "#/components/responses/Problem503"
   /v1/sessions/device/approve:
@@ -1200,6 +1200,63 @@ paths:
           $ref: "#/components/responses/Problem428"
         "503":
           $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/memberships/{id}:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ResourceID"
+    patch:
+      tags: [access]
+      summary: Add connections to a workspace membership
+      operationId: updateMembership
+      description: >-
+        Adds active connections of the workspace to the membership. The request must name
+        the current control_revision of the membership. The update removes no connection
+        and changes no other grant. The actor must be a user that acts without a delegation,
+        and it must hold workspace.access.manage. The user can add connections to its own
+        membership. Then the user must also hold connection.manage. For another membership,
+        the user can add only connections that its own current grants hold. When the
+        membership holds each connection already, the result is unchanged and the control
+        revision stays the same.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MembershipUpdateRequest"
+      responses:
+        "200":
+          description: Original updated or unchanged result, or exact safe replay
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MutationResultResponse"
+                  - $ref: "#/components/schemas/MutationReplayResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
+        "503":
+          $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/memberships/{id}/revoke:
     parameters:
       - $ref: "#/components/parameters/WorkspaceID"
@@ -1509,11 +1566,14 @@ paths:
       summary: Inspect the connection's selected metadata snapshot and its effective schema
       operationId: getConnectionSchema
       description: >-
-        Reports the connection's single selected snapshot reference, that snapshot's
-        declared binding and completeness, and the effective typed fields built from
-        it. An absent selection is explicit. Help and this read never require provider
-        credentials, and a failed or partial discovery never replaces the last
-        complete valid snapshot.
+        Reports the selected snapshot reference of one resource of the connection,
+        that snapshot's declared binding and completeness, the effective typed fields
+        built from it, and the selection revision of the resource. The selection
+        revision is 1 while the resource has no selection, and each selection adds 1.
+        The ETag header carries the same revision. An absent selection is explicit.
+        This read never discovers or selects, and it never requires provider
+        credentials. A failed or partial discovery never replaces the last complete
+        valid snapshot.
       security:
         - PMSession: []
         - PMBrowserSession: []
@@ -1525,7 +1585,10 @@ paths:
         - $ref: "#/components/parameters/SnapshotID"
       responses:
         "200":
-          description: Selected snapshot identity, completeness and effective typed fields
+          description: Selected snapshot identity, completeness, effective typed fields and selection revision
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
           content:
             application/json:
               schema:
@@ -1538,6 +1601,116 @@ paths:
           $ref: "#/components/responses/Problem403"
         "404":
           $ref: "#/components/responses/Problem404"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/discoveries:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectionID"
+    post:
+      tags: [schema]
+      summary: Start one discovery of a declared relation of the connection
+      operationId: discoverConnectionSchema
+      description: >-
+        Admits one durable discovery run of one relation that the connection
+        declares. The run executes only the connector's declared metadata
+        operation in a worker activity and stores one complete candidate
+        snapshot. A discovery never selects a snapshot. A resource that the
+        connection does not declare is refused with schema_relation_unknown
+        before any run starts.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchemaDiscoveryRequest"
+      responses:
+        "202":
+          description: Durably accepted, nonterminal discovery run identity
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AdmissionResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "429":
+          $ref: "#/components/responses/Problem429"
+        "503":
+          $ref: "#/components/responses/Problem503"
+  /v1/workspaces/{workspace_id}/connections/{connection_id}/schema/selections:
+    parameters:
+      - $ref: "#/components/parameters/WorkspaceID"
+      - $ref: "#/components/parameters/ConnectionID"
+    post:
+      tags: [schema]
+      summary: Select one complete candidate of a declared relation of the connection
+      operationId: selectConnectionSchema
+      description: >-
+        Selects one stored complete candidate snapshot of one relation that the
+        connection declares. The request must name the current selection revision of
+        that resource, which the schema route reports. The revision is 1 before the
+        first selection, and each selection adds 1 and writes one audit record. The
+        actor must hold connection.manage on the connection. A resource that the
+        connection does not declare, or a candidate that the resource does not hold,
+        is refused with schema_relation_unknown. A stale revision is refused with
+        control_revision_mismatch. A refusal changes no selection.
+      security:
+        - PMSession: []
+        - PMBrowserSession: []
+      parameters:
+        - $ref: "#/components/parameters/IdempotencyKey"
+        - $ref: "#/components/parameters/IfMatch"
+        - $ref: "#/components/parameters/CSRFToken"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SchemaSelectionRequest"
+      responses:
+        "200":
+          description: Original selection result, or exact safe replay
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/MutationResultResponse"
+                  - $ref: "#/components/schemas/MutationReplayResponse"
+        "400":
+          $ref: "#/components/responses/Problem400"
+        "401":
+          $ref: "#/components/responses/Problem401"
+        "403":
+          $ref: "#/components/responses/Problem403"
+        "404":
+          $ref: "#/components/responses/Problem404"
+        "409":
+          $ref: "#/components/responses/Problem409"
+        "410":
+          $ref: "#/components/responses/Problem410"
+        "412":
+          $ref: "#/components/responses/Problem412"
+        "428":
+          $ref: "#/components/responses/Problem428"
         "503":
           $ref: "#/components/responses/Problem503"
   /v1/workspaces/{workspace_id}/connections/{connection_id}/warehouse/datasets/{dataset}:
@@ -1910,6 +2083,23 @@ components:
         application/problem+json:
           schema:
             $ref: "#/components/schemas/Problem"
+    DevicePoll409:
+      description: >-
+        Device login conflict. A device_authorization_pending answer carries
+        Retry-After. A login_challenge_used answer does not.
+      headers:
+        Retry-After:
+          description: >-
+            Whole seconds until the next permitted poll of the device
+            challenge. A device_authorization_pending answer carries it. A
+            login_challenge_used answer does not.
+          required: false
+          schema:
+            $ref: "#/components/schemas/DevicePollRetryAfterSeconds"
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
     Problem410:
       description: A known resolved retry receipt has expired
       content:
@@ -1943,6 +2133,23 @@ components:
             $ref: "#/components/schemas/Problem"
     Problem429:
       description: A workspace pending-count or oldest-pending-age limit is reached
+      content:
+        application/problem+json:
+          schema:
+            $ref: "#/components/schemas/Problem"
+    DevicePoll429:
+      description: >-
+        Device login limit. A device_poll_too_soon answer carries Retry-After.
+        An authentication_rate_limited answer does not.
+      headers:
+        Retry-After:
+          description: >-
+            Whole seconds until the next permitted poll of the device
+            challenge. A device_poll_too_soon answer carries it. An
+            authentication_rate_limited answer does not.
+          required: false
+          schema:
+            $ref: "#/components/schemas/DevicePollRetryAfterSeconds"
       content:
         application/problem+json:
           schema:
@@ -2265,6 +2472,16 @@ components:
         next_cursor:
           type: [string, "null"]
           maxLength: 4096
+    DevicePollRetryAfterSeconds:
+      description: >-
+        Whole seconds until the stored next poll time of the device challenge,
+        rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it
+        in Retry-After with device_authorization_pending and
+        device_poll_too_soon only.
+      type: string
+      pattern: '^([1-9]|[1-5][0-9]|60)$'
+      minLength: 1
+      maxLength: 2
     DeviceStart:
       type: object
       additionalProperties: false
@@ -3326,6 +3543,32 @@ components:
             expires_at:
               type: [string, "null"]
               format: date-time
+    MembershipUpdateRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, membership]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        membership:
+          type: object
+          additionalProperties: false
+          required: [membership_ref, add_connection_ids]
+          properties:
+            membership_ref:
+              type: string
+              minLength: 1
+              maxLength: 512
+            add_connection_ids:
+              type: array
+              description: Connection IDs to add, in strictly ascending byte order.
+              minItems: 1
+              maxItems: 256
+              uniqueItems: true
+              items:
+                type: string
+                minLength: 1
+                maxLength: 512
     ServiceAccountCreateRequest:
       type: object
       additionalProperties: false
@@ -3464,7 +3707,7 @@ components:
               format: date-time
     MutationResultDisposition:
       type: string
-      enum: [created, revoked, unchanged]
+      enum: [created, updated, revoked, unchanged]
     MutationResultResponse:
       type: object
       additionalProperties: false
@@ -3876,10 +4119,41 @@ components:
         scale:
           type: integer
           minimum: 0
+    SchemaDiscoveryRequest:
+      type: object
+      additionalProperties: false
+      required: [resource]
+      properties:
+        resource:
+          description: The resource that one declared relation binding of the connection names.
+          type: string
+          minLength: 1
+          maxLength: 512
+    SchemaSelectionRequest:
+      type: object
+      additionalProperties: false
+      required: [protocol, selection]
+      properties:
+        protocol:
+          $ref: "#/components/schemas/ProtocolMetadata"
+        selection:
+          type: object
+          additionalProperties: false
+          required: [resource, schema_ref]
+          properties:
+            resource:
+              description: The resource that one declared relation binding of the connection names.
+              type: string
+              minLength: 1
+              maxLength: 512
+            schema_ref:
+              description: The content digest of one stored complete candidate of that resource.
+              type: string
+              pattern: "^sha256:[0-9a-f]{64}$"
     ConnectionSchemaInspection:
       type: object
       additionalProperties: false
-      required: [org_id, workspace_id, connector_id, connection_id, selected, snapshot, fields]
+      required: [org_id, workspace_id, connector_id, connection_id, selected, selection_revision, snapshot, fields]
       properties:
         org_id:
           type: string
@@ -3892,6 +4166,11 @@ components:
         selected:
           type: [string, "null"]
           maxLength: 128
+        selection_revision:
+          description: The selection revision of the resource. It is 1 while the resource has no selection.
+          type: integer
+          format: int64
+          minimum: 1
         snapshot:
           $ref: "#/components/schemas/ConnectionSchemaSnapshot"
         fields:

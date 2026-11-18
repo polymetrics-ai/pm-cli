@@ -3,7 +3,10 @@ load("@rules_go//go:def.bzl", "go_library", "go_test")
 # The committed generated execution bundle is a declared runfile of the tests
 # that execute its facts; the generating tool writes it into this package.
 exports_files(
-    ["data/github.bundle.json"],
+    [
+        "data/github.bundle.json",
+        "data/postgres.bundle.json",
+    ],
     visibility = ["//:__subpackages__"],
 )
 

@@ -25,14 +25,14 @@ type ServiceConfig struct {
 	// Warehouse is optional; absence preserves explicit warehouse read
 	// unavailability.
 	Warehouse *WarehouseResources
-	// ConnectionMetadataRoot is the server-owned root of each connection's
-	// metadata state directory. Absence preserves explicit schema read
-	// unavailability rather than defaulting to another location.
-	ConnectionMetadataRoot string
-	InstanceID             string
-	OIDCHTTPClient         *http.Client
-	ResolveEventCursorKey  func(context.Context) ([]byte, error)
-	EventBufferSize        uint64
-	EventWriteTimeout      time.Duration
-	Draining               <-chan struct{}
+	// SchemaSelection is optional. Its absence makes the schema selection route
+	// answer capability_unavailable. The schema route reads the selection from
+	// PM PostgreSQL through Identity and needs no other dependency.
+	SchemaSelection       *app.SchemaSelectionService
+	InstanceID            string
+	OIDCHTTPClient        *http.Client
+	ResolveEventCursorKey func(context.Context) ([]byte, error)
+	EventBufferSize       uint64
+	EventWriteTimeout     time.Duration
+	Draining              <-chan struct{}
 }

@@ -292,6 +292,11 @@ func recoveredResponse[T generatedRecoveryResponse](response T, err error) (pmap
 			return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
 		}
 		retryAfter = value.HTTPResponse.Header.Get("Retry-After")
+	case *pmapi.UpdateMembershipResponse:
+		if value == nil || value.HTTPResponse == nil {
+			return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
+		}
+		retryAfter = value.HTTPResponse.Header.Get("Retry-After")
 	case *pmapi.RevokeMembershipResponse:
 		if value == nil || value.HTTPResponse == nil {
 			return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
@@ -313,6 +318,11 @@ func recoveredResponse[T generatedRecoveryResponse](response T, err error) (pmap
 		}
 		retryAfter = value.HTTPResponse.Header.Get("Retry-After")
 	case *pmapi.RevokeDelegationResponse:
+		if value == nil || value.HTTPResponse == nil {
+			return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
+		}
+		retryAfter = value.HTTPResponse.Header.Get("Retry-After")
+	case *pmapi.SelectConnectionSchemaResponse:
 		if value == nil || value.HTTPResponse == nil {
 			return pmapi.RecoveryAttemptResult{}, pmapi.ErrClientTransport
 		}
