@@ -179,9 +179,9 @@
       },
       {
         "path": "golang.org/x/net",
-        "version": "v0.58.0",
+        "version": "v0.62.0",
         "license": "BSD-3-Clause",
-        "source_url": "https://go.googlesource.com/net/+/acc78e0d2b2c855c0c4fbdcfe5f42a9e3d0f9778"
+        "source_url": "https://go.googlesource.com/net/+/3de643db506517b3e652a13cc0b56034cea6b8e6"
       },
       {
         "path": "golang.org/x/oauth2",
@@ -191,9 +191,9 @@
       },
       {
         "path": "golang.org/x/sync",
-        "version": "v0.23.0",
+        "version": "v0.24.0",
         "license": "BSD-3-Clause",
-        "source_url": "https://go.googlesource.com/sync/+/f75267d8412fc1dfd12b343644a7ea46e4d9c85d"
+        "source_url": "https://go.googlesource.com/sync/+/36f2d70ecde9857dc4e363242a1369c7645d6770"
       },
       {
         "path": "golang.org/x/time",
