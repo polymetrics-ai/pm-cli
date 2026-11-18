@@ -33,7 +33,7 @@ func TestFeatures(t *testing.T) {
 	suite := godog.TestSuite{
 		Name: "pm",
 		ScenarioInitializer: func(sc *godog.ScenarioContext) {
-			registerCLISteps(sc, bins, stack)
+			registerCLISteps(sc, bins, stack, newLane(sc, stack))
 		},
 		Options: &godog.Options{
 			Format:   "pretty",
