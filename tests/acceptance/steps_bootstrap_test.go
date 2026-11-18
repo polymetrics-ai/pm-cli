@@ -831,7 +831,9 @@ type (
 		MembershipID    string `json:"membership_id"`
 	}
 	scopeAudit struct {
+		RequestedActorID   string `json:"requested_actor_id"`
 		RequestedActorKind string `json:"requested_actor_kind"`
+		EffectiveActorID   string `json:"effective_actor_id"`
 		EffectiveActorKind string `json:"effective_actor_kind"`
 	}
 	scope struct {
@@ -973,8 +975,9 @@ func checkScope(state bootstrapState, run *bootstrapRun, operator bool) error {
 		"the bootstrap record is %+v, want the record of deployment %q that names the workspace, the admin identity and the admin membership", got.record, deploymentID)
 	check(got.runAudits == 0, "the observer sees %d run audit records in the scope, want none", got.runAudits)
 	if operator {
-		check(got.audit.RequestedActorKind == "operator" && got.audit.EffectiveActorKind == "operator",
-			"the audit record is %+v, want the operator as its requested and effective actor", got.audit)
+		check(got.audit.RequestedActorKind == "operator" && got.audit.EffectiveActorKind == "operator" &&
+			got.audit.RequestedActorID == "bootstrap" && got.audit.EffectiveActorID == "bootstrap",
+			"the audit record is %+v, want the operator bootstrap as its requested and effective actor", got.audit)
 	}
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "\n"))
