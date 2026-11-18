@@ -24,8 +24,9 @@ const laneConnectorBundle = "postgres"
 //
 // The lane uses the shared stack harness: the shared build and migration
 // step, one new deployment configuration and the shared starter. The starter
-// starts pm-server with --ready-fd 3 and waits once for its ready line or end
-// of file, up to the start limit. After the pm-server ready line, it starts
+// starts pm-server with --ready-fd 3 and with the held listener of the
+// deployment as --listen-fd 4 (ADR 0008). It waits once for its ready line or
+// end of file, up to the start limit. After the pm-server ready line, it starts
 // pm-worker in the same way. pm-worker uses the worker configuration of the
 // deployment. From the start of each process to its ready signal, the lane
 // makes no observation of pm-server, pm-worker or a dependency.
@@ -34,6 +35,9 @@ type lane struct {
 
 	started  bool
 	startErr error
+
+	// restartsServer is true for a scenario with serverRestartTag.
+	restartsServer bool
 
 	observer   *observer
 	deployment *deployment
@@ -45,6 +49,12 @@ type lane struct {
 // the end of the scenario.
 func newLane(sc *godog.ScenarioContext, harness *stackHarness) *lane {
 	l := &lane{harness: harness}
+	sc.Before(func(ctx context.Context, scenario *godog.Scenario) (context.Context, error) {
+		for _, tag := range scenario.Tags {
+			l.restartsServer = l.restartsServer || tag.Name == serverRestartTag
+		}
+		return ctx, nil
+	})
 	// godog keeps the step error. The hook returns only its own cleanup
 	// error, so the step error is reported once.
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
@@ -90,6 +100,47 @@ func (l *lane) running() error {
 // nil until the lane starts pm-worker.
 func (l *lane) workerProcess() *starter.Process { return l.worker }
 
+// serverRestartTag marks a scenario that stops and starts the lane pm-server
+// again, for example the O4 restart of the 285b scenarios (W1b plan v2.1,
+// R13). Such a scenario keeps the harness copy of the held listener until the
+// deployment closes, so each start of pm-server gets the same listener.
+// Every other lane scenario releases the copy after the first answer through
+// the edge, as before.
+const serverRestartTag = "@pm-server-restart"
+
+// holdListenerForRestart keeps the held listener of a scenario with
+// serverRestartTag until the deployment closes.
+func (l *lane) holdListenerForRestart() {
+	if l.restartsServer {
+		l.deployment.holdListener.Store(true)
+	}
+}
+
+// restartServer stops the lane pm-server and starts it again with the held
+// listener and configuration. The stop is the lane stop sequence and the
+// start is the lane start, each with its limit. The scenario must have
+// serverRestartTag, because without it the harness released its copy after
+// the first answer.
+func (l *lane) restartServer(ctx context.Context, configuration string) error {
+	binary, err := l.harness.binary("pm-server")
+	if err != nil {
+		return err
+	}
+	return l.restartServerBinary(ctx, binary, configuration)
+}
+
+func (l *lane) restartServerBinary(ctx context.Context, binary, configuration string) error {
+	if !l.deployment.holdListener.Load() {
+		return errors.New("the scenario restarts pm-server without the tag " + serverRestartTag + ", so the harness holds no pm-server listener")
+	}
+	if err := stopLaneProcess("pm-server", l.server); err != nil {
+		return err
+	}
+	process, err := l.startBinary(ctx, "pm-server", binary, configuration)
+	l.server = process
+	return err
+}
+
 // start opens the observer and the deployment. Then it starts pm-server and,
 // after the pm-server ready line, pm-worker. pm-worker does not start when
 // pm-server sent no ready line.
@@ -107,6 +158,7 @@ func (l *lane) start(ctx context.Context) error {
 	if l.deployment, err = newDeployment(stack); err != nil {
 		return err
 	}
+	l.holdListenerForRestart()
 	// The lane configuration is real operator setup and holds the connector
 	// bundles (criteria-worker v4, line 54, and the 284b bundle addendum,
 	// line 231). The lane declares the checked-in "postgres" bundle, so that
@@ -138,7 +190,16 @@ func (l *lane) startProcess(ctx context.Context, name, configuration string) (*s
 	if err != nil {
 		return nil, err
 	}
-	process, err := starter.Start(starter.Config{
+	return l.startBinary(ctx, name, binary, configuration)
+}
+
+// startBinary starts the lane process name from binary. pm-server gets the
+// held listener of the deployment as descriptor 4, with --listen-fd 4 (ADR
+// 0008), so it does not bind the configured address itself. The harness
+// closes its copy of the listener when giveListener fails, when the launch
+// fails and when no ready signal comes. pm-worker gets no listener.
+func (l *lane) startBinary(ctx context.Context, name, binary, configuration string) (*starter.Process, error) {
+	config := starter.Config{
 		Path:          binary,
 		Args:          []string{"--config", configuration, "--secrets-directory", l.deployment.secrets, "--ready-fd", "3"},
 		Env:           l.deployment.processEnvironment(),
@@ -148,7 +209,25 @@ func (l *lane) startProcess(ctx context.Context, name, configuration string) (*s
 		Limits:        processLimits,
 		Timers:        starter.RealTimers{},
 		SnapshotBytes: laneOutputLimit,
-	})
+	}
+	if name != "pm-server" {
+		return awaitLaneProcess(ctx, name, config)
+	}
+	if err := l.deployment.giveListener(&config); err != nil {
+		l.deployment.releaseListener()
+		return nil, err
+	}
+	process, err := awaitLaneProcess(ctx, name, config)
+	if err != nil {
+		l.deployment.releaseListener()
+	}
+	return process, err
+}
+
+// awaitLaneProcess starts the lane process name with config and waits once
+// for its ready signal. Only the ready line makes the start pass.
+func awaitLaneProcess(ctx context.Context, name string, config starter.Config) (*starter.Process, error) {
+	process, err := starter.Start(config)
 	if err != nil {
 		return nil, err
 	}

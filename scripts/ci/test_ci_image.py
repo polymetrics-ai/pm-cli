@@ -214,16 +214,18 @@ class CheckCiImage(unittest.TestCase):
         self.assert_failed_without_pass(failures, output, "/opt/pmcli/venv/bin/dbus-launch exists")
 
     # Review #pr-333 brahmagupta F1 at 9d73f24, security cross-review r1
-    # items 11 and 12, and the T3-4 residual of the security delta at 90cfd64:
-    # one check of the launcher search. It covers each entry of ENV PATH in
-    # the Dockerfile and each runtime PATH entry. An empty entry or an unset
-    # PATH fails with fixed text. It calls only the PATH check, not the
-    # privilege walk.
+    # items 11 and 12, the T3-4 residual of the security delta at 90cfd64,
+    # and brahmagupta F1 at 5e22cf7: one check of the launcher search. It
+    # covers each entry of ENV PATH in the Dockerfile and each runtime PATH
+    # entry. An empty or relative entry or an unset PATH fails with fixed
+    # text. It calls only the PATH check, not the privilege walk.
     def test_the_launcher_search_covers_the_image_and_runtime_path(self):
         dockerfile = (ROOT / "build/ci/Dockerfile").read_text()
         line = next(line for line in dockerfile.splitlines() if line.startswith("ENV PATH="))
         image_path = line.split("=", 1)[1].split()[0].split(":")
         self.assertNotIn("", image_path, "the image PATH must have no empty entry")
+        self.assertEqual([entry for entry in image_path if not entry.startswith("/")], [],
+                         "each image PATH entry must be absolute")
         extra = self.root / "extra-bin"
         extra.mkdir()
         saved_path = os.environ.get("PATH")
@@ -257,6 +259,11 @@ class CheckCiImage(unittest.TestCase):
             with self.subTest(path=path):
                 failures, output = run(path)
                 self.assertEqual(failures, ["the runtime PATH has an empty entry"])
+                self.assertNotIn("PASS", output)
+        for path in (".", "./bin", "bin", "../bin", f"/usr/bin:bin:{extra}"):
+            with self.subTest(path=path):
+                failures, output = run(path)
+                self.assertEqual(failures, ["the runtime PATH has a relative entry"])
                 self.assertNotIn("PASS", output)
         with self.subTest(path="unset"):
             failures, output = run(None)

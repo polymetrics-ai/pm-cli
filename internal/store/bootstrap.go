@@ -2,10 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"slices"
 	"strings"
 	"time"
 
@@ -22,8 +20,13 @@ const (
 
 var (
 	// ErrBootstrapScopeExists means that the deployment and organization
-	// already have a committed bootstrap record.
+	// already have a committed bootstrap of the same operator input.
 	ErrBootstrapScopeExists = errors.New("bootstrap scope is already bootstrapped")
+	// ErrBootstrapScopeOtherInput means that the deployment and organization
+	// already have a committed bootstrap of another operator input, or that
+	// the organization already has rows. errors.Is also matches it as
+	// ErrBootstrapScopeExists.
+	ErrBootstrapScopeOtherInput = fmt.Errorf("%w with another input", ErrBootstrapScopeExists)
 	// ErrBootstrapLoginBound means that the admin issuer and subject already
 	// have a login binding in the deployment, for any organization.
 	ErrBootstrapLoginBound = errors.New("bootstrap admin login is already bound")
@@ -55,12 +58,21 @@ func OpenBootstrapPool(ctx context.Context, connectionString string) (*Pool, err
 		return nil, fmt.Errorf("open PostgreSQL bootstrap pool: %w", err)
 	}
 	pool := &Pool{inner: inner}
-	if err := pool.verifyBootstrapIdentity(ctx); err != nil {
+	// The connection and the identity check come before any transaction. A
+	// PostgreSQL that does not answer must not hold the bootstrap, so this work
+	// has its own limit. Nothing is written yet, so its end is a plain failure.
+	identityCtx, cancel := context.WithTimeout(ctx, bootstrapIdentityLimit)
+	defer cancel()
+	if err := pool.verifyBootstrapIdentity(identityCtx); err != nil {
 		inner.Close()
 		return nil, err
 	}
 	return pool, nil
 }
+
+// bootstrapIdentityLimit bounds the connection and the identity check of the
+// bootstrap pool. Only a Go developer check in this package changes it.
+var bootstrapIdentityLimit = 30 * time.Second
 
 func (pool *Pool) verifyBootstrapIdentity(ctx context.Context) error {
 	var database, role string
@@ -148,9 +160,11 @@ func (request BootstrapRequest) validate() error {
 
 // Bootstrap writes the first workspace of an organization, its first user
 // identity with the login binding, the admin membership, the provider
-// accounts, the bootstrap record and one audit record in one transaction. The
-// bootstrap record comes first: its primary key is the point where a
-// concurrent bootstrap of the same scope waits and then fails.
+// accounts, the bootstrap record and one audit record. The bootstrap role
+// has no table grant: one call of the definer function pm.operator_bootstrap
+// checks the scope and the login and writes every row (ADR 0006). The
+// function computes the input digest itself, so a refusal of a taken scope
+// tells the same input from another one.
 func Bootstrap(ctx context.Context, pool *Pool, request BootstrapRequest) error {
 	if ctx == nil {
 		return errors.New("bootstrap context is required")
@@ -158,104 +172,42 @@ func Bootstrap(ctx context.Context, pool *Pool, request BootstrapRequest) error 
 	if err := request.validate(); err != nil {
 		return err
 	}
-	resourceGrants := make([]string, 0, len(request.Permissions))
-	for _, permission := range request.Permissions {
-		resourceGrants = append(resourceGrants, "permission:"+permission)
+	accountIDs := make([]string, 0, len(request.ProviderAccounts))
+	connectors := make([]string, 0, len(request.ProviderAccounts))
+	names := make([]string, 0, len(request.ProviderAccounts))
+	capacities := make([]int64, 0, len(request.ProviderAccounts))
+	for _, account := range request.ProviderAccounts {
+		accountIDs = append(accountIDs, account.AccountID)
+		connectors = append(connectors, account.ConnectorID)
+		names = append(names, account.DisplayName)
+		capacities = append(capacities, account.Capacity)
 	}
-	slices.Sort(resourceGrants)
-	payload, err := json.Marshal(contract.SafePayload{
-		References: []contract.SafeReference{
-			{Name: "deployment", Ref: request.DeploymentID},
-			{Name: "admin_identity", Ref: request.AdminIdentityID},
-			{Name: "membership", Ref: request.MembershipID},
-		},
-		Counts:      []contract.SafeCount{{Name: "provider_accounts", Value: uint64(len(request.ProviderAccounts))}},
-		ReasonCodes: []string{},
-	})
-	if err != nil {
-		return fmt.Errorf("encode bootstrap audit payload: %w", err)
-	}
-	err = WithinTransaction(ctx, pool, func(ctx context.Context, tx *Transaction) error {
-		if _, err := tx.exec(ctx, `
-			SELECT set_config('pm.deployment_id', $1, true),
-			       set_config('pm.org_id', $2, true),
-			       set_config('pm.workspace_id', $3, true),
-			       set_config('pm.requested_actor_id', $4, true),
-			       set_config('pm.requested_actor_kind', $5, true),
-			       set_config('pm.effective_actor_id', $4, true),
-			       set_config('pm.effective_actor_kind', $5, true)
-		`, request.DeploymentID, request.Scope.OrgID, request.Scope.WorkspaceID, BootstrapActorID, BootstrapActorKind); err != nil {
-			return fmt.Errorf("install bootstrap scope: %w", err)
-		}
-		var scopeBootstrapped, loginBound bool
-		if err := tx.queryRow(ctx, `
-			SELECT EXISTS (SELECT 1 FROM pm.bootstrap_records WHERE deployment_id = $1 AND org_id = $2),
-			       EXISTS (SELECT 1 FROM pm.auth_bootstrap_identities WHERE deployment_id = $1 AND issuer = $3 AND subject = $4)
-		`, request.DeploymentID, request.Scope.OrgID, request.AdminIssuer, request.AdminSubject).Scan(&scopeBootstrapped, &loginBound); err != nil {
-			return fmt.Errorf("check bootstrap scope: %w", err)
-		}
-		if scopeBootstrapped {
-			return ErrBootstrapScopeExists
-		}
-		if loginBound {
-			return ErrBootstrapLoginBound
-		}
+	return WithinTransaction(ctx, pool, func(ctx context.Context, tx *Transaction) error {
 		if err := request.runStep(ctx, bootstrapStepChecked); err != nil {
 			return err
 		}
-		statements := []bootstrapStatement{
-			{"insert bootstrap record", `
-				INSERT INTO pm.bootstrap_records (deployment_id, org_id, workspace_id, admin_identity_id, membership_id)
-				VALUES ($1, $2, $3, $4, $5)`,
-				[]any{request.DeploymentID, request.Scope.OrgID, request.Scope.WorkspaceID, request.AdminIdentityID, request.MembershipID}},
-			{"insert workspace", `
-				INSERT INTO pm.workspace_namespaces (org_id, workspace_id, name) VALUES ($1, $2, $3)`,
-				[]any{request.Scope.OrgID, request.Scope.WorkspaceID, request.WorkspaceName}},
-			{"insert admin identity", `
-				INSERT INTO pm.identities (org_id, identity_id, kind, issuer, subject, revision)
-				VALUES ($1, $2, 'user', $3, $4, 1)`,
-				[]any{request.Scope.OrgID, request.AdminIdentityID, request.AdminIssuer, request.AdminSubject}},
-			{"insert admin login binding", `
-				INSERT INTO pm.auth_bootstrap_identities (
-					deployment_id, issuer, subject, org_id, principal_id, principal_kind, can_approve_devices, enabled
-				) VALUES ($1, $2, $3, $4, $5, 'user', true, true)`,
-				[]any{request.DeploymentID, request.AdminIssuer, request.AdminSubject, request.Scope.OrgID, request.AdminIdentityID}},
-			{"insert admin membership", `
-				INSERT INTO pm.memberships (
-					org_id, workspace_id, membership_id, identity_id, role,
-					resource_grants, permissions, connection_ids, operation_ids, policy_epoch, control_revision
-				) VALUES ($1, $2, $3, $4, $5, $6, $7, ARRAY[]::text[], ARRAY[]::text[], 1, 1)`,
-				[]any{request.Scope.OrgID, request.Scope.WorkspaceID, request.MembershipID, request.AdminIdentityID,
-					request.Role, resourceGrants, request.Permissions}},
+		var outcome string
+		if err := tx.queryRow(ctx, `
+			SELECT pm.operator_bootstrap($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+		`, request.DeploymentID, request.Scope.OrgID, request.Scope.WorkspaceID, request.WorkspaceName,
+			request.AdminIdentityID, request.AdminIssuer, request.AdminSubject, request.MembershipID,
+			request.Role, request.Permissions, accountIDs, connectors, names, capacities,
+			request.AuditID, request.Action).Scan(&outcome); err != nil {
+			return bootstrapStoreError("run the operator bootstrap", err)
 		}
-		for _, account := range request.ProviderAccounts {
-			statements = append(statements, bootstrapStatement{"insert provider account", `
-				INSERT INTO pm.provider_accounts (
-					org_id, provider_account_id, provider, account_witness, capacity, revision, display_name
-				) VALUES ($1, $2, $3, $2, $4, 1, $5)`,
-				[]any{request.Scope.OrgID, account.AccountID, account.ConnectorID, account.Capacity, account.DisplayName}})
-		}
-		statements = append(statements, bootstrapStatement{"insert bootstrap audit record", `
-			INSERT INTO pm.workspace_audit_entries (
-				org_id, workspace_id, audit_id, requested_actor_id, requested_actor_kind,
-				effective_actor_id, effective_actor_kind, action, target_ref, payload
-			) VALUES ($1, $2, $3, $4, $5, $4, $5, $6, $2, $7)`,
-			[]any{request.Scope.OrgID, request.Scope.WorkspaceID, request.AuditID, BootstrapActorID, BootstrapActorKind,
-				request.Action, json.RawMessage(payload)}})
-		for _, statement := range statements {
-			if _, err := tx.exec(ctx, statement.sql, statement.arguments...); err != nil {
-				return bootstrapStoreError(statement.action, err)
-			}
+		switch outcome {
+		case "bootstrapped":
+		case "scope_same_input":
+			return ErrBootstrapScopeExists
+		case "scope_other_input":
+			return ErrBootstrapScopeOtherInput
+		case "login_bound":
+			return ErrBootstrapLoginBound
+		default:
+			return fmt.Errorf("operator bootstrap returned the unknown outcome %q", outcome)
 		}
 		return request.runStep(ctx, bootstrapStepWritten)
 	})
-	return err
-}
-
-type bootstrapStatement struct {
-	action    string
-	sql       string
-	arguments []any
 }
 
 func (request BootstrapRequest) runStep(ctx context.Context, step bootstrapStep) error {
@@ -266,8 +218,12 @@ func (request BootstrapRequest) runStep(ctx context.Context, step bootstrapStep)
 }
 
 // bootstrapStoreError maps the PostgreSQL refusals that have a bootstrap
-// meaning. A unique violation of the bootstrap record or of the login binding
-// comes from a concurrent bootstrap that committed first.
+// meaning. pm.operator_bootstrap already turns a unique violation of the
+// bootstrap record or of the login binding into its outcome. These two cases
+// stay for a refusal outside the function. A bootstrap record conflict
+// outside the function had no input digest compare, so it does not claim the
+// same input or another input. Its outcome is unknown: a run with the same
+// input gets the digest compare of the function.
 func bootstrapStoreError(action string, err error) error {
 	var databaseError *pgconn.PgError
 	if !errors.As(err, &databaseError) {
@@ -275,7 +231,7 @@ func bootstrapStoreError(action string, err error) error {
 	}
 	switch {
 	case databaseError.Code == "23505" && databaseError.ConstraintName == "bootstrap_records_pkey":
-		return ErrBootstrapScopeExists
+		return fmt.Errorf("%s: bootstrap record conflict with no input digest compare: %w", action, ErrCommitOutcomeUnknown)
 	case databaseError.Code == "23505" && databaseError.ConstraintName == "auth_bootstrap_identities_pkey":
 		return ErrBootstrapLoginBound
 	case databaseError.Code == "42501" || strings.HasPrefix(databaseError.Code, "28"):

@@ -7,7 +7,10 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/polymetrics-ai/pm-cli/internal/config"
 	"github.com/polymetrics-ai/pm-cli/internal/httpapi"
@@ -105,12 +108,14 @@ func (server *Server) Draining() <-chan struct{} {
 // admission probe passed, the state is serving and the accept loop calls
 // Accept for the first time, Serve starts the one write of ReadyLine in its
 // own goroutine, apart from the accept loop. Serve closes a handle that got no
-// write. A nil handle means no signal.
+// write. When Serve stops serving, it closes the handle of a write that still
+// waits, which ends that write for a non-blocking handle, and it waits once
+// for the writer, within one drain bound. A nil handle means no signal.
 func (server *Server) Serve(ctx context.Context, listener net.Listener, handler http.Handler, ready io.WriteCloser) error {
 	var signal *readySignal
 	if ready != nil {
-		signal = &readySignal{ready: ready, diagnostics: server.diagnostics}
-		defer signal.drop()
+		signal = newReadySignal(ready, server.diagnostics)
+		defer signal.finish(server.settings.DrainTimeout)
 	}
 	if listener == nil {
 		return errors.New("server listener is required")
@@ -163,6 +168,11 @@ func (server *Server) Serve(ctx context.Context, listener net.Listener, handler 
 	}
 	err := server.http.Serve(serving)
 	server.beginDrain()
+	if signal != nil {
+		// End a ready write that still waits while the server drains. finish
+		// waits for the writer at most one drain bound from here.
+		signal.stop(time.Now().Add(server.settings.DrainTimeout))
+	}
 	<-server.stopped
 	<-watchStopped
 	if err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -223,30 +233,88 @@ const ReadyLine = "pm-server ready\n"
 const readyWriteFailed = "pm-server: the ready signal write failed. The process continues.\n"
 
 // readySignal owns the ready handle of one Serve call. Either start or drop
-// runs, once. The write has no deadline: the signal waits until the starter
-// reads (ADR 0005). The handle is closed on every path.
+// runs, once. While Serve serves, the write has no deadline: the signal waits
+// until the starter reads (ADR 0005). When Serve stops serving, stop closes
+// the handle of a write that still waits, and finish waits once for the
+// writer. The handle is closed once, on every path.
 type readySignal struct {
 	once        sync.Once
 	ready       io.WriteCloser
 	diagnostics io.Writer
+
+	started   atomic.Bool
+	closeOnce sync.Once
+	written   chan struct{}
+	joinBy    time.Time
+}
+
+func newReadySignal(ready io.WriteCloser, diagnostics io.Writer) *readySignal {
+	return &readySignal{ready: ready, diagnostics: diagnostics, written: make(chan struct{})}
 }
 
 // start runs the one write in its own goroutine, so a full pipe cannot stop
 // the accept loop.
 func (signal *readySignal) start() {
-	signal.once.Do(func() { go signal.write() })
+	signal.once.Do(func() {
+		signal.started.Store(true)
+		go signal.write()
+	})
 }
 
 // drop closes a handle that got no write.
 func (signal *readySignal) drop() {
-	signal.once.Do(func() { _ = signal.ready.Close() })
+	signal.once.Do(signal.close)
 }
 
+// close closes the handle once.
+func (signal *readySignal) close() {
+	signal.closeOnce.Do(func() { _ = signal.ready.Close() })
+}
+
+// write writes the ready line once and closes the handle. A failed write
+// prints the write-failure line, unless the write failed with the error of a
+// closed handle (os.ErrClosed). While the write runs, only stop closes the
+// handle, so that error means that the stop ended the write. Then the process
+// does not continue, so it prints nothing. Any other error prints the line,
+// also when it comes while the stop runs.
 func (signal *readySignal) write() {
-	if _, err := io.WriteString(signal.ready, ReadyLine); err != nil {
+	defer close(signal.written)
+	if _, err := io.WriteString(signal.ready, ReadyLine); err != nil && !errors.Is(err, os.ErrClosed) {
 		_, _ = io.WriteString(signal.diagnostics, readyWriteFailed)
 	}
-	_ = signal.ready.Close()
+	signal.close()
+}
+
+// stop runs when Serve stops serving. It keeps joinBy, the end of the one
+// wait in finish. For a started write, it closes the handle. The close ends a
+// write that still waits on a non-blocking handle, which is the handle that
+// pm-server makes from its ready descriptor. That write then fails with
+// os.ErrClosed.
+func (signal *readySignal) stop(joinBy time.Time) {
+	signal.joinBy = joinBy
+	if !signal.started.Load() {
+		return
+	}
+	signal.close()
+}
+
+// finish runs when Serve returns, on every path. It closes a handle that got
+// no write. For a started write, it ends the write (stop, if Serve did not
+// call it) and waits once for the writer, until joinBy.
+func (signal *readySignal) finish(drainBound time.Duration) {
+	signal.drop()
+	if !signal.started.Load() {
+		return
+	}
+	if signal.joinBy.IsZero() {
+		signal.stop(time.Now().Add(drainBound))
+	}
+	timer := time.NewTimer(time.Until(signal.joinBy))
+	defer timer.Stop()
+	select {
+	case <-signal.written:
+	case <-timer.C:
+	}
 }
 
 // readyListener starts the ready signal when the accept loop calls Accept

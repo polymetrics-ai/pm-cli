@@ -69,25 +69,45 @@ func TestGeneratedIdentityProviderUsesASecondLoopbackAddressAndExactIssuer(t *te
 		}
 	}
 	info, err := os.Lstat(directory)
-	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
-		t.Fatalf("identity provider directory mode = %v (%v), want a 0700 directory", info.Mode(), err)
+	if err != nil {
+		t.Fatalf("identity provider directory: %v", err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("identity provider directory mode = %v, want a 0700 directory", info.Mode())
 	}
 	for name, mode := range map[string]os.FileMode{
 		"ca.pem":              0o600,
 		"server.pem":          0o640,
 		"server-key.pem":      0o640,
-		"realm.json":          0o640,
 		"admin-client-id":     0o600,
 		"admin-client-secret": 0o600,
+		"import/realm.json":   0o640,
 	} {
 		info, err := os.Lstat(filepath.Join(directory, name))
-		if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != mode {
-			t.Fatalf("%s mode = %v (%v), want regular %v", name, info.Mode(), err, mode)
+		if err != nil {
+			t.Fatalf("%s: %v", name, err)
+		}
+		if !info.Mode().IsRegular() || info.Mode().Perm() != mode {
+			t.Fatalf("%s mode = %v, want regular %v", name, info.Mode(), mode)
 		}
 	}
 	entries, err := os.ReadDir(directory)
 	if err != nil || len(entries) != 6 {
 		t.Fatalf("identity provider directory has %d entries (%v), want 6", len(entries), err)
+	}
+	// #316 review F2: the realm import has its own directory with no other
+	// credential. The provider lists it through the job account's group.
+	imports := filepath.Join(directory, "import")
+	info, err = os.Lstat(imports)
+	if err != nil {
+		t.Fatalf("identity provider import directory: %v", err)
+	}
+	if !info.IsDir() || info.Mode().Perm() != 0o750 {
+		t.Fatalf("identity provider import directory mode = %v, want a 0750 directory", info.Mode())
+	}
+	entries, err = os.ReadDir(imports)
+	if err != nil || len(entries) != 1 || entries[0].Name() != "realm.json" {
+		t.Fatalf("identity provider import directory = %v (%v), want only realm.json", entries, err)
 	}
 }
 
@@ -144,7 +164,7 @@ func TestGeneratedRealmImportHasOnlyAScopedServiceAccount(t *testing.T) {
 	if got := readFixtureText(t, directory, "admin-client-id"); got != "pm-test-admin" {
 		t.Fatalf("admin client id = %q, want pm-test-admin", got)
 	}
-	contents, err := os.ReadFile(filepath.Join(directory, "realm.json"))
+	contents, err := os.ReadFile(filepath.Join(directory, "import", "realm.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

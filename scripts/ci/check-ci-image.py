@@ -10,9 +10,10 @@ The check fails when one of these items is false:
 - Each package of build/ci/keyring-packages.txt is installed at its version.
 - dbus-x11 is not installed. No file or link named dbus-launch is in a
   binary directory, in a directory of the runtime PATH, or anywhere in the
-  whole-root walk below. The runtime PATH must be set and must have no empty
-  entry: each process reads an empty entry as its own current directory, so
-  the check cannot know which directory that entry names.
+  whole-root walk below. The runtime PATH must be set, and each entry must be
+  an absolute path: each process reads an empty or relative entry against its
+  own current directory, so the check cannot know which directory that entry
+  names.
 - /usr/bin/dbus-daemon and /usr/bin/gnome-keyring-daemon are executable
   regular files of the packages dbus-daemon and gnome-keyring.
 - No D-Bus service file names org.freedesktop.secrets or starts
@@ -146,26 +147,34 @@ def installed_packages():
 
 
 def launcher_directories():
-    """Return BINARY_DIRECTORIES and each non-empty entry of the runtime PATH.
+    """Return BINARY_DIRECTORIES and each absolute entry of the runtime PATH.
 
-    check_runtime_path fails on an empty entry, so this list has no entry for it.
+    check_runtime_path fails on an empty or relative entry, so this list has
+    no entry for it.
     """
-    runtime = [entry for entry in os.environ.get("PATH", "").split(":") if entry]
+    runtime = [entry for entry in os.environ.get("PATH", "").split(":") if entry.startswith("/")]
     return tuple(dict.fromkeys((*BINARY_DIRECTORIES, *runtime)))
 
 
 def check_runtime_path():
-    """Fail when the runtime PATH is not set or has an empty entry.
+    """Fail when the runtime PATH is not set or has an empty or relative entry.
 
     Each process reads an empty entry (leading, trailing or `::`) as its own
-    current directory when it runs, and an unset PATH gives the same result.
-    So the check cannot name the directory that such an entry searches.
+    current directory, and a relative entry (for example `.`, `bin` or
+    `../bin`) against its own current directory, when it runs. An unset PATH
+    gives the same result as an empty entry. So the check cannot name the
+    directory that such an entry searches. The messages are fixed text: an
+    entry is environment input, so it is not printed.
     """
     path = os.environ.get("PATH")
     if path is None:
         fail("the runtime PATH is not set")
-    elif "" in path.split(":"):
+        return
+    entries = path.split(":")
+    if "" in entries:
         fail("the runtime PATH has an empty entry")
+    if any(entry and not entry.startswith("/") for entry in entries):
+        fail("the runtime PATH has a relative entry")
 
 
 def check_packages(record, installed, binary_directories=None):

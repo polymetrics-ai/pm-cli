@@ -167,9 +167,9 @@ A starter can ask `pm-server` for one ready signal ([ADR 0005](../decisions/0005
 ```
 
 - The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. Without the flag, `pm-server` sends no signal.
-- Descriptor `n` must be the write end of a pipe that the starter made, with no close-on-exec flag. `pm-server` keeps it in one handle and sets close-on-exec on that handle.
-- `pm-server` is ready when its admission probe passed, its state is serving and its HTTP accept loop calls Accept for the first time. Then it writes `pm-server ready` and one line feed in one write, apart from the serving path, and closes the handle. The write has no deadline: the signal waits until the starter reads. A start that fails before it is ready sends no signal, so the starter reads end of file with no data.
-- If the write fails, `pm-server` writes `pm-server: the ready signal write failed. The process continues.` on standard error once. It continues, and its exit code does not change.
+- Descriptor `n` must be the write end of a pipe that the starter made, with no close-on-exec flag. `pm-server` keeps it in one handle and sets close-on-exec on that handle. It also sets the handle to non-blocking mode. That changes only the blocking mode of the write end. The starter's read end and its one blocking read do not change.
+- `pm-server` is ready when its admission probe passed, its state is serving and its HTTP accept loop calls Accept for the first time. Then it writes `pm-server ready` and one line feed in one write, apart from the serving path, and closes the handle. The write has no deadline: the signal waits until the starter reads. When `pm-server` stops serving before the starter read the line, it closes the handle, which ends the write, and waits for the writer for at most one drain bound. A start that fails before it is ready sends no signal, so the starter reads end of file with no data.
+- A failed ready write does not itself stop `pm-server` or change its exit code. When `pm-server` stops serving, it closes the handle of a ready write that still waits. That write fails with the error of a closed handle, and `pm-server` prints no line for it. Any other write error prints `pm-server: the ready signal write failed. The process continues.` on standard error once, also when the error comes while `pm-server` stops serving.
 
 A refusal stops `pm-server` with exit code 1, one line on standard error and no signal, before it opens its configuration:
 
@@ -188,6 +188,46 @@ The starter must do these things:
 - Read each pipe that it gives as standard output or standard error, or give a destination that cannot fill, for example a file. A full pipe blocks each write of the process.
 
 A supervisor of `pm-server` has this minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM. It bounds its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
+
+### Inherited listener for a starter
+
+A starter can give `pm-server` a TCP socket that the starter has already bound and set to listen at the configured `server.listen`. It passes `--listen-fd <n>`:
+
+```text
+--listen-fd fd   serve on inherited listening socket fd (3 or more) at the configured server.listen
+```
+
+- The number rules of `--ready-fd` apply. The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. When `--ready-fd` is also present, the two values must be different.
+- `pm-server` reads the raw `--listen-fd` value while it reads the flags. It checks the value after the `--config` and `--secrets-directory` checks and before it opens the configuration. No refusal line contains the raw value or the address, because a command line can carry private text by mistake. When the value is missing, `pm-server` takes the next argument as the value. Then the argument after it can appear in the line `pm-server: unknown command "<argument>" for "pm-server"`. The `--ready-fd` refusals repeat the value, as before.
+- Without the flag, `pm-server` binds `server.listen` itself. With the flag, `pm-server` binds no address. It serves on the socket of descriptor `n`. When a check fails, `pm-server` stops. It never binds `server.listen` in place of the inherited socket.
+- `pm-server` checks descriptor `n` after it reads and checks its configuration, and before it opens the application. The descriptor must obey these rules, in this order:
+  1. It is open and has no close-on-exec flag. A descriptor with that flag belongs to `pm-server` itself.
+  2. It is a stream socket in the family of the configured address: `AF_INET` for an IPv4 address, `AF_INET6` for an IPv6 address.
+  3. It uses TCP: plain TCP, or on Linux also Multipath TCP (MPTCP).
+  4. It listens for connections.
+  5. Its local address is equal to `server.listen`: the same family, IP address and port (`netip.AddrPort`). An IPv4-mapped IPv6 address is not equal to the IPv4 address. A wildcard address is equal only to the same wildcard.
+- On Linux, `pm-server` reads `SO_PROTOCOL` and `SO_ACCEPTCONN` for rules 3 and 4. On Linux, `SO_PROTOCOL` must be `IPPROTO_TCP` or `IPPROTO_MPTCP`. Go's `net.Listen` makes an MPTCP socket when the kernel has MPTCP turned on. Darwin has no `SO_PROTOCOL` and does not give `SO_ACCEPTCONN` to `getsockopt`. On Darwin, `pm-server` reads the TCP option `TCP_CONNECTION_INFO`, which only a TCP socket gives, and its state must be `TCPS_LISTEN`. On another system, `pm-server` refuses each descriptor.
+- `pm-server` owns the descriptor from the check:
+  - A descriptor that fails rule 1 is not an inherited descriptor, so `pm-server` does not close it. When a later rule fails, `pm-server` closes the descriptor and stops.
+  - After the checks, `pm-server` sets close-on-exec on the descriptor before it opens the application. It makes its listener from a copy of the descriptor that has close-on-exec (`net.FileListener`), and it closes the descriptor. Thus the listener is the one handle of the socket in `pm-server`, and no child process holds it.
+  - `pm-server` closes the listener when serving ends, and also when the start fails after the checks.
+- The ready line goes only through `--ready-fd`, and the ready rule does not change. With `--listen-fd`, the HTTP accept loop calls Accept for the first time on the inherited listener. No connection needs to come before the ready line. The configuration stays the one source of the server address.
+
+A refusal stops `pm-server` with exit code 1 and one line on standard error. `pm-server` serves nothing:
+
+| Order | Case | Standard error line |
+| --- | --- | --- |
+| 1, while the flags are read | `--listen-fd` is the last argument and has no value | `pm-server: flag needs an argument: --listen-fd` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | `--listen-fd` is given more than once | `pm-server: --listen-fd may be supplied exactly once` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | A value that breaks the number rules | `pm-server: --listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | `--listen-fd` and `--ready-fd` name the same descriptor | `pm-server: --listen-fd and --ready-fd require different descriptors` |
+| 3, after the configuration check and before the application opens | A descriptor that breaks a rule above | `pm-server: --listen-fd requires an inherited listener at the configured server address` |
+
+The starter must do these things:
+
+- Bind the address and set the socket to listen before it starts `pm-server`. Write that exact address into `server.listen`.
+- Give the socket only to `pm-server`, as descriptor `n` with no close-on-exec flag, as it gives the ready descriptor. Protect each copy that it keeps from inheritance by any other child.
+- Keep one copy open until `pm-server` has served one request, so that the port stays held through the handover. Then close it. Also close each copy when `pm-server` does not start or its start fails, and at the normal stop.
 
 ### Operator bootstrap
 
@@ -225,20 +265,35 @@ In one PostgreSQL transaction, the subcommand writes:
 Each provider account must name a connector that `connectors.bundles` declares. On success, the exit code is 0 and stdout holds one JSON document that names these rows. On a refusal, the exit code is 1, stdout is empty, nothing is written, and stderr holds exactly one of these lines:
 
 - `pm-server: bootstrap scope is already bootstrapped`
+- `pm-server: bootstrap scope is already bootstrapped with another input`
 - `pm-server: bootstrap admin login is already bound`
 - `pm-server: bootstrap workspace name is required`
 - `pm-server: bootstrap admin subject is required`
 - `pm-server: bootstrap provider account names an undeclared connector`
 - `pm-server: bootstrap requires operator authority`
 
-Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown; run the same bootstrap again`. After an unknown outcome, run the same bootstrap again. The refusal `bootstrap scope is already bootstrapped` then shows that the first bootstrap committed.
+The bootstrap record holds the SHA-256 of the input. The input here is the organization, the workspace, its name, the admin issuer and subject, and the connector and display name of each provider account. The database computes the SHA-256 from the rows that it writes. `bootstrap scope is already bootstrapped` means that the scope holds a bootstrap of the same input. `bootstrap scope is already bootstrapped with another input` has three causes: another input took the scope, the organization already has rows, or another deployment bootstrapped the organization, also with the same input.
 
-The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role can only insert the bootstrap rows, and row-level security limits each insert to the configured deployment and the organization of the input.
+Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown. Run the bootstrap again with the same input to learn the outcome`.
+
+After an unknown outcome, run the bootstrap again with the same input. The bootstrap commits at most once for each organization, so this run is the reconcile step. Its result tells you the outcome of the first attempt:
+
+| Result of the second run | Meaning |
+| --- | --- |
+| Success | The first attempt did not commit. The second run wrote the bootstrap. |
+| `pm-server: bootstrap scope is already bootstrapped` | A bootstrap of the same input committed. Read its rows through the product after login. |
+| `pm-server: bootstrap scope is already bootstrapped with another input` | The first attempt did not commit. Another input took the scope, the organization has other rows, or another deployment bootstrapped the organization. Do not use that organization as your bootstrap. Check it through the product. |
+| `pm-server: bootstrap admin login is already bound` | The first attempt did not commit. Another organization in this deployment holds that admin login. |
+| Any other line | The outcome of the first attempt is still unknown. Correct the cause that the line names. Then run the bootstrap again with the same input. |
+
+A script must match the whole stderr line. The line about another input starts with the text of the line about the same input.
+
+The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role has no table grant. Its only grant in the schema `pm` is `EXECUTE` on the database function `pm.operator_bootstrap`. That function writes one bootstrap of an organization that has no rows yet. It refuses an admin login that has a binding in the deployment.
 
 The operator has these duties:
 
 1. Run the privileged deployment bootstrap (`deploy/postgres/bootstrap.sql`) before the store migrations. It creates `pm_app_bootstrap` from the password file `pm-app-bootstrap-password`. An existing deployment must run it again before migration 0021, or that migration fails at its role check.
-2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the same deployment and organization is refused, also with the same input.
+2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the organization is refused in any deployment, also with the same input.
 3. Remove `pm-app-bootstrap-endpoint` from the secret directory after the bootstrap.
 
 ### Scoped event streams and artifact boundaries
@@ -377,7 +432,7 @@ Compose's implicit `.env` loading and inherited `COMPOSE_ENV_FILES` are disabled
 
 Bootstrap grants the application runtime only `SELECT` on its readiness marker, revokes database `CREATE` and `TEMPORARY` privileges from both the runtime and `PUBLIC`, and removes table/sequence default grants for future application objects. Store migrations own their exact per-table privileges; repeating dependency initialization must not restore broader application grants.
 
-The digest-pinned [Compose layout](../../deploy/compose.yaml) is a bounded, non-production qualification layout, not production sizing or availability guidance. It uses separate PostgreSQL application, Temporal persistence, Temporal visibility and object-metadata databases; Temporal's official schema tool; Seaweed `postgres2`; two TLS S3 gateways; and Caddy. The filer pool ceiling of two, four concurrent listing clients, and seeded object names are synthetic qualification inputs, not production defaults. Seaweed grows one volume at a time. Before it reports ready, `pm-stack up` gives the default metadata collection and the configured artifact bucket one writable volume each. The volume server keeps one spare volume slot for each of them. `pm-stack check` fails when either has no writable volume. A stack that an older `pm-stack` started fails `pm-stack check` until `pm-stack up` runs again. The volume step of `pm-stack up` only adds empty volumes. No stored data changes.
+The digest-pinned [Compose layout](../../deploy/compose.yaml) is a bounded, non-production qualification layout, not production sizing or availability guidance. It uses separate PostgreSQL application, Temporal persistence, Temporal visibility and object-metadata databases; Temporal's official schema tool; Seaweed `postgres2`; two TLS S3 gateways; and Caddy. The filer pool ceiling of two, four concurrent listing clients, and seeded object names are synthetic qualification inputs, not production defaults. Seaweed grows one volume at a time. Before it reports ready, `pm-stack up` gives the default metadata collection and the configured artifact bucket one writable volume each. After `pm-stack up` starts a fresh or stopped stack, the volume server keeps two spare volume slots in all. `pm-stack check` fails when either has no writable volume. A stack that an older `pm-stack` started fails `pm-stack check` only when its bucket or its default collection has no writable volume. `pm-stack up` then grows each missing volume, if a volume slot is free. The volume step of `pm-stack up` only adds empty volumes. No stored data changes.
 
 Use an explicitly owned disposable fixture with fresh test-only credentials and trusted test certificates. Configuration examples alone do not provision these inputs. `PM_STACK_SECRETS_DIR` names the confined secret-bundle root; `PM_STACK_STATE_DIR` names owned generated state and data; `PM_STACK_PROJECT` identifies the unique Compose project. The named PostgreSQL, Temporal, S3-primary, S3-secondary and public-port overrides must agree with the configured endpoints. Every published infrastructure port binds to `127.0.0.1`; service CPU, memory and process counts are bounded. All service data mounts stay under owned state. Select the intended container engine explicitly; the operator does not install or start a host engine.
 
