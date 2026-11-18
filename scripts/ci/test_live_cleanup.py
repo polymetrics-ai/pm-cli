@@ -111,9 +111,9 @@ class Host:
         path.write_text(text)
         return path
 
-    def run(self, script, *arguments, env=None):
+    def run(self, script, *arguments, env=None, cwd=None):
         return subprocess.run(["/bin/sh", str(script), *arguments], env={"PATH": "/usr/bin:/bin", **(env or {})},
-                              capture_output=True, text=True, timeout=60)
+                              capture_output=True, text=True, timeout=60, cwd=cwd)
 
     def process(self, pid, uid, cgroup="/user.slice/user-1.slice/user@1.service/app.slice/x.scope"):
         entry = self.proc / str(pid)
@@ -512,6 +512,29 @@ class RunnerCheck(unittest.TestCase):
         self.assertEqual([path.name for path in self.list.parent.iterdir()], [self.list.name])
         self.assertEqual(check.returncode, 1, check.stdout)
         self.assertIn("cannot be listed, read or hashed", check.stdout)
+
+    def test_a_path_with_a_line_feed_is_refused(self):
+        # #403 R4-1: the name ".bashrc<LF>fragment" gave the lines ".../.bashrc" and "fragment".
+        # Both name existing files (the second one in the current folder), so the counts
+        # agreed and the file itself was never hashed.
+        for name, make in (("file", lambda: (self.host.home / ".bashrc\nfragment").write_text("a\n")),
+                           ("folder", lambda: (self.host.home / ".bashrc\nfragment").mkdir())):
+            with self.subTest(case=name):
+                self.tearDown()
+                self.setUp()
+                folder = self.host.root / "cwd"
+                folder.mkdir()
+                (folder / "fragment").write_text("x\n")
+                make()
+                record = self.host.run(self.script, "--record", cwd=folder)
+                check = self.host.run(self.script, cwd=folder)
+                self.assertEqual(record.returncode, 1, record.stdout)
+                self.assertEqual(self.list.read_bytes(), self.recorded)
+                self.assertEqual([path.name for path in self.list.parent.iterdir()], [self.list.name])
+                self.assertEqual(check.returncode, 1, check.stdout)
+                self.assertIn("cannot be listed, read or hashed", check.stdout)
+                for result in (record, check):
+                    self.assertIn("a runner, unit or home path holds a line feed", result.stderr)
 
     def test_a_failed_or_empty_compare_listing_never_matches(self):
         # crrao's addendum to N1: an empty baseline and a failed or empty fresh listing.

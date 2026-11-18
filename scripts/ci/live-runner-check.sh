@@ -88,11 +88,23 @@ uid=$(uid_of "$user") && home=$(home_of "$user") && [ -n "$home" ] && [ -d "$hom
   exit 1
 }
 
+# walk TEST...: find over the runner, unit and home files, without the emptied folders.
+walk() {
+  /usr/bin/find "$runner" "$unit" "$home" \( -path "$runner/_diag" -o -path "$home/pm-live-cache" \
+    -o -path "$home/.local/share/containers" \) -prune -o "$@"
+}
 # owner, group, mode, SHA-256 (or link) and path of each runner, unit and home file.
 current_list() {
+  # The list has one path per line. A name with a line feed gives two lines that can each
+  # name another existing file, so the named file is never hashed (#403 R4-1).
+  feed=$(walk -name '*
+*' -print) || return 1
+  if [ -n "$feed" ]; then
+    printf '%s\n' 'live-runner-check: FAILED: a runner, unit or home path holds a line feed' >&2
+    return 1
+  fi
   listing=$(/usr/bin/mktemp "$list.find.XXXXXX") || return 1
-  if ! /usr/bin/find "$runner" "$unit" "$home" \( -path "$runner/_diag" -o -path "$home/pm-live-cache" \
-    -o -path "$home/.local/share/containers" \) -prune -o -print > "$listing" ||
+  if ! walk -print > "$listing" ||
     ! /usr/bin/sort -o "$listing" -- "$listing" || ! lines=$(/usr/bin/wc -l < "$listing"); then
     /bin/rm -f -- "$listing"
     return 1
