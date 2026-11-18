@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -197,6 +198,53 @@ read line < '%s'
 		}
 	case <-time.After(testLimit):
 		t.Fatalf("the descendant still runs %s after Stop returned", testLimit)
+	}
+}
+
+// Defect: after the leader of a daemon process group exited and the harness
+// reaped it, the stop sends a signal to the old group ID (round 2 F2). After
+// the reap, the kernel can give that ID to an unrelated process, so the
+// signal can reach an unrelated group. Here the stand-in exits before the
+// stop, as before a delayed cleanup. At each group signal of the stop, the
+// process whose ID is the group ID must still exist, alive or not yet reaped:
+// kill(pgid, 0) must succeed. At least one group signal must go out. The
+// check causes no PID reuse.
+func TestStopSignalsOnlyAnOwnedGroup(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keyring")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	d := startStandIn(t, dir, "echo leaving", "leaving\n")
+	select {
+	case <-d.done:
+	case <-time.After(testLimit):
+		t.Fatalf("the stand-in daemon did not exit within %s", testLimit)
+	}
+	previous := signalGroup
+	var mutex sync.Mutex
+	var signals int
+	var unowned []error
+	signalGroup = func(pgid int, sig syscall.Signal) error {
+		owned := syscall.Kill(pgid, 0)
+		mutex.Lock()
+		signals++
+		if owned != nil {
+			unowned = append(unowned, owned)
+		}
+		mutex.Unlock()
+		return previous(pgid, sig)
+	}
+	t.Cleanup(func() { signalGroup = previous })
+	if err := d.stop(Limits{Stop: 5 * time.Second, Kill: 10 * time.Second}, false); err != nil {
+		t.Fatalf("stop after the exit of the leader = %v; want no error", err)
+	}
+	mutex.Lock()
+	defer mutex.Unlock()
+	if signals == 0 {
+		t.Error("the stop sent no group signal")
+	}
+	for _, err := range unowned {
+		t.Errorf("a group signal went to a group ID whose process was already reaped: kill(pgid, 0) = %v", err)
 	}
 }
 

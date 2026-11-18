@@ -83,6 +83,10 @@ type daemon struct {
 	cmd  *exec.Cmd
 	done chan struct{}
 	log  string
+	// owner leads the process group of the daemon, and ownerInput is the
+	// write end of its stdin pipe (startGroupOwner).
+	owner      *exec.Cmd
+	ownerInput io.WriteCloser
 	// stopOnce makes stop act once. A later call returns the first result.
 	stopOnce sync.Once
 	stopErr  error
@@ -387,23 +391,101 @@ func (k *Keyring) stop() error {
 	return errors.Join(errs...)
 }
 
-// startDaemon starts cmd in its own process group with stdout, when not set,
-// and stderr in a new log file.
+// groupOwnerReadyLimit bounds the one wait for the ready byte of a group
+// owner.
+const groupOwnerReadyLimit = 10 * time.Second
+
+// signalGroup sends sig to the process group pgid. A developer check replaces
+// it.
+var signalGroup = func(pgid int, sig syscall.Signal) error { return syscall.Kill(-pgid, sig) }
+
+// startGroupOwner starts the owner of the process group of one daemon. The
+// owner leads a new process group, ignores SIGTERM, writes one ready byte and
+// then reads its stdin pipe until end of file. Only this process holds that
+// pipe, so the owner exits when the harness ends. The group ID is the process
+// ID of the owner. The kernel keeps that ID while the owner runs and, after
+// it exits, until the harness reaps it. The owner ignores SIGTERM because the
+// stop sends SIGTERM to the whole group first. The ready byte shows that the
+// owner ignores SIGTERM before any signal can come.
+func startGroupOwner() (*exec.Cmd, io.WriteCloser, error) {
+	owner := exec.Command("/bin/sh", "-c", `trap "" TERM; printf r; exec cat > /dev/null`)
+	owner.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	input, err := owner.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	output, err := owner.StdoutPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := owner.Start(); err != nil {
+		return nil, nil, err
+	}
+	readyErr := errors.New("the group owner sent no ready byte")
+	if file, ok := output.(*os.File); ok && file.SetReadDeadline(time.Now().Add(groupOwnerReadyLimit)) == nil {
+		ready := make([]byte, 1)
+		if n, err := file.Read(ready); n == 1 && ready[0] == 'r' {
+			readyErr = nil
+		} else if err != nil {
+			readyErr = fmt.Errorf("%w: %w", readyErr, err)
+		}
+	}
+	if readyErr != nil {
+		return nil, nil, errors.Join(readyErr, killGroup(owner.Process.Pid), endGroupOwner(owner, input))
+	}
+	return owner, input, nil
+}
+
+// killGroup sends SIGKILL to the process group pgid. ESRCH means that no
+// process of the group is left. Each other error is returned.
+func killGroup(pgid int) error {
+	if err := signalGroup(pgid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("keyring: send SIGKILL to the process group: %w", err)
+	}
+	return nil
+}
+
+// endGroupOwner closes the stdin pipe of the owner and reaps it. The exit by
+// the final SIGKILL is expected. Each other exit is an error: the owner
+// exited before the final signal, or the final signal did not reach it.
+func endGroupOwner(owner *exec.Cmd, input io.Closer) error {
+	_ = input.Close()
+	err := owner.Wait()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+			return nil
+		}
+	}
+	if err == nil {
+		err = errors.New("exit status 0")
+	}
+	return fmt.Errorf("keyring: the process group owner did not end by the final signal: %w", err)
+}
+
+// startDaemon starts cmd in the process group of a new group owner, with
+// stdout, when not set, and stderr in a new log file. A failed owner start,
+// or a failed join of its group, is an error, and the daemon does not start.
 func startDaemon(name string, cmd *exec.Cmd, logPath string) (*daemon, error) {
 	log, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("keyring: create the %s log: %w", name, err)
 	}
+	owner, ownerInput, err := startGroupOwner()
+	if err != nil {
+		_ = log.Close()
+		return nil, fmt.Errorf("keyring: start the process group owner of %s: %w", name, err)
+	}
 	if cmd.Stdout == nil {
 		cmd.Stdout = log
 	}
 	cmd.Stderr = log
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: owner.Process.Pid}
 	if err := cmd.Start(); err != nil {
 		_ = log.Close()
-		return nil, fmt.Errorf("keyring: start %s: %w", name, err)
+		return nil, errors.Join(fmt.Errorf("keyring: start %s: %w", name, err), killGroup(owner.Process.Pid), endGroupOwner(owner, ownerInput))
 	}
-	d := &daemon{name: name, cmd: cmd, done: make(chan struct{}), log: logPath}
+	d := &daemon{name: name, cmd: cmd, done: make(chan struct{}), log: logPath, owner: owner, ownerInput: ownerInput}
 	go func() {
 		_ = cmd.Wait()
 		_ = log.Close()
@@ -422,47 +504,57 @@ func (d *daemon) stop(limits Limits, ready bool) error {
 	return d.stopErr
 }
 
+// stopSequence sends SIGTERM to the process group, then SIGKILL, each with one
+// limit. The owner ignores SIGTERM. When the leader exits, endGroup ends the
+// group. When the stop must send SIGKILL, that SIGKILL is the final group
+// signal: it reaches every process of the group, the owner too.
 func (d *daemon) stopSequence(limits Limits, ready bool) error {
 	select {
 	case <-d.done:
 		if ready {
-			return errors.Join(fmt.Errorf("keyring: %s exited before the stop: %s", d.name, d.cmd.ProcessState), d.killSurvivors())
+			return errors.Join(fmt.Errorf("keyring: %s exited before the stop: %s", d.name, d.cmd.ProcessState), d.endGroup())
 		}
-		return d.killSurvivors()
+		return d.endGroup()
 	default:
 	}
-	group := -d.cmd.Process.Pid
-	_ = syscall.Kill(group, syscall.SIGTERM)
+	group := d.owner.Process.Pid
+	_ = signalGroup(group, syscall.SIGTERM)
 	stopTimer := time.NewTimer(limits.Stop)
 	defer stopTimer.Stop()
 	select {
 	case <-d.done:
-		return d.killSurvivors()
+		return d.endGroup()
 	case <-stopTimer.C:
 	}
-	_ = syscall.Kill(group, syscall.SIGKILL)
+	killErr := killGroup(group)
 	killTimer := time.NewTimer(limits.Kill)
 	defer killTimer.Stop()
 	select {
 	case <-d.done:
-		return errors.Join(fmt.Errorf("keyring: %s did not exit within %s of SIGTERM and needed SIGKILL", d.name, limits.Stop), d.killSurvivors())
+		return errors.Join(fmt.Errorf("keyring: %s did not exit within %s of SIGTERM and needed SIGKILL", d.name, limits.Stop), killErr, endGroupOwner(d.owner, d.ownerInput))
 	case <-killTimer.C:
-		return fmt.Errorf("keyring: %s (process %d) did not exit within %s of SIGKILL", d.name, d.cmd.Process.Pid, limits.Kill)
+		return errors.Join(fmt.Errorf("keyring: %s (process %d) did not exit within %s of SIGKILL", d.name, d.cmd.Process.Pid, limits.Kill), killErr, endGroupOwner(d.owner, d.ownerInput))
 	}
 }
 
-// killSurvivors runs after the leader of the daemon process group exited. It
-// makes one observation, with no wait. When a process of the group is left,
-// it sends SIGKILL to the whole group and reports that process. A process
-// group keeps its ID while one of its processes runs, so the signal reaches
-// only that group.
-func (d *daemon) killSurvivors() error {
-	group := -d.cmd.Process.Pid
-	if err := syscall.Kill(group, 0); errors.Is(err, syscall.ESRCH) {
-		return nil
+// endGroup runs after the leader of the daemon exited and was reaped. The
+// owner is alive. It makes one observation of the live processes of the
+// group other than the owner, with no wait. When a process is left, it
+// reports that process. Then it sends the final SIGKILL to the whole group
+// and reaps the owner. Because the owner is not reaped before that signal,
+// the group ID still belongs to this daemon. A process that left the group
+// (setsid or setpgid) is not seen and gets no signal.
+func (d *daemon) endGroup() error {
+	group := d.owner.Process.Pid
+	var survivors error
+	count, err := liveGroupMembers(group)
+	switch {
+	case err != nil:
+		survivors = fmt.Errorf("keyring: observe the %s process group: %w", d.name, err)
+	case count > 0:
+		survivors = fmt.Errorf("keyring: a process of the %s process group was still there after its leader exited, and the stop sent SIGKILL to the group", d.name)
 	}
-	_ = syscall.Kill(group, syscall.SIGKILL)
-	return fmt.Errorf("keyring: a process of the %s process group was still there after its leader exited, and the stop sent SIGKILL to the group", d.name)
+	return errors.Join(survivors, killGroup(group), endGroupOwner(d.owner, d.ownerInput))
 }
 
 // logTail returns at most the last logLimit bytes of the daemon log, for a
