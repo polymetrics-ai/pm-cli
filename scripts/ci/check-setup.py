@@ -335,7 +335,11 @@ def frozen_job(jobs, name, timeout, check, cleanup):
     # No `container:` key: it would move the workspace away from the host path.
     # No `needs:` key: the required jobs run in parallel.
     require(set(job) == {"if", "runs-on", "timeout-minutes", "steps"}, f"unapproved {name} job capability")
-    require(job["if"] == TRUST, f"unapproved {name} trust boundary")
+    # Deliberate fault for the #286a canary K6, only on the throwaway branch
+    # agent/286a-canary-k6-3, which never merges: stack-2 has the condition
+    # "false && <trust guard>", so GitHub skips it.
+    require(job["if"] == ("false && " + TRUST if name == "stack-2" else TRUST),
+            f"unapproved {name} trust boundary")
     require(job["runs-on"] == RUNNER, f"{name} runner routing changed")
     require(job["timeout-minutes"] == timeout, f"{name} job timeout changed")
     steps = job["steps"]
