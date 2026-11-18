@@ -2,6 +2,7 @@ package keyring
 
 import (
 	"bufio"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -47,7 +48,7 @@ func startStandIn(t *testing.T, dir, script, want string) *daemon {
 	t.Cleanup(func() { _ = read.Close() })
 	cmd := exec.Command("/bin/sh", "-c", script)
 	cmd.Stdout = write
-	d, err := startDaemon("stand-in daemon", cmd, filepath.Join(dir, "stand-in.log"))
+	d, err := startDaemon(context.Background(), "stand-in daemon", cmd, filepath.Join(dir, "stand-in.log"))
 	_ = write.Close()
 	if err != nil {
 		t.Fatal(err)
@@ -245,6 +246,159 @@ func TestStopSignalsOnlyAnOwnedGroup(t *testing.T) {
 	}
 	for _, err := range unowned {
 		t.Errorf("a group signal went to a group ID whose process was already reaped: kill(pgid, 0) = %v", err)
+	}
+}
+
+// Defect: the stop waits with no limit for the exit of the group owner
+// (round 3 finding N1). Here the final group signal is refused (EPERM) and
+// the owner is stopped (SIGSTOP), so the end of its stdin pipe does not end
+// it. The stop must return within its own limit with the signal error and
+// the "not reaped" error. The cleanup of the check ends the owner on every
+// exit. Each wait has one time limit. No sleep, no retry.
+func TestStopBoundsTheOwnerEnd(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "keyring")
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	stall := makeFIFO(t, filepath.Join(t.TempDir(), "stall"))
+	previousLimit := groupOwnerEndLimit
+	groupOwnerEndLimit = 200 * time.Millisecond
+	previousSignal := signalGroup
+	var mutex sync.Mutex
+	var owners []int
+	signalGroup = func(pgid int, sig syscall.Signal) error {
+		if sig != syscall.SIGKILL {
+			return previousSignal(pgid, sig)
+		}
+		mutex.Lock()
+		owners = append(owners, pgid)
+		mutex.Unlock()
+		if err := syscall.Kill(pgid, syscall.SIGSTOP); err != nil {
+			return err
+		}
+		return syscall.EPERM
+	}
+	t.Cleanup(func() {
+		groupOwnerEndLimit = previousLimit
+		signalGroup = previousSignal
+	})
+	d := startStandIn(t, dir, fmt.Sprintf(`echo waiting; read line < '%s'`, stall), "waiting\n")
+	// This cleanup runs before the stop cleanup of startStandIn. It ends the
+	// stopped owner, so a stop that still waits for it can return.
+	t.Cleanup(func() {
+		mutex.Lock()
+		defer mutex.Unlock()
+		for _, pgid := range owners {
+			_ = syscall.Kill(-pgid, syscall.SIGKILL)
+			_ = syscall.Kill(-pgid, syscall.SIGCONT)
+		}
+	})
+	result := make(chan error, 1)
+	go func() { result <- d.stop(Limits{Stop: 5 * time.Second, Kill: 10 * time.Second}, false) }()
+	select {
+	case err := <-result:
+		if !errors.Is(err, syscall.EPERM) || err == nil || !strings.Contains(err.Error(), "is not reaped") {
+			t.Fatalf("stop with a stopped owner and a refused group signal = %v; want the signal error and the owner error", err)
+		}
+	case <-time.After(testLimit):
+		t.Fatalf("the stop did not return within %s", testLimit)
+	}
+}
+
+// Defect: the wait for the ready byte of the group owner ignores the start
+// context of the harness (round 3 finding N2). The owner here keeps its
+// stdout open and never sends the byte. An ended start context must refuse
+// the start, a cancellation must end the start, and a start deadline must
+// end the wait. Each must return far before groupOwnerReadyLimit (10 s).
+// Each wait has one time limit. No sleep, no retry.
+func TestStartGroupOwnerEndsWithTheStartContext(t *testing.T) {
+	previous := groupOwnerScript
+	groupOwnerScript = `trap "" TERM; exec cat`
+	t.Cleanup(func() { groupOwnerScript = previous })
+	const checkLimit = 5 * time.Second
+	ended, cancel := context.WithCancel(context.Background())
+	cancel()
+	deadline, stop := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer stop()
+	cancelled, cancelStart := context.WithCancel(context.Background())
+	defer cancelStart()
+	for name, ctx := range map[string]context.Context{
+		"an ended start context":                 ended,
+		"a start deadline before the ready byte": deadline,
+		"a cancellation while the owner starts":  cancelled,
+	} {
+		t.Run(name, func(t *testing.T) {
+			result := make(chan error, 1)
+			done := make(chan struct{})
+			// After a failure the start can still run, and it reads the seams
+			// of this check. So the cleanup waits once for its end, with one
+			// limit, before any seam is restored.
+			t.Cleanup(func() {
+				select {
+				case <-done:
+				case <-time.After(2 * groupOwnerReadyLimit):
+					t.Errorf("startGroupOwner did not end within %s", 2*groupOwnerReadyLimit)
+				}
+			})
+			go func() {
+				defer close(done)
+				owner, input, err := startGroupOwner(ctx)
+				if err == nil {
+					_ = killGroup(owner.Process.Pid)
+					_ = endGroupOwner(owner, input)
+				}
+				result <- err
+			}()
+			if ctx == cancelled {
+				cancelStart()
+			}
+			select {
+			case err := <-result:
+				if err == nil || !errors.Is(err, ctx.Err()) {
+					t.Fatalf("startGroupOwner = %v; want an error with the end of the start context", err)
+				}
+			case <-time.After(checkLimit):
+				t.Fatalf("startGroupOwner did not return within %s of an ended start context", checkLimit)
+			}
+		})
+	}
+}
+
+// Defect: when the second pipe of the group owner cannot be made, the first
+// pipe stays open (round 3 finding N3). The check makes the second pipe
+// fail and then requires that both ends of the first pipe are closed.
+func TestStartGroupOwnerClosesThePipesAfterASecondPipeFailure(t *testing.T) {
+	previous := newPipe
+	var first []*os.File
+	calls := 0
+	newPipe = func() (*os.File, *os.File, error) {
+		calls++
+		if calls > 1 {
+			return nil, nil, errors.New("no more pipes")
+		}
+		read, write, err := os.Pipe()
+		if err == nil {
+			first = append(first, read, write)
+		}
+		return read, write, err
+	}
+	t.Cleanup(func() {
+		newPipe = previous
+		for _, file := range first {
+			_ = file.Close()
+		}
+	})
+	if _, _, err := startGroupOwner(context.Background()); err == nil {
+		t.Fatal("startGroupOwner with a failed second pipe = nil error; want the pipe error")
+	}
+	if len(first) != 2 {
+		t.Fatalf("the first pipe was not made: %d ends", len(first))
+	}
+	if _, err := first[1].Write([]byte("x")); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("a write to the first pipe after the failure = %v; want os.ErrClosed", err)
+	}
+	if _, err := first[0].Read(make([]byte, 1)); !errors.Is(err, os.ErrClosed) {
+		t.Errorf("a read from the first pipe after the failure = %v; want os.ErrClosed", err)
 	}
 }
 

@@ -217,7 +217,7 @@ func (k *Keyring) startBus(ctx context.Context) error {
 	cmd := exec.Command(busDaemon, "--config-file="+config, "--nofork", "--nopidfile", "--print-address=1")
 	cmd.Env = []string{"PATH=/usr/bin:/bin", "LANG=C", "HOME=" + filepath.Join(k.dir, "home")}
 	cmd.Stdout = write
-	k.bus, err = startDaemon("dbus-daemon", cmd, filepath.Join(k.dir, "bus.log"))
+	k.bus, err = startDaemon(ctx, "dbus-daemon", cmd, filepath.Join(k.dir, "bus.log"))
 	_ = write.Close()
 	if err != nil {
 		return err
@@ -287,7 +287,7 @@ func (k *Keyring) startKeyring(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := k.startKeyringDaemon(); err != nil {
+	if err := k.startKeyringDaemon(ctx); err != nil {
 		return err
 	}
 	var owner string
@@ -317,7 +317,7 @@ func (k *Keyring) startKeyring(ctx context.Context) error {
 
 // startKeyringDaemon starts gnome-keyring-daemon. The random unlock password
 // goes only to the stdin pipe of the daemon, and the harness keeps no copy.
-func (k *Keyring) startKeyringDaemon() error {
+func (k *Keyring) startKeyringDaemon(ctx context.Context) error {
 	secret := make([]byte, 30)
 	if _, err := rand.Read(secret); err != nil {
 		return fmt.Errorf("keyring: generate the unlock password: %w", err)
@@ -339,7 +339,7 @@ func (k *Keyring) startKeyringDaemon() error {
 		"DBUS_SESSION_BUS_ADDRESS=" + k.address,
 	}
 	cmd.Stdin = read
-	k.keyring, err = startDaemon("gnome-keyring-daemon", cmd, filepath.Join(k.dir, "keyring.log"))
+	k.keyring, err = startDaemon(ctx, "gnome-keyring-daemon", cmd, filepath.Join(k.dir, "keyring.log"))
 	_ = read.Close()
 	if err != nil {
 		_ = write.Close()
@@ -399,6 +399,13 @@ const groupOwnerReadyLimit = 10 * time.Second
 // it.
 var signalGroup = func(pgid int, sig syscall.Signal) error { return syscall.Kill(-pgid, sig) }
 
+// groupOwnerScript is the shell script of a group owner. A developer check
+// replaces it.
+var groupOwnerScript = `trap "" TERM; printf r; exec cat > /dev/null`
+
+// newPipe makes one pipe. A developer check replaces it.
+var newPipe = os.Pipe
+
 // startGroupOwner starts the owner of the process group of one daemon. The
 // owner leads a new process group, ignores SIGTERM, writes one ready byte and
 // then reads its stdin pipe until end of file. Only this process holds that
@@ -406,34 +413,72 @@ var signalGroup = func(pgid int, sig syscall.Signal) error { return syscall.Kill
 // ID of the owner. The kernel keeps that ID while the owner runs and, after
 // it exits, until the harness reaps it. The owner ignores SIGTERM because the
 // stop sends SIGTERM to the whole group first. The ready byte shows that the
-// owner ignores SIGTERM before any signal can come.
-func startGroupOwner() (*exec.Cmd, io.WriteCloser, error) {
-	owner := exec.Command("/bin/sh", "-c", `trap "" TERM; printf r; exec cat > /dev/null`)
+// owner ignores SIGTERM before any signal can come. An ended start context
+// refuses the start. Each failure path closes every pipe end.
+func startGroupOwner(ctx context.Context) (*exec.Cmd, io.WriteCloser, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, nil, fmt.Errorf("the start limit ended before the group owner started: %w", err)
+	}
+	inRead, inWrite, err := newPipe()
+	if err != nil {
+		return nil, nil, fmt.Errorf("open the stdin pipe of the group owner: %w", err)
+	}
+	outRead, outWrite, err := newPipe()
+	if err != nil {
+		_ = inRead.Close()
+		_ = inWrite.Close()
+		return nil, nil, fmt.Errorf("open the stdout pipe of the group owner: %w", err)
+	}
+	owner := exec.Command("/bin/sh", "-c", groupOwnerScript)
 	owner.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	input, err := owner.StdinPipe()
-	if err != nil {
-		return nil, nil, err
+	owner.Stdin = inRead
+	owner.Stdout = outWrite
+	startErr := owner.Start()
+	// After the start, the owner holds its own copies of these two ends.
+	_ = inRead.Close()
+	_ = outWrite.Close()
+	if startErr != nil {
+		_ = inWrite.Close()
+		_ = outRead.Close()
+		return nil, nil, startErr
 	}
-	output, err := owner.StdoutPipe()
-	if err != nil {
-		return nil, nil, err
-	}
-	if err := owner.Start(); err != nil {
-		return nil, nil, err
-	}
-	readyErr := errors.New("the group owner sent no ready byte")
-	if file, ok := output.(*os.File); ok && file.SetReadDeadline(time.Now().Add(groupOwnerReadyLimit)) == nil {
-		ready := make([]byte, 1)
-		if n, err := file.Read(ready); n == 1 && ready[0] == 'r' {
-			readyErr = nil
-		} else if err != nil {
-			readyErr = fmt.Errorf("%w: %w", readyErr, err)
-		}
-	}
+	readyErr := awaitOwnerReady(ctx, outRead)
+	_ = outRead.Close()
 	if readyErr != nil {
-		return nil, nil, errors.Join(readyErr, killGroup(owner.Process.Pid), endGroupOwner(owner, input))
+		return nil, nil, errors.Join(readyErr, killGroup(owner.Process.Pid), endGroupOwner(owner, inWrite))
 	}
-	return owner, input, nil
+	return owner, inWrite, nil
+}
+
+// awaitOwnerReady reads the one ready byte of a group owner. The read ends at
+// the earlier of the deadline of ctx and groupOwnerReadyLimit, and at once
+// when ctx ends.
+func awaitOwnerReady(ctx context.Context, output *os.File) error {
+	deadline := time.Now().Add(groupOwnerReadyLimit)
+	startDeadline := false
+	if start, ok := ctx.Deadline(); ok && start.Before(deadline) {
+		deadline, startDeadline = start, true
+	}
+	if err := output.SetReadDeadline(deadline); err != nil {
+		return fmt.Errorf("the group owner sent no ready byte: %w", err)
+	}
+	stop := context.AfterFunc(ctx, func() { _ = output.SetReadDeadline(time.Now()) })
+	defer stop()
+	ready := make([]byte, 1)
+	n, err := output.Read(ready)
+	if n == 1 && ready[0] == 'r' {
+		return nil
+	}
+	if err == nil {
+		err = fmt.Errorf("the byte %q", ready[0])
+	}
+	cause := ctx.Err()
+	if cause == nil && startDeadline && errors.Is(err, os.ErrDeadlineExceeded) {
+		// The read deadline was the start deadline. The context can end a
+		// moment after the read does.
+		cause = context.DeadlineExceeded
+	}
+	return fmt.Errorf("the group owner sent no ready byte: %w", errors.Join(err, cause))
 }
 
 // killGroup sends SIGKILL to the process group pgid. ESRCH means that no
@@ -445,12 +490,29 @@ func killGroup(pgid int) error {
 	return nil
 }
 
-// endGroupOwner closes the stdin pipe of the owner and reaps it. The exit by
-// the final SIGKILL is expected. Each other exit is an error: the owner
-// exited before the final signal, or the final signal did not reach it.
+// groupOwnerEndLimit bounds the wait for the exit of a group owner after the
+// final group signal. A developer check sets a shorter value.
+var groupOwnerEndLimit = 10 * time.Second
+
+// endGroupOwner closes the stdin pipe of the owner and waits for its exit, at
+// most groupOwnerEndLimit. One goroutine reaps the owner. It keeps waiting
+// after the limit, so the owner is reaped when it exits. When the limit ends
+// first, the owner is not reaped, and no code signals its group after that
+// point. The exit by the final SIGKILL is expected. Each other exit is an
+// error: the owner exited before the final signal, or the final signal did
+// not reach it.
 func endGroupOwner(owner *exec.Cmd, input io.Closer) error {
 	_ = input.Close()
-	err := owner.Wait()
+	result := make(chan error, 1)
+	go func() { result <- owner.Wait() }()
+	limit := time.NewTimer(groupOwnerEndLimit)
+	defer limit.Stop()
+	var err error
+	select {
+	case err = <-result:
+	case <-limit.C:
+		return fmt.Errorf("keyring: the process group owner did not exit within %s of the final signal, so it is not reaped", groupOwnerEndLimit)
+	}
 	var exit *exec.ExitError
 	if errors.As(err, &exit) {
 		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
@@ -466,15 +528,20 @@ func endGroupOwner(owner *exec.Cmd, input io.Closer) error {
 // startDaemon starts cmd in the process group of a new group owner, with
 // stdout, when not set, and stderr in a new log file. A failed owner start,
 // or a failed join of its group, is an error, and the daemon does not start.
-func startDaemon(name string, cmd *exec.Cmd, logPath string) (*daemon, error) {
+// ctx is the shared start context: when it ends, the daemon does not start.
+func startDaemon(ctx context.Context, name string, cmd *exec.Cmd, logPath string) (*daemon, error) {
 	log, err := os.OpenFile(logPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("keyring: create the %s log: %w", name, err)
 	}
-	owner, ownerInput, err := startGroupOwner()
+	owner, ownerInput, err := startGroupOwner(ctx)
 	if err != nil {
 		_ = log.Close()
 		return nil, fmt.Errorf("keyring: start the process group owner of %s: %w", name, err)
+	}
+	if err := ctx.Err(); err != nil {
+		_ = log.Close()
+		return nil, errors.Join(fmt.Errorf("keyring: the start limit ended before %s started: %w", name, err), killGroup(owner.Process.Pid), endGroupOwner(owner, ownerInput))
 	}
 	if cmd.Stdout == nil {
 		cmd.Stdout = log
