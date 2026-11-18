@@ -3,6 +3,7 @@ package app_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/polymetrics-ai/pm-cli/internal/api"
@@ -169,6 +171,231 @@ func TestRegisteredCatalogBoundary(t *testing.T) {
 	if calls := downstreamCalls.Load(); calls != 0 {
 		t.Fatalf("catalog activity executed downstream callback %d times", calls)
 	}
+}
+
+// Go developer checks, not acceptance proof. The service of pm commands list
+// (CP11) lists only the commands whose operations the actor's grants name, for
+// every actor. Defect at c59aa20: a direct user whose grants named no operation
+// got every command of the connector.
+func TestCommandListFollowsOperationGrantsForEveryActor(t *testing.T) {
+	t.Parallel()
+	registry, err := connectors.NewRegistry(catalogBundle(t, "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"))
+	if err != nil {
+		t.Fatalf("construct immutable bundle registry: %v", err)
+	}
+	handlers := &app.HandlerRegistry{}
+	foundation := contract.FoundationContract{ID: "FND-6", Version: "1.0.0", Dependencies: []contract.FoundationRef{}}
+	capability := contract.CapabilityRequirement{Capability: "http.execute", Foundation: contract.FoundationRef{ID: foundation.ID, Version: foundation.Version}}
+	if err := handlers.RegisterHTTP(app.HandlerRegistration{
+		Lanes:        []contract.Lane{contract.LaneDirectRead},
+		Foundations:  []contract.FoundationContract{foundation},
+		Capabilities: []contract.CapabilityRequirement{capability},
+		Execute: func(context.Context, app.ExecutionRequest) (app.ExecutionObservation, error) {
+			return app.ExecutionObservation{}, errors.New("a command list never executes an operation")
+		},
+	}); err != nil {
+		t.Fatalf("register controlled read handler: %v", err)
+	}
+	var catalog *app.CatalogService
+	fixture := testfixture.NewOperation(t, "op-1", func(dependencies testfixture.ServiceDependencies, configuration *httpapi.ServiceConfig) error {
+		var err error
+		catalog, err = app.ServeCatalog(app.CatalogServiceConfig{
+			Pool:      dependencies.Pool,
+			Authorize: configuration.Auth.AuthorizeResource,
+			Registry:  registry,
+			Handlers:  handlers,
+		})
+		if err != nil {
+			return err
+		}
+		configuration.Catalog = catalog
+		return nil
+	})
+
+	t.Run("direct user with no operation grant gets no command", func(t *testing.T) {
+		setCatalogMembershipOperations(t, fixture, []string{})
+		if got := listedCatalogCommands(t, catalog, fixture, fixture.Actor); len(got) != 0 {
+			t.Fatalf("command list of a direct user with no operation grant = %q; want no command", got)
+		}
+	})
+	t.Run("direct user with no operation grant cannot inspect a command", func(t *testing.T) {
+		setCatalogMembershipOperations(t, fixture, []string{})
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		command, err := catalog.GetCommand(ctx, fixture.Actor, fixture.Scope, fixture.Connection.ConnectionID, "op-1")
+		requireCatalogFailure(t, err, "resource_not_found")
+		if command.OperationID != "" {
+			t.Fatalf("refused command inspection returned %#v", command)
+		}
+	})
+	t.Run("direct user with one operation grant gets exactly that command", func(t *testing.T) {
+		setCatalogMembershipOperations(t, fixture, []string{"op-1"})
+		if got := listedCatalogCommands(t, catalog, fixture, fixture.Actor); !slices.Equal(got, []string{"inspect-widget op-1"}) {
+			t.Fatalf("command list of a direct user with the op-1 grant = %q; want only inspect-widget op-1", got)
+		}
+	})
+	t.Run("service account keeps its current result", func(t *testing.T) {
+		withOne := insertCatalogServiceAccount(t, fixture, "service-account-one", []string{"op-1"})
+		withNone := insertCatalogServiceAccount(t, fixture, "service-account-none", []string{})
+		if got := listedCatalogCommands(t, catalog, fixture, withOne); !slices.Equal(got, []string{"inspect-widget op-1"}) {
+			t.Fatalf("command list of a service account with the op-1 grant = %q; want only inspect-widget op-1", got)
+		}
+		if got := listedCatalogCommands(t, catalog, fixture, withNone); len(got) != 0 {
+			t.Fatalf("command list of a service account with no operation grant = %q; want no command", got)
+		}
+	})
+	t.Run("delegated actor keeps its current result", func(t *testing.T) {
+		setCatalogMembershipOperations(t, fixture, []string{"op-1", "op-2"})
+		insertCatalogServiceAccount(t, fixture, "delegation-parent", []string{"op-1", "op-2"})
+		withOne := insertCatalogDelegation(t, fixture, "delegation-parent", "delegation-one", []string{"op-1"})
+		withNone := insertCatalogDelegation(t, fixture, "delegation-parent", "delegation-none", []string{})
+		if got := listedCatalogCommands(t, catalog, fixture, withOne); !slices.Equal(got, []string{"inspect-widget op-1"}) {
+			t.Fatalf("command list of a delegated actor with the op-1 grant = %q; want only inspect-widget op-1", got)
+		}
+		if got := listedCatalogCommands(t, catalog, fixture, withNone); len(got) != 0 {
+			t.Fatalf("command list of a delegated actor with no operation grant = %q; want no command", got)
+		}
+	})
+	t.Run("user acting as a service account is refused before the list", func(t *testing.T) {
+		setCatalogMembershipOperations(t, fixture, []string{"op-1", "op-2"})
+		insertCatalogServiceAccount(t, fixture, "effective-parent", []string{"op-1", "op-2"})
+		delegated := insertCatalogDelegation(t, fixture, "effective-parent", "effective-delegation", []string{"op-1"})
+		swapped := contract.Actor{
+			RequestedActor: delegated.EffectiveActor,
+			EffectiveActor: delegated.RequestedActor,
+			Delegation:     delegated.Delegation,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		page, err := catalog.ListCommands(ctx, swapped, fixture.Scope, fixture.Connection.ConnectionID, "", "", 100)
+		requireCatalogFailure(t, err, "grant_unavailable")
+		if len(page.Items) != 0 {
+			t.Fatalf("refused command list returned %#v", page)
+		}
+	})
+}
+
+// insertCatalogDelegation adds a delegation from the service account parentID
+// to the fixture's direct user, with exactly operationIDs, and returns the
+// delegated actor.
+func insertCatalogDelegation(t *testing.T, fixture *testfixture.Fixture, parentID, delegationID string, operationIDs []string) contract.Actor {
+	t.Helper()
+	ceiling := contract.GrantCeiling{
+		Scope:         fixture.Scope,
+		ConnectionIDs: []string{fixture.Connection.ConnectionID},
+		OperationIDs:  []string{"op-1", "op-2"},
+		ApprovalRefs:  []string{},
+		ExpiresAt:     time.Now().UTC().Add(30 * time.Minute).Truncate(time.Microsecond),
+	}
+	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		_, err := tx.Exec(ctx, `
+			INSERT INTO pm.delegations (
+				org_id, workspace_id, delegation_id, requested_actor_id, requested_actor_kind,
+				effective_actor_id, effective_actor_kind, parent_grant_ref, parent_connection_ids,
+				parent_operation_ids, parent_approval_refs, parent_expires_at, connection_ids,
+				operation_ids, policy_epoch, control_revision, expires_at, hop
+			) VALUES ($1, $2, $3, $4, 'service_account', $5, 'user', $4, $6::text[], $7::text[],
+				ARRAY[]::text[], $8, $6::text[], $9::text[], 1, 1, $8, 1)
+		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, delegationID, parentID,
+			fixture.Actor.RequestedActor.PrincipalID, ceiling.ConnectionIDs, ceiling.OperationIDs,
+			ceiling.ExpiresAt, operationIDs)
+		return err
+	})
+	return contract.Actor{
+		RequestedActor: contract.Principal{OrgID: fixture.Scope.OrgID, PrincipalID: parentID, Kind: contract.PrincipalServiceAccount},
+		EffectiveActor: fixture.Actor.RequestedActor,
+		Delegation: &contract.Delegation{
+			DelegationID: delegationID, ParentGrantRef: parentID, Hop: 1, ParentCeiling: ceiling,
+		},
+	}
+}
+
+// requireCatalogFailure fails unless err is the application failure code.
+func requireCatalogFailure(t *testing.T, err error, code string) {
+	t.Helper()
+	var failure *app.Failure
+	if !errors.As(err, &failure) || failure.Code != code {
+		t.Fatalf("catalog error = %v; want application failure %q", err, code)
+	}
+}
+
+// setCatalogMembershipOperations gives the fixture's direct user catalog.read
+// and sets its operation grants to exactly operationIDs (sorted, not nil).
+func setCatalogMembershipOperations(t *testing.T, fixture *testfixture.Fixture, operationIDs []string) {
+	t.Helper()
+	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `
+			UPDATE pm.memberships
+			SET permissions = ARRAY(
+					SELECT DISTINCT value
+					FROM unnest(permissions || ARRAY['catalog.read']) AS value
+					ORDER BY value
+				),
+				resource_grants = ARRAY(
+					SELECT value
+					FROM unnest(resource_grants || ARRAY['permission:catalog.read']) AS value
+					WHERE value NOT LIKE 'operation:%'
+					UNION
+					SELECT 'operation:' || value
+					FROM unnest($4::text[]) AS value
+					ORDER BY 1
+				),
+				operation_ids = $4::text[],
+				policy_epoch = policy_epoch + 1,
+				control_revision = control_revision + 1
+			WHERE org_id = $1 AND workspace_id = $2 AND identity_id = $3
+		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, fixture.Actor.RequestedActor.PrincipalID, operationIDs)
+		if err != nil {
+			return err
+		}
+		if tag.RowsAffected() != 1 {
+			return errors.New("catalog grant fixture update did not affect one membership")
+		}
+		return nil
+	})
+}
+
+// insertCatalogServiceAccount adds a service account with the fixture's
+// connection and exactly operationIDs, and returns its direct actor.
+func insertCatalogServiceAccount(t *testing.T, fixture *testfixture.Fixture, accountID string, operationIDs []string) contract.Actor {
+	t.Helper()
+	fixture.SetupSQL(t, fixture.Scope, func(ctx context.Context, tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO pm.identities (org_id, identity_id, kind, issuer, subject, revision)
+			VALUES ($1, $2, 'service_account', NULL, NULL, 1)
+		`, fixture.Scope.OrgID, accountID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO pm.service_accounts (
+				org_id, workspace_id, service_account_id, display_name, permissions, connection_ids,
+				operation_ids, policy_epoch, control_revision, expires_at
+			) VALUES ($1, $2, $3, NULL, ARRAY['catalog.read', 'connection.read'], ARRAY[$4::text], $5::text[],
+				1, 1, clock_timestamp() + interval '1 hour')
+		`, fixture.Scope.OrgID, fixture.Scope.WorkspaceID, accountID, fixture.Connection.ConnectionID, operationIDs)
+		return err
+	})
+	principal := contract.Principal{OrgID: fixture.Scope.OrgID, PrincipalID: accountID, Kind: contract.PrincipalServiceAccount}
+	return contract.Actor{RequestedActor: principal, EffectiveActor: principal}
+}
+
+// listedCatalogCommands returns "<name> <operation ID>" for each listed command.
+func listedCatalogCommands(t *testing.T, catalog *app.CatalogService, fixture *testfixture.Fixture, actor contract.Actor) []string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	page, err := catalog.ListCommands(ctx, actor, fixture.Scope, fixture.Connection.ConnectionID, "", "", 100)
+	if err != nil {
+		t.Fatalf("ListCommands(): %v", err)
+	}
+	if page.Items == nil || page.Next != "" {
+		t.Fatalf("command page = %#v; want one complete page", page)
+	}
+	listed := make([]string, 0, len(page.Items))
+	for _, command := range page.Items {
+		listed = append(listed, command.Name+" "+command.OperationID)
+	}
+	return listed
 }
 
 func catalogGET(t *testing.T, client *http.Client, endpoint string) ([]byte, int) {

@@ -188,17 +188,15 @@ func (service *CatalogService) ListCommands(
 	if err != nil {
 		return CatalogCommandPage{}, err
 	}
+	// The list holds only the commands whose operations the actor's grants
+	// name, for every actor. An empty grant list names no operation.
 	allowed := make(map[string]struct{}, len(authorization.OperationIDs))
 	for _, operationID := range authorization.OperationIDs {
 		allowed[operationID] = struct{}{}
 	}
-	restrictOperations := len(allowed) != 0 ||
-		actor.RequestedActor.Kind == contract.PrincipalServiceAccount ||
-		actor.EffectiveActor.Kind == contract.PrincipalServiceAccount ||
-		actor.Delegation != nil
 	commands := make([]CatalogCommand, 0, len(connector.Operations))
 	for _, operation := range connector.Operations {
-		if operation.Command == nil || (restrictOperations && !containsOperation(allowed, operation.Contract.OperationID)) {
+		if operation.Command == nil || !containsOperation(allowed, operation.Contract.OperationID) {
 			continue
 		}
 		command, projectionErr := service.projectCommand(connector, connectionID, operation, revision)
