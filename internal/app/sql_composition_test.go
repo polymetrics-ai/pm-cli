@@ -1048,10 +1048,11 @@ func (harness *sqlExecutionHarness) seedSQLExecutionSnapshot(
 				[]any{scope.OrgID, scope.WorkspaceID, runID, reference}},
 			{`INSERT INTO pm.schema_discoveries (
 					org_id, workspace_id, run_id, connection_id, connector_id, resource, relation_binding,
-					provider_account_id, permission_revision, source_revision
-				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+					relation_schema, relation_table, provider_account_id, permission_revision, source_revision
+				) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
 				[]any{scope.OrgID, scope.WorkspaceID, runID, binding.ConnectionID, binding.ConnectorID, binding.Resource,
-					sqlExecutionBinding, binding.ProviderAccountID, binding.PermissionRevision, binding.SourceRevision}},
+					sqlExecutionBinding, sqlExecutionSchema, sqlExecutionRelation,
+					binding.ProviderAccountID, binding.PermissionRevision, binding.SourceRevision}},
 			{`INSERT INTO pm.schema_snapshots (
 					org_id, workspace_id, connection_id, schema_ref, connector_id, provider_account_id,
 					permission_revision, resource, source_revision, complete, field_count, document,

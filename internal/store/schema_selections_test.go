@@ -175,6 +175,7 @@ func (fixture *schemaSelectionFixture) storeCandidates(t *testing.T, seeds ...st
 	discovery := SchemaDiscovery{
 		RunID: admitted.RunID, ConnectionID: fixture.connectionID, ConnectorID: selectionTestConnector,
 		Resource: selectionTestResource, RelationBinding: "postgres.reusable-relation",
+		Schema: "customer", Table: "records",
 		ProviderAccountID: fixture.accountID, PermissionRevision: selectionTestPermRev, SourceRevision: selectionTestSourceRev,
 	}
 	references := make([]string, 0, len(seeds))

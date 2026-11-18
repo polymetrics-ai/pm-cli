@@ -486,8 +486,8 @@ func seedSelectedSchema(
 				[]any{scope.OrgID, scope.WorkspaceID, runID, string(snapshot.Fingerprint)}},
 			{`INSERT INTO pm.schema_discoveries (
 					org_id, workspace_id, run_id, connection_id, connector_id, resource, relation_binding,
-					provider_account_id, permission_revision, source_revision
-				) VALUES ($1, $2, $3, $4, $5, $6, 'fixture.etl-relation', $7, $8, $9)`,
+					relation_schema, relation_table, provider_account_id, permission_revision, source_revision
+				) VALUES ($1, $2, $3, $4, $5, $6, 'fixture.etl-relation', 'fixture', 'etl_relation', $7, $8, $9)`,
 				[]any{scope.OrgID, scope.WorkspaceID, runID, binding.ConnectionID, binding.ConnectorID, binding.Resource,
 					binding.ProviderAccountID, binding.PermissionRevision, binding.SourceRevision}},
 			{`INSERT INTO pm.schema_snapshots (
