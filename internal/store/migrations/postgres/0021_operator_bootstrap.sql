@@ -100,8 +100,8 @@ REVOKE ALL ON TABLE pm.workspace_namespaces, pm.identities, pm.auth_bootstrap_id
 -- definer function below. The function sets the scope settings from its own
 -- checked input. The older permissive policies (pm_scope, pm_org_scope,
 -- pm_deployment_scope) then cover its inserts into the older tables. The read
--- policies let it see every row of the organization, in every workspace, for
--- its refusal of an organization that has rows.
+-- policies let it see every row of the organization, in every workspace and
+-- every deployment, for its refusal of an organization that has rows.
 CREATE POLICY pm_operator_bootstrap_read ON pm.bootstrap_records
     FOR SELECT TO pm_app_migrator
     USING (org_id = NULLIF(current_setting('pm.org_id', true), ''));
@@ -124,6 +124,11 @@ CREATE POLICY pm_operator_bootstrap_read ON pm.workspace_namespaces
     FOR SELECT TO pm_app_migrator
     USING (org_id = NULLIF(current_setting('pm.org_id', true), ''));
 CREATE POLICY pm_operator_bootstrap_read ON pm.memberships
+    FOR SELECT TO pm_app_migrator
+    USING (org_id = NULLIF(current_setting('pm.org_id', true), ''));
+-- pm_deployment_scope shows only the login bindings of the set deployment.
+-- This read shows the bindings of the organization in every deployment.
+CREATE POLICY pm_operator_bootstrap_read ON pm.auth_bootstrap_identities
     FOR SELECT TO pm_app_migrator
     USING (org_id = NULLIF(current_setting('pm.org_id', true), ''));
 
@@ -348,6 +353,7 @@ REVOKE ALL ON FUNCTION pm.operator_bootstrap(
 DROP FUNCTION pm.operator_bootstrap(
     text, text, text, text, text, text, text, text, text, text[], text[], text[], text[], bigint[], text, text
 );
+DROP POLICY pm_operator_bootstrap_read ON pm.auth_bootstrap_identities;
 DROP POLICY pm_operator_bootstrap_read ON pm.memberships;
 DROP POLICY pm_operator_bootstrap_read ON pm.workspace_namespaces;
 

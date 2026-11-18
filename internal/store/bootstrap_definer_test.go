@@ -218,3 +218,107 @@ func TestOperatorBootstrapFunctionIsOnlyForTheBootstrapRole(t *testing.T) {
 		t.Fatalf("pm.operator_bootstrap as the runtime role = %v; want refusal 42501", err)
 	}
 }
+
+// Check (ADR 0006, F1): pm.operator_bootstrap sees every row of the
+// organization before it writes. In each case the organization has one row in
+// exactly one of the seven bootstrap tables, and no bootstrap record for the
+// input scope. Where the table has a workspace, the row is in another
+// workspace than the input's. Where it has a deployment, the row is in another
+// deployment. The bootstrap must be refused as another input, and nothing
+// changes. Defect: a policy hides part of the organization from the function,
+// so a leaked credential bootstraps an organization that exists. The stack
+// administrator writes the one row with session_replication_role = replica, so
+// the foreign keys that would need a second row stay off for that statement.
+func TestOperatorBootstrapSeesEveryRowOfTheOrganization(t *testing.T) {
+	s := prepareBootstrapTestStore(t)
+	deploymentID, otherDeployment := "deployment-"+randomHex(t, 8), "deployment-"+randomHex(t, 8)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*bootstrapWaitLimit)
+	defer cancel()
+	admin, err := pgx.Connect(ctx, s.admin)
+	if err != nil {
+		t.Fatalf("connect the stack administrator: %v", err)
+	}
+	defer func() { _ = admin.Close(context.Background()) }()
+	type oneRow struct {
+		sql string
+		// arguments takes the organization, the other workspace and the other
+		// deployment, and returns the statement arguments.
+		arguments func(orgID, workspaceID, deploymentID string) []any
+	}
+	orgOnly := func(orgID, _, _ string) []any { return []any{orgID} }
+	orgAndWorkspace := func(orgID, workspaceID, _ string) []any { return []any{orgID, workspaceID} }
+	rows := map[string]oneRow{
+		"workspace_namespaces": {`
+			INSERT INTO pm.workspace_namespaces (org_id, workspace_id, name) VALUES ($1, $2, 'Other workspace')`, orgAndWorkspace},
+		"identities": {`
+			INSERT INTO pm.identities (org_id, identity_id, kind, issuer, subject, revision)
+			VALUES ($1, 'identity-other', 'user', 'https://identity.test.invalid', 'subject-other', 1)`, orgOnly},
+		"auth_bootstrap_identities": {`
+			INSERT INTO pm.auth_bootstrap_identities (
+				deployment_id, issuer, subject, org_id, principal_id, principal_kind, can_approve_devices, enabled
+			) VALUES ($2, 'https://identity.test.invalid', 'subject-other', $1, 'identity-other', 'user', false, true)`,
+			func(orgID, _, deploymentID string) []any { return []any{orgID, deploymentID} }},
+		"memberships": {`
+			INSERT INTO pm.memberships (
+				org_id, workspace_id, membership_id, identity_id, role,
+				resource_grants, permissions, connection_ids, operation_ids, policy_epoch, control_revision
+			) VALUES ($1, $2, 'membership-other', 'identity-other', 'member', ARRAY['permission:workspace.read'],
+				ARRAY['workspace.read'], ARRAY[]::text[], ARRAY[]::text[], 1, 1)`, orgAndWorkspace},
+		"provider_accounts": {`
+			INSERT INTO pm.provider_accounts (org_id, provider_account_id, provider, account_witness, capacity, revision, display_name)
+			VALUES ($1, 'provider-account-other', 'postgres', 'provider-account-other', 1, 1, 'Other account')`, orgOnly},
+		"bootstrap_records": {`
+			INSERT INTO pm.bootstrap_records (deployment_id, org_id, workspace_id, admin_identity_id, membership_id, input_digest)
+			VALUES ($3, $1, $2, 'identity-other', 'membership-other', 'sha256:' || repeat('0', 64))`,
+			func(orgID, workspaceID, deploymentID string) []any { return []any{orgID, workspaceID, deploymentID} }},
+		"workspace_audit_entries": {`
+			INSERT INTO pm.workspace_audit_entries (
+				org_id, workspace_id, audit_id, requested_actor_id, requested_actor_kind,
+				effective_actor_id, effective_actor_kind, action, target_ref, payload
+			) VALUES ($1, $2, 'audit-other', 'bootstrap', 'operator', 'bootstrap', 'operator', 'workspace.bootstrap', $2, '{}'::jsonb)`,
+			orgAndWorkspace},
+	}
+	if len(rows) != len(bootstrapTables) {
+		t.Fatalf("the check covers %d tables; want the %d bootstrap tables", len(rows), len(bootstrapTables))
+	}
+	for _, table := range bootstrapTables {
+		t.Run(table, func(t *testing.T) {
+			scope := newTestScope(t)
+			otherWorkspace := "workspace-" + randomHex(t, 8)
+			t.Cleanup(func() {
+				s.removeBootstrapRows(t, deploymentID, scope.OrgID)
+				s.removeBootstrapRows(t, otherDeployment, scope.OrgID)
+			})
+			tx, err := admin.Begin(ctx)
+			if err != nil {
+				t.Fatalf("begin the setup: %v", err)
+			}
+			_, setErr := tx.Exec(ctx, `SET LOCAL session_replication_role = replica`)
+			_, insertErr := tx.Exec(ctx, rows[table].sql, rows[table].arguments(scope.OrgID, otherWorkspace, otherDeployment)...)
+			if err := errors.Join(setErr, insertErr, tx.Commit(ctx)); err != nil {
+				_ = tx.Rollback(context.Background())
+				t.Fatalf("write the one pm.%s row of the organization: %v", table, err)
+			}
+			before := [2]map[string][]string{
+				s.readBootstrapRows(t, deploymentID, scope.OrgID), s.readBootstrapRows(t, otherDeployment, scope.OrgID),
+			}
+			// readBootstrapRows filters only these two tables by deployment.
+			got := rowCounts(before[0])[table]
+			if table == "bootstrap_records" || table == "auth_bootstrap_identities" {
+				got += rowCounts(before[1])[table]
+			}
+			if got != 1 {
+				t.Fatalf("the organization has %d pm.%s rows before the bootstrap; want 1", got, table)
+			}
+			if err := Bootstrap(ctx, s.pool, newBootstrapTestRequest(t, deploymentID, scope)); !errors.Is(err, ErrBootstrapScopeOtherInput) {
+				t.Errorf("bootstrap of an organization with one pm.%s row = %v; want %v", table, err, ErrBootstrapScopeOtherInput)
+			}
+			after := [2]map[string][]string{
+				s.readBootstrapRows(t, deploymentID, scope.OrgID), s.readBootstrapRows(t, otherDeployment, scope.OrgID),
+			}
+			if !reflect.DeepEqual(after, before) {
+				t.Errorf("the refused bootstrap changed the organization:\n got %v\nwant %v", after, before)
+			}
+		})
+	}
+}
