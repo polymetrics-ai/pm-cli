@@ -53,6 +53,7 @@ const (
 	identityProviderComposeFile      = "deploy/compose.identity.yaml"
 	identityProviderBinding          = "${PM_STACK_IDENTITY_PROVIDER_HOST:?}:${PM_STACK_IDENTITY_PROVIDER_PORT:?}:8443"
 	identityProviderUserVariable     = "${PM_STACK_IDENTITY_PROVIDER_USER:?}"
+	identityProviderImageVariable    = "${PM_STACK_IMAGE_KEYCLOAK:?}"
 	identityProviderImageUser        = "1000:0"
 	identityProviderBuildOutput      = "/opt/keycloak/lib/quarkus"
 	identityProviderReadinessTimeout = 4 * time.Minute
@@ -1182,6 +1183,12 @@ func validateIdentityOverlay(overlay identityOverlay) error {
 	if !exists || len(overlay.Networks) != 1 || network.Driver != "bridge" ||
 		len(network.Labels) != 1 || network.Labels["ai.polymetrics.pm-stack"] != "true" {
 		return fmt.Errorf("service %q must use its own bridge network %q, defined only in its overlay with the stack label", identityProviderService, identityProviderNetwork)
+	}
+	// The image is the digest-pinned reference that pm-stack sets from
+	// deploy/images.lock.json (crrao, m1). A tag in the overlay would make the
+	// pin hold only by convention.
+	if provider.Image != identityProviderImageVariable {
+		return fmt.Errorf("service %q must use the pinned image %s", identityProviderService, identityProviderImageVariable)
 	}
 	if provider.User != identityProviderUserVariable || !provider.ReadOnly ||
 		!slices.Equal(provider.CapDrop, []string{"ALL"}) || len(provider.CapAdd) != 0 ||
