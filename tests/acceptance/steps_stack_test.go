@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -35,6 +36,9 @@ type stackScenario struct {
 	keyring    *keyring.Keyring
 	workspace  string
 	result     commandResult
+	// secondListener is the listener of step N2. The scenario close step
+	// closes it.
+	secondListener *net.TCPListener
 }
 
 // startedProcess is one process that the starter started, with the report of
@@ -80,6 +84,7 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness) {
 	sc.Step(`^the lane command stdout contains the lane deployment ID$`, scenario.result.stdoutHasDeploymentID)
 	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.result.stderrContains)
 	registerStartedServerSteps(sc, scenario)
+	registerListenerSteps(sc, scenario)
 }
 
 // newConfiguration is step 1. It runs the shared build and migration step,
@@ -345,6 +350,9 @@ func (s *stackScenario) close() error {
 		if report.Stop != starter.StopNone && (report.Stop != starter.StopAfterSIGTERM || report.ExitCode != 0) {
 			errs = append(errs, fmt.Errorf("stop %s at the end of the scenario: %s", name, report))
 		}
+	}
+	if s.secondListener != nil {
+		errs = append(errs, s.secondListener.Close())
 	}
 	if s.deployment != nil {
 		errs = append(errs, s.deployment.close())
