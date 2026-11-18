@@ -22,6 +22,7 @@ const BootstrapEndpointMember = "pm-app-bootstrap-endpoint"
 // stderr line after the "pm-server: " prefix.
 var (
 	ErrBootstrapScopeExists         = store.ErrBootstrapScopeExists
+	ErrBootstrapScopeOtherInput     = store.ErrBootstrapScopeOtherInput
 	ErrBootstrapLoginBound          = store.ErrBootstrapLoginBound
 	ErrBootstrapWorkspaceName       = errors.New("bootstrap workspace name is required")
 	ErrBootstrapAdminSubject        = errors.New("bootstrap admin subject is required")
@@ -31,9 +32,13 @@ var (
 
 // The other failures of the operator bootstrap. ADR 0006 does not name them.
 var (
-	ErrBootstrapInput          = errors.New("bootstrap input is invalid")
-	ErrBootstrapFailed         = errors.New("bootstrap failed and wrote nothing")
-	ErrBootstrapOutcomeUnknown = errors.New("bootstrap outcome is unknown; run the same bootstrap again")
+	ErrBootstrapInput  = errors.New("bootstrap input is invalid")
+	ErrBootstrapFailed = errors.New("bootstrap failed and wrote nothing")
+	// After an unknown outcome, the same bootstrap again gives the outcome:
+	// success (the first did not commit), ErrBootstrapScopeExists (the scope
+	// holds a bootstrap of the same input), or ErrBootstrapScopeOtherInput
+	// (another bootstrap took the scope).
+	ErrBootstrapOutcomeUnknown = errors.New("bootstrap outcome is unknown; run the same bootstrap again to learn the outcome")
 )
 
 const (
@@ -309,6 +314,8 @@ func bootstrapFailure(err error) error {
 	switch {
 	case errors.Is(err, store.ErrCommitOutcomeUnknown):
 		return ErrBootstrapOutcomeUnknown
+	case errors.Is(err, store.ErrBootstrapScopeOtherInput):
+		return ErrBootstrapScopeOtherInput
 	case errors.Is(err, store.ErrBootstrapScopeExists):
 		return ErrBootstrapScopeExists
 	case errors.Is(err, store.ErrBootstrapLoginBound):
