@@ -227,12 +227,9 @@ func readListenerState(listener *net.TCPListener) (listenerState, error) {
 			callErr = fmt.Errorf("getsockopt SO_TYPE: %w", callErr)
 			return
 		}
-		accepting, err := syscall.GetsockoptInt(int(fd), syscall.SOL_SOCKET, syscall.SO_ACCEPTCONN)
-		if err != nil {
-			callErr = fmt.Errorf("getsockopt SO_ACCEPTCONN: %w", err)
+		if state.listening, callErr = socketListens(int(fd)); callErr != nil {
 			return
 		}
-		state.listening = accepting != 0
 		name, err := syscall.Getsockname(int(fd))
 		if err != nil {
 			callErr = fmt.Errorf("getsockname: %w", err)

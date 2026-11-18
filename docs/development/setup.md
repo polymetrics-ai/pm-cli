@@ -194,7 +194,7 @@ A starter can give `pm-server` a TCP socket that the starter has already bound a
 ```
 
 - The number rules of `--ready-fd` apply. The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. When `--ready-fd` is also present, the two values must be different.
-- `pm-server` reads the raw `--listen-fd` value while it reads the flags. It checks the value after the `--config` and `--secrets-directory` checks and before it opens the configuration. No refusal line contains the raw value or the address, because a command line can carry private text by mistake. The `--ready-fd` refusals repeat the value, as before.
+- `pm-server` reads the raw `--listen-fd` value while it reads the flags. It checks the value after the `--config` and `--secrets-directory` checks and before it opens the configuration. No refusal line contains the raw value or the address, because a command line can carry private text by mistake. When the value is missing, `pm-server` takes the next argument as the value. Then the argument after it can appear in the line `pm-server: unknown command "<argument>" for "pm-server"`. The `--ready-fd` refusals repeat the value, as before.
 - Without the flag, `pm-server` binds `server.listen` itself. With the flag, `pm-server` binds no address. It serves on the socket of descriptor `n`. When a check fails, `pm-server` stops. It never binds `server.listen` in place of the inherited socket.
 - `pm-server` checks descriptor `n` after it reads and checks its configuration, and before it opens the application. The descriptor must obey these rules, in this order:
   1. It is open and has no close-on-exec flag. A descriptor with that flag belongs to `pm-server` itself.
