@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+"""Developer tests of the fail paths of scripts/ci/check-ci-image.py (#323).
+
+They use fixture directories and stubs, so they run on any host. They are
+developer checks, not acceptance proof. The `image` check runs the real check
+inside the job image.
+"""
+import contextlib
+import errno
+import importlib.util
+import io
+import os
+from pathlib import Path
+import stat
+import tempfile
+import unittest
+
+ROOT = Path(__file__).resolve().parents[2]
+SPEC = importlib.util.spec_from_file_location("check_ci_image", ROOT / "scripts/ci/check-ci-image.py")
+check = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(check)
+
+
+def no_capability(path):
+    return False
+
+
+class CheckCiImage(unittest.TestCase):
+    def setUp(self):
+        check.failures.clear()
+        self.directory = tempfile.TemporaryDirectory()
+        self.root = Path(self.directory.name)
+        self.output = io.StringIO()
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def run_check(self, function, *args, **kwargs):
+        with contextlib.redirect_stdout(self.output):
+            function(*args, **kwargs)
+        return list(check.failures), self.output.getvalue()
+
+    def file(self, relative, mode=0o644):
+        path = self.root / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("fixture\n")
+        path.chmod(mode)
+        return path
+
+    def assert_failed_without_pass(self, failures, output, text):
+        self.assertTrue(any(text in failure for failure in failures), failures)
+        self.assertNotIn("PASS", output)
+
+    def test_the_repository_records_parse(self):
+        record = check.read_record()
+        self.assertEqual(len(record), 72)
+        files, closed = check.read_privileged()
+        self.assertTrue(files)
+        self.assertIn("/root", closed)
+
+    def test_a_clean_fixture_passes(self):
+        self.file("usr/bin/tool", 0o755)
+        failures, output = self.run_check(check.check_privileges, {}, set(),
+                                          root=str(self.root), capability=no_capability)
+        self.assertEqual(failures, [])
+        self.assertIn("PASS 1 regular files", output)
+
+    def test_an_unrecorded_setuid_file_fails(self):
+        # The file of a package outside the record, for example an extra
+        # package that a later Dockerfile change adds.
+        path = self.file("usr/bin/extra", 0o755)
+        path.chmod(0o4755)
+        self.assertTrue(path.stat().st_mode & stat.S_ISUID, "the fixture needs a setuid bit")
+        failures, output = self.run_check(check.check_privileges, {}, set(),
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "/usr/bin/extra is setuid or setgid (4755")
+
+    def test_a_recorded_setuid_file_with_another_mode_or_missing_fails(self):
+        self.file("usr/bin/su", 0o755)
+        recorded = {"/usr/bin/su": f"4755 {os.getuid()}:{os.getgid()}"}
+        failures, output = self.run_check(check.check_privileges, recorded, set(),
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "/usr/bin/su is in privileged-files.txt")
+
+    def test_a_capability_fails(self):
+        self.file("usr/bin/daemon", 0o755)
+        failures, output = self.run_check(check.check_privileges, {}, set(), root=str(self.root),
+                                          capability=lambda path: path.endswith("/daemon"))
+        self.assert_failed_without_pass(failures, output, "/usr/bin/daemon has a file capability")
+
+    def test_an_unreadable_capability_state_fails(self):
+        self.file("usr/bin/daemon", 0o755)
+
+        def broken(path):
+            raise OSError(errno.ENOTSUP, os.strerror(errno.ENOTSUP), path)
+
+        failures, output = self.run_check(check.check_privileges, {}, set(),
+                                          root=str(self.root), capability=broken)
+        self.assert_failed_without_pass(failures, output, "/usr/bin/daemon: file capabilities cannot be read")
+
+    def test_the_capability_read_accepts_only_enodata(self):
+        def raises(number):
+            def getxattr(path, name, follow_symlinks=True):
+                raise OSError(number, os.strerror(number), path)
+            return getxattr
+
+        original = getattr(os, "getxattr", None)
+        try:
+            os.getxattr = raises(errno.ENODATA)
+            self.assertFalse(check.read_capability("/usr/bin/daemon"))
+            os.getxattr = raises(errno.EACCES)
+            with self.assertRaises(OSError):
+                check.read_capability("/usr/bin/daemon")
+            os.getxattr = lambda path, name, follow_symlinks=True: b"\x01"
+            self.assertTrue(check.read_capability("/usr/bin/daemon"))
+        finally:
+            if original is None:
+                del os.getxattr
+            else:
+                os.getxattr = original
+
+    def test_closed_directories_must_match_the_record(self):
+        self.assertNotEqual(os.geteuid(), 0, "run the developer tests as a normal user")
+        closed = self.root / "root"
+        closed.mkdir()
+        closed.chmod(0o700 & ~0o500)
+        try:
+            failures, output = self.run_check(check.check_privileges, {}, {"/var/cache/ldconfig"},
+                                              root=str(self.root), capability=no_capability)
+        finally:
+            closed.chmod(0o700)
+        self.assert_failed_without_pass(failures, output, "closed directory /root: the walk cannot read it")
+        self.assertTrue(any("closed directory /var/cache/ldconfig: recorded in privileged-files.txt, "
+                            "but it does not exist" in failure for failure in failures), failures)
+
+    def test_a_recorded_closed_directory_open_to_others_fails(self):
+        (self.root / "home/ubuntu").mkdir(parents=True)
+        (self.root / "home/ubuntu").chmod(0o755)
+        failures, output = self.run_check(check.check_privileges, {}, {"/home/ubuntu"},
+                                          root=str(self.root), capability=no_capability)
+        self.assert_failed_without_pass(failures, output, "closed directory /home/ubuntu: recorded")
+
+    def test_an_activation_file_fails(self):
+        services = self.root / "dbus-1/services"
+        services.mkdir(parents=True)
+        (services / "a.service").write_text("[D-BUS Service]\nName = org.freedesktop.secrets\nExec=/usr/bin/other\n")
+        (services / "b.service").write_text("[D-BUS Service]\nName=org.gnome.keyring\nExec=/usr/bin/gnome-keyring-daemon --start\n")
+        failures, output = self.run_check(check.check_activation, (str(self.root / "dbus-1"),))
+        self.assert_failed_without_pass(failures, output, "a.service activates org.freedesktop.secrets")
+        self.assertTrue(any("b.service starts gnome-keyring-daemon" in failure for failure in failures))
+
+    def test_package_differences_fail(self):
+        record = {"dbus-daemon": "1.14.10-4ubuntu4.1", "gnome-keyring": "46.1-2ubuntu0.2"}
+        installed = {"gnome-keyring": ("46.1-2ubuntu0.1", "ii"), "dbus-x11": ("1.14.10-4ubuntu4.1", "ii")}
+        launch = self.file("usr/bin/dbus-launch", 0o755)
+        failures, output = self.run_check(check.check_packages, record, installed,
+                                          binary_directories=(str(launch.parent),))
+        self.assert_failed_without_pass(failures, output, "package dbus-daemon is not installed")
+        self.assertTrue(any("package gnome-keyring is 46.1-2ubuntu0.1" in failure for failure in failures))
+        self.assertTrue(any("package dbus-x11 is installed" in failure for failure in failures))
+        self.assertTrue(any(failure.endswith("/usr/bin/dbus-launch exists") for failure in failures))
+
+
+if __name__ == "__main__":
+    unittest.main()

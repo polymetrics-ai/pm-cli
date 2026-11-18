@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/base64"
@@ -18,6 +19,7 @@ import (
 	"io"
 	"math/big"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -33,6 +35,13 @@ const (
 	maximumDynamicConfigBytes  = 1 << 20
 	rolloverNamespaceSuffix    = "-rollover"
 	rolloverHistoryEventTarget = 64
+
+	// The job identity provider is a test-only Keycloak realm. Its admin
+	// client is a service account with only the realm-management roles that
+	// create one client and one user.
+	identityProviderDirectory   = "identity-provider"
+	identityProviderRealm       = "pm-test"
+	identityProviderAdminClient = "pm-test-admin"
 )
 
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
@@ -56,6 +65,7 @@ var portNames = []string{
 	"S3_PRIMARY",
 	"S3_SECONDARY",
 	"PUBLIC",
+	"IDENTITY_PROVIDER",
 }
 
 type fixtureOptions struct {
@@ -74,6 +84,9 @@ type certificateBundle map[string][]byte
 type privateFile struct {
 	relativePath string
 	contents     []byte
+	// groupReadable files are bind-mounted into the identity provider, whose
+	// non-root user reads them through the job account's group.
+	groupReadable bool
 }
 
 type fixtureMaterial struct {
@@ -451,6 +464,12 @@ func generateFixtureMaterial(
 		contents:     []byte(base64.StdEncoding.EncodeToString(sseBytes)),
 	})
 
+	identityFiles, identityEnvironment, err := generateIdentityProviderMaterial(options, ports["IDENTITY_PROVIDER"], now)
+	if err != nil {
+		return fixtureMaterial{}, err
+	}
+	files = append(files, identityFiles...)
+
 	configuration, err := selectConfiguration(example, options.project, ports)
 	if err != nil {
 		return fixtureMaterial{}, err
@@ -475,6 +494,9 @@ func generateFixtureMaterial(
 	}
 	for _, name := range portNames {
 		environment["PM_STACK_"+name+"_PORT"] = ports[name]
+	}
+	for name, value := range identityEnvironment {
+		environment[name] = value
 	}
 	environmentJSON, err := json.MarshalIndent(environment, "", "  ")
 	if err != nil {
@@ -534,16 +556,15 @@ func appendCertificateFiles(
 	return files
 }
 
-func generateCertificateBundle(realm, project string, includeClient bool, now time.Time) (certificateBundle, error) {
+func newCertificateAuthority(realm, project string, now time.Time) (*x509.Certificate, *ecdsa.PrivateKey, []byte, error) {
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
 	caSerial, err := randomSerial()
 	if err != nil {
-		return nil, err
+		return nil, nil, nil, err
 	}
-	now = now.UTC()
 	caTemplate := &x509.Certificate{
 		SerialNumber:          caSerial,
 		Subject:               pkix.Name{CommonName: "PMCLI disposable " + project + " " + realm + " CA"},
@@ -555,11 +576,18 @@ func generateCertificateBundle(realm, project string, includeClient bool, now ti
 	}
 	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
 	if err != nil {
+		return nil, nil, nil, err
+	}
+	return caTemplate, caKey, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), nil
+}
+
+func generateCertificateBundle(realm, project string, includeClient bool, now time.Time) (certificateBundle, error) {
+	now = now.UTC()
+	caTemplate, caKey, caPEM, err := newCertificateAuthority(realm, project, now)
+	if err != nil {
 		return nil, err
 	}
-	bundle := certificateBundle{
-		"ca.pem": pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}),
-	}
+	bundle := certificateBundle{"ca.pem": caPEM}
 
 	issue := func(name string, usages []x509.ExtKeyUsage) error {
 		leafKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -602,6 +630,136 @@ func generateCertificateBundle(realm, project string, includeClient bool, now ti
 		}
 	}
 	return bundle, nil
+}
+
+// generateIdentityProviderBundle issues a stack CA and an RSA 2048 server
+// identity that names only the provider's second loopback address. The login
+// spike showed that Keycloak reads this PKCS#8 RSA form.
+func generateIdentityProviderBundle(project string, address netip.Addr, now time.Time) (certificateBundle, error) {
+	now = now.UTC()
+	caTemplate, caKey, caPEM, err := newCertificateAuthority(identityProviderDirectory, project, now)
+	if err != nil {
+		return nil, err
+	}
+	leafKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		return nil, err
+	}
+	serial, err := randomSerial()
+	if err != nil {
+		return nil, err
+	}
+	leafTemplate := &x509.Certificate{
+		SerialNumber:          serial,
+		Subject:               pkix.Name{CommonName: "PMCLI disposable " + project + " identity provider"},
+		IPAddresses:           []net.IP{net.IP(address.AsSlice())},
+		NotBefore:             now.Add(-time.Hour),
+		NotAfter:              now.Add(48 * time.Hour),
+		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+		BasicConstraintsValid: true,
+	}
+	certificateDER, err := x509.CreateCertificate(rand.Reader, leafTemplate, caTemplate, &leafKey.PublicKey, caKey)
+	if err != nil {
+		return nil, err
+	}
+	privateKeyDER, err := x509.MarshalPKCS8PrivateKey(leafKey)
+	if err != nil {
+		return nil, err
+	}
+	return certificateBundle{
+		"ca.pem":         caPEM,
+		"server.pem":     pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: certificateDER}),
+		"server-key.pem": pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateKeyDER}),
+	}, nil
+}
+
+// selectSecondLoopbackAddress picks a random IPv4 loopback address other than
+// 127.0.0.1 for each job. A distinct address gives the identity provider its
+// own cookie host. The address is never written in code or configuration.
+func selectSecondLoopbackAddress(random io.Reader) (netip.Addr, error) {
+	first := netip.AddrFrom4([4]byte{127, 0, 0, 1})
+	for range 16 {
+		var octets [3]byte
+		if _, err := io.ReadFull(random, octets[:]); err != nil {
+			return netip.Addr{}, fmt.Errorf("read random loopback address: %w", err)
+		}
+		if octets[2] == 0 || octets[2] == 255 {
+			continue
+		}
+		address := netip.AddrFrom4([4]byte{127, octets[0], octets[1], octets[2]})
+		if address != first {
+			return address, nil
+		}
+	}
+	return netip.Addr{}, errors.New("no second loopback address was selected")
+}
+
+// generateIdentityProviderMaterial writes the provider's TLS identity, its
+// realm import and the admin client credential. The admin secret is random
+// for each job and stays out of the safe environment.
+func generateIdentityProviderMaterial(options fixtureOptions, port string, now time.Time) ([]privateFile, map[string]string, error) {
+	address, err := selectSecondLoopbackAddress(rand.Reader)
+	if err != nil {
+		return nil, nil, err
+	}
+	bundle, err := generateIdentityProviderBundle(options.project, address, now)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate identity provider TLS material: %w", err)
+	}
+	secret, err := randomHex(32)
+	if err != nil {
+		return nil, nil, fmt.Errorf("generate identity provider admin secret: %w", err)
+	}
+	realm, err := json.MarshalIndent(map[string]any{
+		"realm":               identityProviderRealm,
+		"enabled":             true,
+		"sslRequired":         "all",
+		"registrationAllowed": false,
+		"clients": []map[string]any{{
+			"clientId":                  identityProviderAdminClient,
+			"enabled":                   true,
+			"protocol":                  "openid-connect",
+			"publicClient":              false,
+			"bearerOnly":                false,
+			"clientAuthenticatorType":   "client-secret",
+			"secret":                    secret,
+			"serviceAccountsEnabled":    true,
+			"standardFlowEnabled":       false,
+			"implicitFlowEnabled":       false,
+			"directAccessGrantsEnabled": false,
+			"frontchannelLogout":        false,
+			"redirectUris":              []string{},
+			"webOrigins":                []string{},
+		}},
+		"users": []map[string]any{{
+			"username":               "service-account-" + identityProviderAdminClient,
+			"enabled":                true,
+			"serviceAccountClientId": identityProviderAdminClient,
+			"clientRoles": map[string][]string{
+				"realm-management": {"manage-clients", "manage-users"},
+			},
+		}},
+	}, "", "  ")
+	if err != nil {
+		return nil, nil, errors.New("encode identity provider realm import")
+	}
+	directory := filepath.Join(options.root, identityProviderDirectory)
+	host := address.String()
+	files := []privateFile{
+		{relativePath: filepath.Join(identityProviderDirectory, "ca.pem"), contents: bundle["ca.pem"]},
+		{relativePath: filepath.Join(identityProviderDirectory, "server.pem"), contents: bundle["server.pem"], groupReadable: true},
+		{relativePath: filepath.Join(identityProviderDirectory, "server-key.pem"), contents: bundle["server-key.pem"], groupReadable: true},
+		{relativePath: filepath.Join(identityProviderDirectory, "realm.json"), contents: append(realm, '\n'), groupReadable: true},
+		{relativePath: filepath.Join(identityProviderDirectory, "admin-client-id"), contents: []byte(identityProviderAdminClient)},
+		{relativePath: filepath.Join(identityProviderDirectory, "admin-client-secret"), contents: []byte(secret)},
+	}
+	environment := map[string]string{
+		"PM_STACK_IDENTITY_PROVIDER_HOST":   host,
+		"PM_STACK_IDENTITY_PROVIDER_ISSUER": "https://" + net.JoinHostPort(host, port) + "/realms/" + identityProviderRealm,
+		"PM_STACK_IDENTITY_PROVIDER_DIR":    directory,
+	}
+	return files, environment, nil
 }
 
 func randomSerial() (*big.Int, error) {
@@ -770,6 +928,7 @@ func persistFixture(root string, material fixtureMaterial) error {
 		filepath.Join("secrets", "operator", "postgres"),
 		filepath.Join("secrets", "operator", "temporal"),
 		filepath.Join("secrets", "operator", "artifacts"),
+		identityProviderDirectory,
 	} {
 		if err := os.Mkdir(filepath.Join(root, directory), 0o700); err != nil {
 			return fmt.Errorf("create private fixture directory: %w", err)
@@ -779,14 +938,18 @@ func persistFixture(root string, material fixtureMaterial) error {
 		if !filepath.IsLocal(file.relativePath) {
 			return errors.New("fixture file path is not local")
 		}
-		if err := writePrivateFile(filepath.Join(root, file.relativePath), file.contents); err != nil {
+		mode := os.FileMode(0o600)
+		if file.groupReadable {
+			mode = 0o640
+		}
+		if err := writePrivateFile(filepath.Join(root, file.relativePath), file.contents, mode); err != nil {
 			return fmt.Errorf("write private fixture member %q: %w", file.relativePath, err)
 		}
 	}
 	return nil
 }
 
-func writePrivateFile(path string, contents []byte) error {
+func writePrivateFile(path string, contents []byte, mode os.FileMode) error {
 	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return err
@@ -795,7 +958,7 @@ func writePrivateFile(path string, contents []byte) error {
 	if writeErr == nil && written != int64(len(contents)) {
 		writeErr = io.ErrShortWrite
 	}
-	modeErr := file.Chmod(0o600)
+	modeErr := file.Chmod(mode)
 	closeErr := file.Close()
 	return errors.Join(writeErr, modeErr, closeErr)
 }
