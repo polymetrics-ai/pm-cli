@@ -66,6 +66,23 @@ func TestLaneGivesItsPmServerTheHeldListener(t *testing.T) {
 		}
 	})
 
+	// W1b plan v2.2, M6: a restart that fails must not keep the held
+	// socket open until the deployment closes.
+	t.Run("a failed restart releases the held listener", func(t *testing.T) {
+		l := &lane{deployment: newLaneListenerDeployment(t), restartsServer: true}
+		l.holdListenerForRestart()
+		configuration := writeLaneFakeConfiguration(t, l.deployment.listen)
+		startLaneFakeServer(t, l, fake, configuration)
+		l.deployment.servedThroughEdge()
+		missing := filepath.Join(t.TempDir(), "missing.json")
+		if err := l.restartServerBinary(context.Background(), fake, missing); err == nil {
+			t.Fatal("a restart with no configuration file = nil error; want a failed start")
+		}
+		if err := bindAddressOnce(l.deployment.listen); err != nil {
+			t.Fatalf("a bind of the held address after the failed restart = %v; want a free address", err)
+		}
+	})
+
 	t.Run("a scenario without the restart tag releases the listener after the first answer", func(t *testing.T) {
 		l := &lane{deployment: newLaneListenerDeployment(t)}
 		l.holdListenerForRestart()
