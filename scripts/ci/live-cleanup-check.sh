@@ -64,15 +64,23 @@ check_receipt() {
     fi
     case "$line" in
       complete=true) complete=yes ;;
-      'sink='*' count='*' complete' | 'sink='*' count='*' incomplete')
-        name=${line#sink=} count=${line#* count=}
-        name=${name%% *} count=${count%% *}
+      sink=*)
+        # The exact grammar: sink=NAME count=DIGITS complete|incomplete (#403 F6).
+        name=${line#sink=}
+        name=${name%% *}
+        rest=${line#"sink=$name count="}
+        count=${rest%% *}
+        state=${rest#"$count "}
+        case "$count" in '' | *[!0-9]*) fail 'scan receipt: a line with an unknown format' && return ;; esac
+        if [ "$line" != "sink=$name count=$count $state" ] || { [ "$state" != complete ] && [ "$state" != incomplete ]; }; then
+          fail 'scan receipt: a line with an unknown format' && return
+        fi
         case " $sinks " in *" $name "*) ;; *) fail 'scan receipt: an unknown sink' && return ;; esac
         case " $seen " in *" $name "*) fail "scan receipt: $name twice" && return ;; esac
         seen="$seen $name"
         case "$count" in '' | *[!0-9]*) fail "scan receipt: $name has no count" && return ;; esac
         [ "$count" -eq 0 ] || fail "scan receipt: $name has $count matches"
-        [ "${line##* }" = complete ] || fail "scan receipt: $name is incomplete"
+        [ "$state" = complete ] || fail "scan receipt: $name is incomplete"
         ;;
       *) fail 'scan receipt: a line with an unknown format' && return ;;
     esac

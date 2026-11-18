@@ -160,7 +160,14 @@ class CleanupCheck(unittest.TestCase):
                   "no final line": RECEIPT.replace("complete=true\n", ""),
                   "unknown format": RECEIPT + "x\n", "a line after the end": RECEIPT + RECEIPT[:30] + "\n",
                   "unknown sink": "sink=other count=0 complete\n" + RECEIPT,
-                  "a sink twice": RECEIPT.splitlines(True)[0] + RECEIPT, "missing": None, "two run roots": RECEIPT}
+                  "a sink twice": RECEIPT.splitlines(True)[0] + RECEIPT, "missing": None, "two run roots": RECEIPT,
+                  # #403 F6: the exact grammar of each line.
+                  "extra fields": RECEIPT.replace("postgresql count=0 complete", "postgresql count=0 count=1 complete"),
+                  "trailing text": RECEIPT.replace("postgresql count=0 complete", "postgresql count=0 complete x"),
+                  "double space": RECEIPT.replace("postgresql count=0", "postgresql  count=0"),
+                  "no state": RECEIPT.replace("postgresql count=0 complete", "postgresql count=0"),
+                  "last line changed": RECEIPT.replace("complete=true\n", "complete=false\n"),
+                  "last line with a space": RECEIPT.replace("complete=true\n", "complete=true \n")}
         for name, text in faults.items():
             with self.subTest(case=name):
                 self.host.run_root.mkdir(parents=True, exist_ok=True)
