@@ -55,20 +55,27 @@ type fakeWorker struct {
 	fatal    chan<- error
 	stops    atomic.Int32
 	selfStop chan struct{}
+	// pollerStarted and pollerExited show whether the poller that Start
+	// began still runs. The poller closes pollerExited when it returns.
+	pollerStarted atomic.Bool
+	pollerExited  chan struct{}
 }
 
 func newFakeWorker(log *eventLog, fatal chan<- error) *fakeWorker {
 	return &fakeWorker{
-		log:      log,
-		work:     make(chan chan struct{}),
-		quit:     make(chan struct{}),
-		fatal:    fatal,
-		selfStop: make(chan struct{}),
+		log:          log,
+		work:         make(chan chan struct{}),
+		quit:         make(chan struct{}),
+		fatal:        fatal,
+		selfStop:     make(chan struct{}),
+		pollerExited: make(chan struct{}),
 	}
 }
 
 func (w *fakeWorker) Start() error {
+	w.pollerStarted.Store(true)
 	go func() {
+		defer close(w.pollerExited)
 		for {
 			select {
 			case done := <-w.work:
@@ -88,6 +95,31 @@ func (w *fakeWorker) Start() error {
 func (w *fakeWorker) Stop() {
 	w.stops.Add(1)
 	w.quitOnce.Do(func() { close(w.quit) })
+}
+
+// pollerRunning reports, with no wait, whether the poller that Start began
+// still runs.
+func (w *fakeWorker) pollerRunning() bool {
+	if !w.pollerStarted.Load() {
+		return false
+	}
+	select {
+	case <-w.pollerExited:
+		return false
+	default:
+		return true
+	}
+}
+
+// stopPoller ends the poller that Start began, with no Stop call, so the
+// Stop count of the run path stays as the test asserted it. It waits once
+// for the poller to return, with the one test limit (awaitSignal).
+func (w *fakeWorker) stopPoller(t *testing.T) {
+	t.Helper()
+	w.quitOnce.Do(func() { close(w.quit) })
+	if w.pollerStarted.Load() {
+		awaitSignal(t, w.pollerExited, "return of the fake poller")
+	}
 }
 
 func (w *fakeWorker) fail(err error) {
@@ -272,6 +304,9 @@ func startRunPath(t *testing.T) *runPathRun {
 		cancel:   cancel,
 		returned: make(chan error, 1),
 	}
+	// A run path that takes the fatal path makes no Stop call, so nothing
+	// else ends the fake poller. The cleanup ends it when the subtest ends.
+	t.Cleanup(func() { run.worker.stopPoller(t) })
 	started := make(chan struct{})
 	run.worker.onStart = func() { close(started) }
 	go func() { run.returned <- runWorker(ctx, run.worker, run.fatal, nil) }()
@@ -285,8 +320,12 @@ func startRunPath(t *testing.T) *runPathRun {
 // path, or that calls Stop twice. Each case runs once. No case repeats a run
 // until a race happens. The double close inside the SDK is a proof limit.
 func TestRunPathCallsStopOnlyOnTheContextPath(t *testing.T) {
+	// Each subtest keeps its fake worker here. After the subtest ended, its
+	// poller must have ended too (requirePollerEnded).
+	var worker *fakeWorker
 	t.Run("the context ends first", func(t *testing.T) {
 		run := startRunPath(t)
+		worker = run.worker
 		run.cancel()
 		if err := awaitReturn(t, run.returned, "after the context ended"); err != nil {
 			t.Fatalf("run path after the context ended: %v", err)
@@ -295,8 +334,11 @@ func TestRunPathCallsStopOnlyOnTheContextPath(t *testing.T) {
 			t.Fatalf("run path made %d Stop calls when the context ended first, want exactly 1", got)
 		}
 	})
+	requirePollerEnded(t, "the context ends first", worker)
+	worker = nil
 	t.Run("a fatal error comes first", func(t *testing.T) {
 		run := startRunPath(t)
+		worker = run.worker
 		run.fatal <- errors.New("non-retryable poll error")
 		err := awaitReturn(t, run.returned, "after a fatal worker error")
 		if err == nil || err.Error() != "Temporal worker stopped after a fatal runtime error" {
@@ -306,11 +348,15 @@ func TestRunPathCallsStopOnlyOnTheContextPath(t *testing.T) {
 			t.Fatalf("run path made %d Stop calls after it took the fatal path, want none", got)
 		}
 	})
+	requirePollerEnded(t, "a fatal error comes first", worker)
+	worker = nil
 	t.Run("both come before the run path acts", func(t *testing.T) {
 		ctx, cancel := context.WithCancel(context.Background())
 		t.Cleanup(cancel)
 		fatal := make(chan error, 1)
 		sdkWorker := newFakeWorker(&eventLog{}, nil)
+		worker = sdkWorker
+		t.Cleanup(func() { sdkWorker.stopPoller(t) })
 		// Both inputs come during Start, so both are there before the run
 		// path chooses its path.
 		sdkWorker.onStart = func() {
@@ -332,6 +378,22 @@ func TestRunPathCallsStopOnlyOnTheContextPath(t *testing.T) {
 			t.Fatalf("run path took the fatal path and made %d Stop calls, want none", got)
 		}
 	})
+	requirePollerEnded(t, "both come before the run path acts", worker)
+}
+
+// requirePollerEnded fails the test when the poller of a subtest's fake
+// worker still runs after that subtest ended. It reads the state once, with
+// no wait. Defect it catches: a subtest that leaves a goroutine running
+// after it ends, for example the fake poller of a run path that took the
+// fatal path and so made no Stop call.
+func requirePollerEnded(t *testing.T, subtest string, worker *fakeWorker) {
+	t.Helper()
+	if worker == nil {
+		t.Fatalf("subtest %q kept no fake worker", subtest)
+	}
+	if worker.pollerRunning() {
+		t.Errorf("the fake poller of subtest %q still runs after the subtest ended", subtest)
+	}
 }
 
 // Fact (c). Defect: a kept handle without FD_CLOEXEC after the check. The
