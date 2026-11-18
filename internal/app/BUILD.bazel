@@ -56,9 +56,12 @@ go_test(
         "capabilities_test.go",
         "catalog_test.go",
         "connector_composition_test.go",
+        "continuation_page_test.go",
+        "export_test.go",
         "generated_github_read_test.go",
         "http_continuation_test.go",
         "http_execution_test.go",
+        "http_publication_test.go",
         "http_retry_test.go",
         "lifecycle_test.go",
         "load_boundary_test.go",
@@ -66,6 +69,7 @@ go_test(
         "provider_http_tls_test.go",
         "sql_composition_test.go",
         "worker_plan_test.go",
+        "worker_result_receipt_test.go",
         "worker_results_test.go",
         "worker_runtime_test.go",
     ],
@@ -102,6 +106,7 @@ go_test(
         "//internal/runtime",
         "//internal/schema",
         "//internal/store",
+        "//internal/sync",
         "//internal/temporal",
         "//internal/testfixture",
         "//internal/testfixture/githubcompat",
@@ -110,6 +115,29 @@ go_test(
         "@com_github_jackc_pgx_v5//pgconn",
         "@io_temporal_go_sdk//client",
         "@io_temporal_go_sdk//worker",
+    ],
+)
+
+go_test(
+    name = "continuation_page_test",
+    srcs = ["continuation_page_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/contract",
+        "//internal/objects",
+        "//internal/runtime",
+        "//internal/store",
+        "//internal/sync",
+    ],
+)
+
+go_test(
+    name = "worker_result_receipt_test",
+    srcs = ["worker_result_receipt_test.go"],
+    embed = [":app"],
+    deps = [
+        "//internal/contract",
+        "//internal/store",
     ],
 )
 

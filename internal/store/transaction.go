@@ -154,6 +154,39 @@ func WithinTransaction(ctx context.Context, pool *Pool, fn TransactionFunc) (err
 	return nil
 }
 
+// WithinSavepoint runs fn inside a savepoint of tx. When fn returns nil, the
+// changes of fn stay in tx. When fn returns an error, WithinSavepoint discards
+// every change of fn, keeps tx usable and returns that error. When the
+// discard itself fails, the returned error does not wrap the error of fn, so
+// a caller cannot take a failed discard for a discarded change. The caller
+// must then fail the whole transaction.
+func WithinSavepoint(ctx context.Context, tx *Transaction, fn TransactionFunc) error {
+	if ctx == nil {
+		return errors.New("savepoint context is required")
+	}
+	if tx == nil || tx.tx == nil {
+		return errors.New("store transaction is required")
+	}
+	if fn == nil {
+		return errors.New("savepoint callback is required")
+	}
+	savepoint, err := tx.tx.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin store savepoint: %w", err)
+	}
+	nested := &Transaction{tx: savepoint, scope: tx.scope, actor: tx.actor, scoped: tx.scoped}
+	if callbackErr := fn(context.WithValue(ctx, transactionContextKey{}, nested), nested); callbackErr != nil {
+		if rollbackErr := savepoint.Rollback(ctx); rollbackErr != nil {
+			return fmt.Errorf("roll back store savepoint: %w", rollbackErr)
+		}
+		return callbackErr
+	}
+	if err := savepoint.Commit(ctx); err != nil {
+		return fmt.Errorf("release store savepoint: %w", err)
+	}
+	return nil
+}
+
 func detachedCleanupContext() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), cleanupTimeout)
 }
