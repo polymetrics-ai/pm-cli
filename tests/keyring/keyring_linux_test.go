@@ -39,6 +39,9 @@ func TestStartChecksTheSecretsOwner(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Every exit of the test stops the keyring. Stop acts once, so the
+	// explicit Stop below and this cleanup stop nothing twice.
+	t.Cleanup(func() { _ = k.Stop() })
 	dir := k.dir
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
@@ -75,7 +78,7 @@ func TestStartRefusesAForeignSecretsOwner(t *testing.T) {
 	parent := shortParent(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	_, err := start(parent, linuxLimits(), func(address string) error {
+	k, err := start(parent, linuxLimits(), func(address string) error {
 		// The foreign owner keeps the name until the test ends.
 		conn, err := dbus.Connect(address, dbus.WithContext(ctx))
 		if err != nil {
@@ -87,6 +90,10 @@ func TestStartRefusesAForeignSecretsOwner(t *testing.T) {
 		}
 		return nil
 	})
+	if k != nil {
+		// A start that was wrongly accepted is still stopped.
+		t.Cleanup(func() { _ = k.Stop() })
+	}
 	if err == nil || !strings.Contains(err.Error(), "not the keyring daemon that the harness started") {
 		t.Fatalf("start() = %v, want the owner refusal", err)
 	}

@@ -13,14 +13,18 @@
 // limit, covers the whole start: the bus address line, the first owner change
 // of org.freedesktop.secrets and the bus calls of the owner check. The stop
 // sends SIGTERM to each process group, waits once up to the stop limit, then
-// sends SIGKILL and waits once up to the kill limit.
+// sends SIGKILL and waits once up to the kill limit. When a process of a group
+// stays after its leader exited, the stop sends SIGKILL to that group and
+// reports it. Each stop acts once.
 package keyring
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"io"
@@ -28,6 +32,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -66,6 +71,9 @@ type Keyring struct {
 	// beforeKeyring runs after the bus check and before the keyring daemon
 	// starts. Only the Go developer tests set it.
 	beforeKeyring func(address string) error
+	// stopOnce makes Stop act once. A later call returns the first result.
+	stopOnce sync.Once
+	stopErr  error
 }
 
 // daemon is one started process in its own process group. done closes after
@@ -75,6 +83,9 @@ type daemon struct {
 	cmd  *exec.Cmd
 	done chan struct{}
 	log  string
+	// stopOnce makes stop act once. A later call returns the first result.
+	stopOnce sync.Once
+	stopErr  error
 }
 
 // Start makes a new 0700 directory in parent and starts the bus and the
@@ -119,13 +130,16 @@ func (k *Keyring) start(ctx context.Context) error {
 
 // busConfiguration is the private bus configuration. It lists no
 // <servicedir> and no <standard_session_servicedirs/>, so the bus activates
-// no service (D1-10).
+// no service (D1-10). The listen address escapes the socket path as a D-Bus
+// address value, and the configuration escapes that address as XML text.
 func busConfiguration(socket string) string {
+	var listen bytes.Buffer
+	_ = xml.EscapeText(&listen, []byte("unix:path="+escapeAddressValue(socket)))
 	return `<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
   <type>session</type>
-  <listen>unix:path=` + socket + `</listen>
+  <listen>` + listen.String() + `</listen>
   <auth>EXTERNAL</auth>
   <policy context="default">
     <allow send_destination="*" eavesdrop="true"/>
@@ -134,6 +148,49 @@ func busConfiguration(socket string) string {
   </policy>
 </busconfig>
 `
+}
+
+// escapeAddressValue escapes a value of a D-Bus address: each byte outside
+// [-0-9A-Za-z_/.\\*] becomes %XX (D-Bus specification, "Server Addresses").
+func escapeAddressValue(value string) string {
+	var escaped strings.Builder
+	for _, b := range []byte(value) {
+		switch {
+		case b >= '0' && b <= '9', b >= 'A' && b <= 'Z', b >= 'a' && b <= 'z',
+			b == '-', b == '_', b == '/', b == '.', b == '\\', b == '*':
+			escaped.WriteByte(b)
+		default:
+			fmt.Fprintf(&escaped, "%%%02x", b)
+		}
+	}
+	return escaped.String()
+}
+
+// addressSocketPath returns the decoded path of a unix:path= address, up to
+// its first key separator. It reports false for any other address.
+func addressSocketPath(address string) (string, bool) {
+	value, ok := strings.CutPrefix(address, "unix:path=")
+	if !ok {
+		return "", false
+	}
+	value, _, _ = strings.Cut(value, ",")
+	var path []byte
+	for index := 0; index < len(value); index++ {
+		if value[index] != '%' {
+			path = append(path, value[index])
+			continue
+		}
+		if index+2 >= len(value) {
+			return "", false
+		}
+		var b byte
+		if _, err := fmt.Sscanf(value[index+1:index+3], "%02x", &b); err != nil {
+			return "", false
+		}
+		path = append(path, b)
+		index += 2
+	}
+	return string(path), true
 }
 
 // startBus starts dbus-daemon and waits for its address line, the one line
@@ -173,7 +230,7 @@ func (k *Keyring) startBus(ctx context.Context) error {
 	case <-ctx.Done():
 		return fmt.Errorf("keyring: dbus-daemon printed no address within the start limit %s", k.limits.Start)
 	}
-	if k.address != "unix:path="+socket && !strings.HasPrefix(k.address, "unix:path="+socket+",") {
+	if path, ok := addressSocketPath(k.address); !ok || path != socket {
 		return fmt.Errorf("keyring: dbus-daemon did not print the address of its private socket: %s", k.bus.logTail())
 	}
 	return nil
@@ -306,12 +363,18 @@ func (k *Keyring) KeyringPID() int {
 // Stop stops the keyring daemon and the bus, removes the keyring directory,
 // and checks that it is gone. It reports each cleanup failure: a daemon that
 // exited before the stop, a daemon that needed SIGKILL or did not exit, a
-// process that is left in a daemon process group, and a directory that is
-// still there.
+// process that was left in a daemon process group, and a directory that is
+// still there. It acts once. A later call returns the first result, so a
+// fallback cleanup after an explicit Stop stops nothing twice.
 func (k *Keyring) Stop() error {
 	if k == nil {
 		return nil
 	}
+	k.stopOnce.Do(func() { k.stopErr = k.stop() })
+	return k.stopErr
+}
+
+func (k *Keyring) stop() error {
 	errs := []error{k.keyring.stop(k.limits, k.ready), k.bus.stop(k.limits, k.ready)}
 	if k.busOutput != nil {
 		errs = append(errs, k.busOutput.Close())
@@ -349,18 +412,23 @@ func startDaemon(name string, cmd *exec.Cmd, logPath string) (*daemon, error) {
 	return d, nil
 }
 
-// stop runs the stop sequence once. A daemon that exited before the stop is
-// an error when the keyring was ready.
+// stop runs the stop sequence once. A later call returns the first result. A
+// daemon that exited before the stop is an error when the keyring was ready.
 func (d *daemon) stop(limits Limits, ready bool) error {
 	if d == nil {
 		return nil
 	}
+	d.stopOnce.Do(func() { d.stopErr = d.stopSequence(limits, ready) })
+	return d.stopErr
+}
+
+func (d *daemon) stopSequence(limits Limits, ready bool) error {
 	select {
 	case <-d.done:
 		if ready {
-			return errors.Join(fmt.Errorf("keyring: %s exited before the stop: %s", d.name, d.cmd.ProcessState), d.groupGone())
+			return errors.Join(fmt.Errorf("keyring: %s exited before the stop: %s", d.name, d.cmd.ProcessState), d.killSurvivors())
 		}
-		return d.groupGone()
+		return d.killSurvivors()
 	default:
 	}
 	group := -d.cmd.Process.Pid
@@ -369,7 +437,7 @@ func (d *daemon) stop(limits Limits, ready bool) error {
 	defer stopTimer.Stop()
 	select {
 	case <-d.done:
-		return d.groupGone()
+		return d.killSurvivors()
 	case <-stopTimer.C:
 	}
 	_ = syscall.Kill(group, syscall.SIGKILL)
@@ -377,29 +445,42 @@ func (d *daemon) stop(limits Limits, ready bool) error {
 	defer killTimer.Stop()
 	select {
 	case <-d.done:
-		return errors.Join(fmt.Errorf("keyring: %s did not exit within %s of SIGTERM and needed SIGKILL", d.name, limits.Stop), d.groupGone())
+		return errors.Join(fmt.Errorf("keyring: %s did not exit within %s of SIGTERM and needed SIGKILL", d.name, limits.Stop), d.killSurvivors())
 	case <-killTimer.C:
 		return fmt.Errorf("keyring: %s (process %d) did not exit within %s of SIGKILL", d.name, d.cmd.Process.Pid, limits.Kill)
 	}
 }
 
-// groupGone makes one observation, with no wait: no process of the daemon
-// process group is left.
-func (d *daemon) groupGone() error {
-	if err := syscall.Kill(-d.cmd.Process.Pid, 0); !errors.Is(err, syscall.ESRCH) {
-		return fmt.Errorf("keyring: a process of the %s process group is still there after its exit", d.name)
+// killSurvivors runs after the leader of the daemon process group exited. It
+// makes one observation, with no wait. When a process of the group is left,
+// it sends SIGKILL to the whole group and reports that process. A process
+// group keeps its ID while one of its processes runs, so the signal reaches
+// only that group.
+func (d *daemon) killSurvivors() error {
+	group := -d.cmd.Process.Pid
+	if err := syscall.Kill(group, 0); errors.Is(err, syscall.ESRCH) {
+		return nil
 	}
-	return nil
+	_ = syscall.Kill(group, syscall.SIGKILL)
+	return fmt.Errorf("keyring: a process of the %s process group was still there after its leader exited, and the stop sent SIGKILL to the group", d.name)
 }
 
-// logTail returns the last bytes of the daemon log, for a start error.
+// logTail returns at most the last logLimit bytes of the daemon log, for a
+// start error. It reads only those bytes, not the whole log.
 func (d *daemon) logTail() string {
-	contents, err := os.ReadFile(d.log)
+	file, err := os.Open(d.log)
 	if err != nil {
 		return "(no log)"
 	}
-	if len(contents) > logLimit {
-		contents = contents[len(contents)-logLimit:]
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return "(no log)"
+	}
+	offset := max(info.Size()-logLimit, 0)
+	contents, err := io.ReadAll(io.NewSectionReader(file, offset, logLimit))
+	if err != nil {
+		return "(no log)"
 	}
 	return fmt.Sprintf("%s log: %q", d.name, contents)
 }
