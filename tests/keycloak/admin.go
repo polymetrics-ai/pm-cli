@@ -8,8 +8,10 @@
 // the exact edge callback as its only redirect URI, and one user with a random
 // password (D1-6). The secrets stay in memory. The admin client secret travels
 // only in the Basic client authentication header of the HTTPS token request.
-// The deployment secrets travel only in HTTPS request bodies. Every error text
-// redacts them. Each request waits once, with one limit, and nothing repeats.
+// The deployment secrets travel only in HTTPS request bodies. No error text
+// holds an answer body or the text of a transport error, and no format verb
+// prints a secret-bearing value. Each request waits once, with one limit, and
+// nothing repeats.
 package keycloak
 
 import (
@@ -32,7 +34,12 @@ import (
 
 const answerLimit = 64 << 10
 
-// Config is the stack identity interface of slice L-a.
+// errNotSent marks a request that the admin client refused or could not build.
+// No byte of it reached the network.
+var errNotSent = errors.New("no request was sent")
+
+// Config is the stack identity interface of slice L-a. It holds the admin
+// client secret, so its Format prints no field.
 type Config struct {
 	// Issuer is the exact issuer of the test realm:
 	// https://<address>/realms/<test realm>.
@@ -48,32 +55,56 @@ type Config struct {
 	Transport http.RoundTripper
 }
 
-// Admin is the scoped admin client. It holds the admin client secret.
+const (
+	redactedConfig   = "Keycloak admin configuration [REDACTED]"
+	redactedAdmin    = "Keycloak admin client [REDACTED]"
+	redactedIdentity = "deployment identity [REDACTED]"
+)
+
+// Format writes the same text for every verb and flag, for a value and a
+// pointer, so that no verb prints a field.
+func (Config) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, redactedConfig) }
+func (Config) String() string                 { return redactedConfig }
+func (Config) GoString() string               { return redactedConfig }
+
+// Admin is the scoped admin client. It holds the admin client secret behind a
+// pointer: when fmt prints an Admin as a field that it cannot call methods on,
+// it prints only the address of the secret.
 type Admin struct {
 	issuer   string
 	origin   string
 	realm    string
 	clientID string
-	secret   string
+	secret   *secretText
 	limit    time.Duration
 	client   *http.Client
 }
 
-func (*Admin) String() string   { return "Keycloak admin client [REDACTED]" }
-func (*Admin) GoString() string { return "Keycloak admin client [REDACTED]" }
+// secretText holds one secret. No method of this package formats it.
+type secretText struct{ value string }
+
+func (Admin) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, redactedAdmin) }
+func (Admin) String() string                 { return redactedAdmin }
+func (Admin) GoString() string               { return redactedAdmin }
 
 // Identity is the client and the user of one deployment. It holds secrets.
+// issuer binds it to the admin client that created it. unresolved names each
+// collection whose creation request has no known outcome: the object can
+// exist although Provision has no URL for it.
 type Identity struct {
 	ClientID     string
 	ClientSecret string
 	Username     string
 	Password     string
+	issuer       string
 	clientURL    string
 	userURL      string
+	unresolved   []string
 }
 
-func (Identity) String() string   { return "deployment identity [REDACTED]" }
-func (Identity) GoString() string { return "deployment identity [REDACTED]" }
+func (Identity) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, redactedIdentity) }
+func (Identity) String() string                 { return redactedIdentity }
+func (Identity) GoString() string               { return redactedIdentity }
 
 // New checks the configuration. It sends no request.
 func New(config Config) (*Admin, error) {
@@ -104,7 +135,7 @@ func New(config Config) (*Admin, error) {
 		origin:   issuer.Scheme + "://" + issuer.Host,
 		realm:    realm,
 		clientID: config.ClientID,
-		secret:   config.ClientSecret,
+		secret:   &secretText{value: config.ClientSecret},
 		limit:    config.RequestLimit,
 		client: &http.Client{
 			Transport:     transport,
@@ -131,7 +162,7 @@ func (a *Admin) CheckScope() error {
 			return fmt.Errorf("keycloak: ask for a change to %s: %w", target.name, err)
 		}
 		if status != http.StatusForbidden {
-			return fmt.Errorf("keycloak: the scoped admin client was not refused a change to %s: status %d, want 403: %s", target.name, status, a.redact(text, token))
+			return fmt.Errorf("keycloak: the scoped admin client was not refused a change to %s: status %d, want 403%s", target.name, status, answerCode(text))
 		}
 	}
 	return nil
@@ -145,6 +176,7 @@ func (a *Admin) Provision(callback string) (*Identity, error) {
 		return nil, errors.New("keycloak: the callback must be an https URL with no query or fragment")
 	}
 	identity := &Identity{
+		issuer:       a.issuer,
 		ClientID:     "pm-acceptance-" + randomHex(6),
 		ClientSecret: randomSecret(),
 		Username:     "pm-operator-" + randomHex(6),
@@ -193,29 +225,58 @@ func (a *Admin) Provision(callback string) (*Identity, error) {
 }
 
 // Remove deletes the user and the client that Provision created. It sends
-// each deletion once and reports each one that failed.
+// each deletion once and reports each one that failed. It reports each
+// creation with no known outcome, because that object can still exist. It
+// refuses, before any request, an identity of another admin client or realm
+// and a deletion URL outside the users and clients of its own test realm.
 func (a *Admin) Remove(identity *Identity) error {
-	if identity == nil || (identity.userURL == "" && identity.clientURL == "") {
+	if identity == nil || (identity.userURL == "" && identity.clientURL == "" && len(identity.unresolved) == 0) {
 		return nil
 	}
-	token, err := a.token()
-	if err != nil {
-		return fmt.Errorf("keycloak: remove the deployment identity: %w", err)
+	if identity.issuer != a.issuer {
+		return errors.New("keycloak: the deployment identity belongs to another admin client or realm: no request was sent")
+	}
+	items := []struct{ name, collection, target string }{
+		{"user", "users", identity.userURL},
+		{"client", "clients", identity.clientURL},
+	}
+	for _, item := range items {
+		if item.target != "" && !a.ownsObject(item.target, item.collection) {
+			return fmt.Errorf("keycloak: the deployment %s URL is not in the %s of the test realm: no request was sent", item.name, item.collection)
+		}
 	}
 	var errs []error
-	for _, item := range []struct{ name, target string }{{"user", identity.userURL}, {"client", identity.clientURL}} {
-		if item.target == "" {
-			continue
-		}
-		status, _, text, err := a.do(http.MethodDelete, item.target, token, nil)
-		if err == nil && status != http.StatusNoContent {
-			err = fmt.Errorf("status %d, want 204: %s", status, a.redact(text, token, identity.ClientSecret, identity.Password))
-		}
+	if identity.userURL != "" || identity.clientURL != "" {
+		token, err := a.token()
 		if err != nil {
-			errs = append(errs, fmt.Errorf("keycloak: remove the deployment %s: %w", item.name, err))
+			errs = append(errs, fmt.Errorf("keycloak: remove the deployment identity: %w", err))
+		} else {
+			for _, item := range items {
+				if item.target == "" {
+					continue
+				}
+				status, _, text, err := a.do(http.MethodDelete, item.target, token, nil)
+				if err == nil && status != http.StatusNoContent {
+					err = fmt.Errorf("status %d, want 204%s", status, answerCode(text))
+				}
+				if err != nil {
+					errs = append(errs, fmt.Errorf("keycloak: remove the deployment %s: %w", item.name, err))
+				}
+			}
 		}
 	}
+	for _, collection := range identity.unresolved {
+		errs = append(errs, fmt.Errorf("keycloak: the deployment %s can exist: its creation request has no known outcome, and Remove has no URL for it",
+			strings.TrimSuffix(collection, "s")))
+	}
 	return errors.Join(errs...)
+}
+
+// ownsObject reports whether target is one object of collection in the test
+// realm of this admin client.
+func (a *Admin) ownsObject(target, collection string) bool {
+	id, ok := strings.CutPrefix(target, a.origin+"/admin/realms/"+a.realm+"/"+collection+"/")
+	return ok && id != "" && !strings.ContainsAny(id, "/?#%")
 }
 
 // Leaks names each secret of the admin client and of the identity that data
@@ -224,7 +285,7 @@ func (a *Admin) Remove(identity *Identity) error {
 // It is detection, not a boundary.
 func (a *Admin) Leaks(data []byte, identity *Identity) []string {
 	names := []string{"admin client secret"}
-	values := [][]string{append(forms(a.secret), forms(a.basicCredential())...)}
+	values := [][]string{append(forms(a.secret.value), forms(a.basicCredential())...)}
 	if identity != nil {
 		names = append(names, "deployment client secret", "deployment user password")
 		values = append(values, forms(identity.ClientSecret), forms(identity.Password))
@@ -245,7 +306,7 @@ func (a *Admin) Leaks(data []byte, identity *Identity) []string {
 // form-encoded client ID and secret, joined by a colon (RFC 6749, section
 // 2.3.1).
 func (a *Admin) basicCredential() string {
-	return url.QueryEscape(a.clientID) + ":" + url.QueryEscape(a.secret)
+	return url.QueryEscape(a.clientID) + ":" + url.QueryEscape(a.secret.value)
 }
 
 // token gets an access token for the admin client with the client
@@ -258,9 +319,9 @@ func (a *Admin) token() (string, error) {
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, a.issuer+"/protocol/openid-connect/token", strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", fmt.Errorf("keycloak: build the token request: %w", err)
+		return "", errors.New("keycloak: build the token request")
 	}
-	request.SetBasicAuth(url.QueryEscape(a.clientID), url.QueryEscape(a.secret))
+	request.SetBasicAuth(url.QueryEscape(a.clientID), url.QueryEscape(a.secret.value))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	status, _, text, err := a.send(request)
 	if err != nil {
@@ -271,41 +332,57 @@ func (a *Admin) token() (string, error) {
 		TokenType   string `json:"token_type"`
 	}
 	if status != http.StatusOK || json.Unmarshal(text, &answer) != nil || answer.AccessToken == "" || !strings.EqualFold(answer.TokenType, "Bearer") {
-		return "", fmt.Errorf("keycloak: the token request got status %d, want 200 with a bearer token: %s", status, a.redact(text, answer.AccessToken))
+		return "", fmt.Errorf("keycloak: the token request got status %d, want 200 with a bearer token%s", status, answerCode(text))
 	}
 	return answer.AccessToken, nil
 }
 
 // create posts one representation to a collection of the test realm and
-// returns the URL of the new object from the Location header.
+// returns the URL of the new object from the Location header. It returns a
+// valid URL also with an error, for example when the answer body could not
+// be read after 201: Remove can then delete the object. It records the
+// collection in identity.unresolved when the outcome is not known: no answer,
+// or 201 with no valid Location. It never sends the request again.
 func (a *Admin) create(token, collection string, representation map[string]any, identity *Identity) (string, error) {
 	body, err := json.Marshal(representation)
 	if err != nil {
-		return "", fmt.Errorf("keycloak: encode the deployment %s: %w", collection, err)
+		return "", fmt.Errorf("keycloak: encode the deployment %s", collection)
 	}
 	defer clear(body)
 	base := a.origin + "/admin/realms/" + a.realm + "/" + collection
 	status, header, text, err := a.do(http.MethodPost, base, token, body)
-	id, ok := strings.CutPrefix(header.Get("Location"), base+"/")
+	target := base + "/" + strings.TrimPrefix(header.Get("Location"), base+"/")
+	located := strings.HasPrefix(header.Get("Location"), base+"/") && a.ownsObject(target, collection)
 	switch {
-	case err != nil:
-		return "", fmt.Errorf("keycloak: create the deployment %s: %w", collection, err)
-	case status != http.StatusCreated:
-		return "", fmt.Errorf("keycloak: create the deployment %s: status %d, want 201: %s", collection, status,
-			a.redact(text, token, identity.ClientSecret, identity.Password))
-	case !ok || id == "" || strings.ContainsAny(id, "/?#"):
+	case status == http.StatusCreated && located:
+		if err != nil {
+			return target, fmt.Errorf("keycloak: create the deployment %s: %w", collection, err)
+		}
+		return target, nil
+	case (status == 0 && !errors.Is(err, errNotSent)) || status == http.StatusCreated:
+		identity.unresolved = append(identity.unresolved, collection)
+		if err != nil {
+			return "", fmt.Errorf("keycloak: create the deployment %s: %w", collection, err)
+		}
 		return "", fmt.Errorf("keycloak: the new deployment %s has no Location in the test realm", collection)
+	case err != nil:
+		return "", fmt.Errorf("keycloak: create the deployment %s: status %d: %w", collection, status, err)
 	}
-	return base + "/" + id, nil
+	return "", fmt.Errorf("keycloak: create the deployment %s: status %d, want 201%s", collection, status, answerCode(text))
 }
 
 // do sends one admin request with the bearer token and an optional JSON body.
+// It refuses a target outside the origin of the test realm before it builds
+// the request, so the token goes to no other origin.
 func (a *Admin) do(method, target, token string, body []byte) (int, http.Header, []byte, error) {
+	if parsed, err := url.Parse(target); err != nil || parsed.Scheme+"://"+parsed.Host != a.origin || parsed.User != nil {
+		return 0, http.Header{}, nil, fmt.Errorf("keycloak: the request target is not on the origin of the test realm: %w", errNotSent)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), a.limit)
 	defer cancel()
 	request, err := http.NewRequestWithContext(ctx, method, target, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, http.Header{}, nil, fmt.Errorf("keycloak: build the admin request: %w", errNotSent)
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	if body != nil {
@@ -315,37 +392,58 @@ func (a *Admin) do(method, target, token string, body []byte) (int, http.Header,
 }
 
 // send sends one request and reads at most answerLimit bytes of the answer.
+// The error of the transport or of the answer reader can hold a credential,
+// for example a request header or body. So send never returns its text. It
+// keeps the status and the headers when only the body read failed.
 func (a *Admin) send(request *http.Request) (int, http.Header, []byte, error) {
 	answer, err := a.client.Do(request)
 	if err != nil {
-		return 0, nil, nil, err
+		return 0, http.Header{}, nil, requestFailure(request.Context(), "send the request")
 	}
 	defer answer.Body.Close()
 	text, err := io.ReadAll(io.LimitReader(answer.Body, answerLimit))
 	if err != nil {
-		return 0, nil, nil, err
+		return answer.StatusCode, answer.Header, nil, requestFailure(request.Context(), "read the answer")
 	}
 	return answer.StatusCode, answer.Header, text, nil
 }
 
-// redact returns at most 512 bytes of an answer for an error text, with every
-// form of the admin client secret, of its Basic credential and of the given
-// secrets replaced.
-func (a *Admin) redact(text []byte, secrets ...string) string {
-	value := string(text)
-	for _, secret := range append(secrets, a.basicCredential(), a.secret) {
-		for _, form := range forms(secret) {
-			value = strings.ReplaceAll(value, form, "[REDACTED]")
-		}
+// requestFailure is the safe error of a failed request step. A passed request
+// limit keeps context.DeadlineExceeded as its cause. No other text of the
+// failure goes into it.
+func requestFailure(ctx context.Context, step string) error {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("keycloak: %s: the request limit passed: %w", step, context.DeadlineExceeded)
 	}
-	if len(value) > 512 {
-		value = value[:512] + "..."
-	}
-	return fmt.Sprintf("%q", value)
+	return fmt.Errorf("keycloak: %s: the request failed", step)
 }
 
-// forms returns the forms of a secret that the leak checks search: exact,
-// base64, base64url with and without padding, URL-encoded and hex.
+// oauthErrorCodes are the error codes that an error text may name. They come
+// from RFC 6749, section 5.2, and RFC 6750, section 3.1, and Keycloak's
+// unknown_error. Each one is a fixed word, never a value of a request.
+var oauthErrorCodes = map[string]bool{
+	"invalid_request": true, "invalid_client": true, "invalid_grant": true,
+	"unauthorized_client": true, "unsupported_grant_type": true, "invalid_scope": true,
+	"invalid_token": true, "insufficient_scope": true, "access_denied": true, "unknown_error": true,
+}
+
+// answerCode names the OAuth error code of an answer for an error text, only
+// when it is a known fixed code. It never copies other text of the answer: an
+// answer can echo a secret in any encoding.
+func answerCode(text []byte) string {
+	var answer struct {
+		Error string `json:"error"`
+	}
+	if json.Unmarshal(text, &answer) != nil || !oauthErrorCodes[answer.Error] {
+		return ""
+	}
+	return " (error code " + answer.Error + ")"
+}
+
+// forms returns the forms of a secret that the leak checks search: exact; the
+// content of a JSON string, with and without the HTML escapes of Go;
+// URL-encoded as a query value and as a path segment; hex in lower and upper
+// case; base64 and base64url, each with and without padding.
 func forms(secret string) []string {
 	if secret == "" {
 		return nil
@@ -353,13 +451,29 @@ func forms(secret string) []string {
 	value := []byte(secret)
 	return []string{
 		secret,
+		jsonContent(secret, true),
+		jsonContent(secret, false),
+		url.QueryEscape(secret),
+		url.PathEscape(secret),
+		hex.EncodeToString(value),
+		strings.ToUpper(hex.EncodeToString(value)),
 		base64.StdEncoding.EncodeToString(value),
 		base64.RawStdEncoding.EncodeToString(value),
 		base64.URLEncoding.EncodeToString(value),
 		base64.RawURLEncoding.EncodeToString(value),
-		url.QueryEscape(secret),
-		hex.EncodeToString(value),
 	}
+}
+
+// jsonContent returns secret as the content of a JSON string, with no quotes.
+func jsonContent(secret string, escapeHTML bool) string {
+	var buffer bytes.Buffer
+	encoder := json.NewEncoder(&buffer)
+	encoder.SetEscapeHTML(escapeHTML)
+	if encoder.Encode(secret) != nil {
+		return secret
+	}
+	text := strings.TrimSuffix(buffer.String(), "\n")
+	return strings.TrimSuffix(strings.TrimPrefix(text, `"`), `"`)
 }
 
 func randomSecret() string {

@@ -3,6 +3,7 @@ package keycloak
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -34,10 +35,14 @@ type recorded struct {
 }
 
 // recorder records each request and answers with the status that answer
-// returns for it. It holds no state of a provider.
+// returns for it. It holds no state of a provider. When fail returns an
+// error, the request gets that transport error and no answer. When bodyFail
+// returns an error, the answer body ends with that read error.
 type recorder struct {
 	requests []recorded
 	answer   func(method, target string) (int, http.Header, string)
+	fail     func(request *http.Request, body string) error
+	bodyFail func(method, target string) error
 }
 
 func (r *recorder) RoundTrip(request *http.Request) (*http.Response, error) {
@@ -46,12 +51,28 @@ func (r *recorder) RoundTrip(request *http.Request) (*http.Response, error) {
 		body, _ = io.ReadAll(request.Body)
 	}
 	r.requests = append(r.requests, recorded{request.Method, request.URL.String(), request.Header.Clone(), string(body)})
+	if r.fail != nil {
+		if err := r.fail(request, string(body)); err != nil {
+			return nil, err
+		}
+	}
 	status, header, text := r.answer(request.Method, request.URL.String())
 	if header == nil {
 		header = http.Header{}
 	}
-	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(text)), Request: request}, nil
+	var reader io.Reader = strings.NewReader(text)
+	if r.bodyFail != nil {
+		if err := r.bodyFail(request.Method, request.URL.String()); err != nil {
+			reader = io.MultiReader(reader, failingReader{err})
+		}
+	}
+	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(reader), Request: request}, nil
 }
+
+// failingReader returns its error on each read.
+type failingReader struct{ err error }
+
+func (f failingReader) Read([]byte) (int, error) { return 0, f.err }
 
 // keycloakAnswers answers as the scoped admin client of the test realm gets
 // answered: a token, 201 with a Location for a creation, 204 for a deletion
@@ -184,8 +205,10 @@ func TestRemoveReportsEachFailedDeletion(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "remove the deployment user") || !strings.Contains(err.Error(), "status 500") {
 		t.Fatalf("Remove() = %v, want the failed user deletion", err)
 	}
-	if strings.Contains(err.Error(), adminSecret) || !strings.Contains(err.Error(), "[REDACTED]") {
-		t.Fatalf("the cleanup error does not redact the echoed admin secret: %v", err)
+	// The answer echoes the admin secret. No text of the answer may reach the
+	// error, so neither the secret nor the rest of the answer is in it.
+	if strings.Contains(err.Error(), adminSecret) || strings.Contains(err.Error(), "echo") {
+		t.Fatalf("the cleanup error holds text of the answer: %v", err)
 	}
 	var deletions []string
 	for _, request := range r.requests {
@@ -245,5 +268,220 @@ func TestNewRefusesTheMasterRealm(t *testing.T) {
 		if _, err := New(Config{Issuer: issuer, ClientID: "a", ClientSecret: "b", RequestLimit: time.Second, Transport: &recorder{}}); err == nil {
 			t.Errorf("New() accepted the issuer %q", issuer)
 		}
+	}
+}
+
+// Defect: a format verb prints a field of a secret-bearing value: Config,
+// Admin or Identity, as a value, a pointer or an exported field (B1).
+func TestNoFormatVerbPrintsASecret(t *testing.T) {
+	r := &recorder{answer: keycloakAnswers(nil)}
+	admin := newTestAdmin(t, r)
+	identity, err := admin.Provision(testCallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: adminSecret, RequestLimit: time.Second}
+	nested := struct {
+		C Config
+		A Admin
+		I Identity
+	}{config, *admin, *identity}
+	values := map[string]any{
+		"Config": config, "*Config": &config, "Admin": *admin, "*Admin": admin,
+		"Identity": *identity, "*Identity": identity, "a struct with exported fields": nested,
+	}
+	for name, value := range values {
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%d", "%x", "%X", "%q"} {
+			text := fmt.Sprintf(verb, value)
+			if found := admin.Leaks([]byte(text), identity); len(found) != 0 || strings.Contains(text, adminSecret) {
+				t.Errorf("%s with %s holds %q: %s", verb, name, found, text)
+			}
+		}
+	}
+}
+
+// Defect: the error of a transport or of an answer reader reaches the caller
+// with its text, which can hold the Basic credential, the bearer token or a
+// deployment secret (B2).
+func TestRequestFailuresHoldNoSecret(t *testing.T) {
+	// echo returns a transport error that quotes the credentials and the body
+	// of the request, as a diagnostic of a transport can.
+	echo := func(request *http.Request, body string) error {
+		return fmt.Errorf("transport failure: %s %s", request.Header.Get("Authorization"), body)
+	}
+	check := func(t *testing.T, step string, admin *Admin, identity *Identity, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s: no error, want the request failure", step)
+		}
+		if found := admin.Leaks([]byte(err.Error()), identity); len(found) != 0 || strings.Contains(err.Error(), adminToken) {
+			t.Errorf("%s: the error holds %q or the admin token: %v", step, found, err)
+		}
+		if identity != nil && (strings.Contains(err.Error(), identity.ClientSecret) || strings.Contains(err.Error(), identity.Password)) {
+			t.Errorf("%s: the error holds a deployment secret: %v", step, err)
+		}
+	}
+
+	t.Run("the token request", func(t *testing.T) {
+		r := &recorder{answer: keycloakAnswers(nil), fail: echo}
+		admin := newTestAdmin(t, r)
+		identity, err := admin.Provision(testCallback)
+		check(t, "Provision", admin, identity, err)
+	})
+	t.Run("a creation", func(t *testing.T) {
+		r := &recorder{answer: keycloakAnswers(nil)}
+		admin := newTestAdmin(t, r)
+		r.fail = func(request *http.Request, body string) error {
+			if request.Method != http.MethodPost || request.URL.String() != testAdmin+"/clients" {
+				return nil
+			}
+			return echo(request, body)
+		}
+		identity, err := admin.Provision(testCallback)
+		check(t, "Provision", admin, identity, err)
+	})
+	t.Run("a deletion", func(t *testing.T) {
+		r := &recorder{answer: keycloakAnswers(nil)}
+		admin := newTestAdmin(t, r)
+		identity, err := admin.Provision(testCallback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		r.fail = func(request *http.Request, body string) error {
+			if request.Method != http.MethodDelete {
+				return nil
+			}
+			return echo(request, body)
+		}
+		check(t, "Remove", admin, identity, admin.Remove(identity))
+	})
+	t.Run("an answer body read", func(t *testing.T) {
+		r := &recorder{answer: keycloakAnswers(nil)}
+		admin := newTestAdmin(t, r)
+		r.bodyFail = func(method, target string) error {
+			return errors.New("read failure after " + adminToken + " and " + adminSecret)
+		}
+		identity, err := admin.Provision(testCallback)
+		check(t, "Provision", admin, identity, err)
+	})
+}
+
+// Defect: an error text copies an answer that echoes a secret in an encoding
+// that the redaction does not know, for example as a JSON string (B3). The
+// leak check misses that encoding too.
+func TestAnswerTextStaysOutOfErrors(t *testing.T) {
+	const quotedSecret = `admin"secret\value-for-the-check`
+	escaped, err := json.Marshal(quotedSecret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := &recorder{answer: func(method, target string) (int, http.Header, string) {
+		return 401, nil, `{"error":"invalid_client","error_description":"echo ` + strings.Trim(string(escaped), `"`) + `"}`
+	}}
+	admin, err := New(Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: quotedSecret, RequestLimit: 10 * time.Second, Transport: r})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = admin.Provision(testCallback)
+	if err == nil || strings.Contains(err.Error(), strings.Trim(string(escaped), `"`)) || strings.Contains(err.Error(), quotedSecret) ||
+		strings.Contains(err.Error(), "echo") {
+		t.Fatalf("Provision() = %v, want an error with no text of the answer", err)
+	}
+	if !strings.Contains(err.Error(), "status 401") || !strings.Contains(err.Error(), "invalid_client") {
+		t.Fatalf("Provision() = %v, want the status and the OAuth error code", err)
+	}
+	if found := admin.Leaks([]byte(`{"record":"`+strings.Trim(string(escaped), `"`)+`"}`), nil); len(found) != 1 {
+		t.Fatalf("Leaks() of the JSON-escaped admin secret = %q, want the admin client secret", found)
+	}
+}
+
+// Defect: Remove sends the bearer token of its admin client to the URLs of an
+// identity from another admin client, or to a URL outside its own test realm
+// (B4).
+func TestRemoveRefusesAnIdentityOfAnotherAdmin(t *testing.T) {
+	first := &recorder{answer: keycloakAnswers(nil)}
+	identity, err := newTestAdmin(t, first).Provision(testCallback)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := &recorder{answer: keycloakAnswers(nil)}
+	otherAdmin, err := New(Config{Issuer: "https://other.test.invalid:8443/realms/pm-test", ClientID: testClientID,
+		ClientSecret: adminSecret, RequestLimit: 10 * time.Second, Transport: other})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := otherAdmin.Remove(identity); err == nil || len(other.requests) != 0 {
+		t.Fatalf("Remove() of another admin's identity = %v after %d requests, want a refusal before any request", err, len(other.requests))
+	}
+
+	same := &recorder{answer: keycloakAnswers(nil)}
+	sameAdmin := newTestAdmin(t, same)
+	moved := *identity
+	moved.userURL = "https://other.test.invalid:8443/admin/realms/pm-test/users/0b9a7e1c-0000-4000-8000-000000000001"
+	if err := sameAdmin.Remove(&moved); err == nil || len(same.requests) != 0 {
+		t.Fatalf("Remove() of a user URL on another origin = %v after %d requests, want a refusal before any request", err, len(same.requests))
+	}
+}
+
+// Defect: an answer body that could not be read after 201 with a Location
+// loses the URL of the new client, so Remove deletes nothing and reports
+// success (M1).
+func TestRemoveDeletesAnObjectWhoseAnswerBodyFailed(t *testing.T) {
+	r := &recorder{answer: keycloakAnswers(nil)}
+	admin := newTestAdmin(t, r)
+	r.bodyFail = func(method, target string) error {
+		if method == http.MethodPost && target == testAdmin+"/clients" {
+			return errors.New("the answer body broke")
+		}
+		return nil
+	}
+	identity, err := admin.Provision(testCallback)
+	if err == nil {
+		t.Fatal("Provision() = nil, want the read failure of the client creation")
+	}
+	r.bodyFail = nil
+	r.requests = nil
+	if err := admin.Remove(identity); err != nil {
+		t.Fatalf("Remove() = %v", err)
+	}
+	var deletions []string
+	for _, request := range r.requests {
+		if request.method == http.MethodDelete {
+			deletions = append(deletions, request.target)
+		}
+	}
+	if len(deletions) != 1 || !strings.HasPrefix(deletions[0], testAdmin+"/clients/") {
+		t.Fatalf("Remove sent the deletions %q, want the created client", deletions)
+	}
+}
+
+// Defect: a creation request with no answer leaves no trace, so Remove
+// reports success although the user can exist (M1).
+func TestRemoveReportsACreationWithNoKnownOutcome(t *testing.T) {
+	r := &recorder{answer: keycloakAnswers(nil)}
+	admin := newTestAdmin(t, r)
+	r.fail = func(request *http.Request, _ string) error {
+		if request.Method == http.MethodPost && request.URL.String() == testAdmin+"/users" {
+			return errors.New("the connection broke after the request")
+		}
+		return nil
+	}
+	identity, err := admin.Provision(testCallback)
+	if err == nil {
+		t.Fatal("Provision() = nil, want the failure of the user creation")
+	}
+	r.fail = nil
+	err = admin.Remove(identity)
+	if err == nil || !strings.Contains(err.Error(), "user can exist") {
+		t.Fatalf("Remove() = %v, want the user creation with no known outcome", err)
+	}
+	creations := 0
+	for _, request := range r.requests {
+		if request.method == http.MethodPost && request.target == testAdmin+"/users" {
+			creations++
+		}
+	}
+	if creations != 1 {
+		t.Fatalf("the user creation was sent %d times, want once", creations)
 	}
 }
