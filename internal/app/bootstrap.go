@@ -34,11 +34,12 @@ var (
 var (
 	ErrBootstrapInput  = errors.New("bootstrap input is invalid")
 	ErrBootstrapFailed = errors.New("bootstrap failed and wrote nothing")
-	// After an unknown outcome, the same bootstrap again gives the outcome:
-	// success (the first did not commit), ErrBootstrapScopeExists (the scope
-	// holds a bootstrap of the same input), or ErrBootstrapScopeOtherInput
-	// (another bootstrap took the scope).
-	ErrBootstrapOutcomeUnknown = errors.New("bootstrap outcome is unknown; run the same bootstrap again to learn the outcome")
+	// After an unknown outcome, the bootstrap again with the same input gives
+	// the outcome: success (the first did not commit), ErrBootstrapScopeExists
+	// (a bootstrap of the same input committed), ErrBootstrapScopeOtherInput
+	// or ErrBootstrapLoginBound (the first did not commit). Any other error
+	// keeps the outcome unknown.
+	ErrBootstrapOutcomeUnknown = errors.New("bootstrap outcome is unknown. Run the bootstrap again with the same input to learn the outcome")
 )
 
 const (

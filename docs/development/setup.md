@@ -228,16 +228,28 @@ Each provider account must name a connector that `connectors.bundles` declares. 
 - `pm-server: bootstrap provider account names an undeclared connector`
 - `pm-server: bootstrap requires operator authority`
 
-The bootstrap record holds the SHA-256 of the input: the organization, the workspace, its name, the admin issuer and subject, and the connector and display name of each provider account. The database computes it from the rows that it writes. `bootstrap scope is already bootstrapped` means that the scope holds a bootstrap of the same input. `bootstrap scope is already bootstrapped with another input` means that another input took the scope, or that the organization already has rows.
+The bootstrap record holds the SHA-256 of the input. The input here is the organization, the workspace, its name, the admin issuer and subject, and the connector and display name of each provider account. The database computes the SHA-256 from the rows that it writes. `bootstrap scope is already bootstrapped` means that the scope holds a bootstrap of the same input. `bootstrap scope is already bootstrapped with another input` has three causes: another input took the scope, the organization already has rows, or another deployment bootstrapped the organization, also with the same input.
 
-Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown; run the same bootstrap again to learn the outcome`. After an unknown outcome, run the same bootstrap again. Success means that the first attempt did not commit. `bootstrap scope is already bootstrapped` means that a bootstrap of the same input committed. `bootstrap scope is already bootstrapped with another input` means that another bootstrap took the scope: check the workspace through the product before you trust it.
+Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown. Run the bootstrap again with the same input to learn the outcome`.
 
-The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role has no table grant. Its only grant in the schema `pm` is `EXECUTE` on the database function `pm.operator_bootstrap`. That function writes one bootstrap of an organization that has no rows yet, and it refuses an admin login that has a binding in the deployment.
+After an unknown outcome, run the bootstrap again with the same input. The bootstrap commits at most once for each organization, so this run is the reconcile step. Its result tells you the outcome of the first attempt:
+
+| Result of the second run | Meaning |
+| --- | --- |
+| Success | The first attempt did not commit. The second run wrote the bootstrap. |
+| `pm-server: bootstrap scope is already bootstrapped` | A bootstrap of the same input committed. Read its rows through the product after login. |
+| `pm-server: bootstrap scope is already bootstrapped with another input` | The first attempt did not commit. Another input took the scope, the organization has other rows, or another deployment bootstrapped the organization. Do not use that organization as your bootstrap. Check it through the product. |
+| `pm-server: bootstrap admin login is already bound` | The first attempt did not commit. Another organization in this deployment holds that admin login. |
+| Any other line | The outcome of the first attempt is still unknown. Correct the cause that the line names. Then run the bootstrap again with the same input. |
+
+A script must match the whole stderr line. The line about another input starts with the text of the line about the same input.
+
+The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role has no table grant. Its only grant in the schema `pm` is `EXECUTE` on the database function `pm.operator_bootstrap`. That function writes one bootstrap of an organization that has no rows yet. It refuses an admin login that has a binding in the deployment.
 
 The operator has these duties:
 
 1. Run the privileged deployment bootstrap (`deploy/postgres/bootstrap.sql`) before the store migrations. It creates `pm_app_bootstrap` from the password file `pm-app-bootstrap-password`. An existing deployment must run it again before migration 0021, or that migration fails at its role check.
-2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the same deployment and organization is refused, also with the same input.
+2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the organization is refused in any deployment, also with the same input.
 3. Remove `pm-app-bootstrap-endpoint` from the secret directory after the bootstrap.
 
 ### Scoped event streams and artifact boundaries

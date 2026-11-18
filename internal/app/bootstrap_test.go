@@ -147,6 +147,26 @@ func TestBootstrapWritesTheAdminAndMapsStoreRefusals(t *testing.T) {
 	}
 }
 
+// Go developer check, not acceptance proof. No Gherkin scenario checks the
+// text of these bootstrap lines. Each error text is the exact stderr line after
+// "pm-server: ", and docs/development/setup.md names it. Defect: a changed line
+// that an operator or a script reads.
+func TestBootstrapLinesWithoutAScenarioAreExact(t *testing.T) {
+	for _, testCase := range []struct {
+		err  error
+		line string
+	}{
+		{ErrBootstrapScopeOtherInput, "bootstrap scope is already bootstrapped with another input"},
+		{ErrBootstrapInput, "bootstrap input is invalid"},
+		{ErrBootstrapFailed, "bootstrap failed and wrote nothing"},
+		{ErrBootstrapOutcomeUnknown, "bootstrap outcome is unknown. Run the bootstrap again with the same input to learn the outcome"},
+	} {
+		if testCase.err.Error() != testCase.line {
+			t.Errorf("bootstrap line = %q; want exactly %q", testCase.err.Error(), testCase.line)
+		}
+	}
+}
+
 // Go developer check, not acceptance proof. Without the bootstrap credential
 // in the secret directory, the store step refuses before any database
 // connection. Defect: a bootstrap that falls back to another credential.

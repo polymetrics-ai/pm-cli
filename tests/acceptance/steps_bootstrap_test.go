@@ -446,12 +446,13 @@ func readOutputFile(file *os.File, name string) (string, error) {
 }
 
 // knownBootstrapLines are the stderr lines that a failure message may show.
-// Each is a constant of this test: the six refusal lines of ADR 0006, and
+// Each is a constant of this test: the seven refusal lines of ADR 0006, and
 // the line of an unknown flag for each flag that the step passes. A message
 // shows such a line only when the output is exactly that line, so a message
 // shows only text that the test already holds.
 var knownBootstrapLines = []string{
 	"pm-server: bootstrap scope is already bootstrapped",
+	"pm-server: bootstrap scope is already bootstrapped with another input",
 	"pm-server: bootstrap admin login is already bound",
 	"pm-server: bootstrap workspace name is required",
 	"pm-server: bootstrap admin subject is required",
