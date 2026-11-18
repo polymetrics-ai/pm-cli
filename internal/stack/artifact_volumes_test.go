@@ -1,7 +1,9 @@
 package stack
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"io"
 	"net/url"
 	"os"
@@ -418,18 +420,20 @@ func TestArtifactStartFailuresReportTheirStep(t *testing.T) {
 		name     string
 		before   string
 		after    string
-		limit    time.Duration
+		capacity bool
 		bucket   bool
 		wantStep string
 		wantLog  []string
 	}{
 		{
-			// The context limit ends the capacity wait. Both possible end
-			// points, the service starts and the wait, are artifacts-start.
+			// The first capacity request that reaches the fake master
+			// ends the wait (#336 round 3 F2). So both service starts are
+			// complete, and the wait ends in the capacity check, not at a
+			// time limit.
 			name:     "the capacity wait ends before the volume server joins",
 			before:   notJoined,
 			after:    notJoined,
-			limit:    2 * time.Second,
+			capacity: true,
 			wantStep: "artifacts-start",
 			wantLog:  []string{"up seaweed-master", "up seaweed-volume"},
 		},
@@ -459,10 +463,13 @@ func TestArtifactStartFailuresReportTheirStep(t *testing.T) {
 			rt := &runtime{root: fake, project: "pm-artifact-store-test", stdout: io.Discard, stderr: io.Discard}
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			if test.limit > 0 {
-				var stop context.CancelFunc
-				ctx, stop = context.WithTimeout(ctx, test.limit)
-				defer stop()
+			// A deadlock guard only. A correct run ends at an observed
+			// event long before it.
+			ctx, stop := context.WithTimeout(ctx, artifactStartDeadlockGuard)
+			defer stop()
+			var capacityRequested func() bool
+			if test.capacity {
+				capacityRequested = cancelAtFirstCapacityRequest(t, cancel)
 			}
 			ensureBucket := func(context.Context) error {
 				if err := appendTestLine(filepath.Join(fake, "order.log"), "bucket"); err != nil {
@@ -484,10 +491,89 @@ func TestArtifactStartFailuresReportTheirStep(t *testing.T) {
 			if step != test.wantStep {
 				t.Fatalf("failed step = %q, want %q (error: %v)", step, test.wantStep, err)
 			}
+			if test.capacity {
+				if !capacityRequested() {
+					t.Fatalf("no capacity request reached the fake master (error: %v)", err)
+				}
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("the capacity wait did not end at the observed capacity request: %v", err)
+				}
+			}
 			if got := recordedMasterCalls(t, fake, "order.log"); !slices.Equal(got, test.wantLog) {
 				t.Fatalf("artifact store calls = %q, want %q", got, test.wantLog)
 			}
 		})
+	}
+}
+
+// artifactStartDeadlockGuard ends a broken artifact start test. A correct
+// run never reaches it.
+const artifactStartDeadlockGuard = time.Minute
+
+// cancelAtFirstCapacityRequest puts a python3 wrapper first on PATH, before
+// the fake of installFakeArtifactStore. When a /dir/status request (the
+// capacity check) reaches the fake master, the wrapper writes one line to a
+// named pipe, then runs the fake. A goroutine opens the pipe, which waits
+// until that first request, reads the line and calls cancel. The returned
+// function reports whether a capacity request came. It also ends the wait
+// of the goroutine when no request came.
+func cancelAtFirstCapacityRequest(t *testing.T, cancel context.CancelFunc) func() bool {
+	t.Helper()
+	directory := t.TempDir()
+	signal := filepath.Join(directory, "capacity")
+	if err := syscall.Mkfifo(signal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(directory, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
+for argument in "$@"; do
+  last=$argument
+done
+case "$last" in
+  */dir/status)
+    printf 'capacity\n' > "$FAKE_CAPACITY_SIGNAL"
+    ;;
+esac
+exec "$FAKE_STORE_DIR/bin/python3" "$@"
+`, 0o700)
+	t.Setenv("FAKE_CAPACITY_SIGNAL", signal)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	seen := make(chan bool, 1)
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		file, err := os.OpenFile(signal, os.O_RDONLY, 0)
+		if err != nil {
+			seen <- false
+			return
+		}
+		defer file.Close()
+		line, _ := bufio.NewReader(file).ReadString('\n')
+		requested := line == "capacity\n"
+		if requested {
+			cancel()
+		}
+		seen <- requested
+		// The read end stays open until the test ends, so that a later
+		// capacity request never waits for a reader.
+		<-done
+	}()
+	return func() bool {
+		// When no capacity request came, the goroutine still waits in
+		// open. A writer that opens and closes the pipe ends that wait.
+		if writer, err := os.OpenFile(signal, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+		select {
+		case requested := <-seen:
+			return requested
+		case <-time.After(artifactStartDeadlockGuard):
+			t.Fatal("the capacity signal reader did not end")
+			return false
+		}
 	}
 }
 
