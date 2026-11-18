@@ -4,7 +4,7 @@ Date: 2026-11-18. Status: proposed. This record does not authorize application w
 
 ## Context
 
-`pm-server` binds its configured listener address (`server.listen`) itself. At `f35eee7` the start order is: validate the configuration (`cmd/pm-server/main.go:112`), open the application (`:116`), bind `server.listen` with `net.Listen("tcp", …)` (`:129`), then serve (`:135`). Serving accepts the first connection and sends the ready line through `--ready-fd` (ADR 0005). So the bind comes after the configuration and the application open, and before serving and the ready signal. Any bind error ends the start with exit code 1 and the line `pm-server: configured server listener is unavailable`.
+`pm-server` binds its configured listener address (`server.listen`) itself. At `f35eee7` the start order is: validate the configuration (`cmd/pm-server/main.go:112`), open the application (`:116`), bind `server.listen` with `net.Listen("tcp", …)` (`:129`), then serve (`:135`). As ADR 0005 defines, `pm-server` is ready when its admission probe passed, its state is serving, and its HTTP accept loop calls Accept for the first time; it then sends the ready line through `--ready-fd`. No incoming connection is needed for that. So the bind comes after the configuration and the application open, and before serving and the ready signal. Any bind error ends the start with exit code 1 and the line `pm-server: configured server listener is unavailable`.
 
 `server.listen` is a literal IP address and a port: the configuration accepts only what `netip.ParseAddrPort` accepts, with a port other than 0 and no zone (`internal/config/server.go:109-113` at `f35eee7`). It accepts no host name.
 
@@ -59,7 +59,7 @@ Each refusal: exit code 1, nothing served, and exactly one stderr line after `pm
 
 ### The ready signal
 
-The ready contract of ADR 0005 does not change. The process sends its ready line through `--ready-fd`, never through the listener. With `--listen-fd`, the process serves on the inherited listener; the ready line still follows the first accept on that listener, as ADR 0005 defines.
+The ready contract of ADR 0005 does not change. The process sends its ready line through `--ready-fd`, never through the listener. With `--listen-fd`, the process serves on the inherited listener, and the readiness boundary of ADR 0005 stays exactly as it is: the admission probe passed, the state is serving, and the HTTP accept loop calls Accept for the first time, now on the inherited listener. No incoming connection is needed before the ready line.
 
 ### The acceptance harness
 
@@ -69,7 +69,7 @@ The harness binds `127.0.0.1:0` and keeps the listener. It writes that exact add
 
 | Option | Result |
 | --- | --- |
-| An inherited listener, `--listen-fd` | Selected. No gap: the port stays held from the bind to the first accept. It follows the number rules of ADR 0005. A service manager can also use it to start `pm-server` with a socket that it holds. |
+| An inherited listener, `--listen-fd` | Selected. No gap: the port stays held from the starter's bind until `pm-server` serves on it. It follows the number rules of ADR 0005. A service manager can also use it to start `pm-server` with a socket that it holds. |
 | `pm-server` binds port 0 and reports its address on the ready line | Rejected. It changes the ready line of ADR 0005, which scenario A1 checks word for word, and every reader of that line. |
 | Choose the port outside the range for client connections, and start the edge after `pm-server` | Rejected as the fix. It makes the gap smaller but does not close it: another process can still bind the port. |
 | Start `pm-server` again after a bind failure | Rejected. The test-wait rule allows no retry. |
@@ -94,7 +94,7 @@ The harness binds `127.0.0.1:0` and keeps the listener. It writes that exact add
 ## Planned proof
 
 **Gherkin scenarios that run the real binaries** (the criteria owner sets the final text; QA writes the RED):
-1. **`pm-server` serves on a listener that its starter holds.** The starter binds an address, keeps its copy open, writes the address into the configuration and starts `pm-server` with `--listen-fd`. The starter receives the ready line through `--ready-fd`, and a `pm` command through the lane succeeds, while the starter's copy is still open. An implementation that closed the inherited socket and bound the address again would fail here, because the starter's open copy holds the port. On the code before this record, the scenario fails at the start with the flag parser's unknown-flag refusal.
+1. **`pm-server` serves on a listener that its starter holds.** The starter binds an address, keeps its copy open, writes the address into the configuration and starts `pm-server` with `--listen-fd`. In this order: the starter receives the ready line through `--ready-fd`; then a `pm` command through the lane succeeds; the starter's copy stays open through both. An implementation that closed the inherited socket and bound the address again would fail here, because the starter's open copy holds the port. On the code before this record, the scenario fails at the start with the flag parser's unknown-flag refusal.
 2. **Without `--listen-fd`, a held address stops the start.** The starter holds the configured address and starts `pm-server` without `--listen-fd`. `pm-server` stops with exit code 1 and `configured server listener is unavailable`. This is the bind failure of the old start path, shown deterministically, and it passes on the code before and after this record. It is distinct from the unknown-flag refusal of scenario 1.
 3. **A refused descriptor.** The starter passes a listener at another address with `--listen-fd`. `pm-server` stops with exit code 1 and `--listen-fd requires an inherited listener at the configured server address`, and nothing listens at the configured address.
 
