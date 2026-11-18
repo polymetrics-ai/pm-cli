@@ -61,6 +61,12 @@ type commandResult struct {
 	// deploymentID is the deployment ID of the server that the command ran
 	// against.
 	deploymentID string
+	// authenticated is true for a command that ran with the user's PM
+	// session. Its stdout and stderr then hold only text that is safe by its
+	// form, and privateStdout holds the raw stdout. Only a result oracle reads
+	// privateStdout, and no failure message shows it (#402 review F1).
+	authenticated bool
+	privateStdout string
 }
 
 // registerStackSteps registers each step that two or more slices use: the

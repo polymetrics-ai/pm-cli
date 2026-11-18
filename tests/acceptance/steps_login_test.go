@@ -172,7 +172,7 @@ func (s *loginScenario) logIn(ctx context.Context) error {
 	if err := decideDeviceLogin(ctx, b, challenge, "approves"); err != nil {
 		return err
 	}
-	if err := runDeviceExchange(s.shared.harness.bins.pm, []string{"sessions", "login-exchange", "--wait=true"}, environment, challenge); err != nil {
+	if err := runDeviceExchange(ctx, s.shared.harness.bins.pm, []string{"sessions", "login-exchange", "--wait=true"}, environment, challenge); err != nil {
 		return err
 	}
 	s.loggedIn = true
@@ -230,8 +230,20 @@ func (s *loginScenario) runAsUser(ctx context.Context, line string) error {
 	if err != nil {
 		return err
 	}
-	s.shared.result = commandResult{ran: true, exitCode: code, stdout: stdout, stderr: stderr, deploymentID: s.lane.deployment.deploymentID}
+	s.shared.result = authenticatedResult(code, stdout, stderr, s.lane.deployment.deploymentID)
 	return nil
+}
+
+// authenticatedResult is the shared result state of a command that ran with
+// the user's PM session. The shared exit code step shows the stdout and the
+// stderr of a result when it fails, so they keep only text that is safe by
+// its form (storedSessionResult). The raw stdout stays in privateStdout for
+// the result oracles only (#402 review F1).
+func authenticatedResult(code int, stdout, stderr, deploymentID string) commandResult {
+	result := storedSessionResult(code, stdout, stderr, deploymentID)
+	result.authenticated = true
+	result.privateStdout = stdout
+	return result
 }
 
 // environment is the environment of each pm process of the login steps: the
@@ -260,30 +272,49 @@ func (s *loginScenario) close() error {
 
 // runDeviceExchange starts pm sessions login-exchange with the arguments and
 // --challenge-id from the login-start output. It writes the device proof and
-// one line feed to the stdin pipe and closes the pipe (D4-10, D4-13). It
-// waits once for the exit and the end of the output, with the exit limit of
-// the command line, and needs exit code 0. A process that does not end in
-// time is killed. A failure message shows the output by its form only.
-func runDeviceExchange(binary string, args, environment []string, challenge *deviceChallenge) error {
+// one line feed to the stdin pipe and closes the pipe (D4-10, D4-13). One
+// deadline bounds the write, the exit and the end of the output: the exit
+// limit of the command line, or the end of the parent context if that comes
+// first (#402 review F2). The write runs in a goroutine. At the deadline the
+// step kills the process, closes the pipe and joins the write before it
+// returns. It needs exit code 0. A failure message shows the output by its
+// form only.
+func runDeviceExchange(parent context.Context, binary string, args, environment []string, challenge *deviceChallenge) error {
 	exitLimit, err := exchangeExitLimit(args)
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(parent, exitLimit)
+	defer cancel()
 	args = append(slices.Clone(args), "--challenge-id", challenge.challengeID)
 	process, err := startExchangeProcess(binary, args, environment)
 	if err != nil {
 		return err
 	}
-	if err := process.writeStdin(challenge.proof); err != nil {
-		return errors.Join(
-			fmt.Errorf("write the device proof to the login-exchange stdin pipe and close the pipe: %s", pipeCategory(err)),
-			stopExchangeProcess(process))
+	writer, err := process.takeStdin()
+	if err != nil {
+		return errors.Join(err, stopExchangeProcess(process))
 	}
-	timer := time.NewTimer(exitLimit)
-	defer timer.Stop()
-	if !process.awaitEnd(timer.C) {
+	written := make(chan error, 1)
+	go func() { written <- writeProof(writer, challenge.proof) }()
+	select {
+	case err := <-written:
+		if err != nil {
+			return errors.Join(
+				fmt.Errorf("write the device proof to the login-exchange stdin pipe and close the pipe: %s", pipeCategory(err)),
+				stopExchangeProcess(process))
+		}
+	case <-ctx.Done():
+		stopErr := stopExchangeProcess(process)
+		_ = writer.Close()
+		<-written
 		return errors.Join(
-			fmt.Errorf("pm sessions login-exchange did not end within %s; %s\n%s", exitLimit, process.describeStatus(), describeOutputText("stderr", &process.stderr)),
+			fmt.Errorf("the device proof write to pm sessions login-exchange did not end within %s or before the step ended. %s", exitLimit, process.describeStatus()),
+			stopErr)
+	}
+	if !process.awaitEndUntil(ctx.Done()) {
+		return errors.Join(
+			fmt.Errorf("pm sessions login-exchange did not end within %s or before the step ended. %s\n%s", exitLimit, process.describeStatus(), describeOutputText("stderr", &process.stderr)),
 			stopExchangeProcess(process))
 	}
 	if !process.status.exited || process.status.code != 0 {
@@ -330,7 +361,10 @@ func (s *bootstrapScenario) namesBootstrappedWorkspace() error {
 	if !result.ran {
 		return errors.New("no lane command ran")
 	}
-	return checkOnlyWorkspace(result.stdout, s.first.OrgID, s.first.WorkspaceID)
+	if !result.authenticated {
+		return errors.New("the last lane command did not run as the user")
+	}
+	return checkOnlyWorkspace(result.privateStdout, s.first.OrgID, s.first.WorkspaceID)
 }
 
 // workspaceItem is the part of one workspace of the page that the check
@@ -342,18 +376,20 @@ type workspaceItem struct {
 
 // checkOnlyWorkspace needs exactly one workspace on the page, with the
 // organization and workspace IDs, and no next page. So another workspace on
-// this page or on a later page fails the check.
+// this page or on a later page fails the check. The stdout is the output of
+// an authenticated command, so a failure message shows only its byte count
+// and fixed text, never the output (#402 review F1).
 func checkOnlyWorkspace(stdout, orgID, workspaceID string) error {
 	items, nextCursor, err := readWorkspacePage(stdout)
 	if err != nil {
-		return fmt.Errorf("read the workspace page from the lane command stdout: %w\nstdout: %s", err, stdout)
+		return fmt.Errorf("read the workspace page from the lane command stdout (%d bytes, not shown): %w", len(stdout), err)
 	}
 	if string(nextCursor) != "null" {
-		return fmt.Errorf("the workspace page has a next page, so it can hold another workspace\nstdout: %s", stdout)
+		return fmt.Errorf("the workspace page has a next page, so it can hold another workspace (stdout: %d bytes, not shown)", len(stdout))
 	}
 	if len(items) != 1 || items[0].WorkspaceID != workspaceID || items[0].OrgID != orgID {
-		return fmt.Errorf("the workspace page names %d workspaces, want only the bootstrapped workspace %q of organization %q\nstdout: %s",
-			len(items), workspaceID, orgID, stdout)
+		return fmt.Errorf("the workspace page names %d workspaces, want only the bootstrapped workspace %q of organization %q (stdout: %d bytes, not shown)",
+			len(items), workspaceID, orgID, len(stdout))
 	}
 	return nil
 }

@@ -128,7 +128,7 @@ func TestRunDeviceExchangeRedactsTheProof(t *testing.T) {
 	environment := []string{"PATH=/usr/bin:/bin", "LANG=C"}
 	t.Run("a failed exchange that prints the proof and the user code", func(t *testing.T) {
 		script := `read proof; printf '%s\n' "$proof" >&2; printf '%s PM-SECRETUSERCODE\n' "$proof"; exit 3`
-		err := runDeviceExchange("/bin/sh", []string{"-c", script}, environment, challenge)
+		err := runDeviceExchange(t.Context(), "/bin/sh", []string{"-c", script}, environment, challenge)
 		if err == nil {
 			t.Fatal("runDeviceExchange passed, want exit code 3 to fail")
 		}
@@ -142,13 +142,13 @@ func TestRunDeviceExchangeRedactsTheProof(t *testing.T) {
 		}
 	})
 	t.Run("an exchange that exits with code 0 passes", func(t *testing.T) {
-		if err := runDeviceExchange("/bin/sh", []string{"-c", "read proof; exit 0"}, environment, challenge); err != nil {
+		if err := runDeviceExchange(t.Context(), "/bin/sh", []string{"-c", "read proof; exit 0"}, environment, challenge); err != nil {
 			t.Fatalf("runDeviceExchange = %v, want no error", err)
 		}
 	})
 	t.Run("the step adds the challenge ID itself", func(t *testing.T) {
 		script := `read proof; [ "$0" = "--challenge-id" ] && [ "$1" = "device-challenge-1" ] && [ "$proof" = "pm_device_SECRETPROOFVALUE0123456789" ]`
-		if err := runDeviceExchange("/bin/sh", []string{"-c", script}, environment, challenge); err != nil {
+		if err := runDeviceExchange(t.Context(), "/bin/sh", []string{"-c", script}, environment, challenge); err != nil {
 			t.Fatalf("the exchange did not get --challenge-id and the proof on stdin: %v", err)
 		}
 	})

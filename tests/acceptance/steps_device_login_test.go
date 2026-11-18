@@ -304,19 +304,26 @@ func (s *deviceLoginScenario) runPM(parent context.Context, args []string) (int,
 }
 
 // runPMProcess runs one pm process with the environment and waits once for
-// its exit, with the limit of one lane command. An error never shows the
-// output.
+// its exit and the end of its output. The limit of one lane command bounds
+// the run. A process that pm started can keep the output pipes open after pm
+// exits or is killed. The wait then ends at most killLimit later
+// (Cmd.WaitDelay): it closes the pipes and fails (#402 review F3). An error
+// never shows the output.
 func runPMProcess(parent context.Context, binary string, args, environment []string) (int, string, string, error) {
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, binary, args...)
 	command.Env = environment
+	command.WaitDelay = killLimit
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
 	runErr := command.Run()
 	if ctx.Err() != nil {
 		return 0, "", "", fmt.Errorf("pm did not finish within %s: %q", laneCommandTimeout, args)
+	}
+	if errors.Is(runErr, exec.ErrWaitDelay) {
+		return 0, "", "", fmt.Errorf("pm exited, but a process that it started kept the output open for %s after the exit: %q", killLimit, args)
 	}
 	var exitErr *exec.ExitError
 	switch {
@@ -943,11 +950,27 @@ func startExchangeProcess(binary string, args, environment []string) (*exchangeP
 
 // writeStdin writes the proof and one line feed, then closes the pipe.
 func (p *exchangeProcess) writeStdin(proof string) error {
+	writer, err := p.takeStdin()
+	if err != nil {
+		return err
+	}
+	return writeProof(writer, proof)
+}
+
+// takeStdin gives the write end of the stdin pipe to the caller, which
+// closes it. stopExchangeProcess then does not close it.
+func (p *exchangeProcess) takeStdin() (*os.File, error) {
 	writer := p.stdin
 	if writer == nil {
-		return errors.New("the stdin pipe is already closed")
+		return nil, errors.New("the stdin pipe is already closed")
 	}
 	p.stdin = nil
+	return writer, nil
+}
+
+// writeProof writes the proof and one line feed to the writer, then closes
+// it.
+func writeProof(writer *os.File, proof string) error {
 	line := []byte(proof + "\n")
 	_, writeErr := writer.Write(line)
 	clear(line)
@@ -1007,6 +1030,22 @@ func (p *exchangeProcess) awaitEnd(timer <-chan time.Time) bool {
 	case <-p.outputEnded:
 		return true
 	case <-timer:
+		return false
+	}
+}
+
+// awaitEndUntil waits for the exit of the process and the end of its
+// output, until done closes. It reports whether both happened.
+func (p *exchangeProcess) awaitEndUntil(done <-chan struct{}) bool {
+	select {
+	case <-p.exited:
+	case <-done:
+		return false
+	}
+	select {
+	case <-p.outputEnded:
+		return true
+	case <-done:
 		return false
 	}
 }
