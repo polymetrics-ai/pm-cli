@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"testing"
 
 	"github.com/jackc/pgx/v5"
@@ -68,7 +69,25 @@ func TestConnectionReadSelectorRefusalsAreConcealed(t *testing.T) {
 				authorized, err, harness.metadata.snapshot.Fingerprint, len(harness.metadata.snapshot.Fields))
 		}
 
+		// A resource with no selection is not a refusal. ADR 0007 gives each
+		// resource its own selection, and a resource with none reports that
+		// explicitly, at selection revision 1, with the ETag of that revision.
+		// Reading it runs no child.
+		unselected := harness.send(t, client, http.MethodGet,
+			schemaSelectorPath(harness, workspace, url.Values{"resource": {readRefusalForeignDataset}}), nil)
+		absent := decodeWarehouseRoute[api.ConnectionSchemaInspection](t, unselected, http.StatusOK)
+		if named, err := absent.Selected.Get(); err == nil || !absent.Selected.IsNull() {
+			t.Fatalf("the schema read of a resource with no selection named %q (%v); want selected null", named, err)
+		}
+		if absent.SelectionRevision != 1 || unselected.etag != `"1"` ||
+			!slices.Equal(absent.Snapshot.Blockers, []string{"no_selection"}) || absent.Snapshot.Complete ||
+			len(absent.Fields) != 0 {
+			t.Fatalf("the schema read of a resource with no selection = %#v with ETag %q; want selection revision 1, ETag \"1\", the blocker no_selection and no fields",
+				absent, unselected.etag)
+		}
+
 		unknown := unknownSchemaSnapshot(t)
+		promoted := string(harness.metadata.snapshot.Fingerprint)
 		for _, selector := range []struct {
 			name   string
 			value  string
@@ -76,7 +95,15 @@ func TestConnectionReadSelectorRefusalsAreConcealed(t *testing.T) {
 		}{
 			{"another permission revision", "fixture-permission-other",
 				url.Values{"permission_revision": {"fixture-permission-other"}}},
-			{"another resource", "returns", url.Values{"resource": {"returns"}}},
+			// The promoted snapshot exists, but under another resource. Its
+			// stored binding refuses the resource that the caller names.
+			{"another resource for the selected snapshot", readRefusalForeignDataset,
+				url.Values{"resource": {readRefusalForeignDataset}, "snapshot_id": {promoted}}},
+			// The resource has no selection, but the connection has one provider
+			// account, and the selector names another one. The same selector
+			// gets the same answer as on a selected resource.
+			{"another provider account on a resource with no selection", "fixture-account-other",
+				url.Values{"resource": {readRefusalForeignDataset}, "provider_account_id": {"fixture-account-other"}}},
 			{"another source revision", "fixture-source-other",
 				url.Values{"source_revision": {"fixture-source-other"}}},
 			{"another provider account", "fixture-account-other",

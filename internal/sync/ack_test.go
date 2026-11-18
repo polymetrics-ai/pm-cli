@@ -1237,6 +1237,8 @@ func (harness *etlHarness) queryRoutePath(workspaceID string) string {
 type warehouseRouteResponse struct {
 	status   int
 	document []byte
+	// etag is the ETag header of the answer, or empty.
+	etag string
 }
 
 // send executes one request through the fixture's real TLS router with the
@@ -1274,7 +1276,7 @@ func (harness *etlHarness) send(
 	if err != nil || len(document) > 1<<20 {
 		t.Fatalf("the answer to %s exceeded its readable envelope: %v", method, err)
 	}
-	return warehouseRouteResponse{status: response.StatusCode, document: document}
+	return warehouseRouteResponse{status: response.StatusCode, document: document, etag: response.Header.Get("ETag")}
 }
 
 func decodeWarehouseRoute[T any](t *testing.T, response warehouseRouteResponse, wantStatus int) T {
