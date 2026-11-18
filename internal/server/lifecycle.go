@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -242,7 +243,6 @@ type readySignal struct {
 	diagnostics io.Writer
 
 	started   atomic.Bool
-	stopping  atomic.Bool
 	closeOnce sync.Once
 	written   chan struct{}
 	joinBy    time.Time
@@ -272,26 +272,29 @@ func (signal *readySignal) close() {
 }
 
 // write writes the ready line once and closes the handle. A failed write
-// prints the write-failure line, unless stop ended the write: then the
-// process does not continue, so it prints nothing.
+// prints the write-failure line, unless the write failed with the error of a
+// closed handle (os.ErrClosed). While the write runs, only stop closes the
+// handle, so that error means that the stop ended the write. Then the process
+// does not continue, so it prints nothing. Any other error prints the line,
+// also when it comes while the stop runs.
 func (signal *readySignal) write() {
 	defer close(signal.written)
-	if _, err := io.WriteString(signal.ready, ReadyLine); err != nil && !signal.stopping.Load() {
+	if _, err := io.WriteString(signal.ready, ReadyLine); err != nil && !errors.Is(err, os.ErrClosed) {
 		_, _ = io.WriteString(signal.diagnostics, readyWriteFailed)
 	}
 	signal.close()
 }
 
 // stop runs when Serve stops serving. It keeps joinBy, the end of the one
-// wait in finish. For a started write, it marks the stop and then closes the
-// handle. The close ends a write that still waits on a non-blocking handle,
-// which is the handle that pm-server makes from its ready descriptor.
+// wait in finish. For a started write, it closes the handle. The close ends a
+// write that still waits on a non-blocking handle, which is the handle that
+// pm-server makes from its ready descriptor. That write then fails with
+// os.ErrClosed.
 func (signal *readySignal) stop(joinBy time.Time) {
 	signal.joinBy = joinBy
 	if !signal.started.Load() {
 		return
 	}
-	signal.stopping.Store(true)
 	signal.close()
 }
 
