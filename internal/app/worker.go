@@ -104,6 +104,10 @@ type WorkerService struct {
 	artifactPublisher         *objects.Publisher
 	maximumResultBytes        int64
 	sqlBounds                 SQLBoundsResolver
+	// commitResultPublication is nil in production, and settlement then uses
+	// PreparedPublication.Commit. Only a developer check sets it, through
+	// export_test.go, to supply a receipt that the store cannot produce.
+	commitResultPublication resultPublicationCommit
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -1094,7 +1098,7 @@ func (service *WorkerService) settleWorkerUnit(
 		if err := recordWorkerHTTPCooldown(ctx, tx, plan, permit, observation.HTTP); err != nil {
 			return err
 		}
-		resultArtifactID, err := commitWorkerResult(ctx, tx, plan, publication)
+		resultArtifactID, err := commitWorkerResult(ctx, tx, plan, publication, service.commitResultPublication)
 		if err != nil {
 			return err
 		}

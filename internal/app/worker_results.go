@@ -68,10 +68,21 @@ func (service *WorkerService) prepareWorkerResult(ctx context.Context, plan work
 	return &publication, nil
 }
 
-func commitWorkerResult(ctx context.Context, tx *store.Transaction, plan workerUnitPlan, publication *objects.PreparedPublication) (string, error) {
+// resultPublicationCommit commits a prepared result publication in the
+// settlement transaction and returns its receipt.
+type resultPublicationCommit func(context.Context, *store.Transaction, *objects.PreparedPublication) (store.ArtifactPublicationReceipt, error)
+
+func commitPreparedPublication(ctx context.Context, tx *store.Transaction, publication *objects.PreparedPublication) (store.ArtifactPublicationReceipt, error) {
+	return publication.Commit(ctx, tx)
+}
+
+func commitWorkerResult(ctx context.Context, tx *store.Transaction, plan workerUnitPlan, publication *objects.PreparedPublication, commit resultPublicationCommit) (string, error) {
 	reservationID := plan.resultReservation.Request.ReservationID
 	if publication != nil {
-		receipt, err := publication.Commit(ctx, tx)
+		if commit == nil {
+			commit = commitPreparedPublication
+		}
+		receipt, err := commit(ctx, tx, publication)
 		if err != nil {
 			return "", err
 		}
