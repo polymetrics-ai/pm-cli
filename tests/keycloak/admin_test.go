@@ -98,7 +98,7 @@ func keycloakAnswers(overrides map[string]int) func(string, string) (int, http.H
 
 func newTestAdmin(t *testing.T, r *recorder) *Admin {
 	t.Helper()
-	admin, err := New(Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: adminSecret, RequestLimit: 10 * time.Second, Transport: r})
+	admin, err := New(Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: NewSecret(adminSecret), RequestLimit: 10 * time.Second, Transport: r})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestProvisionSendsOneClientAndOneUserInRequestBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	switch {
-	case clientBody.ClientID != identity.ClientID || clientBody.Secret != identity.ClientSecret || clientBody.ClientAuthenticatorType != "client-secret":
+	case clientBody.ClientID != identity.ClientID || clientBody.Secret != identity.ClientSecret.Reveal() || clientBody.ClientAuthenticatorType != "client-secret":
 		t.Errorf("the client is not the confidential deployment client: %s", identity)
 	case clientBody.PublicClient || !clientBody.StandardFlowEnabled || clientBody.ImplicitFlowEnabled || clientBody.DirectAccessGrantsEnabled || clientBody.ServiceAccountsEnabled:
 		t.Errorf("the client allows a flow other than the code flow: %+v", clientBody.Attributes)
@@ -162,7 +162,7 @@ func TestProvisionSendsOneClientAndOneUserInRequestBodies(t *testing.T) {
 		t.Fatal(err)
 	}
 	if userBody.Username != identity.Username || !userBody.Enabled || len(userBody.Credentials) != 1 ||
-		userBody.Credentials[0].Type != "password" || userBody.Credentials[0].Value != identity.Password || userBody.Credentials[0].Temporary {
+		userBody.Credentials[0].Type != "password" || userBody.Credentials[0].Value != identity.Password.Reveal() || userBody.Credentials[0].Temporary {
 		t.Errorf("the user is not the deployment user with its password: %s", identity)
 	}
 	for index, request := range r.requests {
@@ -174,7 +174,7 @@ func TestProvisionSendsOneClientAndOneUserInRequestBodies(t *testing.T) {
 		if found := admin.Leaks([]byte(request.target+" "+fmt.Sprint(header)), identity); len(found) != 0 {
 			t.Errorf("%q are in the URL or a header of %s %s", found, request.method, request.target)
 		}
-		if (index != 1 && strings.Contains(request.body, identity.ClientSecret)) || (index != 2 && strings.Contains(request.body, identity.Password)) ||
+		if (index != 1 && strings.Contains(request.body, identity.ClientSecret.Reveal())) || (index != 2 && strings.Contains(request.body, identity.Password.Reveal())) ||
 			strings.Contains(request.body, adminSecret) {
 			t.Errorf("a secret is in the body of %s %s, which does not own it", request.method, request.target)
 		}
@@ -183,7 +183,7 @@ func TestProvisionSendsOneClientAndOneUserInRequestBodies(t *testing.T) {
 		}
 	}
 	for _, text := range []string{fmt.Sprint(identity), fmt.Sprintf("%+v %#v %v", *identity, identity, admin)} {
-		if strings.Contains(text, identity.Password) || strings.Contains(text, identity.ClientSecret) || strings.Contains(text, adminSecret) {
+		if strings.Contains(text, identity.Password.Reveal()) || strings.Contains(text, identity.ClientSecret.Reveal()) || strings.Contains(text, adminSecret) {
 			t.Errorf("the formatted identity or admin client holds a secret: %s", text)
 		}
 	}
@@ -242,11 +242,11 @@ func TestLeaksFindsEachEncodedForm(t *testing.T) {
 	admin := newTestAdmin(t, &recorder{answer: keycloakAnswers(nil)})
 	// The password bytes encode differently in base64 and base64url, and
 	// need escapes in a URL.
-	identity := &Identity{ClientSecret: "client-secret-value", Password: "pass word+/\xfb\xff"}
+	identity := &Identity{ClientSecret: NewSecret("client-secret-value"), Password: NewSecret("pass word+/\xfb\xff")}
 	for _, data := range []string{
-		"log: " + base64.RawURLEncoding.EncodeToString([]byte(identity.Password)),
-		"log: " + url.QueryEscape(identity.Password),
-		"env: " + fmt.Sprintf("%x", identity.Password),
+		"log: " + base64.RawURLEncoding.EncodeToString([]byte(identity.Password.Reveal())),
+		"log: " + url.QueryEscape(identity.Password.Reveal()),
+		"env: " + fmt.Sprintf("%x", identity.Password.Reveal()),
 	} {
 		if found := admin.Leaks([]byte(data), identity); len(found) != 1 || found[0] != "deployment user password" {
 			t.Errorf("Leaks(%q) = %q, want the deployment user password", data, found)
@@ -265,14 +265,18 @@ func TestLeaksFindsEachEncodedForm(t *testing.T) {
 // Defect: the harness provisions through the master realm (D1-4).
 func TestNewRefusesTheMasterRealm(t *testing.T) {
 	for _, issuer := range []string{testOrigin + "/realms/master", "http://identity.test.invalid/realms/pm-test", testOrigin + "/realms/pm-test/extra"} {
-		if _, err := New(Config{Issuer: issuer, ClientID: "a", ClientSecret: "b", RequestLimit: time.Second, Transport: &recorder{}}); err == nil {
+		if _, err := New(Config{Issuer: issuer, ClientID: "a", ClientSecret: NewSecret("b"), RequestLimit: time.Second, Transport: &recorder{}}); err == nil {
 			t.Errorf("New() accepted the issuer %q", issuer)
 		}
 	}
 }
 
-// Defect: a format verb prints a field of a secret-bearing value: Config,
-// Admin or Identity, as a value, a pointer or an exported field (B1).
+// Defect: a format verb or an encoder prints a secret: of a Config, an Admin,
+// an Identity or a Secret, as a value, a pointer, an exported field or a field
+// that is not exported (B1, round 2 F1). fmt calls no method for an invalid
+// verb, such as %p or %w on a value, or for a field that is not exported.
+// Then it prints the struct fields. A failure message names only the verb, the
+// value and the kind of secret, never the output.
 func TestNoFormatVerbPrintsASecret(t *testing.T) {
 	r := &recorder{answer: keycloakAnswers(nil)}
 	admin := newTestAdmin(t, r)
@@ -280,22 +284,49 @@ func TestNoFormatVerbPrintsASecret(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	config := Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: adminSecret, RequestLimit: time.Second}
-	nested := struct {
+	config := Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: NewSecret(adminSecret), RequestLimit: time.Second}
+	exported := struct {
 		C Config
 		A Admin
 		I Identity
 	}{config, *admin, *identity}
+	hidden := struct {
+		c Config
+		a Admin
+		i Identity
+		s Secret
+	}{config, *admin, *identity, identity.Password}
 	values := map[string]any{
 		"Config": config, "*Config": &config, "Admin": *admin, "*Admin": admin,
-		"Identity": *identity, "*Identity": identity, "a struct with exported fields": nested,
+		"Identity": *identity, "*Identity": identity, "Secret": identity.ClientSecret, "*Secret": &identity.Password,
+		"a struct with exported fields": exported, "a struct with fields that are not exported": hidden,
+		"a pointer to a struct with fields that are not exported": &hidden,
+		"a struct with only an Admin field that is not exported":  struct{ a Admin }{*admin},
+	}
+	leaks := func(text string) []string {
+		found := admin.Leaks([]byte(text), identity)
+		if strings.Contains(text, adminSecret) {
+			found = append(found, "admin client secret text")
+		}
+		return found
 	}
 	for name, value := range values {
-		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%d", "%x", "%X", "%q"} {
-			text := fmt.Sprintf(verb, value)
-			if found := admin.Leaks([]byte(text), identity); len(found) != 0 || strings.Contains(text, adminSecret) {
-				t.Errorf("%s with %s holds %q: %s", verb, name, found, text)
+		for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%d", "%x", "%X", "%q", "%p", "%w", "%z"} {
+			if found := leaks(fmt.Sprintf(verb, value)); len(found) != 0 {
+				t.Errorf("fmt.Sprintf %s of %s holds %q (output not shown)", verb, name, found)
 			}
+			if found := leaks(fmt.Errorf(verb, value).Error()); len(found) != 0 {
+				t.Errorf("fmt.Errorf %s of %s holds %q (output not shown)", verb, name, found)
+			}
+		}
+	}
+	for name, value := range map[string]any{"Config": config, "Identity": identity, "a struct with exported fields": exported} {
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("encode %s as JSON: %v", name, err)
+		}
+		if found := leaks(string(encoded)); len(found) != 0 {
+			t.Errorf("the JSON of %s holds %q (output not shown)", name, found)
 		}
 	}
 }
@@ -317,7 +348,7 @@ func TestRequestFailuresHoldNoSecret(t *testing.T) {
 		if found := admin.Leaks([]byte(err.Error()), identity); len(found) != 0 || strings.Contains(err.Error(), adminToken) {
 			t.Errorf("%s: the error holds %q or the admin token: %v", step, found, err)
 		}
-		if identity != nil && (strings.Contains(err.Error(), identity.ClientSecret) || strings.Contains(err.Error(), identity.Password)) {
+		if identity != nil && (strings.Contains(err.Error(), identity.ClientSecret.Reveal()) || strings.Contains(err.Error(), identity.Password.Reveal())) {
 			t.Errorf("%s: the error holds a deployment secret: %v", step, err)
 		}
 	}
@@ -378,7 +409,7 @@ func TestAnswerTextStaysOutOfErrors(t *testing.T) {
 	r := &recorder{answer: func(method, target string) (int, http.Header, string) {
 		return 401, nil, `{"error":"invalid_client","error_description":"echo ` + strings.Trim(string(escaped), `"`) + `"}`
 	}}
-	admin, err := New(Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: quotedSecret, RequestLimit: 10 * time.Second, Transport: r})
+	admin, err := New(Config{Issuer: testIssuer, ClientID: testClientID, ClientSecret: NewSecret(quotedSecret), RequestLimit: 10 * time.Second, Transport: r})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +437,7 @@ func TestRemoveRefusesAnIdentityOfAnotherAdmin(t *testing.T) {
 	}
 	other := &recorder{answer: keycloakAnswers(nil)}
 	otherAdmin, err := New(Config{Issuer: "https://other.test.invalid:8443/realms/pm-test", ClientID: testClientID,
-		ClientSecret: adminSecret, RequestLimit: 10 * time.Second, Transport: other})
+		ClientSecret: NewSecret(adminSecret), RequestLimit: 10 * time.Second, Transport: other})
 	if err != nil {
 		t.Fatal(err)
 	}

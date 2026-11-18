@@ -9,9 +9,10 @@
 // password (D1-6). The secrets stay in memory. The admin client secret travels
 // only in the Basic client authentication header of the HTTPS token request.
 // The deployment secrets travel only in HTTPS request bodies. No error text
-// holds an answer body or the text of a transport error, and no format verb
-// prints a secret-bearing value. Each request waits once, with one limit, and
-// nothing repeats.
+// holds an answer body or the text of a transport error. Each secret is a
+// Secret: fmt prints a fixed text for it, or only an address when fmt cannot
+// call its methods, and encoding/json sees no field of it. Each request waits
+// once, with one limit, and nothing repeats.
 package keycloak
 
 import (
@@ -48,7 +49,7 @@ type Config struct {
 	CA []byte
 	// ClientID and ClientSecret are the scoped admin client of the test realm.
 	ClientID     string
-	ClientSecret string
+	ClientSecret Secret
 	// RequestLimit bounds each request.
 	RequestLimit time.Duration
 	// Transport replaces the HTTPS transport. Only the Go developer tests set it.
@@ -59,7 +60,35 @@ const (
 	redactedConfig   = "Keycloak admin configuration [REDACTED]"
 	redactedAdmin    = "Keycloak admin client [REDACTED]"
 	redactedIdentity = "deployment identity [REDACTED]"
+	redactedSecret   = "secret [REDACTED]"
 )
+
+// Secret holds one secret text. Its methods write the same fixed text for
+// every verb. fmt does not call these methods for an invalid verb, such as %p
+// or %w on a value, or for a field that is not exported. Then fmt prints the
+// struct field by field. The only field is a pointer to a string, and fmt
+// prints such a pointer only as an address, for every verb. (fmt follows a
+// pointer to a struct, an array, a slice or a map, so the pointer must not
+// point to one of them.) encoding/json sees no exported field. The zero Secret
+// holds no text.
+type Secret struct{ text *string }
+
+// NewSecret returns a Secret that holds value.
+func NewSecret(value string) Secret { return Secret{text: &value} }
+
+// Reveal returns the secret text, or "" for the zero Secret. Use it only
+// where the text leaves the harness: an HTTPS request, a secret file or a
+// leak check.
+func (s Secret) Reveal() string {
+	if s.text == nil {
+		return ""
+	}
+	return *s.text
+}
+
+func (Secret) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, redactedSecret) }
+func (Secret) String() string                 { return redactedSecret }
+func (Secret) GoString() string               { return redactedSecret }
 
 // Format writes the same text for every verb and flag, for a value and a
 // pointer, so that no verb prints a field.
@@ -67,21 +96,17 @@ func (Config) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, red
 func (Config) String() string                 { return redactedConfig }
 func (Config) GoString() string               { return redactedConfig }
 
-// Admin is the scoped admin client. It holds the admin client secret behind a
-// pointer: when fmt prints an Admin as a field that it cannot call methods on,
-// it prints only the address of the secret.
+// Admin is the scoped admin client. It holds the admin client secret as a
+// Secret.
 type Admin struct {
 	issuer   string
 	origin   string
 	realm    string
 	clientID string
-	secret   *secretText
+	secret   Secret
 	limit    time.Duration
 	client   *http.Client
 }
-
-// secretText holds one secret. No method of this package formats it.
-type secretText struct{ value string }
 
 func (Admin) Format(state fmt.State, _ rune) { _, _ = io.WriteString(state, redactedAdmin) }
 func (Admin) String() string                 { return redactedAdmin }
@@ -93,9 +118,9 @@ func (Admin) GoString() string               { return redactedAdmin }
 // exist although Provision has no URL for it.
 type Identity struct {
 	ClientID     string
-	ClientSecret string
+	ClientSecret Secret
 	Username     string
-	Password     string
+	Password     Secret
 	issuer       string
 	clientURL    string
 	userURL      string
@@ -116,7 +141,7 @@ func New(config Config) (*Admin, error) {
 	if !ok || realm == "" || strings.Contains(realm, "/") || realm == "master" {
 		return nil, errors.New("keycloak: the issuer must be a test realm, not master: https://<address>/realms/<realm>")
 	}
-	if config.ClientID == "" || config.ClientSecret == "" || config.RequestLimit <= 0 {
+	if config.ClientID == "" || config.ClientSecret.Reveal() == "" || config.RequestLimit <= 0 {
 		return nil, errors.New("keycloak: the admin client and the request limit are required")
 	}
 	transport := config.Transport
@@ -135,7 +160,7 @@ func New(config Config) (*Admin, error) {
 		origin:   issuer.Scheme + "://" + issuer.Host,
 		realm:    realm,
 		clientID: config.ClientID,
-		secret:   &secretText{value: config.ClientSecret},
+		secret:   config.ClientSecret,
 		limit:    config.RequestLimit,
 		client: &http.Client{
 			Transport:     transport,
@@ -178,9 +203,9 @@ func (a *Admin) Provision(callback string) (*Identity, error) {
 	identity := &Identity{
 		issuer:       a.issuer,
 		ClientID:     "pm-acceptance-" + randomHex(6),
-		ClientSecret: randomSecret(),
+		ClientSecret: NewSecret(randomSecret()),
 		Username:     "pm-operator-" + randomHex(6),
-		Password:     randomSecret(),
+		Password:     NewSecret(randomSecret()),
 	}
 	token, err := a.token()
 	if err != nil {
@@ -193,7 +218,7 @@ func (a *Admin) Provision(callback string) (*Identity, error) {
 		"publicClient":              false,
 		"bearerOnly":                false,
 		"clientAuthenticatorType":   "client-secret",
-		"secret":                    identity.ClientSecret,
+		"secret":                    identity.ClientSecret.Reveal(),
 		"standardFlowEnabled":       true,
 		"implicitFlowEnabled":       false,
 		"directAccessGrantsEnabled": false,
@@ -218,7 +243,7 @@ func (a *Admin) Provision(callback string) (*Identity, error) {
 		"firstName":       "PM",
 		"lastName":        "Operator",
 		"requiredActions": []string{},
-		"credentials":     []map[string]any{{"type": "password", "value": identity.Password, "temporary": false}},
+		"credentials":     []map[string]any{{"type": "password", "value": identity.Password.Reveal(), "temporary": false}},
 	}
 	identity.userURL, err = a.create(token, "users", user, identity)
 	return identity, err
@@ -285,10 +310,10 @@ func (a *Admin) ownsObject(target, collection string) bool {
 // It is detection, not a boundary.
 func (a *Admin) Leaks(data []byte, identity *Identity) []string {
 	names := []string{"admin client secret"}
-	values := [][]string{append(forms(a.secret.value), forms(a.basicCredential())...)}
+	values := [][]string{append(forms(a.secret.Reveal()), forms(a.basicCredential())...)}
 	if identity != nil {
 		names = append(names, "deployment client secret", "deployment user password")
-		values = append(values, forms(identity.ClientSecret), forms(identity.Password))
+		values = append(values, forms(identity.ClientSecret.Reveal()), forms(identity.Password.Reveal()))
 	}
 	var found []string
 	for index, value := range values {
@@ -306,7 +331,7 @@ func (a *Admin) Leaks(data []byte, identity *Identity) []string {
 // form-encoded client ID and secret, joined by a colon (RFC 6749, section
 // 2.3.1).
 func (a *Admin) basicCredential() string {
-	return url.QueryEscape(a.clientID) + ":" + url.QueryEscape(a.secret.value)
+	return url.QueryEscape(a.clientID) + ":" + url.QueryEscape(a.secret.Reveal())
 }
 
 // token gets an access token for the admin client with the client
@@ -321,7 +346,7 @@ func (a *Admin) token() (string, error) {
 	if err != nil {
 		return "", errors.New("keycloak: build the token request")
 	}
-	request.SetBasicAuth(url.QueryEscape(a.clientID), url.QueryEscape(a.secret.value))
+	request.SetBasicAuth(url.QueryEscape(a.clientID), url.QueryEscape(a.secret.Reveal()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	status, _, text, err := a.send(request)
 	if err != nil {
