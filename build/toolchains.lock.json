@@ -1,6 +1,6 @@
 {
   "schema_version": "pm.toolchains/v1",
-  "go_version": "1.27.1",
+  "go_version": "1.27.4",
   "assets": [
     {
       "id": "bazel",
@@ -151,28 +151,28 @@
     },
     {
       "id": "go",
-      "version": "1.27.1",
+      "version": "1.27.4",
       "platform": "darwin-arm64",
-      "url": "https://go.dev/dl/go1.27.1.darwin-arm64.tar.gz",
-      "sha256": "ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12",
+      "url": "https://go.dev/dl/go1.27.4.darwin-arm64.tar.gz",
+      "sha256": "91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4",
       "kind": "tar.gz",
       "executable": "go/bin/go"
     },
     {
       "id": "go",
-      "version": "1.27.1",
+      "version": "1.27.4",
       "platform": "linux-amd64",
-      "url": "https://go.dev/dl/go1.27.1.linux-amd64.tar.gz",
-      "sha256": "63d339f0da5ab53635a56f2490a7984dfe12dfcff22ad749f63edaf590168445",
+      "url": "https://go.dev/dl/go1.27.4.linux-amd64.tar.gz",
+      "sha256": "7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840",
       "kind": "tar.gz",
       "executable": "go/bin/go"
     },
     {
       "id": "go",
-      "version": "1.27.1",
+      "version": "1.27.4",
       "platform": "linux-arm64",
-      "url": "https://go.dev/dl/go1.27.1.linux-arm64.tar.gz",
-      "sha256": "3450b45a3f9ee8568792736a5c5e70a1f2e9b36c35a8f74958c03e51d7d92bec",
+      "url": "https://go.dev/dl/go1.27.4.linux-arm64.tar.gz",
+      "sha256": "3392582988a273a87ab5043ee1b2c9c17a2c3c00580bf9326c47a2e0aaaeac92",
       "kind": "tar.gz",
       "executable": "go/bin/go"
     },
