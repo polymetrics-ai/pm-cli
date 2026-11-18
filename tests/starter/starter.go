@@ -92,9 +92,18 @@ type Config struct {
 	// Stdin is given to the process as is. Nil gives the null device.
 	Stdin *os.File
 	// ReadyFD is the number of the ready descriptor in the process, 3 or
-	// more. The descriptors from 3 to ReadyFD-1 are closed in the process.
+	// more. Each descriptor from 3 to ReadyFD-1 is closed in the process,
+	// except the descriptor that ListenFD names when Listener is set.
 	ReadyFD   int
 	ReadyMode ReadyMode
+	// ListenFD, when more than 0, is the number of an inherited listener
+	// descriptor in the process (ADR 0008), 3 or more and not ReadyFD.
+	// Listener is a copy of the socket that the caller bound and set to
+	// listen. Start owns Listener: the process gets it as descriptor
+	// ListenFD, and Start closes Listener before it returns, on every path.
+	// The caller keeps its own copy, with close-on-exec, and closes it.
+	ListenFD int
+	Listener *os.File
 	// ReadyLine is the exact ready line, with its line feed.
 	ReadyLine string
 	Limits    Limits
@@ -123,6 +132,10 @@ func (c Config) check() error {
 		return fmt.Errorf("starter: ready descriptor %d is less than 3", c.ReadyFD)
 	case c.ReadyMode < ReadyWriteEnd || c.ReadyMode > ReadyReadOnly:
 		return fmt.Errorf("starter: unknown ready mode %d", c.ReadyMode)
+	case (c.ListenFD == 0) != (c.Listener == nil):
+		return errors.New("starter: a listener descriptor needs both its number and its file")
+	case c.Listener != nil && (c.ListenFD < 3 || c.ListenFD == c.ReadyFD):
+		return fmt.Errorf("starter: listener descriptor %d must be 3 or more and not the ready descriptor", c.ListenFD)
 	case len(c.ReadyLine) < 2 || !strings.HasSuffix(c.ReadyLine, "\n"):
 		return errors.New("starter: the ready line must have text and end with a line feed")
 	case c.SnapshotBytes <= 0:
@@ -256,6 +269,11 @@ type Process struct {
 // the descriptors that Config names, and it closes its own copy of each write
 // end, so end of file comes when the process closes its copies or exits.
 func Start(config Config) (*Process, error) {
+	// The process has its own copy of the listener after cmd.Start. Start
+	// closes this copy on every path, also when the start fails.
+	if config.Listener != nil {
+		defer config.Listener.Close()
+	}
 	if err := config.check(); err != nil {
 		return nil, err
 	}
@@ -284,12 +302,15 @@ func Start(config Config) (*Process, error) {
 	cmd.Stdout = stdoutWrite
 	cmd.Stderr = stderrWrite
 	// Entry i becomes descriptor 3+i. A nil entry is closed in the process.
-	cmd.ExtraFiles = make([]*os.File, config.ReadyFD-2)
+	cmd.ExtraFiles = make([]*os.File, max(config.ReadyFD, config.ListenFD)-2)
 	switch config.ReadyMode {
 	case ReadyWriteEnd:
 		cmd.ExtraFiles[config.ReadyFD-3] = readyWrite
 	case ReadyReadOnly:
 		cmd.ExtraFiles[config.ReadyFD-3] = readyRead
+	}
+	if config.Listener != nil {
+		cmd.ExtraFiles[config.ListenFD-3] = config.Listener
 	}
 	if err := cmd.Start(); err != nil {
 		closeAll(readyRead, readyWrite, stdoutRead, stdoutWrite, stderrRead, stderrWrite)
