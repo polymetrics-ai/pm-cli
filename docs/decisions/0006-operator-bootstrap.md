@@ -1,6 +1,6 @@
 # 0006: Operator bootstrap of the first workspace and admin
 
-Date: 2026-11-16. Status: accepted 2026-11-16. The three corrections of 2026-11-18 in "Corrections" wait for the owner's decision. This record does not authorize application work. Every command, flag, role, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #284, a sub-issue of #72.
+Date: 2026-11-16. Status: accepted 2026-11-16. The owner accepted the four corrections of 2026-11-18 in "Corrections" on 2026-11-18. This record does not authorize application work. Every command, flag, role, text and check below is a planned contract until the owning implementation creates and runs it. Issue: #284, a sub-issue of #72.
 
 ## Context
 
@@ -13,7 +13,7 @@ At `main` `c59aa20`, no product path creates the first of these:
 - its first admin membership (`store.RegisterMembership`, `internal/store/memberships.go:41`);
 - a provider account (`store.RegisterProviderAccount`, `internal/store/provider_accounts.go:32`).
 
-Each has only test callers. `pm memberships grant` and `pm connections create` exist, but they need an existing workspace and an authorized user. So a new deployment has no first admin, and no product path can make one.
+Each has only test callers. `pm access memberships grant` and `pm connections create` exist, but they need an existing workspace and an authorized user. So a new deployment has no first admin, and no product path can make one.
 
 The owner decided on 2026-11-16 that acceptance scenarios must not write these rows directly: "Build product commands first". The operator owns the stack lifecycle, and a client invocation never starts or owns a backend ([ADR475-15](../architecture/pm-server/architecture/ADRS.md#adr475-15--operator-lifecycle-and-recovery), `AGENTS.md`).
 
@@ -76,7 +76,7 @@ Operator authority is a dedicated database credential for a new role, `pm_app_bo
   - `pm-server: bootstrap provider account names an undeclared connector`;
   - `pm-server: bootstrap requires operator authority` (the secrets directory holds no bootstrap credential, or the credential is refused).
 
-The admin membership holds the right to manage memberships and connections. Its resource grants list no connection at the start. An admin who later creates a connection adds it to a membership through `pm memberships update` (#284, slice 284c), under the existing grant model. That update is outside this record.
+The admin membership holds the right to manage memberships and connections. Its resource grants list no connection at the start. An admin who later creates a connection adds it to a membership through `pm access memberships update` (#284, slice 284c), under the existing grant model. That update is outside this record.
 
 ### Options
 
@@ -149,8 +149,9 @@ None of these exists yet. The #284 scenarios (`tests/acceptance/features/operato
 
 ## Corrections
 
-The owner accepted this record on 2026-11-16. The reviews of 2026-11-18 found statements that claimed more than the planned design held, and one gap in it. These corrections make the record true. They narrow the bootstrap authority. Correction 2 also adds one refusal line. Each must be a named change in the owner's sign-off packet.
+The owner accepted this record on 2026-11-16. The reviews of 2026-11-18 found statements that claimed more than the planned design held, one gap in it, and a wrong command path. These corrections make the record true. Corrections 1 to 3 narrow the bootstrap authority. Correction 2 also adds one refusal line. Correction 4 changes no behaviour. The owner accepted the four corrections on 2026-11-18.
 
 1. **Existing organizations (review finding F1).** The planned grants allowed direct inserts that were limited only by the organization that the client names. So a leaked credential could add an admin to an existing organization, and the risk statement was not true. The correction replaces the table grants with one function that refuses an organization that has rows ("The grants"), and states the remaining risk exactly ("Consequences"). It also removes the read of every login binding. The implementation is in #302.
 2. **A retry after an uncertain commit (review finding F2).** The record said that a refusal on retry proves that the first bootstrap committed. A refusal of a taken scope proves only that the scope is taken. The correction says so, and adds the SHA-256 of the input as a witness of the same input ("Scope"). The bootstrap record now stores that SHA-256. The correction adds one refusal line, `pm-server: bootstrap scope is already bootstrapped with another input` ("The planned interface"). The implementation is in #302.
 3. **One organization in two deployments (security review finding m1).** The primary key (deployment, organization) did not stop two concurrent bootstraps of one organization in two deployments. Both could commit. The correction adds a unique key on the organization, so an organization has a bootstrap in one deployment only ("Scope"). A refused bootstrap of this kind gives the refusal line of correction 2. The implementation is in #302.
+4. **The membership command path.** The record named `pm memberships grant` ("Context") and `pm memberships update` ("The planned interface"). PM has no top-level `memberships` command. At `main` `c59aa20`, `memberships` is a subcommand of `access` (`internal/cli/access.go:43-44`, `:51`), and the root adds `access` (`internal/cli/root.go:137`). The correction names `pm access memberships grant` and `pm access memberships update`. It changes no behaviour, no refusal line and no check.
