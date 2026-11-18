@@ -1080,6 +1080,125 @@ class IdentityProviderTests(unittest.TestCase):
         with self.assertRaises(FIXTURE.FixtureError):
             self.validate(dict(docker, cap_drop=sorted(FIXTURE.PODMAN_DEFAULT_CAPABILITIES)), refs, podman=False)
 
+    def test_keycloak_realm_import_is_a_directory_mount(self):
+        # Review #316 F2: the provider mounts the import directory, not the
+        # import file. A file bind mount keeps a removed file visible in the
+        # container.
+        imports = self.ROOT / FIXTURE.IDENTITY_DIRECTORY / "import"
+        mounts = FIXTURE.expected_mounts("keycloak", self.ROOT, ROOT)
+        self.assertIn((str(imports), "/opt/keycloak/data/import", False, "bind"), mounts)
+        self.assertEqual([item for item in mounts if item[1].startswith("/opt/keycloak/data/import/")], [])
+        value, refs = self.keycloak(podman=False)
+        file_mount = [
+            dict(item, Source=str(imports / "realm.json"), Destination="/opt/keycloak/data/import/realm.json")
+            if item["Destination"] == "/opt/keycloak/data/import" else item
+            for item in value["mounts"]
+        ]
+        with self.assertRaises(FIXTURE.FixtureError):
+            self.validate(dict(value, mounts=file_mount), refs, podman=False)
+
+    def test_realm_import_removal_checks_both_views(self):
+        # Review #316 F2: after the ready line the job removes the realm
+        # import, then needs an empty import directory on the job host and in
+        # the running provider.
+        def remove(imports, container_count, extra=None):
+            imports.mkdir(mode=0o750)
+            (imports / "realm.json").write_text("{}\n")
+            if extra is not None:
+                (imports / extra).write_text("{}\n")
+            calls = []
+
+            def run_capture(arguments, **options):
+                calls.append((list(arguments), options))
+                if isinstance(container_count, Exception):
+                    raise container_count
+                return 0, container_count, b""
+
+            with mock.patch.object(FIXTURE, "run_capture", side_effect=run_capture):
+                try:
+                    FIXTURE.remove_realm_import(
+                        imports, "f" * 64, Path("/unused/docker"), Path("/unused/docker-config"),
+                        "unix:///unused/docker.sock", {}, ROOT)
+                    outcome = None
+                except FIXTURE.FixtureError as exc:
+                    outcome = exc
+            return outcome, calls
+
+        with tempfile.TemporaryDirectory() as temporary:
+            outcome, calls = remove(Path(temporary) / "empty", b"0\n")
+            self.assertIsNone(outcome)
+            self.assertEqual(os.listdir(Path(temporary) / "empty"), [])
+            self.assertEqual(len(calls), 1)
+            arguments, options = calls[0]
+            self.assertEqual(arguments[-8:], ["container", "exec", "f" * 64, "/bin/bash", "-c",
+                                              FIXTURE.IDENTITY_IMPORT_COUNT, "bash", "/opt/keycloak/data/import"])
+            self.assertEqual((options["timeout"], options["max_output"]), (FIXTURE.DOCKER_TIMEOUT, 64))
+
+            outcome, calls = remove(Path(temporary) / "host", b"0\n", extra="second.json")
+            self.assertEqual(str(outcome), "identity provider realm import remains on the job host")
+            self.assertEqual(calls, [])
+
+            outcome, _ = remove(Path(temporary) / "container", b"1\n")
+            self.assertEqual(str(outcome), "identity provider realm import remains in the container")
+
+            outcome, _ = remove(Path(temporary) / "unreadable", b"")
+            self.assertEqual(str(outcome), "identity provider realm import remains in the container")
+
+            outcome, _ = remove(Path(temporary) / "failed", FIXTURE.CommandFailure("list the import", 126))
+            self.assertIsInstance(outcome, FIXTURE.CommandFailure)
+
+    def test_realm_import_count_counts_every_entry(self):
+        # Review #316 F2: the container check runs this text with bash
+        # builtins only. A real bash runs it here against a local directory.
+        def count(directory):
+            return subprocess.run(["/bin/bash", "-c", FIXTURE.IDENTITY_IMPORT_COUNT, "bash", str(directory)],
+                                  capture_output=True, timeout=30, check=False)
+
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary) / "import"
+            directory.mkdir()
+            self.assertEqual(count(directory).stdout, b"0\n")
+            (directory / "realm.json").write_text("{}\n")
+            self.assertEqual(count(directory).stdout, b"1\n")
+            (directory / ".hidden").write_text("x")
+            self.assertEqual(count(directory).stdout, b"2\n")
+            self.assertNotEqual(count(Path(temporary) / "absent").returncode, 0)
+            self.assertEqual(count(Path(temporary) / "absent").stdout, b"")
+
+    def test_keycloak_no_new_privileges_must_be_enabled(self):
+        # Review #316 F1: only an enabled no-new-privileges record passes. A
+        # false value, another suffix or a conflicting entry is refused.
+        for podman in (True, False):
+            value, refs = self.keycloak(podman=podman)
+            for accepted in (["no-new-privileges"], ["no-new-privileges:true"], ["no-new-privileges=true"]):
+                with self.subTest(podman=podman, accepted=accepted):
+                    self.validate(dict(value, security_opt=accepted), refs, podman=podman)
+            for unsafe in (
+                ["no-new-privileges:false"],
+                ["no-new-privileges=false"],
+                ["no-new-privileges:true", "no-new-privileges:false"],
+                ["no-new-privileges=true", "no-new-privileges=false"],
+                ["no-new-privileges:yes"],
+                ["no-new-privileges-disabled"],
+                ["no-new-privileges", None],
+            ):
+                with self.subTest(podman=podman, unsafe=unsafe), self.assertRaises(FIXTURE.FixtureError):
+                    self.validate(dict(value, security_opt=unsafe), refs, podman=podman)
+
+    def test_keycloak_build_output_must_name_copy_up(self):
+        # Review #316 F6: a build output tmpfs record without tmpcopyup is
+        # refused on both engines, and so is an explicit contrary option.
+        for podman, missing in (
+            (True, "size=64m,mode=0770,rw,rprivate,nosuid,nodev,noexec"),
+            (False, "mode=0770,size=64m"),
+        ):
+            value, refs = self.keycloak(podman=podman)
+            self.validate(value, refs, podman=podman)
+            for options in (missing, missing + ",notmpcopyup"):
+                tmpfs = dict(value["tmpfs"], **{"/opt/keycloak/lib/quarkus": options})
+                with self.subTest(podman=podman, options=options), self.assertRaises(FIXTURE.FixtureError):
+                    self.validate(dict(value, tmpfs=tmpfs), refs, podman=podman)
+
     def test_rootful_keycloak_runs_as_the_job_account(self):
         value, refs = self.keycloak(podman=False, rootless=False)
         self.validate(value, refs, podman=False, rootless=False)
@@ -1090,9 +1209,12 @@ class IdentityProviderTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "fixture"
             identity = root / "identity-provider"
-            identity.mkdir(parents=True, mode=0o700)
+            imports = identity / "import"
+            imports.mkdir(parents=True)
             os.chmod(root, 0o700)
-            modes = {"ca.pem": 0o600, "server.pem": 0o640, "server-key.pem": 0o640, "realm.json": 0o640,
+            os.chmod(identity, 0o700)
+            os.chmod(imports, 0o750)
+            modes = {"ca.pem": 0o600, "server.pem": 0o640, "server-key.pem": 0o640, "import/realm.json": 0o640,
                      "admin-client-id": 0o600, "admin-client-secret": 0o600}
             for name, mode in modes.items():
                 (identity / name).write_text("synthetic\n")
@@ -1101,8 +1223,9 @@ class IdentityProviderTests(unittest.TestCase):
             os.chmod(root / "server.json", 0o600)
             FIXTURE.validate_private_tree(root)
             FIXTURE.validate_identity_files(root)
-            for path, mode in ((identity / "realm.json", 0o644), (identity / "admin-client-secret", 0o640),
-                               (root / "server.json", 0o640)):
+            for path, mode in ((imports / "realm.json", 0o644), (identity / "admin-client-secret", 0o640),
+                               (root / "server.json", 0o640), (imports, 0o755), (imports, 0o770),
+                               (imports, 0o700), (identity, 0o750)):
                 with self.subTest(path=path.name, mode=oct(mode)):
                     original = stat_mode(path)
                     os.chmod(path, mode)
@@ -1112,6 +1235,18 @@ class IdentityProviderTests(unittest.TestCase):
                             FIXTURE.validate_identity_files(root)
                     finally:
                         os.chmod(path, original)
+            # Review #316 F2: the realm import only in its own directory, and
+            # nothing else in that directory.
+            for extra in (identity / "realm.json", imports / "admin-client-secret", imports / "extra.json"):
+                with self.subTest(extra=str(extra.relative_to(identity))):
+                    extra.write_text("x")
+                    os.chmod(extra, 0o600)
+                    try:
+                        with self.assertRaises(FIXTURE.FixtureError):
+                            FIXTURE.validate_identity_files(root)
+                    finally:
+                        extra.unlink()
+            FIXTURE.validate_identity_files(root)
             (identity / "extra").write_text("x")
             os.chmod(identity / "extra", 0o600)
             with self.assertRaises(FIXTURE.FixtureError):
@@ -1172,6 +1307,47 @@ class IdentityProviderTests(unittest.TestCase):
             with self.subTest(form=form[:12]), self.assertRaises(FIXTURE.FixtureError):
                 FIXTURE.require_secret_absent(b"prefix " + form + b" suffix", secret, "provider log", "pm-test-admin")
 
+    def test_secret_scan_report_names_its_forms_and_snapshots(self):
+        # Review #316 F8: the success line names the snapshots and the forms
+        # that the scan checked, and claims no more. The scan refuses each
+        # form that the line names.
+        secret = FIXTURE.secrets.token_hex(32)
+        report = FIXTURE.secret_scan_report("pm-test-admin")
+        forms = FIXTURE.secret_forms(secret, "pm-test-admin")
+        self.assertEqual(len(forms), 7)
+        for name, form in forms.items():
+            with self.subTest(form=name):
+                self.assertIn(name, report)
+                with self.assertRaises(FIXTURE.FixtureError):
+                    FIXTURE.require_secret_absent(b"prefix " + form + b" suffix", secret, "provider log", "pm-test-admin")
+        self.assertIn("both read before the HTTPS probes and the admin token request", report)
+        self.assertIn("is not detected", report)
+        self.assertNotIn("no form", report)
+
+    def test_admin_token_claims_must_be_a_json_object(self):
+        # Review #316 F5: a JWT payload of valid JSON that is not an object
+        # gives one fixed FixtureError, not an AttributeError.
+        issuer = "https://127.0.0.2:13006/realms/pm-test"
+
+        def token(payload):
+            encoded = base64.urlsafe_b64encode(json.dumps(payload).encode()).rstrip(b"=").decode()
+            return "e30." + encoded + ".c2ln"
+
+        def roles(payload):
+            answer = (200, {"access_token": token(payload)})
+            with mock.patch.object(FIXTURE, "identity_request", return_value=answer):
+                return FIXTURE.admin_client_roles(
+                    "127.0.0.2", 13006, issuer, ssl.create_default_context(), "pm-test-admin", "a" * 64)
+
+        for payload in ([], [1, 2], None, "claims", 5, True):
+            with self.subTest(payload=payload), self.assertRaisesRegex(
+                FIXTURE.FixtureError, "^identity provider admin token claims are not a JSON object$"
+            ):
+                roles(payload)
+        valid = {"iss": issuer, "azp": "pm-test-admin",
+                 "resource_access": {"realm-management": {"roles": ["manage-users", "manage-clients"]}}}
+        self.assertEqual(roles(valid), ["manage-clients", "manage-users"])
+
     def test_owned_networks_keep_the_identity_provider_alone(self):
         containers = [{"id": "1" * 64, "service": "postgres"}, {"id": "2" * 64, "service": "keycloak"}]
 
@@ -1225,6 +1401,112 @@ class IdentityProviderTests(unittest.TestCase):
         thread = threading.Thread(target=answer)
         thread.start()
         return listener, thread
+
+    def test_identity_request_ends_a_slow_answer_at_one_deadline(self):
+        # Review #316 F3: an answer that keeps making progress, one byte for
+        # each second of a fake clock, never reaches a per-operation socket
+        # timeout. The request must still end at one absolute deadline and
+        # close its TLS socket. A fast answer still passes.
+        body = b'{"issuer": "' + b"a" * 4096 + b'"}'
+        answer = (b"HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n"
+                  % len(body)) + body
+
+        class Answer(io.RawIOBase):
+            """The http.client reader of a socket: it reads through recv_into."""
+
+            def __init__(self, connection):
+                super().__init__()
+                self.connection = connection
+
+            def readable(self):
+                return True
+
+            def readinto(self, buffer):
+                return self.connection.recv_into(buffer)
+
+        class Clock:
+            now = 1000.0
+
+            def __call__(self):
+                return self.now
+
+        class TLS:
+            """A TLS socket whose answer gives STEP bytes for each SECONDS of the clock."""
+
+            def __init__(self, clock, step, seconds):
+                self.clock, self.step, self.seconds = clock, step, seconds
+                self.offset, self.request, self.closed = 0, b"", False
+
+            def settimeout(self, _value):
+                pass
+
+            def setsockopt(self, *_arguments):
+                pass
+
+            def send(self, data):
+                self.request += bytes(data)
+                return len(data)
+
+            def sendall(self, data):
+                self.request += bytes(data)
+
+            def recv_into(self, buffer, *_arguments):
+                piece = answer[self.offset:self.offset + min(self.step, len(buffer))]
+                self.offset += len(piece)
+                buffer[:len(piece)] = piece
+                self.clock.now += self.seconds if piece else 0
+                return len(piece)
+
+            def makefile(self, _mode, *_arguments, **_options):
+                return io.BufferedReader(Answer(self))
+
+            def close(self):
+                self.closed = True
+
+        class Raw:
+            def settimeout(self, _value):
+                pass
+
+            def setsockopt(self, *_arguments):
+                pass
+
+            def close(self):
+                pass
+
+        def request(step, seconds, phase=None):
+            clock = Clock()
+            tls = TLS(clock, step, seconds)
+            context = mock.Mock()
+            context.wrap_socket.return_value = tls
+            with contextlib.ExitStack() as stack:
+                stack.enter_context(mock.patch.object(FIXTURE, "CLOCK", clock, create=True))
+                stack.enter_context(mock.patch.object(FIXTURE.socket, "create_connection", return_value=Raw()))
+                if phase is not None:
+                    stack.enter_context(FIXTURE.Phase("start", phase))
+                try:
+                    outcome = FIXTURE.identity_request("127.0.0.2", 13006, context, "GET", "/")
+                except (FIXTURE.FixtureError, FIXTURE.PhaseDeadline) as exc:
+                    outcome = exc
+            return outcome, clock.now - 1000.0, tls
+
+        outcome, _, tls = request(len(answer), 0)
+        self.assertEqual(outcome, (200, {"issuer": "a" * 4096}))
+        self.assertTrue(tls.closed)
+        self.assertTrue(tls.request.startswith(b"GET / HTTP/1.1\r\nHost: 127.0.0.2:13006\r\n"))
+
+        outcome, elapsed, tls = request(1, 1)
+        self.assertIsInstance(outcome, FIXTURE.FixtureError)
+        self.assertNotIsInstance(outcome, FIXTURE.PhaseDeadline)
+        self.assertIn("did not end within its limit of 10 s", str(outcome))
+        self.assertLessEqual(elapsed, FIXTURE.IDENTITY_PROBE_TIMEOUT)
+        self.assertLess(tls.offset, len(answer))
+        self.assertTrue(tls.closed)
+
+        # The phase deadline sets the limit when less time is left in it.
+        outcome, elapsed, tls = request(1, 1, phase=7)
+        self.assertIsInstance(outcome, FIXTURE.PhaseDeadline)
+        self.assertLessEqual(elapsed, 7)
+        self.assertTrue(tls.closed)
 
     def test_plain_http_probe_needs_no_http_answer(self):
         for reply, refused in ((b"", True), (b"\x15\x03\x03\x00\x02\x02\x50", True),

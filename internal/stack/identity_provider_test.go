@@ -249,6 +249,7 @@ func TestComposeSourceAdmitsTheSecondLoopbackBindingOnlyForTheIdentityProvider(t
 	}
 	buildOutput := identityProviderBuildOutput + ":size=64m,mode=0770,tmpcopyup"
 	serverKey := "${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server-key.pem:/run/secrets/identity-provider-server-key.pem:ro"
+	realmImport := "${PM_STACK_IDENTITY_PROVIDER_DIR:?}/import:/opt/keycloak/data/import:ro"
 	for _, test := range []mutation{
 		{name: "valid", wantRefuse: ""},
 		{name: "identity provider wildcard binding", identity: func(d map[string]any) {
@@ -312,6 +313,16 @@ func TestComposeSourceAdmitsTheSecondLoopbackBindingOnlyForTheIdentityProvider(t
 		}, wantRefuse: "keycloak"},
 		{name: "missing credential mount", identity: func(d map[string]any) {
 			keycloak(d)["volumes"] = keycloak(d)["volumes"].([]any)[1:]
+		}, wantRefuse: "keycloak"},
+		// #316 review F2: the realm import is a directory mount. A file bind
+		// mount keeps a removed import file visible in the container.
+		{name: "realm import as a file mount", identity: func(d map[string]any) {
+			keycloak(d)["volumes"] = replaceIn(keycloak(d)["volumes"], realmImport,
+				"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/import/realm.json:/opt/keycloak/data/import/realm.json:ro")
+		}, wantRefuse: "keycloak"},
+		{name: "realm import from the credential directory", identity: func(d map[string]any) {
+			keycloak(d)["volumes"] = replaceIn(keycloak(d)["volumes"], realmImport,
+				"${PM_STACK_IDENTITY_PROVIDER_DIR:?}:/opt/keycloak/data/import:ro")
 		}, wantRefuse: "keycloak"},
 		// Review F5: the resource limits.
 		{name: "missing cpu limit", identity: func(d map[string]any) { delete(keycloak(d), "cpus") }, wantRefuse: "keycloak"},

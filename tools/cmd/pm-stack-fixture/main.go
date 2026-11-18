@@ -42,6 +42,9 @@ const (
 	identityProviderDirectory   = "identity-provider"
 	identityProviderRealm       = "pm-test"
 	identityProviderAdminClient = "pm-test-admin"
+	// The realm import has its own directory, which the provider mounts. It
+	// holds no other credential (#316 review F2).
+	identityProviderImportDirectory = identityProviderDirectory + string(filepath.Separator) + "import"
 )
 
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
@@ -750,7 +753,7 @@ func generateIdentityProviderMaterial(options fixtureOptions, port string, now t
 		{relativePath: filepath.Join(identityProviderDirectory, "ca.pem"), contents: bundle["ca.pem"]},
 		{relativePath: filepath.Join(identityProviderDirectory, "server.pem"), contents: bundle["server.pem"], groupReadable: true},
 		{relativePath: filepath.Join(identityProviderDirectory, "server-key.pem"), contents: bundle["server-key.pem"], groupReadable: true},
-		{relativePath: filepath.Join(identityProviderDirectory, "realm.json"), contents: append(realm, '\n'), groupReadable: true},
+		{relativePath: filepath.Join(identityProviderImportDirectory, "realm.json"), contents: append(realm, '\n'), groupReadable: true},
 		{relativePath: filepath.Join(identityProviderDirectory, "admin-client-id"), contents: []byte(identityProviderAdminClient)},
 		{relativePath: filepath.Join(identityProviderDirectory, "admin-client-secret"), contents: []byte(secret)},
 	}
@@ -933,6 +936,15 @@ func persistFixture(root string, material fixtureMaterial) error {
 		if err := os.Mkdir(filepath.Join(root, directory), 0o700); err != nil {
 			return fmt.Errorf("create private fixture directory: %w", err)
 		}
+	}
+	// The provider mounts the import directory and lists it. Its non-root
+	// user reads it through the job account's group, never as other.
+	importDirectory := filepath.Join(root, identityProviderImportDirectory)
+	if err := os.Mkdir(importDirectory, 0o700); err != nil {
+		return fmt.Errorf("create private fixture directory: %w", err)
+	}
+	if err := os.Chmod(importDirectory, 0o750); err != nil {
+		return fmt.Errorf("share the identity provider import directory: %w", err)
 	}
 	for _, file := range material.files {
 		if !filepath.IsLocal(file.relativePath) {

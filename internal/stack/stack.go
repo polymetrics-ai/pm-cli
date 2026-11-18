@@ -69,11 +69,13 @@ const (
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
 
 // identityProviderMounts are the only mounts that the provider may have, as
-// Compose volume strings: each one read-only (review F3).
+// Compose volume strings: each one read-only (review F3). The realm import is
+// a directory mount, so a removed import file also leaves the container view
+// (#316 review F2).
 var identityProviderMounts = []string{
 	"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server.pem:/run/secrets/identity-provider-server.pem:ro",
 	"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server-key.pem:/run/secrets/identity-provider-server-key.pem:ro",
-	"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/realm.json:/opt/keycloak/data/import/realm.json:ro",
+	"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/import:/opt/keycloak/data/import:ro",
 }
 
 // identityProviderTmpfs are the only tmpfs mounts that the provider may have.
