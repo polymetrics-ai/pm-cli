@@ -40,6 +40,10 @@ case "$mode" in
 esac
 uid=$(/usr/bin/id -u)
 runtime="$root/run/user/$uid"
+# env -i removed the caller's value. Podman finds the runtime folder of the
+# live UID through this one (crrao I3).
+XDG_RUNTIME_DIR=$runtime
+export XDG_RUNTIME_DIR
 runs="$runtime/pm-live-run"
 home=$(home_of "$uid")
 

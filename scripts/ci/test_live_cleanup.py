@@ -35,6 +35,8 @@ FAKE_PODMAN = """import os, subprocess, sys
 state, args = STATE, sys.argv[1:]
 with open(os.path.join(state, "log"), "a") as log:
     log.write(" ".join(args) + "\\n")
+with open(os.path.join(state, "xdg"), "a") as xdg:
+    xdg.write(os.environ.get("XDG_RUNTIME_DIR", "unset") + "\\n")
 flag = lambda name: os.path.exists(os.path.join(state, name))
 if args[0] == "unshare":
     sys.exit(1 if flag("rm-fails") else subprocess.run(args[1:]).returncode)
@@ -100,8 +102,8 @@ class Host:
         path.write_text(text)
         return path
 
-    def run(self, script, *arguments):
-        return subprocess.run(["/bin/sh", str(script), *arguments], env={"PATH": "/usr/bin:/bin"},
+    def run(self, script, *arguments, env=None):
+        return subprocess.run(["/bin/sh", str(script), *arguments], env={"PATH": "/usr/bin:/bin", **(env or {})},
                               capture_output=True, text=True, timeout=60)
 
     def process(self, pid, uid, cgroup="/user.slice/user-1.slice/user@1.service/app.slice/x.scope"):
@@ -192,6 +194,14 @@ class CleanupCheck(unittest.TestCase):
                                                              "unshare", "unshare"])
         self.assertFalse((self.host.runtime / "pm-live-run").exists())
         self.assertIn("FAILED: in-job cleanup: uncertain", result.stdout)
+
+    def test_podman_gets_the_runtime_folder_of_the_script(self):
+        # crrao I3: env -i removes the caller's XDG_RUNTIME_DIR. The script
+        # sets its own value, and each podman call gets it.
+        result = self.host.run(self.script, "post-stop", env={"XDG_RUNTIME_DIR": "/caller/value"})
+        self.assertEqual(result.returncode, 0, result.stdout)
+        values = set((self.host.state / "xdg").read_text().splitlines())
+        self.assertEqual(values, {str(self.host.runtime)})
 
     def test_a_token_link_is_removed_as_a_link(self):
         target = self.host.root / "target"
