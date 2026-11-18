@@ -63,6 +63,7 @@ go_test(
         "http_execution_test.go",
         "http_publication_test.go",
         "http_retry_test.go",
+        "lease_decision_export_test.go",
         "lifecycle_test.go",
         "load_boundary_test.go",
         "permit_expiry_test.go",

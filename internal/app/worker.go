@@ -120,6 +120,10 @@ type WorkerService struct {
 	artifactPublisher         *objects.Publisher
 	maximumResultBytes        int64
 	sqlBounds                 SQLBoundsResolver
+	// beforeLeaseDecision runs in the prepare transaction just before
+	// claimWorkerTask reads the stored lease. Production sets no value. Only
+	// the Go developer checks set it, through lease_decision_export_test.go.
+	beforeLeaseDecision func(context.Context) error
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -731,7 +735,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		// TTL to it (workerLeaseDeadline).
 		claimStarted := time.Now()
 		lease, err := claimWorkerTask(
-			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend,
+			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend, service.beforeLeaseDecision,
 		)
 		if err != nil {
 			return err
@@ -928,6 +932,7 @@ func claimWorkerTask(
 	ref store.TaskRef,
 	maxTTL time.Duration,
 	reconciliationOnly bool,
+	beforeLeaseDecision func(context.Context) error,
 ) (store.Lease, error) {
 	ownerID, err := workerRecordID("task-owner-v1-", struct {
 		RunID         string `json:"run_id"`
@@ -945,6 +950,11 @@ func claimWorkerTask(
 		return store.Lease{}, workerFailure(ErrWorkerAuthorization, errors.New("worker lease authority has elapsed"))
 	}
 	expectedFence := uint64(0)
+	if beforeLeaseDecision != nil {
+		if err := beforeLeaseDecision(ctx); err != nil {
+			return store.Lease{}, err
+		}
+	}
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
 		// Preparation runs after loadWorkerRunState sampled state.now, and it
@@ -2961,12 +2971,16 @@ func workerLeaseDeadline(claimStarted time.Time, lease store.Lease) time.Time {
 // In the Temporal activity the attempt deadline usually comes first: the claim
 // follows the start of the attempt, and the lease TTL is at most the sealed
 // start_to_close. This context then keeps the attempt deadline exactly. But
-// claimWorkerTask also limits the TTL of a fresh lease to the remaining
-// accepted run lifetime. When that lifetime ends before the attempt deadline,
-// the lease deadline comes first. Each step can then end earlier than with the
-// attempt deadline alone: the settlement cutoff can move to one reserve before
-// the lease deadline. A caller with a later deadline, or with none, also gets
-// the lease deadline.
+// claimWorkerTask also limits the TTL of a fresh lease to the accepted run
+// lifetime that remained at state.now, the database time that the worker
+// sampled before the preparation. workerLeaseDeadline adds that TTL to
+// claimStarted, a later local time. So the derived lease deadline can be up
+// to the preparation time after the accepted run deadline, and a shortened
+// lease does not always come first. When the derived lease deadline comes
+// before the attempt deadline, each step can end earlier than with the attempt
+// deadline alone: the settlement cutoff can move to one reserve before the
+// lease deadline. A caller with a later deadline, or with none, also gets the
+// lease deadline.
 func workerLeaseContext(ctx context.Context, leaseDeadline time.Time) (context.Context, context.CancelFunc) {
 	return context.WithDeadline(ctx, leaseDeadline)
 }

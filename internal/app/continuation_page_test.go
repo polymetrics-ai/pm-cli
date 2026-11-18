@@ -552,11 +552,11 @@ func TestUnitStepsEndBeforeTheTaskLeaseEnds(t *testing.T) {
 	}
 
 	// claimWorkerTask limits the TTL of a fresh lease to the remaining accepted
-	// run lifetime. When that lifetime ends before the attempt deadline, the
-	// lease deadline comes first, and each step ends earlier than with the
-	// attempt deadline alone. Here the attempt has 10s and the run 4s. The lease
-	// ends 10 ms before the accepted run deadline, because the worker takes its
-	// claim start time before the claim.
+	// run lifetime. When the lease deadline that the worker derives comes before
+	// the attempt deadline, each step ends earlier than with the attempt
+	// deadline alone. Here the attempt has 10s and the run 4s. The check chooses
+	// a lease end 10 ms before the accepted run deadline as its input. It does
+	// not run workerLeaseDeadline, which derives the real lease deadline.
 	t.Run("shortened run lifetime: the lease deadline comes first", func(t *testing.T) {
 		now := time.Now()
 		attemptDeadline := now.Add(10 * time.Second)
