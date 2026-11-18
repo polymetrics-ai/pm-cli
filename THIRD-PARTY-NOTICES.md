@@ -4,8 +4,8 @@ This file records the third-party source identities selected by the build/toolch
 
 ## Recorded dependency scope
 
-- Module-listing environment: Go 1.27.1 with `CGO_ENABLED=0`, `GOWORK=off`, and `GOFLAGS=-mod=readonly`.
-- Application graph: 254 resolved third-party modules; `go.sum` SHA-256 `4c46a56399ad3db07782ff5e3c5cdfb7b243bafb2e337582bc16ef6f4cb8601e`.
+- Module-listing environment: Go 1.27.4 with `CGO_ENABLED=0`, `GOWORK=off`, and `GOFLAGS=-mod=readonly`.
+- Application graph: 254 resolved third-party modules; `go.sum` SHA-256 `6ae4ab535d1f6fd9ea6732d129b22b05d40fc74796bc3e37ff2f6bf76442fafa`.
 - Isolated tools/generator graph: 65 resolved third-party modules; `tools/go.sum` SHA-256 `7c8cfcd3e5d3149e9e8ce2b09003dec1ede617494a9f19f8e8cc90c3f3fa3be0`.
 - Union: 306 exact module path/version identities; 13 identities occur in both graphs.
 - The module table below names the license material present in the downloaded source module. Full upstream license and NOTICE files must accompany any distribution that contains the corresponding code. This compact inventory is not a substitute for those texts.
@@ -19,7 +19,7 @@ This file records the third-party source identities selected by the build/toolch
 
 | Component | Exact identity | License / notice | Qualification status |
 | --- | --- | --- | --- |
-| Go | 1.27.1; official source archive SHA-256 `4e408abae126d916b6164627193f2c54f0e3ca1312d693b86db45f862ab238b1`; Darwin arm64 tool archive SHA-256 `ee215d57e0ec269c60cc9ceca68e6bda321ba9ee5afe24f4b0988703c2d87d12` | BSD-3-Clause | The pinned Darwin arm64 tool executed for module resolution and successful build, test, and vet boundaries; Linux locks remain unexecuted and no release qualification is claimed |
+| Go | 1.27.4; official source archive SHA-256 `73cfb8571aec0c01177687db87163d46aa20e9779672772891aa17654d9a6099`; Darwin arm64 tool archive SHA-256 `91a44a2b8a716600ad94a4f143e156116620db8828086a6e3602291be9bd0bb4` | BSD-3-Clause | The pinned Darwin arm64 tool executed for module resolution and successful build, test, and vet boundaries; Linux locks remain unexecuted and no release qualification is claimed |
 | DuckDB Go driver | `github.com/duckdb/duckdb-go/v2@v2.10505.0`, source archive SHA-256 `afa622810aa5cb65e4acafcbb6d95db9936e98329c743d9d9eff8ce521af470c` | MIT | Resolved and exercised through the Darwin arm64 native child; other targets remain unexecuted |
 | DuckDB Go bindings | `github.com/duckdb/duckdb-go-bindings@v0.10505.0`, origin `5f98009483427ea94061fdd5e39515d129d11b00` | MIT | The Darwin arm64 native probe passed with the locked binding and native asset; an omitted embedded build-info sum remains explicitly coupled to the separately verified module lock |
 | DuckDB core/static libraries | DuckDB 1.5.5; Linux amd64 `deb47c5300f3c99725e84cdb14d214c3b12bbd748b613b1698b938c894cb68eb`; Linux arm64 `ea6a34cb49ec2db5ed23d9e8311237c53c32abf9cdbf5dd608c4176c3dd8bfeb`; macOS amd64 `a27d36fa1247a3ffa1692e7aa0bf4ea4d1e0ee51da7c4df7a5db5217357b1b4d`; macOS arm64 `d79ec66b8a4054b866faada82e9e31f859a713c555b3f1c4b71c4a43d3273e9c` | MIT; preserve DuckDB and bundled extension notices | The Darwin arm64 SQL and C API probe passed at 1.5.5, including exact `±9007199254740993` values and a two-row Parquet read; every other platform remains unexecuted and no release or service qualification is claimed |
@@ -340,28 +340,29 @@ Locked source archive/binary hashes and installed-content hashes emitted by an S
 | `go.yaml.in/yaml/v3@v3.0.5` | application, tools | Apache-2.0 AND MIT (`LICENSE, NOTICE`) | [source](https://pkg.go.dev/go.yaml.in/yaml/v3@v3.0.5) |
 | `golang.org/x/arch@v0.22.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/arch@v0.22.0) |
 | `golang.org/x/crypto@v0.0.0-20200622213623-75b288015ac9` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/crypto@v0.0.0-20200622213623-75b288015ac9) |
-| `golang.org/x/crypto@v0.55.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/crypto@v0.55.0) |
+| `golang.org/x/crypto@v0.58.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/crypto@v0.58.0) |
+| `golang.org/x/exp/typeparams@v0.0.0-20231108232855-2478ac86f678` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/exp/typeparams@v0.0.0-20231108232855-2478ac86f678) |
 | `golang.org/x/exp@v0.0.0-20231110203233-9a3e6036ecaa` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/exp@v0.0.0-20231110203233-9a3e6036ecaa) |
 | `golang.org/x/exp@v0.0.0-20260824195058-e88cd73687aa` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/exp@v0.0.0-20260824195058-e88cd73687aa) |
-| `golang.org/x/exp/typeparams@v0.0.0-20231108232855-2478ac86f678` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/exp/typeparams@v0.0.0-20231108232855-2478ac86f678) |
-| `golang.org/x/mod@v0.32.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/mod@v0.32.0) |
-| `golang.org/x/mod@v0.41.0` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/mod@v0.41.0) |
-| `golang.org/x/net@v0.58.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/net@v0.58.0) |
+| `golang.org/x/mod@v0.41.0` | application, tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/mod@v0.41.0) |
 | `golang.org/x/net@v0.59.0` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/net@v0.59.0) |
+| `golang.org/x/net@v0.62.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/net@v0.62.0) |
 | `golang.org/x/oauth2@v0.37.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/oauth2@v0.37.0) |
-| `golang.org/x/sync@v0.23.0` | application, tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/sync@v0.23.0) |
-| `golang.org/x/sys@v0.47.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/sys@v0.47.0) |
+| `golang.org/x/sync@v0.23.0` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/sync@v0.23.0) |
+| `golang.org/x/sync@v0.24.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/sync@v0.24.0) |
 | `golang.org/x/sys@v0.48.0` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/sys@v0.48.0) |
-| `golang.org/x/telemetry@v0.0.0-20260116145544-c6413dc483f5` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/telemetry@v0.0.0-20260116145544-c6413dc483f5) |
+| `golang.org/x/sys@v0.49.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/sys@v0.49.0) |
 | `golang.org/x/telemetry@v0.0.0-20260908163034-4bcc4b2ee518` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/telemetry@v0.0.0-20260908163034-4bcc4b2ee518) |
+| `golang.org/x/telemetry@v0.0.0-20260924152758-ed294f943157` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/telemetry@v0.0.0-20260924152758-ed294f943157) |
 | `golang.org/x/term@v0.0.0-20210927222741-03fcf44c2211` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/term@v0.0.0-20210927222741-03fcf44c2211) |
+| `golang.org/x/term@v0.47.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/term@v0.47.0) |
 | `golang.org/x/text@v0.40.0` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/text@v0.40.0) |
-| `golang.org/x/text@v0.41.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/text@v0.41.0) |
+| `golang.org/x/text@v0.43.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/text@v0.43.0) |
 | `golang.org/x/time@v0.16.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/time@v0.16.0) |
-| `golang.org/x/tools@v0.41.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/tools@v0.41.0) |
+| `golang.org/x/tools/go/expect@v0.1.1-deprecated` | application, tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/tools/go/expect@v0.1.1-deprecated) |
+| `golang.org/x/tools/go/packages/packagestest@v0.1.1-deprecated` | application, tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/tools/go/packages/packagestest@v0.1.1-deprecated) |
 | `golang.org/x/tools@v0.50.0` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/tools@v0.50.0) |
-| `golang.org/x/tools/go/expect@v0.1.1-deprecated` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/tools/go/expect@v0.1.1-deprecated) |
-| `golang.org/x/tools/go/packages/packagestest@v0.1.1-deprecated` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/tools/go/packages/packagestest@v0.1.1-deprecated) |
+| `golang.org/x/tools@v0.51.0` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/tools@v0.51.0) |
 | `golang.org/x/vuln@v1.8.0` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/vuln@v1.8.0) |
 | `golang.org/x/xerrors@v0.0.0-20200804184101-5ec99f83aff1` | tools | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/xerrors@v0.0.0-20200804184101-5ec99f83aff1) |
 | `golang.org/x/xerrors@v0.0.0-20240903120638-7835f813f4da` | application | BSD-3-Clause (`LICENSE`) | [source](https://pkg.go.dev/golang.org/x/xerrors@v0.0.0-20240903120638-7835f813f4da) |

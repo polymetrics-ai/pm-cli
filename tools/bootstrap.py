@@ -60,7 +60,7 @@ EXPECTED_ASSET_VERSIONS = {
     "chromium": "153.0.8010.12",
     "clang": "21.1.8",
     "docker-compose": "5.5.1",
-    "go": "1.27.1",
+    "go": "1.27.4",
     "node": "24.21.0",
     "syft": "1.51.1",
 }
@@ -226,8 +226,8 @@ def _validate_lock(raw: object) -> dict[str, object]:
     )
     if lock["schema_version"] != "pm.toolchains/v1":
         raise BootstrapError("unsupported toolchain lock schema")
-    if lock["go_version"] != "1.27.1":
-        raise BootstrapError("toolchain lock must select Go 1.27.1")
+    if lock["go_version"] != "1.27.4":
+        raise BootstrapError("toolchain lock must select Go 1.27.4")
 
     assets = lock["assets"]
     if not isinstance(assets, list):
