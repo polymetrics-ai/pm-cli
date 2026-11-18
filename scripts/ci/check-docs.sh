@@ -100,6 +100,8 @@ check_python() {
     "$py" -I -B scripts/dev/secret_scan.py install
   fi
   for test in scripts/ci/test_setup.py scripts/ci/test_runner_admission.py \
+    scripts/ci/test_runner_admission_live.py scripts/ci/test_live_launcher.py \
+    scripts/ci/test_live_cleanup.py \
     scripts/ci/test_stack_fixture.py tools/test_bootstrap.py scripts/dev/test_secret_scan.py; do
     step "$test"
     "$py" -I -B "$test"

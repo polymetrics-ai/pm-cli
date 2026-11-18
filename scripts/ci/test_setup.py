@@ -270,6 +270,18 @@ class HookCheckSelection(unittest.TestCase):
             capture_output=True, text=True, timeout=30, env=env,
         )
 
+    def test_live_suites_and_files_are_registered(self):
+        # L-e1 P4: the checks job runs the live suites, and the setup check
+        # requires the live files.
+        script = CHECK_DOCS.read_text()
+        for suite in ("test_runner_admission_live.py", "test_live_launcher.py", "test_live_cleanup.py"):
+            self.assertIn(f"scripts/ci/{suite}", script)
+        required = set(json.loads(POLICY.read_text())["required_files"])
+        self.assertLessEqual({f"scripts/ci/{name}" for name in (
+            "runner_admission_live.py", "runner-admission-live.sh", "test_runner_admission_live.py",
+            "test_live_launcher.py", "live-cleanup-check.sh", "live-runner-check.sh", "test_live_cleanup.py")},
+            required)
+
     def test_check_names_come_from_the_script(self):
         result = subprocess.run(["/bin/sh", str(CHECK_DOCS), "--list"],
                                 capture_output=True, text=True, timeout=30)
