@@ -1509,10 +1509,14 @@ print(json.dumps({"result": list(result), "nested": nested}))
         # starts unexited: an exit before the kqueue registration would set
         # exited and skip the replaced events (#408 QA F1).
         process = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE)
-        try:
-            watch = module.ExitWatch(process.pid)
-        finally:
-            process.stdin.close()
+        # The cleanups run in reverse order, also when an assertion fails: the
+        # watch gets its own events back and closes, the input closes so that
+        # the child ends, and the child is reaped (#408 QA R2-F1).
+        self.addCleanup(process.wait, timeout=30)
+        self.addCleanup(process.stdin.close)
+        watch = module.ExitWatch(process.pid)
+        self.addCleanup(watch.close)
+        process.stdin.close()
         nested, calls = [], []
         self.assertFalse(watch.exited, "the child ended before the watch existed")
         exit_event = types.SimpleNamespace(filter=-5, fflags=0x80000000, ident=process.pid)
@@ -1530,15 +1534,11 @@ print(json.dumps({"result": list(result), "nested": nested}))
 
         saved = (watch.descriptor, watch.queue)
         watch.descriptor, watch.queue = None, Queue()
+        self.addCleanup(lambda: setattr(watch, "descriptor", saved[0]) or setattr(watch, "queue", saved[1]))
         constants = types.SimpleNamespace(KQ_FILTER_READ=-1, KQ_FILTER_PROC=-5, KQ_NOTE_EXIT=0x80000000)
-        try:
-            with mock.patch.object(module, "select", constants):
-                self.assertTrue(watch.wait(30), "an observed exit was lost")
-            self.assertEqual((nested, watch.exited), ([True], True))
-        finally:
-            watch.descriptor, watch.queue = saved
-            watch.close()
-            process.wait(timeout=30)
+        with mock.patch.object(module, "select", constants):
+            self.assertTrue(watch.wait(30), "an observed exit was lost")
+        self.assertEqual((nested, watch.exited), ([True], True))
 
     def test_refused_group_signal_after_the_group_is_empty(self):
         # The command exits 0 and leaves no member. Only on Darwin does the
