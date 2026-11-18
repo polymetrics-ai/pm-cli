@@ -120,6 +120,10 @@ type WorkerService struct {
 	artifactPublisher         *objects.Publisher
 	maximumResultBytes        int64
 	sqlBounds                 SQLBoundsResolver
+	// beforeLeaseDecision runs in the prepare transaction just before
+	// claimWorkerTask reads the stored lease. Production sets no value. Only
+	// the Go developer checks set it, through lease_decision_export_test.go.
+	beforeLeaseDecision func(context.Context) error
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -721,7 +725,7 @@ func (service *WorkerService) prepareWorkerUnit(
 		// TTL to it (workerLeaseDeadline).
 		claimStarted := time.Now()
 		lease, err := claimWorkerTask(
-			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend,
+			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend, service.beforeLeaseDecision,
 		)
 		if err != nil {
 			return err
@@ -903,6 +907,7 @@ func claimWorkerTask(
 	ref store.TaskRef,
 	maxTTL time.Duration,
 	reconciliationOnly bool,
+	beforeLeaseDecision func(context.Context) error,
 ) (store.Lease, error) {
 	ownerID, err := workerRecordID("task-owner-v1-", struct {
 		RunID         string `json:"run_id"`
@@ -920,6 +925,11 @@ func claimWorkerTask(
 		return store.Lease{}, workerFailure(ErrWorkerAuthorization, errors.New("worker lease authority has elapsed"))
 	}
 	expectedFence := uint64(0)
+	if beforeLeaseDecision != nil {
+		if err := beforeLeaseDecision(ctx); err != nil {
+			return store.Lease{}, err
+		}
+	}
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
 		// Preparation runs after loadWorkerRunState sampled state.now, and it
