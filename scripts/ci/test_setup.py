@@ -1363,6 +1363,44 @@ class GoTestReport(unittest.TestCase):
         _, _, reader = self.run_with_refused_group_signals(script)
         self.assertEqual(reader, {"acknowledged": True, "alive": True, "ended": True})
 
+    def test_refusal_after_an_interrupted_wait_of_an_exited_command(self):
+        # Pre-push failure of 2026-11-18: SIGTERM interrupts the wait after the command
+        # exited, and Darwin refuses a signal to its group. Forced on each system.
+        module = self.load_reporter()
+        real, killed, exits = module.ExitWatch, [], []
+
+        class InterruptedWatch:
+            def __init__(self, pid):
+                self.pid, self.real, self.exited, self.waits = pid, real(pid), False, 0
+
+            def wait(self, timeout):
+                self.waits += 1
+                if self.waits > 1:
+                    self.exited = self.real.wait(timeout)
+                    return self.exited
+                probe = real(self.pid)  # one bounded wait for the exit event, no reap
+                exits.append(probe.wait(30))
+                probe.close()
+                signal.raise_signal(signal.SIGTERM)
+                raise AssertionError("the signal did not interrupt the wait")
+
+            def close(self):
+                self.real.close()
+
+        def refused(group, signum):
+            killed.append(signum)
+            raise PermissionError(1, "Operation not permitted")
+
+        with tempfile.TemporaryDirectory() as directory, contextlib.ExitStack() as stack:
+            for name, value in (("ExitWatch", InterruptedWatch), ("live_group_members", lambda group: [])):
+                stack.enter_context(mock.patch.object(module, name, value))
+            stack.enter_context(mock.patch.object(module.sys, "platform", "darwin"))
+            stack.enter_context(mock.patch.object(module.os, "killpg", refused))
+            result = module.run_command(["/usr/bin/true"], Path(directory) / "out.json", None, None)
+        self.assertEqual(exits, [True], "the command did not exit before the signal")
+        self.assertEqual((result[0], result[3]), (128 + signal.SIGTERM, None), result)
+        self.assertEqual(killed[:2], [signal.SIGTERM, signal.SIGTERM])
+
     def test_refused_group_signal_after_the_group_is_empty(self):
         # The command exits 0 and leaves no member. Only on Darwin does the
         # system refuse a signal to a group whose only member is the exited,
