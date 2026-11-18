@@ -12,13 +12,16 @@ concurrency:
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 jobs:
-  # The behavior gate: the Gherkin acceptance suite runs real PM binaries in the
-  # pinned CI image on a rootless Podman runner. Go developer tests run in the
-  # git hooks. See docs/development/ci.md.
-  bdd:
+  # The stack run of the Go developer tests runs in three shards, one job
+  # each (scripts/ci/stack-shards.txt). Each shard starts its own job-owned
+  # stack. Job stack-3 then runs the behavior gate: the Gherkin acceptance
+  # suite runs real PM binaries on a fresh stack. All run in the pinned CI
+  # image on a rootless Podman runner. Go tests are developer checks, not
+  # acceptance proof. See docs/development/ci.md.
+  stack-1:
     if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
     runs-on: [self-hosted, Linux, X64, pm-cli-vps]
-    timeout-minutes: 60
+    timeout-minutes: 100
     steps:
       - name: Check out the exact pushed revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -29,20 +32,93 @@ jobs:
           persist-credentials: false
           set-safe-directory: false
           submodules: false
-      - name: Run the Gherkin acceptance suite
-        timeout-minutes: 50
-        run: sh scripts/ci/in-ci-image.sh run bdd -- sh scripts/ci/check-bdd.sh
+      - name: Run stack shard 1
+        timeout-minutes: 90
+        run: sh scripts/ci/in-ci-image.sh run stack-1 -- sh scripts/ci/check-bdd.sh --shard 1
       - name: Clean up the job container and dependency fixture
         if: always()
         timeout-minutes: 6
         run: |
-          sh scripts/ci/in-ci-image.sh stop bdd
-          sh scripts/ci/in-ci-image.sh run bdd-cleanup -- python3 scripts/ci/with-stack-fixture.py \
-            --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+          sh scripts/ci/in-ci-image.sh stop stack-1
+          sh scripts/ci/in-ci-image.sh run stack-1-cleanup -- python3 scripts/ci/with-stack-fixture.py \
+            --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-s1.json"
+
+  stack-2:
+    if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
+    runs-on: [self-hosted, Linux, X64, pm-cli-vps]
+    timeout-minutes: 100
+    steps:
+      - name: Check out the exact pushed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+      - name: Run stack shard 2
+        timeout-minutes: 3
+        run: sh scripts/ci/in-ci-image.sh run stack-2 -- sh scripts/ci/check-bdd.sh --shard 2
+      - name: Clean up the job container and dependency fixture
+        if: always()
+        timeout-minutes: 6
+        run: |
+          sh scripts/ci/in-ci-image.sh stop stack-2
+          sh scripts/ci/in-ci-image.sh run stack-2-cleanup -- python3 scripts/ci/with-stack-fixture.py \
+            --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-s2.json"
+
+  stack-3:
+    if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
+    runs-on: [self-hosted, Linux, X64, pm-cli-vps]
+    timeout-minutes: 100
+    steps:
+      - name: Check out the exact pushed revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          lfs: false
+          persist-credentials: false
+          set-safe-directory: false
+          submodules: false
+      - name: Run stack shard 3 and the Gherkin acceptance suite
+        timeout-minutes: 90
+        run: sh scripts/ci/in-ci-image.sh run stack-3 -- sh scripts/ci/check-bdd.sh --shard 3
+      - name: Clean up the job container and dependency fixture
+        if: always()
+        timeout-minutes: 6
+        run: |
+          sh scripts/ci/in-ci-image.sh stop stack-3
+          sh scripts/ci/in-ci-image.sh run stack-3-cleanup -- python3 scripts/ci/with-stack-fixture.py \
+            --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-s3.json"
+
+  # The required check. It passes only when each stack job has the result
+  # success. A failure, a cancellation or a skip of a stack job fails it. It
+  # has no checkout and runs no repository code. It reads only needs.*.result.
+  bdd:
+    needs: [stack-1, stack-2, stack-3]
+    if: always() && github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
+    runs-on: [self-hosted, Linux, X64, pm-cli-vps]
+    timeout-minutes: 5
+    steps:
+      - name: Require the result success of each stack job
+        env:
+          STACK_1: ${{ needs.stack-1.result }}
+          STACK_2: ${{ needs.stack-2.result }}
+          STACK_3: ${{ needs.stack-3.result }}
+        run: |
+          status=0
+          for job in "stack-1 $STACK_1" "stack-2 $STACK_2" "stack-3 $STACK_3"; do
+            printf '%s: %s\n' "${job% *}" "${job#* }"
+            [ "${job#* }" = success ] || status=1
+          done
+          exit "$status"
 
   # The static checks: setup, the Python script tests, generated code, gofmt,
-  # import boundaries and the tools module tests. They run no behavior test
-  # and do not wait for bdd. See docs/development/ci.md.
+  # import boundaries, the tools module tests and the unit run of the Go
+  # developer tests. They run no behavior test and do not wait for bdd. See
+  # docs/development/ci.md.
   checks:
     if: github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)
     runs-on: [self-hosted, Linux, X64, pm-cli-vps]
