@@ -53,7 +53,7 @@ Operator authority is a dedicated database credential for a new role, `pm_app_bo
 - **One bootstrap for each deployment and organization.** The deployment comes from the server configuration. The organization comes from the input.
 - **Once.** The bootstrap record has the primary key (deployment, organization). Any second bootstrap of the same scope is refused, also when its input is the same as the first input. Two concurrent bootstraps of one scope cannot both commit, because the primary key refuses the second insert. The reasons for "once":
   - The bootstrap is one transaction, so a failed bootstrap leaves no partial state, and a retry after a failure starts clean.
-  - After a lost or uncertain commit, a retry tells the operator what happened. A success means that no bootstrap of this scope had committed. A refusal means only that the scope is taken: a second operator, or a person with a leaked credential, can take the scope with another input. So the refusal also says whether the SHA-256 of the input that the bootstrap record holds equals the SHA-256 of this input. Equal means that a bootstrap with this exact input committed. Not equal means that another input took the scope. The exact refusal lines are set with the implementation (#302) and the scenario owners.
+  - After a lost or uncertain commit, a retry tells the operator what happened. A success means that no bootstrap of this scope had committed. A refusal means only that the scope is taken: a second operator, or a person with a leaked credential, can take the scope with another input. So the refusal also says whether the SHA-256 of the input that the bootstrap record holds equals the SHA-256 of this input. Equal means that a bootstrap with this exact input committed: the refusal is `pm-server: bootstrap scope is already bootstrapped`. Not equal means that another input took the scope: the refusal is `pm-server: bootstrap scope is already bootstrapped with another input`.
   - A clear "once" needs no stored copy of the first input, only its SHA-256, and no rule for when two inputs are the same.
   - An operator who lost the output can read the result through the product after login.
 - **A second organization in the same deployment.** A bootstrap of another organization in the same deployment succeeds. It inserts only the rows of the new organization. The rows of each earlier organization stay unchanged: the function writes only the rows of a new organization, and the role has no other write authority.
@@ -65,7 +65,8 @@ Operator authority is a dedicated database credential for a new role, `pm_app_bo
 - The input file holds the organization, the workspace ID and name, the admin's issuer and subject, and the provider accounts (connector ID and display name). It holds no secret, and no secret is in an argument.
 - Success: exit code 0. One JSON document on stdout names the workspace, the admin identity, the admin membership and each provider account. It holds no secret.
 - Each refusal: exit code 1, nothing on stdout, nothing written, and exactly one stderr line:
-  - `pm-server: bootstrap scope is already bootstrapped`;
+  - `pm-server: bootstrap scope is already bootstrapped` (the scope holds a bootstrap of the same input);
+  - `pm-server: bootstrap scope is already bootstrapped with another input` (the scope holds a bootstrap of another input, or the organization already has rows);
   - `pm-server: bootstrap admin login is already bound`;
   - `pm-server: bootstrap workspace name is required`;
   - `pm-server: bootstrap admin subject is required`;
