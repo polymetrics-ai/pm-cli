@@ -96,8 +96,14 @@ func runHandoverChild(part string) int {
 		}
 		return 0
 	}
+	if extra, ok := handoverChildParts[part]; ok {
+		return extra()
+	}
 	return broken("unknown part %q", part)
 }
+
+// handoverChildParts are child parts that a test file for one system adds.
+var handoverChildParts = map[string]func() int{}
 
 // Go developer test, not acceptance proof: the local mechanism check F3 of the
 // ADR 0008 review. A test starter runs this test binary as a child process
@@ -246,7 +252,13 @@ func startChild(t *testing.T, command *exec.Cmd) *child {
 	}()
 	t.Cleanup(func() {
 		_ = command.Process.Kill()
-		<-process.done
+		// Wait also waits for the copy of the child output, so a process
+		// that keeps that pipe open can delay it. One limit bounds it.
+		select {
+		case <-process.done:
+		case <-time.After(readyTestLimit):
+			t.Errorf("the child did not end within %s after SIGKILL", readyTestLimit)
+		}
 	})
 	return process
 }

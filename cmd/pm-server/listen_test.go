@@ -173,12 +173,19 @@ func TestListenDescriptorRefusals(t *testing.T) {
 // criteria D18). Defect: after it refuses a mismatched descriptor, the start
 // path binds server.listen, or goes on to open the application. The
 // configured address is free: the test bound it and closed it again. After
-// the refusal, the process holds no socket at the configured address.
+// the refusal, the process holds no socket at the configured address. The
+// test makes the inherited listener while it still holds the configured
+// port, so the two addresses differ. A bind that closes its socket again
+// leaves nothing to count here: on Linux, TestRefusedDescriptorMakesNoBind
+// catches each bind call.
 func TestRefusedDescriptorDoesNotFallBackToTheConfiguredAddress(t *testing.T) {
 	free := listenLoopback(t)
 	configured := free.Addr().String()
-	_ = free.Close()
 	descriptor, name := inheritedListener(t)
+	_ = free.Close()
+	if name == "inet4 "+configured {
+		t.Fatalf("test setup: the inherited listener is at the configured address %s", configured)
+	}
 	paths := []string{"--config", writeListenConfiguration(t, configured), "--secrets-directory", t.TempDir()}
 	requireRefusal(t, withArguments(paths, "--listen-fd", strconv.Itoa(descriptor)), listenRefusal)
 	requireOwnership(t, descriptor, true, name)
