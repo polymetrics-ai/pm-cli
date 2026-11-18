@@ -132,8 +132,11 @@ for folder in "$work" "$runner/_diag" "$home/.local/share/containers" "$home/pm-
   fi
 done
 
-# 3. Compare the files with the root-held list.
-if [ ! -f "$list" ] || [ -L "$list" ]; then
+# 3. Compare the files with the root-held list. Only after the gate, as in
+# step 2: a live process could change a file while root reads it (crrao I2).
+if [ "$gate" -ne 0 ]; then
+  fail 'the files were not compared, because the gate failed'
+elif [ ! -f "$list" ] || [ -L "$list" ]; then
   fail 'the root-held file list is missing'
 else
   temporary=$(/usr/bin/mktemp) || exit 1
@@ -146,7 +149,7 @@ else
   fi
   /bin/rm -f -- "$temporary"
 fi
-forbidden_files
+[ "$gate" -ne 0 ] || forbidden_files
 
 # 4. No crontab and no at job.
 if crontab=$(crontab_of "$user" 2>&1); then

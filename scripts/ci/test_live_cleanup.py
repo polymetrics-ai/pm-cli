@@ -48,11 +48,17 @@ if flag(kind):
     print("left-" + kind)
 """
 FAKE_ENTRY = """import os, sys
+with open(os.path.join(STATE, "reads"), "a") as reads:
+    reads.write(sys.argv[1] + "\\n")
 status, owner = os.lstat(sys.argv[1]), os.path.join(STATE, "owner")
 foreign = os.path.exists(owner) and open(owner).read() == sys.argv[1]
 print(status.st_uid + foreign, status.st_gid, format(status.st_mode, "x"))
 """
-FAKE_SHA = "import hashlib, sys\nprint(hashlib.sha256(open(sys.argv[1], 'rb').read()).hexdigest())\n"
+FAKE_SHA = """import hashlib, os, sys
+with open(os.path.join(STATE, "reads"), "a") as reads:
+    reads.write(sys.argv[1] + "\\n")
+print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())
+"""
 
 
 class Host:
@@ -344,6 +350,16 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(self.host.run(self.script, "--record").returncode, 0)
                 result = self.check()
                 self.assertEqual(result.returncode, expected, result.stdout)
+
+    def test_a_failed_gate_reads_no_file(self):
+        # crrao I2: with a failed gate, root reads no runner or home file.
+        reads = self.host.state / "reads"
+        reads.unlink()  # the record of setUp read each file
+        self.host.process(20, UID)
+        result = self.check()
+        self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertFalse(reads.exists(), reads.read_text() if reads.exists() else "")
+        self.assertIn("not compared, because the gate failed", result.stdout)
 
     def test_record_refuses_a_forbidden_file(self):
         (self.host.home / ".ssh").mkdir()
