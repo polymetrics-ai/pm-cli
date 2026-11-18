@@ -25,6 +25,68 @@ FIXTURE = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(FIXTURE)
 
 
+# The teardown check and the FIFO reader check of test_setup.py.
+SETUP_SPEC = importlib.util.spec_from_file_location("test_setup", ROOT / "scripts/ci/test_setup.py")
+SETUP = importlib.util.module_from_spec(SETUP_SPEC)
+SETUP_SPEC.loader.exec_module(SETUP)
+processes_holding, no_fifo_reader = SETUP.processes_holding, SETUP.no_fifo_reader
+
+
+class ExitedLeader:
+    """A process group whose leader exited and is not reaped (F1 at 52a87ec).
+
+    The leader and, with DESCENDANT, one group member are children of the
+    test, so each Popen keeps its identity until the reap. The member opens
+    "hold" and acknowledges on "ack". The leader then exits, and the member
+    blocks on "hold" until release(). The test holds both FIFOs open, so no
+    open blocks. Each end and process is registered when it is acquired. A
+    failed setup releases the FIFOs, then kills and collects each process.
+    """
+
+    def __init__(self, directory, descendant):
+        self.ends, self.processes, self.member = [], [], None
+        try:
+            hold, ack = Path(directory) / "hold", Path(directory) / "ack"
+            for path in (hold, ack):
+                os.mkfifo(path)
+                self.ends.append(os.open(path, os.O_RDWR))
+            scripts = ['read ack < "$1"', 'exec 3<"$0"; echo opened > "$1"; exec cat <&3 > /dev/null']
+            for script in (scripts if descendant else ["exit 0"]):
+                group = self.processes[0].pid if self.processes else 0
+                self.processes.append(subprocess.Popen(["/bin/sh", "-c", script, str(hold), str(ack)],
+                                                       stdin=subprocess.DEVNULL, process_group=group))
+            self.leader, self.member = self.processes[0], (self.processes[1] if descendant else None)
+            # One bounded wait for the exit of the leader, without a reap.
+            watch = FIXTURE.ExitWatch(self.leader.pid)
+            try:
+                if not watch.wait(30):
+                    raise AssertionError("the leader did not exit")
+            finally:
+                watch.close()
+        except BaseException:
+            self.close()
+            raise
+
+    def release(self):
+        while self.ends:
+            os.close(self.ends.pop())
+
+    def close(self):
+        self.release()
+        for process in self.processes:
+            if process.returncode is None:
+                # The process is not reaped, so its ID still names it.
+                process.kill()
+                process.wait(timeout=30)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        self.close()
+        return False
+
+
 class FixtureOwnershipTests(unittest.TestCase):
     def test_rootless_mapping_requires_observed_daemon_option(self):
         self.assertTrue(FIXTURE.rootless_engine(["name=seccomp,profile=builtin", "name=rootless"]))
@@ -393,11 +455,9 @@ class FixtureOwnershipTests(unittest.TestCase):
             process.communicate(timeout=5)
 
     def test_cancellation_stops_descendant_that_ignores_term(self):
-        # The leader stops on SIGTERM. Its descendant ignores SIGTERM and holds
-        # the process output open. Both block on a FIFO that the test holds
-        # open and never writes. The group SIGKILL after the grace must stop
-        # the descendant. The leader is not reaped before the call, so its
-        # process group ID names no other group (issue #286).
+        # The leader stops on SIGTERM. Its descendant ignores SIGTERM, holds
+        # the output open and blocks on a held FIFO. The group SIGKILL after
+        # the grace must stop it, before the leader's reap (issue #286).
         descendant = (
             "import signal,sys; "
             "signal.signal(signal.SIGTERM,signal.SIG_IGN); "
@@ -437,12 +497,9 @@ class FixtureOwnershipTests(unittest.TestCase):
                 os.close(hold_end)
 
     def test_group_signal_precedes_any_reap(self):
-        # E6 lines 357-394 at 8fc2bd3: terminate_process_group called
-        # process.poll(), which can reap the exited leader, and then signalled
-        # the group by the leader's process ID. After the reap, that ID can
-        # name another group. Here the leader has exited and is not reaped,
-        # and a member of its group blocks on a FIFO that the test holds open
-        # and never writes. Each killpg must come before the reap.
+        # E6 at 8fc2bd3: a reap before the group signal lets the leader's ID
+        # name another group. The leader exited and is not reaped, and a group
+        # member blocks on a held FIFO. Each killpg must come before the reap.
         events = []
         real_killpg = os.killpg
 
@@ -496,39 +553,9 @@ class FixtureOwnershipTests(unittest.TestCase):
         self.assertEqual([index for index in kills if index > reaped[0]], [],
                          f"killpg after the leader was reaped: {events}")
 
-    def exited_leader(self, directory, descendant):
-        """Start a leader that exits at once and is not reaped.
-
-        With DESCENDANT, the leader first starts a member of its group that
-        opens the FIFO "hold", writes its process ID to "pid" and then
-        acknowledges on the FIFO "ack". The leader exits only after that
-        acknowledgement. The member blocks on "hold" until the test closes it.
-        Return (process, held member or None, the FIFO ends to close).
-        """
-        hold, ack, pid_file = (Path(directory) / name for name in ("hold", "ack", "pid"))
-        os.mkfifo(hold)
-        os.mkfifo(ack)
-        ends = [os.open(hold, os.O_RDWR), os.open(ack, os.O_RDWR)]
-        script = "exit 0"
-        if descendant:
-            script = ("sh -c 'exec 3<\"$0\"; echo $$ > \"$2\"; echo opened > \"$1\"; exec cat <&3 > /dev/null' "
-                      "\"$0\" \"$1\" \"$2\" & read ack < \"$1\"")
-        process = subprocess.Popen(["/bin/sh", "-c", script, str(hold), str(ack), str(pid_file)],
-                                   stdin=subprocess.DEVNULL, start_new_session=True)
-        # One bounded wait for the exit of the leader, without a reap.
-        watch = FIXTURE.ExitWatch(process.pid)
-        try:
-            self.assertTrue(watch.wait(30), "the leader did not exit")
-        finally:
-            watch.close()
-        member = FIXTURE.ExitWatch(int(pid_file.read_text())) if descendant else None
-        return process, member, ends
-
     def test_group_signal_refusal_needs_an_empty_group(self):
-        # brahmagupta F3 at 3b6e71f: the wrapper took any refused group signal
-        # as harmless once the leader had exited. Now only Darwin, with a
-        # member list that shows no live member, makes it harmless. killpg is
-        # refused in each case, so no real signal goes to the group.
+        # brahmagupta F3 at 3b6e71f: only Darwin, with no live member, makes a
+        # refused group signal harmless. killpg is refused in each case.
         def refused(group, signum):
             raise PermissionError(1, "Operation not permitted")
 
@@ -540,8 +567,8 @@ class FixtureOwnershipTests(unittest.TestCase):
         ]
         for name, descendant, system, members, message in cases:
             with self.subTest(case=name), tempfile.TemporaryDirectory() as directory:
-                process, member, ends = self.exited_leader(directory, descendant)
-                try:
+                with ExitedLeader(directory, descendant) as group:
+                    process = group.leader
                     with contextlib.ExitStack() as stack:
                         stack.enter_context(mock.patch.object(FIXTURE.os, "killpg", refused))
                         if system:
@@ -556,18 +583,42 @@ class FixtureOwnershipTests(unittest.TestCase):
                             with self.assertRaisesRegex(FIXTURE.FixtureError, message):
                                 FIXTURE.terminate_process_group(process)
                     self.assertIsNotNone(process.returncode, "the exited leader was not reaped")
-                finally:
+                    group.release()
+                    if group.member is not None:
+                        # One wait for the member, which reads the end of the
+                        # closed FIFO and exits by itself.
+                        self.assertEqual(group.member.wait(timeout=30), 0, "the group member did not exit")
+                self.assertEqual(processes_holding(directory), [])
+
+    def test_exited_leader_setup_failure_releases_everything(self):
+        # brahmagupta F1 at 52a87ec: a failed setup left the FIFO ends and the
+        # processes. The exit watch fails after both processes started.
+        started = []
+
+        class Recorded(subprocess.Popen):
+            def __init__(self, *arguments, **options):
+                super().__init__(*arguments, **options)
+                started.append(self)
+
+        def no_watch(pid):
+            raise OSError("no exit watch")
+
+        with tempfile.TemporaryDirectory() as directory:
+            try:
+                with mock.patch.object(subprocess, "Popen", Recorded), \
+                        mock.patch.object(FIXTURE, "ExitWatch", no_watch), \
+                        self.assertRaisesRegex(OSError, "no exit watch"):
+                    ExitedLeader(directory, True)
+                self.assertEqual(len(started), 2, started)
+                self.assertEqual([process.returncode is None for process in started], [False, False],
+                                 "an owned process was not stopped and collected")
+                self.assertTrue(all(no_fifo_reader(Path(directory) / name) for name in ("hold", "ack")))
+                self.assertEqual(processes_holding(directory), [])
+            finally:
+                for process in started:
                     if process.returncode is None:
-                        process.wait()
-                    for end in ends:
-                        os.close(end)
-                    if member is not None:
-                        # One wait for the exit of the held member, which reads
-                        # the end of the closed FIFO.
-                        try:
-                            self.assertTrue(member.wait(30), "the group member did not exit")
-                        finally:
-                            member.close()
+                        process.kill()
+                        process.wait(timeout=30)
 
     def test_group_signal_refuses_a_reaped_leader(self):
         # The process group ID of a reaped leader can name another group, so
@@ -666,9 +717,7 @@ class PhaseFixture:
         stack.enter_context(mock.patch.object(FIXTURE.secrets, "token_hex", return_value=token))
         stack.enter_context(mock.patch.object(FIXTURE, "SIGNALS", FIXTURE.SignalController()))
         stack.enter_context(mock.patch.object(FIXTURE, "terminate_process_group", side_effect=self.stop))
-        # The fake clock. With create=True, the patch also applies to a
-        # wrapper that has no CLOCK, so that the check fails there on its
-        # assertions.
+        # The fake clock. create=True also patches a wrapper with no CLOCK.
         stack.enter_context(mock.patch.object(FIXTURE, "CLOCK", self.clock, create=True))
         stack.enter_context(mock.patch.object(FIXTURE.subprocess, "Popen", side_effect=self.popen))
 
@@ -715,8 +764,7 @@ class PhaseDeadlineTests(unittest.TestCase):
         return json.loads(path.read_text())
 
     def test_phase_deadline_ends_the_start_phase(self):
-        # Each call ends after 25 s, inside its own 30 s limit. Together the
-        # calls pass 720 s in the discovery after `pm-stack up`.
+        # Each call ends after 25 s (own limit 30 s); together they pass 720 s.
         fixture = PhaseFixture(lambda _arguments: 25)
         with tempfile.TemporaryDirectory() as temporary:
             result, errors, path = fixture.run(Path(temporary).resolve())
@@ -742,13 +790,11 @@ class PhaseDeadlineTests(unittest.TestCase):
         self.assertEqual(start[15][0][-3:-2], ["up"])
         self.assertEqual(timeouts[15], 345)
         self.assertEqual(timeouts[16:], [30] * 12 + [20])
-        # The 20 s call is stopped at the start deadline. The cleanup in the
-        # run step then reaches its own deadline and stops one more call.
+        # The start deadline stops the 20 s call; the cleanup deadline one more.
         self.assertEqual(len(fixture.stopped), 2)
 
     def test_phase_deadline_ends_the_cleanup_in_the_run_step(self):
-        # The start and the command are quick. Each cleanup call ends after
-        # 25 s. Together they pass the 360 s of the cleanup phase.
+        # Each cleanup call ends after 25 s; together they pass the 360 s.
         fixture = PhaseFixture(lambda _arguments: 25 if fixture.command_started else 1)
         with tempfile.TemporaryDirectory() as temporary:
             result, errors, path = fixture.run(Path(temporary).resolve())
@@ -763,8 +809,7 @@ class PhaseDeadlineTests(unittest.TestCase):
         self.assertEqual([timeout for _, timeout in cleanup], [30] * 14 + [10])
 
     def test_phase_deadline_ends_the_cleanup_step(self):
-        # --cleanup in the workflow cleanup step: 300 s. The 12th call gets the
-        # 25 s that are left. Then no time is left, and no 13th call starts.
+        # --cleanup: 300 s. The 12th call gets the last 25 s; no 13th call starts.
         fixture = PhaseFixture(lambda _arguments: 25)
         with tempfile.TemporaryDirectory() as temporary:
             result, errors, path = fixture.cleanup_step(Path(temporary).resolve())
@@ -776,8 +821,7 @@ class PhaseDeadlineTests(unittest.TestCase):
         self.assertEqual([timeout for _, timeout in fixture.calls], [30] * 11 + [25])
 
     def test_phase_deadline_differs_from_a_slow_call(self):
-        # One call that reaches its own 30 s limit gets the per-call message,
-        # not the phase message: in the start phase and in --cleanup.
+        # A call at its own 30 s limit gets the per-call message, in both phases.
         def first_never_ends(arguments):
             return None if len(fixture.calls) == 1 else 1
 
@@ -797,9 +841,7 @@ class PhaseDeadlineTests(unittest.TestCase):
             self.assertEqual(self.manifest(path)["phase"], "cleanup_failed")
 
     def test_phase_deadline_limits_match_the_bdd_budget(self):
-        # check-bdd.sh plans with the same start and cleanup times, plus the
-        # wait after the SIGKILL of a stopped call, which the phase does not
-        # limit.
+        # check-bdd.sh adds the unlimited wait after a SIGKILL to each phase.
         script = (ROOT / "scripts/ci/check-bdd.sh").read_text()
         grace = FIXTURE.PROCESS_TERM_GRACE
         self.assertIn(f"\nstart_allowance={FIXTURE.START_PHASE_LIMIT + grace}\n", script)
