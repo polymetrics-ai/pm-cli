@@ -496,10 +496,11 @@ func TestUnitStepsEndBeforeTheTaskLeaseEnds(t *testing.T) {
 		})
 	}
 
-	// In the Temporal activity the attempt deadline comes before the lease end:
-	// the claim follows the start of the attempt, and both use the sealed
-	// start_to_close. The lease context then keeps the exact attempt deadline,
-	// so each step keeps the deadline that it has without the lease context.
+	// In the Temporal activity, when the accepted run lifetime outlasts the
+	// attempt, the attempt deadline comes before the lease end: the claim
+	// follows the start of the attempt, and both use the sealed start_to_close.
+	// The lease context then keeps the exact attempt deadline, so each step
+	// keeps the deadline that it has without the lease context.
 	for _, testCase := range []struct {
 		name    string
 		attempt time.Duration
@@ -549,6 +550,50 @@ func TestUnitStepsEndBeforeTheTaskLeaseEnds(t *testing.T) {
 			}
 		})
 	}
+
+	// claimWorkerTask limits the TTL of a fresh lease to the remaining accepted
+	// run lifetime. When that lifetime ends before the attempt deadline, the
+	// lease deadline comes first, and each step ends earlier than with the
+	// attempt deadline alone. Here the attempt has 10s and the run 4s. The lease
+	// ends 10 ms before the accepted run deadline, because the worker takes its
+	// claim start time before the claim.
+	t.Run("shortened run lifetime: the lease deadline comes first", func(t *testing.T) {
+		now := time.Now()
+		attemptDeadline := now.Add(10 * time.Second)
+		attempt, cancelAttempt := context.WithDeadline(context.Background(), attemptDeadline)
+		defer cancelAttempt()
+		accepted := now.Add(4 * time.Second)
+		lease := accepted.Add(-10 * time.Millisecond)
+		unit, cancelUnit := workerLeaseContext(attempt, lease)
+		defer cancelUnit()
+		if deadline, ok := unit.Deadline(); !ok || !deadline.Equal(lease) {
+			t.Fatalf("lease context deadline = %v (bounded %t); want the lease deadline %v, before the attempt deadline %v",
+				deadline.Sub(now), ok, lease.Sub(now), attemptDeadline.Sub(now))
+		}
+		// Without the lease context the settlement cutoff is the accepted run
+		// deadline. With it, the cutoff is one reserve before the lease deadline.
+		for _, step := range []struct {
+			name    string
+			make    func(context.Context, time.Time, time.Duration, time.Duration) (context.Context, context.CancelFunc)
+			without time.Time
+			with    time.Time
+		}{
+			{name: "provider callback", make: workerCallbackContext, without: accepted.Add(-reserve), with: lease.Add(-2 * reserve)},
+			{name: "publication step", make: workerPublicationContext, without: accepted.Add(-reserve), with: lease.Add(-2 * reserve)},
+			{name: "settlement", make: workerSettlementContext, without: accepted, with: lease.Add(-reserve)},
+		} {
+			today, cancelToday := step.make(attempt, accepted, heartbeat, transport)
+			leased, cancelLeased := step.make(unit, accepted, heartbeat, transport)
+			todayEnd, todayBounded := today.Deadline()
+			leasedEnd, leasedBounded := leased.Deadline()
+			cancelToday()
+			cancelLeased()
+			if !todayBounded || !todayEnd.Equal(step.without) || !leasedBounded || !leasedEnd.Equal(step.with) {
+				t.Errorf("%s deadline = %v without and %v with the lease context; want %v and %v",
+					step.name, todayEnd.Sub(now), leasedEnd.Sub(now), step.without.Sub(now), step.with.Sub(now))
+			}
+		}
+	})
 
 	// The lease deadline adds the lease TTL to a local time from before the
 	// claim. It compares no local time with a PostgreSQL time, so a PostgreSQL
