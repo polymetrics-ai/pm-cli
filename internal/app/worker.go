@@ -2602,12 +2602,16 @@ func workerLeaseDeadline(claimStarted time.Time, lease store.Lease) time.Time {
 // In the Temporal activity the attempt deadline usually comes first: the claim
 // follows the start of the attempt, and the lease TTL is at most the sealed
 // start_to_close. This context then keeps the attempt deadline exactly. But
-// claimWorkerTask also limits the TTL of a fresh lease to the remaining
-// accepted run lifetime. When that lifetime ends before the attempt deadline,
-// the lease deadline comes first. Each step can then end earlier than with the
-// attempt deadline alone: the settlement cutoff can move to one reserve before
-// the lease deadline. A caller with a later deadline, or with none, also gets
-// the lease deadline.
+// claimWorkerTask also limits the TTL of a fresh lease to the accepted run
+// lifetime that remained at state.now, the database time that the worker
+// sampled before the preparation. workerLeaseDeadline adds that TTL to
+// claimStarted, a later local time. So the derived lease deadline can be up
+// to the preparation time after the accepted run deadline, and a shortened
+// lease does not always come first. When the derived lease deadline comes
+// before the attempt deadline, each step can end earlier than with the attempt
+// deadline alone: the settlement cutoff can move to one reserve before the
+// lease deadline. A caller with a later deadline, or with none, also gets the
+// lease deadline.
 func workerLeaseContext(ctx context.Context, leaseDeadline time.Time) (context.Context, context.CancelFunc) {
 	return context.WithDeadline(ctx, leaseDeadline)
 }
