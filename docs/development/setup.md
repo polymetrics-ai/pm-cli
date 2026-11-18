@@ -107,6 +107,10 @@ The [server schema](../../schemas/server-config.schema.json), [bundled example](
 
 `identity.step_up_maximum_age` bounds fresh OIDC authentication for private credential writes. Omission selects `5m`; explicit values must be between `1s` and `15m`, inclusive. Null, numeric seconds and out-of-range durations are rejected. The freshness witness is signed OIDC `auth_time`, not the PM session's creation or expiry time.
 
+`identity.device_poll_interval` sets the device login poll interval that pm-server gives each new device login challenge. Omission selects `5s`. An explicit value must be a JSON string of at most 64 bytes that does not start with `+`, and Go `time.ParseDuration` must accept it. The duration must be a whole number of seconds from `1s` to `60s`, inclusive. For example, `"60s"`, `"1m"` and `".5m"` (30 seconds) are valid. Each challenge keeps the interval that it got at its start. A changed value applies only to the challenges that start after pm-server restarts.
+
+The refusal diagnostic is `configuration <kind> at identity.device_poll_interval`. The diagnostic does not show the value from the file. The kind is `type` for a value that is not a JSON string, for example a number or `null`. The kind is `value` for a string that is longer than 64 bytes, starts with `+` or does not parse. A duration that overflows, for example `"9999999999999999999s"`, does not parse. The kind is `bounds` for a parsed duration below `1s`, above `60s` or not a whole number of seconds. The kind is `duplicate` when the `identity` object holds the key two times. `pm-server`, `pm-server bootstrap`, `pm-worker` and `pm-stack` read the same configuration, so each of them refuses an invalid value. Each of them writes the diagnostic on stderr after its own name, for example `pm-server: configuration bounds at identity.device_poll_interval`. Then it exits with code 1.
+
 `artifacts.execution` is an optional-complete operator block. Omitting it leaves artifact-byte execution unavailable even when the base `artifacts` fields are sufficient to check the selected S3 dependency; PM never infers a byte backend or execution authority from those fields. When present, the block requires all eight controls: `region`, `max_object_bytes`, `max_in_flight`, `request_timeout`, `organization_reserved_bytes`, `workspace_reserved_bytes`, `organization_reserved_attempts`, and `workspace_reserved_attempts`. The checked-in deployment and packaging examples intentionally omit the block.
 
 The region is retained exactly and must contain 1–64 lowercase ASCII letters, digits, or hyphens. Every byte and attempt value is positive and no greater than 9,223,372,036,854,775,807. `max_object_bytes` must be smaller than that signed maximum to leave room for the verification sentinel byte. `max_in_flight` is additionally capped at 65,536, its product with `max_object_bytes` must fit the signed bound, and `request_timeout` is positive and at most five minutes. One object fits the workspace retained-byte reservation, which fits the organization retained-byte reservation; workspace retained attempts fit the organization retained-attempt reservation. These are scoped retained artifact reservations and backend I/O controls, not aliases for `limits.request_bytes`, workflow payload/input limits, run budgets, or admission controls. A valid block makes this policy available to process composition; it does not by itself install or certify a backend.
@@ -163,9 +167,9 @@ A starter can ask `pm-server` for one ready signal ([ADR 0005](../decisions/0005
 ```
 
 - The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. Without the flag, `pm-server` sends no signal.
-- Descriptor `n` must be the write end of a pipe that the starter made, with no close-on-exec flag. `pm-server` keeps it in one handle and sets close-on-exec on that handle.
-- `pm-server` is ready when its admission probe passed, its state is serving and its HTTP accept loop calls Accept for the first time. Then it writes `pm-server ready` and one line feed in one write, apart from the serving path, and closes the handle. The write has no deadline: the signal waits until the starter reads. A start that fails before it is ready sends no signal, so the starter reads end of file with no data.
-- If the write fails, `pm-server` writes `pm-server: the ready signal write failed. The process continues.` on standard error once. It continues, and its exit code does not change.
+- Descriptor `n` must be the write end of a pipe that the starter made, with no close-on-exec flag. `pm-server` keeps it in one handle and sets close-on-exec on that handle. It also sets the handle to non-blocking mode. That changes only the blocking mode of the write end. The starter's read end and its one blocking read do not change.
+- `pm-server` is ready when its admission probe passed, its state is serving and its HTTP accept loop calls Accept for the first time. Then it writes `pm-server ready` and one line feed in one write, apart from the serving path, and closes the handle. The write has no deadline: the signal waits until the starter reads. When `pm-server` stops serving before the starter read the line, it closes the handle, which ends the write, and waits for the writer for at most one drain bound. A start that fails before it is ready sends no signal, so the starter reads end of file with no data.
+- A failed ready write does not itself stop `pm-server` or change its exit code. When `pm-server` stops serving, it closes the handle of a ready write that still waits. That write fails with the error of a closed handle, and `pm-server` prints no line for it. Any other write error prints `pm-server: the ready signal write failed. The process continues.` on standard error once, also when the error comes while `pm-server` stops serving.
 
 A refusal stops `pm-server` with exit code 1, one line on standard error and no signal, before it opens its configuration:
 
@@ -184,6 +188,46 @@ The starter must do these things:
 - Read each pipe that it gives as standard output or standard error, or give a destination that cannot fill, for example a file. A full pipe blocks each write of the process.
 
 A supervisor of `pm-server` has this minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM. It bounds its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
+
+### Inherited listener for a starter
+
+A starter can give `pm-server` a TCP socket that the starter has already bound and set to listen at the configured `server.listen`. It passes `--listen-fd <n>`:
+
+```text
+--listen-fd fd   serve on inherited listening socket fd (3 or more) at the configured server.listen
+```
+
+- The number rules of `--ready-fd` apply. The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. When `--ready-fd` is also present, the two values must be different.
+- `pm-server` reads the raw `--listen-fd` value while it reads the flags. It checks the value after the `--config` and `--secrets-directory` checks and before it opens the configuration. No refusal line contains the raw value or the address, because a command line can carry private text by mistake. When the value is missing, `pm-server` takes the next argument as the value. Then the argument after it can appear in the line `pm-server: unknown command "<argument>" for "pm-server"`. The `--ready-fd` refusals repeat the value, as before.
+- Without the flag, `pm-server` binds `server.listen` itself. With the flag, `pm-server` binds no address. It serves on the socket of descriptor `n`. When a check fails, `pm-server` stops. It never binds `server.listen` in place of the inherited socket.
+- `pm-server` checks descriptor `n` after it reads and checks its configuration, and before it opens the application. The descriptor must obey these rules, in this order:
+  1. It is open and has no close-on-exec flag. A descriptor with that flag belongs to `pm-server` itself.
+  2. It is a stream socket in the family of the configured address: `AF_INET` for an IPv4 address, `AF_INET6` for an IPv6 address.
+  3. It uses TCP: plain TCP, or on Linux also Multipath TCP (MPTCP).
+  4. It listens for connections.
+  5. Its local address is equal to `server.listen`: the same family, IP address and port (`netip.AddrPort`). An IPv4-mapped IPv6 address is not equal to the IPv4 address. A wildcard address is equal only to the same wildcard.
+- On Linux, `pm-server` reads `SO_PROTOCOL` and `SO_ACCEPTCONN` for rules 3 and 4. On Linux, `SO_PROTOCOL` must be `IPPROTO_TCP` or `IPPROTO_MPTCP`. Go's `net.Listen` makes an MPTCP socket when the kernel has MPTCP turned on. Darwin has no `SO_PROTOCOL` and does not give `SO_ACCEPTCONN` to `getsockopt`. On Darwin, `pm-server` reads the TCP option `TCP_CONNECTION_INFO`, which only a TCP socket gives, and its state must be `TCPS_LISTEN`. On another system, `pm-server` refuses each descriptor.
+- `pm-server` owns the descriptor from the check:
+  - A descriptor that fails rule 1 is not an inherited descriptor, so `pm-server` does not close it. When a later rule fails, `pm-server` closes the descriptor and stops.
+  - After the checks, `pm-server` sets close-on-exec on the descriptor before it opens the application. It makes its listener from a copy of the descriptor that has close-on-exec (`net.FileListener`), and it closes the descriptor. Thus the listener is the one handle of the socket in `pm-server`, and no child process holds it.
+  - `pm-server` closes the listener when serving ends, and also when the start fails after the checks.
+- The ready line goes only through `--ready-fd`, and the ready rule does not change. With `--listen-fd`, the HTTP accept loop calls Accept for the first time on the inherited listener. No connection needs to come before the ready line. The configuration stays the one source of the server address.
+
+A refusal stops `pm-server` with exit code 1 and one line on standard error. `pm-server` serves nothing:
+
+| Order | Case | Standard error line |
+| --- | --- | --- |
+| 1, while the flags are read | `--listen-fd` is the last argument and has no value | `pm-server: flag needs an argument: --listen-fd` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | `--listen-fd` is given more than once | `pm-server: --listen-fd may be supplied exactly once` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | A value that breaks the number rules | `pm-server: --listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | `--listen-fd` and `--ready-fd` name the same descriptor | `pm-server: --listen-fd and --ready-fd require different descriptors` |
+| 3, after the configuration check and before the application opens | A descriptor that breaks a rule above | `pm-server: --listen-fd requires an inherited listener at the configured server address` |
+
+The starter must do these things:
+
+- Bind the address and set the socket to listen before it starts `pm-server`. Write that exact address into `server.listen`.
+- Give the socket only to `pm-server`, as descriptor `n` with no close-on-exec flag, as it gives the ready descriptor. Protect each copy that it keeps from inheritance by any other child.
+- Keep one copy open until `pm-server` has served one request, so that the port stays held through the handover. Then close it. Also close each copy when `pm-server` does not start or its start fails, and at the normal stop.
 
 ### Operator bootstrap
 
@@ -221,20 +265,35 @@ In one PostgreSQL transaction, the subcommand writes:
 Each provider account must name a connector that `connectors.bundles` declares. On success, the exit code is 0 and stdout holds one JSON document that names these rows. On a refusal, the exit code is 1, stdout is empty, nothing is written, and stderr holds exactly one of these lines:
 
 - `pm-server: bootstrap scope is already bootstrapped`
+- `pm-server: bootstrap scope is already bootstrapped with another input`
 - `pm-server: bootstrap admin login is already bound`
 - `pm-server: bootstrap workspace name is required`
 - `pm-server: bootstrap admin subject is required`
 - `pm-server: bootstrap provider account names an undeclared connector`
 - `pm-server: bootstrap requires operator authority`
 
-Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown; run the same bootstrap again`. After an unknown outcome, run the same bootstrap again. The refusal `bootstrap scope is already bootstrapped` then shows that the first bootstrap committed.
+The bootstrap record holds the SHA-256 of the input. The input here is the organization, the workspace, its name, the admin issuer and subject, and the connector and display name of each provider account. The database computes the SHA-256 from the rows that it writes. `bootstrap scope is already bootstrapped` means that the scope holds a bootstrap of the same input. `bootstrap scope is already bootstrapped with another input` has three causes: another input took the scope, the organization already has rows, or another deployment bootstrapped the organization, also with the same input.
 
-The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role can only insert the bootstrap rows, and row-level security limits each insert to the configured deployment and the organization of the input.
+Other failures also exit 1 with one stderr line: `pm-server: bootstrap input is invalid`, `pm-server: bootstrap failed and wrote nothing`, or `pm-server: bootstrap outcome is unknown. Run the bootstrap again with the same input to learn the outcome`.
+
+After an unknown outcome, run the bootstrap again with the same input. The bootstrap commits at most once for each organization, so this run is the reconcile step. Its result tells you the outcome of the first attempt:
+
+| Result of the second run | Meaning |
+| --- | --- |
+| Success | The first attempt did not commit. The second run wrote the bootstrap. |
+| `pm-server: bootstrap scope is already bootstrapped` | A bootstrap of the same input committed. Read its rows through the product after login. |
+| `pm-server: bootstrap scope is already bootstrapped with another input` | The first attempt did not commit. Another input took the scope, the organization has other rows, or another deployment bootstrapped the organization. Do not use that organization as your bootstrap. Check it through the product. |
+| `pm-server: bootstrap admin login is already bound` | The first attempt did not commit. Another organization in this deployment holds that admin login. |
+| Any other line | The outcome of the first attempt is still unknown. Correct the cause that the line names. Then run the bootstrap again with the same input. |
+
+A script must match the whole stderr line. The line about another input starts with the text of the line about the same input.
+
+The bootstrap credential is the member `pm-app-bootstrap-endpoint` of the bundle that `postgres.endpoint_ref` names. It is a PostgreSQL connection string for the role `pm_app_bootstrap` on `pm_app`. The running server never reads this member. The role has no table grant. Its only grant in the schema `pm` is `EXECUTE` on the database function `pm.operator_bootstrap`. That function writes one bootstrap of an organization that has no rows yet. It refuses an admin login that has a binding in the deployment.
 
 The operator has these duties:
 
 1. Run the privileged deployment bootstrap (`deploy/postgres/bootstrap.sql`) before the store migrations. It creates `pm_app_bootstrap` from the password file `pm-app-bootstrap-password`. An existing deployment must run it again before migration 0021, or that migration fails at its role check.
-2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the same deployment and organization is refused, also with the same input.
+2. Run `pm-server bootstrap` once for each organization. A second bootstrap of the organization is refused in any deployment, also with the same input.
 3. Remove `pm-app-bootstrap-endpoint` from the secret directory after the bootstrap.
 
 ### Scoped event streams and artifact boundaries
@@ -282,6 +341,52 @@ These are placeholder paths, not a runnable deployment. The complete server conf
 `task_queue` must be `pm-control` and appear in `temporal.task_queues`. Dial and drain timeouts must be positive and at most five minutes; each concurrency bound must be 1–65,536. The nested timeouts require `schedule_to_close > start_to_close > 0`, with positive `heartbeat` and `transport` both below `start_to_close`. Schedule-to-close cannot exceed `limits.run_lifetime`. The Go validator enforces these relational constraints in addition to the JSON Schema's closed shape.
 
 The worker opens the configured application PostgreSQL endpoint and authenticated Temporal client from the confined operator secret bundles. It uses `pm-app-endpoint` and Temporal `ca.pem`, `client.pem`, and `client-key.pem`; it does not provision dependencies, migrate the store, or perform OIDC discovery. Workflow and activity polling share one SDK client. Shutdown stops the worker before closing the client and application resources, without cancelling accepted durable runs.
+
+#### Ready signal of `pm-worker`
+
+A starter can ask `pm-worker` for one ready signal on an inherited descriptor. [Decision 0005](../decisions/0005-process-ready-signal.md) is the contract. The `--help` line is:
+
+```text
+--ready-fd fd   write one ready line to inherited descriptor fd (3 or more), then close it
+```
+
+The value of `--ready-fd` has only the ASCII digits 0-9 and no leading zero. It fits in a 32-bit signed int and is 3 or more. "The int maximum" in the refusal text is 2147483647. The flag may appear once. Without the flag, `pm-worker` sends no signal.
+
+`pm-worker` is ready only while its context is not done. It is ready when these steps passed, in this order:
+
+1. After the dial, `pm-worker` called GetSystemInfo once and DescribeNamespace once for the configured namespace, with no retry options. Only a success answer passes. The DescribeNamespace answer must name the configured namespace.
+2. `pm-worker` registered its workflows and activities in its own SDK worker.
+3. The Temporal worker start returned without an error.
+
+Then `pm-worker` writes `pm-worker ready` and one line feed in one write, and it closes the descriptor. The write runs apart from the work and the stop. It has no time limit, so the signal waits until the starter reads. The signal does not say that Temporal lists the poller or answered a poll. When the write fails, `pm-worker` writes `pm-worker: the ready signal write failed. The process continues.` on stderr once. It continues, and its exit code does not change.
+
+Each refusal stops `pm-worker` with exit code 1, one stderr line and no signal, before it opens the configuration. The checks come in this order:
+
+| Order | Case | Stderr line |
+| --- | --- | --- |
+| 1, while `pm-worker` reads its flags | `--ready-fd` is the last argument and has no value | `pm-worker: flag needs an argument: --ready-fd` |
+| 1, while `pm-worker` reads its flags | A second `--ready-fd` | `pm-worker: invalid argument "<value>" for "--ready-fd" flag: --ready-fd may be supplied exactly once` |
+| 1, while `pm-worker` reads its flags | A value that breaks the value rule | `pm-worker: invalid argument "<value>" for "--ready-fd" flag: --ready-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks | A descriptor that is not open for writing, or that has close-on-exec set at the check | `pm-worker: --ready-fd requires an inherited descriptor that is open for writing` |
+
+The flag parser owns the missing-value text and the `invalid argument` prefix. A parser upgrade can change them.
+
+Ready step 1 has its own failure texts. The text depends on the call, not on the status code:
+
+- A failed dial or a failed GetSystemInfo call: `pm-worker: Temporal worker dependency is unavailable`.
+- A failed DescribeNamespace call, or an answer that names another namespace: `pm-worker: Temporal namespace is unavailable`. A namespace that does not exist takes this path.
+
+Each other result, also "not implemented", stops the start with exit code 1 and no signal. The dial and the two calls finish within `worker.dial_timeout`, counted from the start of the dial. `pm-worker` does not retry them, so a short transient error stops the start. A `pm-worker` that its starter stops before it is ready sends no signal, and its exit code does not change.
+
+The starter must do these steps:
+
+- Give `pm-worker` only the write end of a pipe as the descriptor.
+- Make sure that no other process that it starts holds that write end.
+- Close its own copy of the write end after the start. Otherwise it never reads end of file.
+- Read the pipe until the line or end of file comes, with one time limit that the starter owns.
+- Read each pipe that it gives as stdout or stderr, or give a destination that cannot fill, for example a file.
+
+A supervisor of `pm-worker` has a minimum duty. It bounds its wait for the ready line or end of file. It bounds its wait for the exit after SIGTERM, and its wait for the exit after SIGKILL. It reports a process that did not exit after SIGKILL. PM adds no setting for these limits. Packaging (M12) chooses the values.
 
 At each new physical-unit boundary, the worker checks the accepted durable grant against current connection, principal and grant authority. Login-session expiry alone does not revoke accepted work. PostgreSQL account permits are shared across worker instances and connection aliases; authorization checks database-time expiry before committing a new attempt. An expired reservation is not renewed and dispatched in the same acquisition. Workspace admission budgets remain independent. These are the bounded [grant and permit checks](testing.md#current-grants-and-shared-account-permits-m4), not a measured fairness guarantee.
 

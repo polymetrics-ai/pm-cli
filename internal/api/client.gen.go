@@ -5273,12 +5273,12 @@ func (r DenyDeviceLoginResponse) ContentType() string {
 
 // ExchangeDeviceLoginResponse409Headers the declared response headers of an HTTP 409 response for ExchangeDeviceLogin
 type ExchangeDeviceLoginResponse409Headers struct {
-	RetryAfter *string
+	RetryAfter *DevicePollRetryAfterSeconds
 }
 
 // ExchangeDeviceLoginResponse429Headers the declared response headers of an HTTP 429 response for ExchangeDeviceLogin
 type ExchangeDeviceLoginResponse429Headers struct {
-	RetryAfter *string
+	RetryAfter *DevicePollRetryAfterSeconds
 }
 
 type ExchangeDeviceLoginResponse struct {
@@ -9545,7 +9545,7 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 	case rsp.StatusCode == 409:
 		var headers ExchangeDeviceLoginResponse409Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
-			var value string
+			var value DevicePollRetryAfterSeconds
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			}
@@ -9555,7 +9555,7 @@ func ParseExchangeDeviceLoginResponse(rsp *http.Response) (*ExchangeDeviceLoginR
 	case rsp.StatusCode == 429:
 		var headers ExchangeDeviceLoginResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
-			var value string
+			var value DevicePollRetryAfterSeconds
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			}

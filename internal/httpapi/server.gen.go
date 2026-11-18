@@ -2607,7 +2607,7 @@ func RegisterHandlersWithOptions(router gin.IRouter, si ServerInterface, options
 }
 
 type DevicePoll409ResponseHeaders struct {
-	RetryAfter *string
+	RetryAfter *DevicePollRetryAfterSeconds
 }
 type DevicePoll409ApplicationProblemPlusJSONResponse struct {
 	Body Problem
@@ -2616,7 +2616,7 @@ type DevicePoll409ApplicationProblemPlusJSONResponse struct {
 }
 
 type DevicePoll429ResponseHeaders struct {
-	RetryAfter *string
+	RetryAfter *DevicePollRetryAfterSeconds
 }
 type DevicePoll429ApplicationProblemPlusJSONResponse struct {
 	Body Problem
@@ -9334,6 +9334,7 @@ type DeviceApproval = api.DeviceApproval
 type DeviceChallenge = api.DeviceChallenge
 type DevicePoll409 = api.DevicePoll409
 type DevicePoll429 = api.DevicePoll429
+type DevicePollRetryAfterSeconds = api.DevicePollRetryAfterSeconds
 type DeviceProof = api.DeviceProof
 type DeviceStart = api.DeviceStart
 type EffectState = api.EffectState

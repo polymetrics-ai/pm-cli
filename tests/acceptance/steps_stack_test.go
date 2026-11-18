@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,22 +17,31 @@ import (
 
 	"github.com/cucumber/godog"
 
+	"github.com/polymetrics-ai/pm-cli/tests/keyring"
 	"github.com/polymetrics-ai/pm-cli/tests/starter"
 )
 
 const laneCommandTimeout = 60 * time.Second
 
 // stackScenario is the state of one scenario that uses the shared steps: its
-// deployment configuration, the processes that the starter started, and the
-// shared result state of the last pm command.
+// deployment configuration, the processes that the starter started, the pm
+// client HOME and private keyring, and the shared result state of the last pm
+// command.
 type stackScenario struct {
 	harness    *stackHarness
 	deployment *deployment
 	processes  map[string]*startedProcess
 	runDir     string
 	home       string
+	keyring    *keyring.Keyring
 	workspace  string
 	result     commandResult
+	// profiles holds the names of the pm server profiles that the scenario
+	// added in its HOME.
+	profiles map[string]bool
+	// secondListener is the listener of step N2. The scenario close step
+	// closes it.
+	secondListener *net.TCPListener
 }
 
 // startedProcess is one process that the starter started, with the report of
@@ -57,7 +67,11 @@ type commandResult struct {
 // steps that start and observe pm-server and pm-worker through the shared
 // starter, and the result steps of the shared result state.
 func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *lane) {
-	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}}
+	scenario := &stackScenario{harness: harness, processes: map[string]*startedProcess{}, profiles: map[string]bool{}}
+	// godog runs the After hooks in the order of registration. The device
+	// login steps register their After hook first, so that it ends a running
+	// pm process before this hook stops pm-server and the private keyring.
+	registerDeviceLoginSteps(sc, scenario)
 	// godog keeps the step error. The hook returns only its own cleanup
 	// error, so the step error is reported once.
 	sc.After(func(ctx context.Context, _ *godog.Scenario, _ error) (context.Context, error) {
@@ -77,8 +91,11 @@ func registerStackSteps(sc *godog.ScenarioContext, harness *stackHarness, lane *
 	sc.Step(`^the lane command stdout contains the lane deployment ID$`, scenario.result.stdoutHasDeploymentID)
 	sc.Step(`^the lane command stderr contains "([^"]*)"$`, scenario.result.stderrContains)
 	registerStartedServerSteps(sc, scenario)
-	registerBootstrapSteps(sc, scenario)
+	registerBootstrapSteps(sc, scenario, lane)
 	registerLaneSteps(sc, scenario, lane)
+	registerLoginSteps(sc, scenario, lane)
+	registerDevicePollIntervalSteps(sc, scenario)
+	registerListenerSteps(sc, scenario)
 }
 
 // newConfiguration is step 1. It runs the shared build and migration step,
@@ -101,7 +118,9 @@ func (s *stackScenario) newConfiguration(ctx context.Context) error {
 }
 
 // startAndWait is step 5. The starter gives the write end of a new ready pipe
-// as descriptor 3, with --ready-fd 3.
+// as descriptor 3, with --ready-fd 3. pm-server also gets the held listener
+// of the deployment as descriptor 4, with --listen-fd 4. The harness closes
+// its copy of the listener when the launch or the start fails.
 func (s *stackScenario) startAndWait(ctx context.Context, name string) error {
 	if s.deployment == nil {
 		return errors.New("the scenario has no deployment configuration")
@@ -110,12 +129,23 @@ func (s *stackScenario) startAndWait(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.start(ctx, name, starter.Config{
+	config := starter.Config{
 		Args:    []string{"--config", configuration, "--secrets-directory", s.deployment.secrets, "--ready-fd", "3"},
 		Env:     s.deployment.processEnvironment(),
 		Dir:     s.deployment.home(),
 		ReadyFD: 3,
-	})
+	}
+	if name != "pm-server" {
+		_, err = s.start(ctx, name, config)
+		return err
+	}
+	if err := s.deployment.giveListener(&config); err != nil {
+		return err
+	}
+	started, err := s.start(ctx, name, config)
+	if err != nil || started.report.Outcome != starter.OutcomeReady {
+		s.deployment.releaseListener()
+	}
 	return err
 }
 
@@ -156,12 +186,17 @@ func (s *stackScenario) runWithDescriptor(ctx context.Context, name, arguments, 
 // process limits and the real timer source, and waits once for its ready line
 // or end of file. Only the start limit fails the step. The Then steps check
 // every other result. The step output records the duration of the start.
+// start owns the listener copy in config.Listener until starter.Start takes
+// it. It closes that copy when it returns before starter.Start, and
+// starter.Start closes it on every other path.
 func (s *stackScenario) start(ctx context.Context, name string, config starter.Config) (*startedProcess, error) {
 	if _, ok := s.processes[name]; ok {
+		closeListenerCopy(config)
 		return nil, fmt.Errorf("the scenario already started %s", name)
 	}
 	binary, err := s.harness.binary(name)
 	if err != nil {
+		closeListenerCopy(config)
 		return nil, err
 	}
 	config.Path = binary
@@ -182,6 +217,14 @@ func (s *stackScenario) start(ctx context.Context, name string, config starter.C
 		return nil, fmt.Errorf("%s: %s: %s", name, started.report.Outcome, started.report)
 	}
 	return started, nil
+}
+
+// closeListenerCopy closes the listener copy of a start that did not reach
+// starter.Start.
+func closeListenerCopy(config starter.Config) {
+	if config.Listener != nil {
+		_ = config.Listener.Close()
+	}
 }
 
 func (s *stackScenario) started(name string) (*startedProcess, error) {
@@ -228,6 +271,9 @@ func (s *stackScenario) sendSIGTERM(ctx context.Context, name string) error {
 		return err
 	}
 	started.report = started.process.Stop()
+	if name == "pm-server" && s.deployment != nil {
+		s.deployment.releaseListener()
+	}
 	godog.Logf(ctx, "%s stop: %s", name, started.report.Stop)
 	return nil
 }
@@ -312,7 +358,8 @@ func (s *stackScenario) runDirectory() (string, error) {
 }
 
 // close runs the stop sequence for each started process that the starter has
-// not finished, closes the deployment and removes the scenario directories.
+// not finished, closes the deployment, stops the private keyring and removes
+// its directory, and removes the scenario directories.
 // A process that the stop sequence stopped, but not with exit code 0 after
 // SIGTERM, is an error. A process that exited by itself is not: the steps
 // check it.
@@ -328,9 +375,13 @@ func (s *stackScenario) close() error {
 			errs = append(errs, fmt.Errorf("stop %s at the end of the scenario: %s", name, report))
 		}
 	}
+	if s.secondListener != nil {
+		errs = append(errs, s.secondListener.Close())
+	}
 	if s.deployment != nil {
 		errs = append(errs, s.deployment.close())
 	}
+	errs = append(errs, s.keyring.Stop())
 	for _, directory := range []string{s.runDir, s.home} {
 		if directory != "" {
 			errs = append(errs, os.RemoveAll(directory))
@@ -340,9 +391,10 @@ func (s *stackScenario) close() error {
 }
 
 // addServerProfile adds a pm server profile for the deployment with the real
-// pm binary, in a new HOME for this scenario. It also selects a new workspace
-// ID for the scenario. The server never creates that workspace unless a
-// scenario runs an authenticated command.
+// pm binary, in a new HOME for this scenario. With the HOME, it starts the
+// private keyring of the scenario's pm client and selects a new workspace ID
+// for the scenario. The server never creates that workspace unless a scenario
+// runs an authenticated command.
 func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d *deployment) error {
 	if s.home == "" {
 		home, err := os.MkdirTemp("", "pm-acceptance-stack-home-")
@@ -351,6 +403,9 @@ func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d 
 		}
 		s.home = home
 		s.workspace = "acceptance-workspace-" + randomHex(6)
+		if s.keyring, err = startKeyring(ctx); err != nil {
+			return err
+		}
 	}
 	code, stdout, stderr, err := s.runPM(ctx, d.caFile, []string{
 		"server", "profiles", "add", profile,
@@ -363,7 +418,13 @@ func (s *stackScenario) addServerProfile(ctx context.Context, profile string, d 
 	if code != 0 || strings.TrimSpace(stdout) != profile {
 		return fmt.Errorf("pm server profiles add exited %d\nstdout: %s\nstderr: %s", code, stdout, stderr)
 	}
+	s.profiles[profile] = true
 	return nil
+}
+
+// hasProfile reports whether the scenario added the pm server profile.
+func (s *stackScenario) hasProfile(profile string) bool {
+	return s.profiles[profile]
 }
 
 // runAgainst runs the command with the controls added at the end: the server
@@ -388,13 +449,34 @@ func (s *stackScenario) runAgainst(ctx context.Context, line, profile string, d 
 	return nil
 }
 
+// startKeyring starts the private Secret Service of the scenario's pm
+// client. Its directory is in the job directory, RUNNER_TEMP, and the stop
+// step removes it (D1-10). The start checks the owner of
+// org.freedesktop.secrets (D1-11). The start waits use the start limit.
+func startKeyring(ctx context.Context) (*keyring.Keyring, error) {
+	job := os.Getenv("RUNNER_TEMP")
+	if !filepath.IsAbs(job) {
+		return nil, errors.New("RUNNER_TEMP must name the job directory: run the @stack scenarios through scripts/ci/check-bdd.sh")
+	}
+	started, err := keyring.Start(job, keyring.Limits{Start: startLimit, Stop: stopLimit, Kill: killLimit})
+	if err != nil {
+		return nil, err
+	}
+	godog.Logf(ctx, "private keyring: org.freedesktop.secrets is owned by the keyring daemon that the harness started (process %d)", started.KeyringPID())
+	return started, nil
+}
+
 // runPM runs the built pm binary with the scenario HOME. SSL_CERT_FILE makes
-// the deployment CA the only trusted root of this pm process.
+// the deployment CA the only trusted root of this pm process. The pm process
+// is the only process that gets the private bus address of the keyring.
 func (s *stackScenario) runPM(parent context.Context, caFile string, args []string) (int, string, string, error) {
 	ctx, cancel := context.WithTimeout(parent, laneCommandTimeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, s.harness.bins.pm, args...)
 	command.Env = []string{"HOME=" + s.home, "PATH=/usr/bin:/bin", "LANG=C", "SSL_CERT_FILE=" + caFile}
+	if s.keyring != nil {
+		command.Env = append(command.Env, s.keyring.Environment()...)
+	}
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr

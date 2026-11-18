@@ -109,3 +109,13 @@ Feature: An operator bootstraps the first workspace and its admin
     And the bootstrap stdout is empty
     And the bootstrap stderr is exactly the line: pm-server: bootstrap admin login is already bound
     And the observer sees the bootstrap state of the stack unchanged since it recorded it, and no new audit record
+
+  # K1b. Rule K, success: the bootstrapped admin can log in. Slice W1a. Feature: the lane.
+  @stack
+  Scenario: The bootstrapped admin logs in and sees its workspace
+    Given the lane runs pm-server and pm-worker on the job-owned stack
+    And the operator bootstrapped the deployment with a "postgres" provider account
+    And the user is logged in through the product login flow
+    When I run "pm workspaces list" as the user
+    Then the lane command exits with code 0
+    And the lane command stdout names the bootstrapped workspace and no other workspace

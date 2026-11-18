@@ -37,12 +37,20 @@ func (s *bootstrapScenario) declaresBundle(which, name string) error {
 	if d == nil {
 		return fmt.Errorf("the scenario has no %s configuration", which)
 	}
+	return declareCheckedInBundle(d, s.shared.harness.bins.root, name)
+}
+
+// declareCheckedInBundle declares one checked-in connector bundle of the
+// checkout at root in the configuration of the deployment, with checks 1 to
+// 5 of the 284b bundle addendum. It writes the configuration once. The lane
+// uses it too, for the lane configuration (lane.start).
+func declareCheckedInBundle(d *deployment, root, name string) error {
 	// Item 1: the checked-in bundle of the checkout under test, by its
 	// absolute and clean path.
 	if !bundleName.MatchString(name) {
 		return fmt.Errorf("item 1: %q is not the name of a checked-in connector bundle", name)
 	}
-	path := filepath.Join(s.shared.harness.bins.root, "internal", "connectors", "data", name+".bundle.json")
+	path := filepath.Join(root, "internal", "connectors", "data", name+".bundle.json")
 	if !filepath.IsAbs(path) || filepath.Clean(path) != path {
 		return fmt.Errorf("item 1: the bundle path %q is not absolute and clean", path)
 	}

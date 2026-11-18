@@ -102,6 +102,10 @@ func Validate(document Document, prelaunch Prelaunch) (Configuration, error) {
 	if data.identity.StepUpMaximumAge < time.Second || data.identity.StepUpMaximumAge > 15*time.Minute {
 		return Configuration{}, diagnostic("identity.step_up_maximum_age", DiagnosticBounds)
 	}
+	if data.identity.DevicePollInterval < time.Second || data.identity.DevicePollInterval > time.Minute ||
+		data.identity.DevicePollInterval%time.Second != 0 {
+		return Configuration{}, diagnostic("identity.device_poll_interval", DiagnosticBounds)
+	}
 	if err := validateSecretReference(data.encryption.WrappingKeyRef, "encryption.wrapping_key_ref"); err != nil {
 		return Configuration{}, err
 	}

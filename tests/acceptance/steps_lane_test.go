@@ -27,10 +27,14 @@ type laneScenario struct {
 func registerLaneSteps(sc *godog.ScenarioContext, shared *stackScenario, l *lane) {
 	scenario := &laneScenario{lane: l, shared: shared}
 	sc.Step(`^the lane runs pm-server on the job-owned stack$`, scenario.laneRuns)
+	// The L2 Background phrase (criteria-worker v4, line 133). Since L2 the
+	// lane starts pm-server and pm-worker, so both phrases start the same lane.
+	sc.Step(`^the lane runs pm-server and pm-worker on the job-owned stack$`, scenario.laneRuns)
 	sc.Step(`^a pm server profile for the lane server$`, scenario.addProfile)
 	sc.Step(`^I run "([^"]*)" against the lane server$`, scenario.runAgainstLane)
 	sc.Step(`^the observer reads the lane server information through its own HTTPS client, and its instance ID equals the instance ID in the lane command stdout$`, scenario.observerReadsLaneInstanceID)
 	sc.Step(`^the observer sees no new row in the PM run and audit tables$`, scenario.observerSeesNoNewRow)
+	registerLaneProcessSteps(sc, scenario)
 }
 
 func (s *laneScenario) laneRuns(ctx context.Context) error {

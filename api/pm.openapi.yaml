@@ -1936,16 +1936,6 @@ components:
         pattern: '^bytes ([0-9]+-[0-9]+|\*)/[0-9]+$'
         minLength: 9
         maxLength: 128
-    DevicePollRetryAfter:
-      description: >-
-        Whole seconds until the stored next poll time of the device challenge,
-        rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it
-        with device_authorization_pending and device_poll_too_soon only.
-      schema:
-        type: string
-        pattern: '^([1-9]|[1-5][0-9]|60)$'
-        minLength: 1
-        maxLength: 2
   responses:
     Problem400:
       description: Malformed or unsupported typed request
@@ -1983,7 +1973,13 @@ components:
         Retry-After. A login_challenge_used answer does not.
       headers:
         Retry-After:
-          $ref: "#/components/headers/DevicePollRetryAfter"
+          description: >-
+            Whole seconds until the next permitted poll of the device
+            challenge. A device_authorization_pending answer carries it. A
+            login_challenge_used answer does not.
+          required: false
+          schema:
+            $ref: "#/components/schemas/DevicePollRetryAfterSeconds"
       content:
         application/problem+json:
           schema:
@@ -2031,7 +2027,13 @@ components:
         An authentication_rate_limited answer does not.
       headers:
         Retry-After:
-          $ref: "#/components/headers/DevicePollRetryAfter"
+          description: >-
+            Whole seconds until the next permitted poll of the device
+            challenge. A device_poll_too_soon answer carries it. An
+            authentication_rate_limited answer does not.
+          required: false
+          schema:
+            $ref: "#/components/schemas/DevicePollRetryAfterSeconds"
       content:
         application/problem+json:
           schema:
@@ -2354,6 +2356,16 @@ components:
         next_cursor:
           type: [string, "null"]
           maxLength: 4096
+    DevicePollRetryAfterSeconds:
+      description: >-
+        Whole seconds until the stored next poll time of the device challenge,
+        rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it
+        in Retry-After with device_authorization_pending and
+        device_poll_too_soon only.
+      type: string
+      pattern: '^([1-9]|[1-5][0-9]|60)$'
+      minLength: 1
+      maxLength: 2
     DeviceStart:
       type: object
       additionalProperties: false

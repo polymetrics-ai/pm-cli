@@ -21,3 +21,11 @@ Feature: pm-server and pm-worker tell their starter when they are ready
     And the lane command stdout contains the deployment ID of the started pm-server
     And the observer reads the started pm-server information through its own HTTPS client, and its instance ID equals the instance ID in the lane command stdout
     And pm-server is still running
+
+  # B1. Rule B, success. Slice S4. Plan item: M1-01 ready signal. Issue: #72.
+  @stack
+  Scenario: pm-worker sends its ready signal after it starts in its Temporal namespace
+    Given a new PM deployment configuration on the job-owned stack
+    When the starter starts pm-worker and waits for its ready signal or its exit
+    Then the starter received the pm-worker ready signal
+    And pm-worker is still running
