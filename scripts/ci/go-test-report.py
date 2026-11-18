@@ -108,8 +108,11 @@ counts, the godog totals as numbers, the result words PASS, FAIL, SKIP and
 The full report and the standard error of COMMAND go to the --raw-output
 FILE, which the script creates with mode 0600 and refuses when it exists.
 --live requires --scenarios, --expect and --raw-output, and --raw-output
-requires --live. The other rules do not change. The live log holds no stream
-text by design: this is prevention, not detection.
+requires --live. The other rules do not change. An event with a known field
+of the wrong type is a line that is not a JSON event. Any other error of the
+script in --live mode writes its traceback only to the raw file, prints one
+fixed line and exits 1. The live log holds no stream text by design: this is
+prevention, not detection.
 """
 import argparse
 import json
@@ -121,6 +124,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 
 # godog colors its output. The escape byte can be absent from the event text,
 # so the color codes match with and without it.
@@ -736,6 +740,37 @@ def live_report(packages, order, results, unfinished, rows, totals, problems, fa
     return lines
 
 
+# The raw file and the public stdout of --live mode, for live_guarded_main().
+LIVE = {"raw": None, "public": None}
+# The known event fields and their types. In --live mode an event with a known
+# field of another type is malformed (#403 F1).
+LIVE_FIELDS = (("Action", str), ("Package", str), ("ImportPath", str), ("Test", str), ("Output", str),
+               ("Elapsed", (int, float)))
+
+
+def typed(event):
+    return all(name not in event or (isinstance(event[name], kind) and not isinstance(event[name], bool))
+               for name, kind in LIVE_FIELDS)
+
+
+def live_guarded_main():
+    """main(), with no stream text on public output for any error in --live mode."""
+    try:
+        return main()
+    except Exception:
+        if LIVE["raw"] is None:
+            raise
+        sys.stdout = LIVE["public"]
+        try:
+            LIVE["raw"].write(traceback.format_exc())
+            LIVE["raw"].close()
+        except (OSError, ValueError):
+            pass
+        print("go test (live): the reporter stopped on an internal error; only the private raw report "
+              "holds the details")
+        return 1
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
@@ -784,6 +819,7 @@ def main():
         except OSError:
             parser.error("--raw-output must name a new file")
         # From here on, every report line goes to the private raw file.
+        LIVE.update(raw=raw, public=public)
         sys.stdout = raw
     status, timed_out, received, cleanup = run_command(command, args.output, args.deadline, args.timeout, raw)
     packages, failures, output = {}, [], {}
@@ -798,7 +834,9 @@ def main():
             print(line)
             malformed += 1
             continue
-        if not isinstance(event, dict):
+        if not isinstance(event, dict) or (args.live and not typed(event)):
+            if args.live:
+                print(line)
             malformed += 1
             continue
         events += 1
@@ -919,4 +957,4 @@ class summary_stream:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(live_guarded_main())

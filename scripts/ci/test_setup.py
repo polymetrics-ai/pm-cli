@@ -1799,7 +1799,7 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
     # L-e1 P5a: a marker in names and output, with and without control characters.
     MARK = "LIVE-MARK-41c7"
 
-    def live_report(self, events, *options, expect=("m/acc",), raw_text=None):
+    def live_report(self, events, *options, expect=("m/acc",), raw_text=None, reporter=None):
         """Run the reporter with --live. Return (result, summary, raw report, raw mode)."""
         with tempfile.TemporaryDirectory() as directory:
             stream = Path(directory) / "events.json"
@@ -1810,8 +1810,8 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
             fake = self.program("import sys; sys.stdout.write(open(sys.argv[1]).read()); "
                                 "sys.stderr.write(sys.argv[2])")
             result = subprocess.run(
-                [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
-                 "--live", "--raw-output", str(raw), "--scenarios", "--expect", str(expected),
+                [*(reporter or [sys.executable, "-I", "-B", str(REPORT)]), "--output",
+                 str(Path(directory) / "out.json"), "--live", "--raw-output", str(raw), "--scenarios", "--expect", str(expected),
                  "--fail-on-skip", "--summary-file", str(summary), *options, "--", *fake, str(stream),
                  f"stderr {self.MARK}\n", "-count=1"],
                 capture_output=True, text=True, timeout=120)
@@ -1848,6 +1848,35 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                 self.assertIn(": no result\n", result.stdout)
                 self.assertIn(": SKIP\n", result.stdout)
                 self.assertIn("- scenario 1 of 1: FAIL\n", summary)
+
+    def test_live_mode_hides_typed_field_faults_and_errors(self):
+        # #403 F1: a field of the wrong type reached float() and a public
+        # traceback. Each fault fails the run with no stream text in public.
+        good = self.gherkin_suite({"a": ("pass", [])}, ["1 scenarios (1 passed)", "0 steps"])
+        faults = {"Elapsed": go_event("pass", "m/acc", Elapsed=self.MARK),
+                  "Action": json.dumps({"Action": [self.MARK], "Package": "m/acc"}),
+                  "Test": go_event("run", "m/acc", Test={"x": self.MARK}),
+                  "Package": json.dumps({"Action": "pass", "Package": [self.MARK]}),
+                  "Output": go_event("output", "m/acc", "TestFeatures", Output=[self.MARK])}
+        for field, event in faults.items():
+            with self.subTest(field=field):
+                result, summary, raw, _ = self.live_report(good[:-1] + [event, good[-1]])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(self.MARK, result.stdout + result.stderr + summary)
+                self.assertIn(self.MARK, raw)
+        # Any other error: its text holds the marker and goes only to the raw file.
+        wrapper = self.program(
+            "import importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('report', {str(REPORT)!r})\n"
+            "module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
+            f"def broken(*arguments):\n    raise ValueError({self.MARK!r})\n"
+            "module.scenario_report = broken\nsys.argv[0] = 'go-test-report.py'\n"
+            "sys.exit(module.live_guarded_main())\n")
+        result, summary, raw, _ = self.live_report(good, reporter=wrapper)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("the reporter stopped on an internal error", result.stdout)
+        self.assertNotIn(self.MARK, result.stdout + result.stderr + summary)
+        self.assertIn(self.MARK, raw)
 
     def test_live_mode_needs_its_options(self):
         with tempfile.TemporaryDirectory() as directory:
