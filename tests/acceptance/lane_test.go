@@ -20,8 +20,9 @@ import (
 //
 // The lane uses the shared stack harness: the shared build and migration
 // step, one new deployment configuration and the shared starter. The starter
-// starts pm-server with --ready-fd 3 and waits once for its ready line or end
-// of file, up to the start limit. After the pm-server ready line, it starts
+// starts pm-server with --ready-fd 3 and with the held listener of the
+// deployment as --listen-fd 4 (ADR 0008). It waits once for its ready line or
+// end of file, up to the start limit. After the pm-server ready line, it starts
 // pm-worker in the same way. pm-worker uses the worker configuration of the
 // deployment. From the start of each process to its ready signal, the lane
 // makes no observation of pm-server, pm-worker or a dependency.
@@ -126,7 +127,16 @@ func (l *lane) startProcess(ctx context.Context, name, configuration string) (*s
 	if err != nil {
 		return nil, err
 	}
-	process, err := starter.Start(starter.Config{
+	return l.startBinary(ctx, name, binary, configuration)
+}
+
+// startBinary starts the lane process name from binary. pm-server gets the
+// held listener of the deployment as descriptor 4, with --listen-fd 4 (ADR
+// 0008), so it does not bind the configured address itself. The harness
+// closes its copy of the listener when giveListener fails, when the launch
+// fails and when no ready signal comes. pm-worker gets no listener.
+func (l *lane) startBinary(ctx context.Context, name, binary, configuration string) (*starter.Process, error) {
+	config := starter.Config{
 		Path:          binary,
 		Args:          []string{"--config", configuration, "--secrets-directory", l.deployment.secrets, "--ready-fd", "3"},
 		Env:           l.deployment.processEnvironment(),
@@ -136,7 +146,25 @@ func (l *lane) startProcess(ctx context.Context, name, configuration string) (*s
 		Limits:        processLimits,
 		Timers:        starter.RealTimers{},
 		SnapshotBytes: laneOutputLimit,
-	})
+	}
+	if name != "pm-server" {
+		return awaitLaneProcess(ctx, name, config)
+	}
+	if err := l.deployment.giveListener(&config); err != nil {
+		l.deployment.releaseListener()
+		return nil, err
+	}
+	process, err := awaitLaneProcess(ctx, name, config)
+	if err != nil {
+		l.deployment.releaseListener()
+	}
+	return process, err
+}
+
+// awaitLaneProcess starts the lane process name with config and waits once
+// for its ready signal. Only the ready line makes the start pass.
+func awaitLaneProcess(ctx context.Context, name string, config starter.Config) (*starter.Process, error) {
+	process, err := starter.Start(config)
 	if err != nil {
 		return nil, err
 	}
