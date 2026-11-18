@@ -199,10 +199,10 @@ A starter can give `pm-server` a TCP socket that the starter has already bound a
 - `pm-server` checks descriptor `n` after it reads and checks its configuration, and before it opens the application. The descriptor must obey these rules, in this order:
   1. It is open and has no close-on-exec flag. A descriptor with that flag belongs to `pm-server` itself.
   2. It is a stream socket in the family of the configured address: `AF_INET` for an IPv4 address, `AF_INET6` for an IPv6 address.
-  3. It uses TCP.
+  3. It uses TCP: plain TCP, or on Linux also Multipath TCP (MPTCP).
   4. It listens for connections.
   5. Its local address is equal to `server.listen`: the same family, IP address and port (`netip.AddrPort`). An IPv4-mapped IPv6 address is not equal to the IPv4 address. A wildcard address is equal only to the same wildcard.
-- On Linux, `pm-server` reads `SO_PROTOCOL` and `SO_ACCEPTCONN` for rules 3 and 4. Darwin has no `SO_PROTOCOL` and does not give `SO_ACCEPTCONN` to `getsockopt`. On Darwin, `pm-server` reads the TCP option `TCP_CONNECTION_INFO`, which only a TCP socket gives, and its state must be `TCPS_LISTEN`. On another system, `pm-server` refuses each descriptor.
+- On Linux, `pm-server` reads `SO_PROTOCOL` and `SO_ACCEPTCONN` for rules 3 and 4. On Linux, `SO_PROTOCOL` must be `IPPROTO_TCP` or `IPPROTO_MPTCP`. Go's `net.Listen` makes an MPTCP socket when the kernel has MPTCP turned on. Darwin has no `SO_PROTOCOL` and does not give `SO_ACCEPTCONN` to `getsockopt`. On Darwin, `pm-server` reads the TCP option `TCP_CONNECTION_INFO`, which only a TCP socket gives, and its state must be `TCPS_LISTEN`. On another system, `pm-server` refuses each descriptor.
 - `pm-server` owns the descriptor from the check:
   - A descriptor that fails rule 1 is not an inherited descriptor, so `pm-server` does not close it. When a later rule fails, `pm-server` closes the descriptor and stops.
   - After the checks, `pm-server` sets close-on-exec on the descriptor before it opens the application. It makes its listener from a copy of the descriptor that has close-on-exec (`net.FileListener`), and it closes the descriptor. Thus the listener is the one handle of the socket in `pm-server`, and no child process holds it.
