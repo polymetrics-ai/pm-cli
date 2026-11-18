@@ -916,8 +916,16 @@ func claimWorkerTask(
 	expectedFence := uint64(0)
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
-		if current.ExpiresAt.After(state.now) {
-			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(state.now)}
+		// Preparation runs after loadWorkerRunState sampled state.now, and it
+		// can outlast the stored lease. The lease decision reads the database
+		// time again and uses that one sample for the expiry comparison and
+		// for the remaining lease time.
+		decidedAt, err := store.ReadAuthenticationTime(ctx, tx)
+		if err != nil {
+			return store.Lease{}, err
+		}
+		if current.ExpiresAt.After(decidedAt) {
+			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(decidedAt)}
 		}
 		expectedFence = current.Fence
 	} else if !errors.Is(err, store.ErrNotFound) {
