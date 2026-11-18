@@ -62,20 +62,22 @@ func run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		},
 		Version: version,
 		RunE: func(*cobra.Command, []string) error {
-			// The --listen-fd value is checked after the flags are read, with
-			// fixed texts, before the check of each descriptor (ADR 0008).
+			if !configurationFlag.present || configurationPath == "" {
+				return errors.New("--config requires exactly one nonempty path")
+			}
+			if !secretsFlag.present || secretsDirectory == "" {
+				return errors.New("--secrets-directory requires exactly one nonempty path")
+			}
+			// The --listen-fd value checks (ADR 0008, order 2) come after the
+			// path checks and before the configuration opens, with fixed texts
+			// that contain no value. They come before the check of each
+			// descriptor.
 			listen, err := listenFlag.descriptor()
 			if err != nil {
 				return err
 			}
 			if listen != 0 && readyFlag.present && listen == readyFlag.descriptor {
 				return errors.New("--listen-fd and --ready-fd require different descriptors")
-			}
-			if !configurationFlag.present || configurationPath == "" {
-				return errors.New("--config requires exactly one nonempty path")
-			}
-			if !secretsFlag.present || secretsDirectory == "" {
-				return errors.New("--secrets-directory requires exactly one nonempty path")
 			}
 			// The ready descriptor check comes before the configuration opens
 			// and before any code that can start a child process (ADR 0005).

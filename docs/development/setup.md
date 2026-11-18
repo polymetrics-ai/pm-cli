@@ -194,7 +194,7 @@ A starter can give `pm-server` a TCP socket that the starter has already bound a
 ```
 
 - The number rules of `--ready-fd` apply. The value has only the digits 0-9 and no leading zero. It is a number from 3 to the int maximum, 2147483647. The flag can appear once. When `--ready-fd` is also present, the two values must be different.
-- `pm-server` reads the raw `--listen-fd` value while it reads the flags, and checks it after that. No refusal line contains the raw value or the address, because a command line can carry private text by mistake. The `--ready-fd` refusals repeat the value, as before.
+- `pm-server` reads the raw `--listen-fd` value while it reads the flags. It checks the value after the `--config` and `--secrets-directory` checks and before it opens the configuration. No refusal line contains the raw value or the address, because a command line can carry private text by mistake. The `--ready-fd` refusals repeat the value, as before.
 - Without the flag, `pm-server` binds `server.listen` itself. With the flag, `pm-server` binds no address. It serves on the socket of descriptor `n`. When a check fails, `pm-server` stops. It never binds `server.listen` in place of the inherited socket.
 - `pm-server` checks descriptor `n` after it reads and checks its configuration, and before it opens the application. The descriptor must obey these rules, in this order:
   1. It is open and has no close-on-exec flag. A descriptor with that flag belongs to `pm-server` itself.
@@ -214,9 +214,9 @@ A refusal stops `pm-server` with exit code 1 and one line on standard error. `pm
 | Order | Case | Standard error line |
 | --- | --- | --- |
 | 1, while the flags are read | `--listen-fd` is the last argument and has no value | `pm-server: flag needs an argument: --listen-fd` |
-| 2, after the flags are read and before the `--config` check | `--listen-fd` is given more than once | `pm-server: --listen-fd may be supplied exactly once` |
-| 2, after the flags are read and before the `--config` check | A value that breaks the number rules | `pm-server: --listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
-| 2, after the flags are read and before the `--config` check | `--listen-fd` and `--ready-fd` name the same descriptor | `pm-server: --listen-fd and --ready-fd require different descriptors` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | `--listen-fd` is given more than once | `pm-server: --listen-fd may be supplied exactly once` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | A value that breaks the number rules | `pm-server: --listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum` |
+| 2, after the `--config` and `--secrets-directory` checks and before the configuration opens | `--listen-fd` and `--ready-fd` name the same descriptor | `pm-server: --listen-fd and --ready-fd require different descriptors` |
 | 3, after the configuration check and before the application opens | A descriptor that breaks a rule above | `pm-server: --listen-fd requires an inherited listener at the configured server address` |
 
 The starter must do these things:

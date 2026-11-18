@@ -21,18 +21,22 @@ const listenRefusal = "--listen-fd requires an inherited listener at the configu
 const notOpen = "2147483647"
 
 // sentinel stands for private text that a command line carries by mistake.
-// No output may contain it (ADR 0008, "The value").
-const sentinel = "private-text-sentinel-7c41d9"
+// No output may contain it (ADR 0008, "The value"; criteria LF4 and D2).
+const sentinel = "LF_PRIVATE_TEXT_SENTINEL"
 
 // Go developer test, not acceptance proof (ADR 0008, "Refusals", order 1 and
-// 2). Defect: pm-server has no --listen-fd flag, accepts a second flag or a
-// value that breaks the number rules, accepts the same descriptor as
-// --ready-fd, or repeats a raw value in a refusal. The equal descriptors are
-// not open, so that refusal must come before the check of each descriptor.
-// Each case runs the command of the binary through run and requires the
-// fixed text, no output and no sentinel.
+// 2; criteria D1 to D5 and O-LF1). Defect: pm-server has no --listen-fd flag,
+// accepts a second flag or a value that breaks the number rules, accepts the
+// same descriptor as --ready-fd, or repeats a raw value in a refusal. Or the
+// value checks run before the --config and --secrets-directory checks, or
+// after the configuration opens. The configuration path and the secret
+// directory do not exist, so a value check after the configuration open gives
+// another refusal. The equal descriptors are not open, so that refusal must
+// come before the check of each descriptor. Each case runs the command of the
+// binary through run and requires the fixed text, no output and no sentinel.
 func TestListenDescriptorFlagRefusals(t *testing.T) {
-	paths := []string{"--config", writeListenConfiguration(t, "127.0.0.1:8080"), "--secrets-directory", t.TempDir()}
+	missing := t.TempDir()
+	paths := []string{"--config", filepath.Join(missing, "pm-deployment.json"), "--secrets-directory", filepath.Join(missing, "secrets")}
 	const once = "--listen-fd may be supplied exactly once"
 	const numberRule = "--listen-fd requires only the digits 0-9, with no leading zero, for a number from 3 to the int maximum"
 	type refusal struct {
@@ -41,13 +45,17 @@ func TestListenDescriptorFlagRefusals(t *testing.T) {
 		want string
 	}
 	cases := []refusal{
-		{"no value", withArguments(paths, "--listen-fd"), "flag needs an argument: --listen-fd"},
-		{"a second flag with the sentinel", withArguments(paths, "--listen-fd", "5", "--listen-fd", sentinel), once},
-		{"the sentinel and a second flag", withArguments(paths, "--listen-fd", sentinel, "--listen-fd", "5"), once},
-		{"the same descriptor as --ready-fd", withArguments(paths, "--ready-fd", notOpen, "--listen-fd", notOpen), "--listen-fd and --ready-fd require different descriptors"},
+		{"D1 no value", withArguments(paths, "--listen-fd"), "flag needs an argument: --listen-fd"},
+		{"D4 a second flag", withArguments(paths, "--listen-fd", "4", "--listen-fd", "5"), once},
+		{"D4 a second flag with the sentinel", withArguments(paths, "--listen-fd", "5", "--listen-fd", sentinel), once},
+		{"D4 the sentinel and a second flag", withArguments(paths, "--listen-fd", sentinel, "--listen-fd", "5"), once},
+		{"D5 the same descriptor as --ready-fd", withArguments(paths, "--ready-fd", "4", "--listen-fd", "4"), "--listen-fd and --ready-fd require different descriptors"},
+		{"D5 the same descriptor as --ready-fd, not open", withArguments(paths, "--ready-fd", notOpen, "--listen-fd", notOpen), "--listen-fd and --ready-fd require different descriptors"},
+		{"O-LF1 the --config check comes first", []string{"--secrets-directory", filepath.Join(missing, "secrets"), "--listen-fd=" + sentinel}, "--config requires exactly one nonempty path"},
+		{"O-LF1 the --secrets-directory check comes first", []string{"--config", filepath.Join(missing, "pm-deployment.json"), "--listen-fd=" + sentinel}, "--secrets-directory requires exactly one nonempty path"},
 	}
-	for _, value := range []string{sentinel, "", "0", "2", "03", "+3", "-3", "x", "3 ", "2147483648"} {
-		cases = append(cases, refusal{"value " + strconv.Quote(value), withArguments(paths, "--listen-fd="+value), numberRule})
+	for _, value := range []string{sentinel, "", "0", "2", "03", "04", "+3", "+4", "-3", "-4", "x", "3 ", "2147483648"} {
+		cases = append(cases, refusal{"D2 and D3 value " + strconv.Quote(value), withArguments(paths, "--listen-fd="+value), numberRule})
 	}
 	for _, refusal := range cases {
 		t.Run(refusal.name, func(t *testing.T) {
@@ -136,6 +144,11 @@ func TestListenDescriptorRefusals(t *testing.T) {
 			t.Cleanup(func() { _ = configured.Close() })
 			return inheritedCase{descriptor: strconv.Itoa(descriptor), listen: configured.Addr().String(), inherited: true, handles: name}
 		}},
+		{"a listener for another configured loopback IP address at its port", func(t *testing.T) inheritedCase {
+			descriptor, name := inheritedListener(t)
+			_, port, _ := net.SplitHostPort(strings.TrimPrefix(name, "inet4 "))
+			return inheritedCase{descriptor: strconv.Itoa(descriptor), listen: net.JoinHostPort("127.0.0.2", port), inherited: true, handles: name}
+		}},
 		{"a loopback listener for the configured wildcard at its port", func(t *testing.T) inheritedCase {
 			descriptor, name := inheritedListener(t)
 			_, port, _ := net.SplitHostPort(strings.TrimPrefix(name, "inet4 "))
@@ -153,6 +166,24 @@ func TestListenDescriptorRefusals(t *testing.T) {
 			descriptor, _ := strconv.Atoi(check.descriptor)
 			requireOwnership(t, descriptor, check.inherited, check.handles)
 		})
+	}
+}
+
+// Go developer test, not acceptance proof (ADR 0008, "There is no fallback";
+// criteria D18). Defect: after it refuses a mismatched descriptor, the start
+// path binds server.listen, or goes on to open the application. The
+// configured address is free: the test bound it and closed it again. After
+// the refusal, the process holds no socket at the configured address.
+func TestRefusedDescriptorDoesNotFallBackToTheConfiguredAddress(t *testing.T) {
+	free := listenLoopback(t)
+	configured := free.Addr().String()
+	_ = free.Close()
+	descriptor, name := inheritedListener(t)
+	paths := []string{"--config", writeListenConfiguration(t, configured), "--secrets-directory", t.TempDir()}
+	requireRefusal(t, withArguments(paths, "--listen-fd", strconv.Itoa(descriptor)), listenRefusal)
+	requireOwnership(t, descriptor, true, name)
+	if count := socketHandles(t, "inet4 "+configured); count != 0 {
+		t.Errorf("the process holds %d sockets at the configured address after the refusal, want none", count)
 	}
 }
 
