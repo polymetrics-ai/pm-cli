@@ -947,8 +947,16 @@ func claimWorkerTask(
 	expectedFence := uint64(0)
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
-		if current.ExpiresAt.After(state.now) {
-			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(state.now)}
+		// Preparation runs after loadWorkerRunState sampled state.now, and it
+		// can outlast the stored lease. The lease decision reads the database
+		// time again and uses that one sample for the expiry comparison and
+		// for the remaining lease time.
+		decidedAt, err := store.ReadAuthenticationTime(ctx, tx)
+		if err != nil {
+			return store.Lease{}, err
+		}
+		if current.ExpiresAt.After(decidedAt) {
+			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(decidedAt)}
 		}
 		expectedFence = current.Fence
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -2946,10 +2954,15 @@ func workerLeaseDeadline(claimStarted time.Time, lease store.Lease) time.Time {
 // after the lease ends makes the settlement fail with a stale task fence, and
 // the unit then settles nothing. A zero lease deadline ends every step at once.
 //
-// In the Temporal activity the attempt deadline comes first: the claim follows
-// the start of the attempt, and the lease TTL is at most the sealed
-// start_to_close. This context then keeps the attempt deadline exactly. A
-// caller with a later deadline, or with none, gets the lease deadline.
+// In the Temporal activity the attempt deadline usually comes first: the claim
+// follows the start of the attempt, and the lease TTL is at most the sealed
+// start_to_close. This context then keeps the attempt deadline exactly. But
+// claimWorkerTask also limits the TTL of a fresh lease to the remaining
+// accepted run lifetime. When that lifetime ends before the attempt deadline,
+// the lease deadline comes first. Each step can then end earlier than with the
+// attempt deadline alone: the settlement cutoff can move to one reserve before
+// the lease deadline. A caller with a later deadline, or with none, also gets
+// the lease deadline.
 func workerLeaseContext(ctx context.Context, leaseDeadline time.Time) (context.Context, context.CancelFunc) {
 	return context.WithDeadline(ctx, leaseDeadline)
 }
