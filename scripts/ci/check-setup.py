@@ -295,11 +295,35 @@ def provenance_check(root, files, policy):
 
 TRUST = ("github.repository == 'polymetrics-ai/pm-cli' && github.actor == 'karthik-sivadas' && github.triggering_actor == 'karthik-sivadas' && github.event_name == 'push' && github.event.deleted == false && (github.ref != 'refs/heads/main' || github.event.forced == false)")
 RUNNER = ["self-hosted", "Linux", "X64", "pm-cli-vps"]
-BDD_RUN = "sh scripts/ci/in-ci-image.sh run bdd -- sh scripts/ci/check-bdd.sh"
-CLEANUP_RUN = ("sh scripts/ci/in-ci-image.sh stop bdd\n"
-               "sh scripts/ci/in-ci-image.sh run bdd-cleanup -- "
-               "python3 scripts/ci/with-stack-fixture.py \\\n"
-               '  --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"\n')
+SHARDS = ("1", "2", "3")
+STACK_STEP_NAMES = {"1": "Run stack shard 1", "2": "Run stack shard 2",
+                    "3": "Run stack shard 3 and the Gherkin acceptance suite"}
+
+
+def stack_run(shard):
+    return f"sh scripts/ci/in-ci-image.sh run stack-{shard} -- sh scripts/ci/check-bdd.sh --shard {shard}"
+
+
+def stack_cleanup_run(shard):
+    return (f"sh scripts/ci/in-ci-image.sh stop stack-{shard}\n"
+            f"sh scripts/ci/in-ci-image.sh run stack-{shard}-cleanup -- "
+            "python3 scripts/ci/with-stack-fixture.py \\\n"
+            f'  --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-s{shard}.json"\n')
+
+
+# The aggregate job `bdd`, the required check. Its exact condition and step are
+# frozen, so that only the result `success` of every stack job can pass it.
+AGGREGATE_IF = "always() && " + TRUST
+AGGREGATE_STEP = {
+    "name": "Require the result success of each stack job",
+    "env": {f"STACK_{shard}": "${{ needs.stack-%s.result }}" % shard for shard in SHARDS},
+    "run": ('status=0\n'
+            'for job in "stack-1 $STACK_1" "stack-2 $STACK_2" "stack-3 $STACK_3"; do\n'
+            "  printf '%s: %s\\n' \"${job% *}\" \"${job#* }\"\n"
+            '  [ "${job#* }" = success ] || status=1\n'
+            'done\n'
+            'exit "$status"\n'),
+}
 CHECKS_RUN = "sh scripts/ci/in-ci-image.sh run checks -- sh scripts/ci/check-docs.sh"
 CHECKS_CLEANUP_RUN = "sh scripts/ci/in-ci-image.sh stop checks"
 
@@ -329,6 +353,20 @@ def frozen_job(jobs, name, timeout, check, cleanup):
     require(clean == cleanup, f"unapproved {name} cleanup step")
 
 
+def aggregate_job(jobs):
+    """Freeze `bdd`: it needs the stack jobs and passes only when each one succeeded."""
+    job = jobs["bdd"]
+    require(isinstance(job, dict), "bdd job must be an object")
+    require(set(job) == {"needs", "if", "runs-on", "timeout-minutes", "steps"},
+            "unapproved bdd job capability")
+    require(job["needs"] == [f"stack-{shard}" for shard in SHARDS], "unapproved bdd needs")
+    require(job["if"] == AGGREGATE_IF, "unapproved bdd condition")
+    require(job["runs-on"] == RUNNER, "bdd runner routing changed")
+    require(job["timeout-minutes"] == "5", "bdd job timeout changed")
+    # One step, with no checkout and no repository code.
+    require(job["steps"] == [AGGREGATE_STEP], "unapproved bdd step")
+
+
 def workflow_check(path, actionlint):
     """Freeze the required checks: `bdd` and `checks` on owner pushes, in the CI image."""
     obj = read_yaml(path.read_text())
@@ -341,12 +379,14 @@ def workflow_check(path, actionlint):
             "group": "bdd-${{ github.ref }}",
             "cancel-in-progress": "${{ github.ref != 'refs/heads/main' }}"},
             "unapproved workflow concurrency")
-    require(isinstance(obj["jobs"], dict) and set(obj["jobs"]) == {"bdd", "checks"},
-            "unapproved job membership")
-    frozen_job(obj["jobs"], "bdd", "60",
-               {"name": "Run the Gherkin acceptance suite", "timeout-minutes": "50", "run": BDD_RUN},
-               {"name": "Clean up the job container and dependency fixture",
-                "if": "always()", "timeout-minutes": "6", "run": CLEANUP_RUN})
+    require(isinstance(obj["jobs"], dict) and set(obj["jobs"]) ==
+            {"stack-1", "stack-2", "stack-3", "bdd", "checks"}, "unapproved job membership")
+    for shard in SHARDS:
+        frozen_job(obj["jobs"], f"stack-{shard}", "100",
+                   {"name": STACK_STEP_NAMES[shard], "timeout-minutes": "90", "run": stack_run(shard)},
+                   {"name": "Clean up the job container and dependency fixture",
+                    "if": "always()", "timeout-minutes": "6", "run": stack_cleanup_run(shard)})
+    aggregate_job(obj["jobs"])
     frozen_job(obj["jobs"], "checks", "20",
                {"name": "Run the static checks", "timeout-minutes": "17", "run": CHECKS_RUN},
                {"name": "Clean up the job container",
