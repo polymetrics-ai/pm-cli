@@ -65,9 +65,7 @@ func (service *Service) GetConnectionSchema(
 		if err != nil {
 			return asProblemResponse(err, nil), nil
 		}
-		if snapshot.Binding != binding {
-			return asProblemResponse(concealedSchemaSelector(schema.ErrSnapshotScope), nil), nil
-		}
+		// CANARY 2 (never merge): the binding check of a named snapshot is removed.
 		if projected, err = connectionSchemaResponse(scope, binding, reference, &snapshot); err != nil {
 			return asProblemResponse(err, nil), nil
 		}
