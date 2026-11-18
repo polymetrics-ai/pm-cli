@@ -2,6 +2,7 @@
 # Run one CI command inside the pinned job image (build/ci/Dockerfile).
 #
 #   in-ci-image.sh run NAME -- COMMAND...   run COMMAND in a new job container
+#   in-ci-image.sh live NAME -- COMMAND...  run COMMAND for the live runner (D2-A)
 #   in-ci-image.sh stop NAME                remove a leftover job container
 #   in-ci-image.sh dev -- COMMAND...        run COMMAND for a developer (the git hooks)
 #
@@ -14,12 +15,23 @@
 # The dev mode needs no GitHub variables. It mounts the checkout, the Git common
 # directory and the tool cache at their host paths. It mounts no engine socket
 # and uses the default network, so COMMAND cannot start the dependency stack.
+#
+# The live mode (L-e1 P5) is for the pm-live runner only. It checks the token
+# channel before anything else, puts the run root (RUNNER_TEMP inside) on the
+# memory file system, builds a fresh image with a run-specific tag, uses fresh
+# caches and adds --pid host. See "Live runner (D2-A)" in docs/development/ci.md.
 set -eu
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
 engine=${PMCLI_CONTAINER_ENGINE:-podman}
+# The fixed host paths and probes of the live mode. The developer checks
+# (scripts/ci/test_live_launcher.py) replace only these four lines.
+live_runtime=/run/user
+live_etc=/etc/pm-live
+live_fs_type() { stat -f -c %T "$1"; }
+live_owner_mode() { stat -c '%u %a' "$1"; }
 
 usage() {
-  printf '%s\n' 'usage: in-ci-image.sh run NAME -- COMMAND... | stop NAME | dev -- COMMAND...' >&2
+  printf '%s\n' 'usage: in-ci-image.sh run|live NAME -- COMMAND... | stop NAME | dev -- COMMAND...' >&2
   exit 2
 }
 
@@ -108,7 +120,7 @@ case "$mode" in
     "$engine" rm -f "$container" >/dev/null 2>&1 || true
     exit 0
     ;;
-  run)
+  run | live)
     [ "${1:-}" = -- ] || usage
     shift
     [ "$#" -ge 1 ] || usage
@@ -131,6 +143,73 @@ if [ ! -S "$socket" ]; then
   printf 'container engine socket is unavailable: %s\n' "$socket" >&2
   exit 1
 fi
+
+if [ "$mode" = live ]; then
+  live_refuse() {
+    printf 'in-ci-image.sh live: %s\n' "$1" >&2
+    exit 1
+  }
+  case "$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" in
+    *[!0-9-]* | -* | *-) live_refuse 'the run identity is not numeric' ;;
+  esac
+  uid=$(id -u)
+  # The token channel (F3, R2-8). Every check comes before the image build.
+  token_dir="$live_runtime/$uid/pm-live"
+  token=${PMCLI_LIVE_TOKEN_FILE:-}
+  [ "$token" = "$token_dir/w2-token" ] || live_refuse "PMCLI_LIVE_TOKEN_FILE must be $token_dir/w2-token"
+  [ "$(realpath "$token" 2>/dev/null)" = "$token" ] || live_refuse 'the token path is missing or holds a symbolic link'
+  [ -d "$token_dir" ] && [ ! -L "$token_dir" ] || live_refuse 'the token directory is not a directory'
+  [ "$(live_owner_mode "$token_dir")" = "$uid 700" ] || live_refuse 'the token directory needs the runner UID and mode 0700'
+  [ "$(live_fs_type "$token_dir")" = tmpfs ] || live_refuse 'the token directory is not on tmpfs'
+  [ -f "$token" ] && [ ! -L "$token" ] || live_refuse 'the token file is not a regular file'
+  [ "$(live_owner_mode "$token")" = "$uid 600" ] || live_refuse 'the token file needs the runner UID and mode 0600'
+  size=$(wc -c < "$token")
+  [ "$size" -ge 20 ] && [ "$size" -le 4096 ] || live_refuse 'the token file must hold 20 to 4096 bytes'
+  # The run root on the memory file system (F3). Inside, RUNNER_TEMP names
+  # it, so the fixture root, the secret root, the manifest, the raw report
+  # and the scan copies are all there.
+  run_id="$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+  run_root="$live_runtime/$uid/pm-live-run/$run_id"
+  [ -d "$live_runtime/$uid/pm-live-run" ] || mkdir -m 700 "$live_runtime/$uid/pm-live-run"
+  mkdir -m 700 "$run_root" || live_refuse 'the run root exists'
+  [ "$(live_fs_type "$run_root")" = tmpfs ] || live_refuse 'the run root is not on tmpfs'
+  # Fresh caches (F5).
+  [ -d "$HOME/pm-live-cache" ] || mkdir -m 700 "$HOME/pm-live-cache"
+  live_cache="$HOME/pm-live-cache/$run_id"
+  mkdir -m 700 "$live_cache" || live_refuse 'the cache folder exists'
+  mkdir "$live_cache/home"
+  # A fresh image with a run-specific tag (F5), also when one exists.
+  image="localhost/pmcli-live:$run_id"
+  printf 'Building live image %s\n' "$image" >&2
+  "$engine" build --platform linux/amd64 --tag "$image" \
+    --file "$repo_root/build/ci/Dockerfile" "$repo_root/build/ci" >&2
+  printf 'live image ID: %s\n' "$("$engine" image inspect --format '{{.Id}}' "$image")" >&2
+  # --pid host lets the harness scan the processes of the live UID (Q2).
+  # Default capabilities only: no privilege flag, no added capability or
+  # device. The container gets the inside token path only, never a value.
+  exec "$engine" run --rm --init --pull never --name "$container" \
+    --userns keep-id --user "$uid:$(id -g)" \
+    --network host --pid host \
+    --memory "${PMCLI_JOB_MEMORY:-8g}" --cpus "${PMCLI_JOB_CPUS:-4}" \
+    --pids-limit "${PMCLI_JOB_PIDS:-4096}" \
+    --volume "$GITHUB_WORKSPACE:$GITHUB_WORKSPACE" \
+    --volume "$run_root:$run_root" \
+    --volume "$live_cache:$live_cache" \
+    --volume "$token_dir:/run/pm-live-token" \
+    --volume "$live_etc/run-kind:/run/pm-live-run-kind:ro" \
+    --volume "$GITHUB_STEP_SUMMARY:$GITHUB_STEP_SUMMARY" \
+    --volume "$socket:/var/run/docker.sock" \
+    --workdir "$repo_root" \
+    --env PMCLI_CACHE_DIR="$live_cache" --env HOME="$live_cache/home" \
+    --env PM_TOOLS_CACHE="$live_cache/pm-tools" --env RUNNER_TEMP="$run_root" \
+    --env PMCLI_LIVE_TOKEN_FILE=/run/pm-live-token/w2-token \
+    --env CI --env GITHUB_ACTIONS --env GITHUB_WORKSPACE --env GITHUB_REPOSITORY \
+    --env GITHUB_SHA --env GITHUB_REF --env GITHUB_EVENT_NAME \
+    --env GITHUB_RUN_ID --env GITHUB_RUN_ATTEMPT --env RUNNER_NAME \
+    --env GITHUB_STEP_SUMMARY \
+    "$image" "$@"
+fi
+
 mkdir -p "$cache" "$cache/home"
 chmod 700 "$cache"
 
