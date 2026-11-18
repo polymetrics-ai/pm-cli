@@ -48,9 +48,19 @@ func newSchemaDiscoverCommand(runtime *commandRuntime) *cobra.Command {
 
 The server admits a discovery run. pm-worker runs only the connector's declared metadata
 operation for that relation and stores one complete candidate snapshot. A discovery never
-selects a snapshot. With --wait, the command waits for the run: it exits with code 0 only
-when the run succeeded and so stored its candidate. A resource that the connection does not
-declare is refused with schema_relation_unknown before any run starts.`,
+selects a snapshot.
+
+With --wait, the command waits for the run and exits with a nonzero code when the run does
+not succeed. An interrupt ends only the wait, not the run, and exits with code 0 (issue #437).
+Run pm runs inspect RUN_ID with the run ID from the notice to see its state.
+
+A resource that the connection does not declare is refused with schema_relation_unknown and
+exit code 3 before any run starts. Check the --resource value against the relations that the
+connection declares.
+
+When the outcome of the admission is unknown, the command exits with code 7 and names the
+request key. Repeat the same command with that --request-key to get the same run. A new key
+starts a new discovery.`,
 		Args: noArgs,
 		RunE: func(command *cobra.Command, _ []string) error {
 			connection := runtime.flags.connection
@@ -84,7 +94,7 @@ declare is refused with schema_relation_unknown before any run starts.`,
 				pmapi.DiscoverConnectionSchemaJSONRequestBody{Resource: resource.value},
 			)
 			if err != nil {
-				return requestError(ctx, err)
+				return discoveryAdmissionError(ctx, selection.RequestKey, err)
 			}
 			if !bundle.config.wait {
 				return renderWireResponse(command.OutOrStdout(), bundle.config.output, response)
@@ -175,6 +185,23 @@ selection. The command never discovers metadata and requires no provider credent
 	command.Flags().Var(&resource, resource.name, "Declared resource of the relation to select")
 	command.Flags().Var(&schemaRef, schemaRef.name, "Content digest of the stored complete candidate to select")
 	return command
+}
+
+// discoveryAdmissionError maps a failed admission send. A transport failure
+// can follow a committed admission, so its outcome is unknown: the command
+// exits with code 7 and names the request key, as the shared mutation recovery
+// does, and a repeat with that key replays the same admission. Every other
+// failure keeps its own exit code.
+func discoveryAdmissionError(ctx context.Context, requestKey string, err error) error {
+	err = requestError(ctx, err)
+	if !errors.Is(err, pmapi.ErrClientTransport) {
+		return err
+	}
+	return &exitError{
+		code:    7,
+		message: fmt.Sprintf("PM discovery admission outcome is unknown; repeat only this command with %s to get the same run", requestKeyFlag(requestKey)),
+		cause:   err,
+	}
 }
 
 func newSchemaShowCommand(runtime *commandRuntime) *cobra.Command {

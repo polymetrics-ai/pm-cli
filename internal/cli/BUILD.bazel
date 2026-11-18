@@ -40,6 +40,7 @@ go_test(
         "dynamic_test.go",
         "membership_update_test.go",
         "result_document_test.go",
+        "schema_discover_test.go",
         "schema_select_test.go",
         "sessions_test.go",
         "tree_test.go",

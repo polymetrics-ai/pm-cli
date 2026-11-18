@@ -27,8 +27,9 @@ END
 $$;
 
 -- One row for each admitted discovery run. It records the declared relation
--- binding that admission resolved, so the worker can refuse a declaration that
--- changed before any provider I/O. Rows are immutable for the runtime role.
+-- binding that admission resolved, with its physical schema and table, so the
+-- worker can refuse a declaration that changed before any provider I/O. Rows
+-- are immutable for the runtime role.
 CREATE TABLE pm.schema_discoveries (
     org_id text NOT NULL,
     workspace_id text NOT NULL,
@@ -37,6 +38,8 @@ CREATE TABLE pm.schema_discoveries (
     connector_id text NOT NULL CHECK (connector_id <> ''),
     resource text NOT NULL CHECK (resource <> '' AND octet_length(resource) <= 512),
     relation_binding text NOT NULL CHECK (relation_binding <> '' AND octet_length(relation_binding) <= 512),
+    relation_schema text NOT NULL CHECK (relation_schema <> '' AND octet_length(relation_schema) <= 63),
+    relation_table text NOT NULL CHECK (relation_table <> '' AND octet_length(relation_table) <= 63),
     provider_account_id text NOT NULL CHECK (provider_account_id <> '' AND octet_length(provider_account_id) <= 512),
     permission_revision text NOT NULL CHECK (permission_revision <> '' AND octet_length(permission_revision) <= 512),
     source_revision text NOT NULL CHECK (source_revision <> '' AND octet_length(source_revision) <= 512),
@@ -123,7 +126,7 @@ REVOKE ALL ON TABLE pm.schema_discoveries, pm.schema_snapshots FROM PUBLIC, pm_a
 GRANT SELECT ON TABLE pm.schema_discoveries, pm.schema_snapshots TO pm_app_runtime;
 -- created_at is never written by the runtime: the column default owns it.
 GRANT INSERT (org_id, workspace_id, run_id, connection_id, connector_id, resource, relation_binding,
-              provider_account_id, permission_revision, source_revision)
+              relation_schema, relation_table, provider_account_id, permission_revision, source_revision)
     ON pm.schema_discoveries TO pm_app_runtime;
 GRANT INSERT (org_id, workspace_id, connection_id, schema_ref, connector_id, provider_account_id,
               permission_revision, resource, source_revision, complete, field_count, document,

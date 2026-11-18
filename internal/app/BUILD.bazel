@@ -166,6 +166,7 @@ go_test(
     srcs = ["schema_discovery_internal_test.go"],
     embed = [":app"],
     deps = [
+        "//internal/config",
         "//internal/contract",
         "//internal/runtime",
         "//internal/schema",

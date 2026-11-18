@@ -503,6 +503,8 @@ func (composition *SQLComposition) ResolveDiscovery(
 		ConnectorID:        connection.declaration.ConnectorID,
 		OperationID:        operationID,
 		RelationBinding:    found.Binding,
+		Schema:             found.Schema,
+		Table:              found.Table,
 		Resource:           found.Snapshot.Resource,
 		ProviderAccountID:  found.Snapshot.ProviderAccountID,
 		PermissionRevision: found.Snapshot.PermissionRevision,
@@ -546,7 +548,7 @@ func (composition *SQLComposition) ResolveRelationBinding(
 // operator's relation binding, not from a selected snapshot. The relation
 // names only the declared schema and table, which the metadata statement binds
 // as parameter values. A declaration that differs from the accepted discovery
-// intent is refused before any send.
+// intent, also in its physical schema or table, is refused before any send.
 func (composition *SQLComposition) bindDiscovery(
 	scope contract.Scope,
 	connectionID string,
@@ -573,6 +575,7 @@ func (composition *SQLComposition) bindDiscovery(
 	if !present || discovery.ConnectionID != connectionID ||
 		discovery.ConnectorID != connection.declaration.ConnectorID ||
 		discovery.RelationBinding != operation.Transport.RelationBinding ||
+		discovery.Schema != binding.Schema || discovery.Table != binding.Table ||
 		binding.Snapshot != (config.ProviderSQLSnapshotBinding{
 			ProviderAccountID:  discovery.ProviderAccountID,
 			PermissionRevision: discovery.PermissionRevision,

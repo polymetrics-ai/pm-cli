@@ -314,6 +314,10 @@ type sqlExecutionTuning struct {
 	noSnapshot      bool
 	wrongCredential bool
 	noCredential    bool
+	// execute, when set, replaces the shared SQL callback with a controlled
+	// callback that has the same registered lanes, foundations and
+	// capabilities as the declared composition.
+	execute app.ExecutionCallback
 }
 
 // sqlExecutionRun is the durable settlement of one executed unit together with
@@ -730,8 +734,26 @@ func newSQLExecutionHarness(
 		if err != nil {
 			return err
 		}
-		if tuning.declared {
+		if tuning.declared && tuning.execute == nil {
 			if err := composition.Register(registry); err != nil {
+				return err
+			}
+		}
+		if tuning.declared && tuning.execute != nil {
+			declared := &app.HandlerRegistry{}
+			if err := composition.Register(declared); err != nil {
+				return err
+			}
+			manifest := app.BuildHandlerManifest(declared)
+			if len(manifest.Handlers) != 1 || manifest.Handlers[0].Kind != app.HandlerSQL {
+				return errors.New("the declared SQL composition registers no single SQL handler")
+			}
+			if err := registry.RegisterSQL(app.HandlerRegistration{
+				Lanes:        manifest.Handlers[0].Lanes,
+				Foundations:  manifest.Handlers[0].Foundations,
+				Capabilities: manifest.Handlers[0].Capabilities,
+				Execute:      tuning.execute,
+			}); err != nil {
 				return err
 			}
 		}

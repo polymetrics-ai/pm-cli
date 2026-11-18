@@ -34,9 +34,14 @@ type DiscoveryInvocation struct {
 // discovery binds: the operator's relation binding and the connector's
 // declared metadata operation for that binding. It needs no selected snapshot.
 type DeclaredDiscovery struct {
-	ConnectorID        string
-	OperationID        string
-	RelationBinding    string
+	ConnectorID     string
+	OperationID     string
+	RelationBinding string
+	// Schema and Table are the physical relation of the binding. Admission
+	// records them, and the worker refuses a declaration that names another
+	// relation under the same binding (ADR 0007).
+	Schema             string
+	Table              string
 	Resource           string
 	ProviderAccountID  string
 	PermissionRevision string
@@ -212,16 +217,7 @@ func (service *AdmissionService) AcceptDiscovery(
 		if err != nil {
 			return mapAdmissionFailure(err)
 		}
-		if err := store.RecordSchemaDiscovery(ctx, tx, store.SchemaDiscovery{
-			RunID:              request.Spec.RunID,
-			ConnectionID:       invocation.ConnectionRef,
-			ConnectorID:        declared.ConnectorID,
-			Resource:           declared.Resource,
-			RelationBinding:    declared.RelationBinding,
-			ProviderAccountID:  declared.ProviderAccountID,
-			PermissionRevision: declared.PermissionRevision,
-			SourceRevision:     declared.SourceRevision,
-		}); err != nil {
+		if err := store.RecordSchemaDiscovery(ctx, tx, declared.intent(request.Spec.RunID, invocation.ConnectionRef)); err != nil {
 			return mapAdmissionFailure(err)
 		}
 		return nil
@@ -233,6 +229,23 @@ func (service *AdmissionService) AcceptDiscovery(
 		return store.AdmissionResult{}, committedFailure
 	}
 	return result, nil
+}
+
+// intent is the discovery intent that admission records for one run of this
+// declared relation. The worker compares it with its own declaration.
+func (declared DeclaredDiscovery) intent(runID, connectionID string) store.SchemaDiscovery {
+	return store.SchemaDiscovery{
+		RunID:              runID,
+		ConnectionID:       connectionID,
+		ConnectorID:        declared.ConnectorID,
+		Resource:           declared.Resource,
+		RelationBinding:    declared.RelationBinding,
+		Schema:             declared.Schema,
+		Table:              declared.Table,
+		ProviderAccountID:  declared.ProviderAccountID,
+		PermissionRevision: declared.PermissionRevision,
+		SourceRevision:     declared.SourceRevision,
+	}
 }
 
 // discoveryOperation reports whether one resolved operation is the declared

@@ -18,18 +18,25 @@ const maxSchemaCandidateDocumentBytes = 4 << 20
 // maxSchemaCandidateFields is the field bound of one stored snapshot.
 const maxSchemaCandidateFields = 4096
 
+// maxSchemaDiscoveryRelationNameBytes bounds the recorded schema and table
+// names of a discovery: the PostgreSQL identifier length.
+const maxSchemaDiscoveryRelationNameBytes = 63
+
 var schemaReferencePattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
 // SchemaDiscovery is the immutable accepted intent of one discovery run: the
 // connection, the resource and the declared relation binding that admission
-// resolved. The worker compares it with the current declaration before any
-// provider I/O, so a declaration that changed after admission is refused.
+// resolved, with its physical schema and table. The worker compares it with
+// the current declaration before any provider I/O, so a declaration that
+// changed after admission is refused.
 type SchemaDiscovery struct {
 	RunID              string
 	ConnectionID       string
 	ConnectorID        string
 	Resource           string
 	RelationBinding    string
+	Schema             string
+	Table              string
 	ProviderAccountID  string
 	PermissionRevision string
 	SourceRevision     string
@@ -43,6 +50,12 @@ func (discovery SchemaDiscovery) validate() error {
 	} {
 		if !validStoreID(value) {
 			return errors.New("schema discovery identity is invalid")
+		}
+	}
+	// A PostgreSQL identifier has at most 63 bytes, as the declaration allows.
+	for _, value := range []string{discovery.Schema, discovery.Table} {
+		if !validStoreID(value) || len(value) > maxSchemaDiscoveryRelationNameBytes {
+			return errors.New("schema discovery relation is invalid")
 		}
 	}
 	return nil
@@ -62,13 +75,14 @@ func RecordSchemaDiscovery(ctx context.Context, tx *Transaction, discovery Schem
 	tag, err := tx.exec(ctx, `
 		INSERT INTO pm.schema_discoveries (
 			org_id, workspace_id, run_id, connection_id, connector_id, resource,
-			relation_binding, provider_account_id, permission_revision, source_revision
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+			relation_binding, relation_schema, relation_table, provider_account_id,
+			permission_revision, source_revision
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT DO NOTHING
 	`,
 		scope.OrgID, scope.WorkspaceID, discovery.RunID, discovery.ConnectionID, discovery.ConnectorID,
-		discovery.Resource, discovery.RelationBinding, discovery.ProviderAccountID,
-		discovery.PermissionRevision, discovery.SourceRevision,
+		discovery.Resource, discovery.RelationBinding, discovery.Schema, discovery.Table,
+		discovery.ProviderAccountID, discovery.PermissionRevision, discovery.SourceRevision,
 	)
 	if err != nil {
 		return safeMetadataWriteError("record schema discovery", err)
@@ -100,12 +114,13 @@ func LoadSchemaDiscovery(ctx context.Context, tx *Transaction, runID string) (Sc
 	}
 	discovery := SchemaDiscovery{RunID: runID}
 	if err := tx.queryRow(ctx, `
-		SELECT connection_id, connector_id, resource, relation_binding,
+		SELECT connection_id, connector_id, resource, relation_binding, relation_schema, relation_table,
 		       provider_account_id, permission_revision, source_revision
 		FROM pm.schema_discoveries
 		WHERE run_id = $1
 	`, runID).Scan(
 		&discovery.ConnectionID, &discovery.ConnectorID, &discovery.Resource, &discovery.RelationBinding,
+		&discovery.Schema, &discovery.Table,
 		&discovery.ProviderAccountID, &discovery.PermissionRevision, &discovery.SourceRevision,
 	); errors.Is(err, pgx.ErrNoRows) {
 		return SchemaDiscovery{}, ErrNotFound
