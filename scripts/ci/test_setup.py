@@ -1746,6 +1746,92 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
         result, _ = self.report([], expect=["m/a"], command=command)
         self.assertEqual(result.returncode, 143)
 
+    # L-e1 P5a: a marker in names and output, with and without control characters.
+    MARK = "LIVE-MARK-41c7"
+
+    def live_report(self, events, *options, expect=("m/acc",), raw_text=None):
+        """Run the reporter with --live. Return (result, summary, raw report, raw mode)."""
+        with tempfile.TemporaryDirectory() as directory:
+            stream = Path(directory) / "events.json"
+            stream.write_text(raw_text if raw_text is not None else "\n".join(events) + "\n")
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("".join(f"{package}\n" for package in expect))
+            raw, summary = Path(directory) / "raw", Path(directory) / "summary.md"
+            fake = self.program("import sys; sys.stdout.write(open(sys.argv[1]).read()); "
+                                "sys.stderr.write(sys.argv[2])")
+            result = subprocess.run(
+                [sys.executable, "-I", "-B", str(REPORT), "--output", str(Path(directory) / "out.json"),
+                 "--live", "--raw-output", str(raw), "--scenarios", "--expect", str(expected),
+                 "--fail-on-skip", "--summary-file", str(summary), *options, "--", *fake, str(stream),
+                 f"stderr {self.MARK}\n", "-count=1"],
+                capture_output=True, text=True, timeout=120)
+            text = summary.read_text() if summary.exists() else ""
+            report = raw.read_text() if raw.exists() else ""
+            mode = raw.stat().st_mode & 0o777 if raw.exists() else None
+        return result, text, report, mode
+
+    def test_live_mode_prints_no_stream_text(self):
+        for decoration in ("", "\x1b[31m\r\x07\t"):
+            mark = self.MARK + decoration
+            scenario = f"{mark} scenario"
+            steps = [f"    \x1b[31mWhen\x1b[0m \x1b[31m{mark} step\x1b[0m\n"]
+            extra = [go_event("run", "m/acc", f"Test{mark}Fail"),
+                     go_event("output", "m/acc", f"Test{mark}Fail", Output=f"error {mark}\n"),
+                     go_event("fail", "m/acc", f"Test{mark}Fail"),
+                     go_event("run", "m/acc", f"TestParent/{mark}sub"),
+                     go_event("output", "m/acc", f"TestParent/{mark}sub", Output=f"skip {mark}\n"),
+                     go_event("skip", "m/acc", f"TestParent/{mark}sub"),
+                     go_event("run", "m/acc", f"Test{mark}Unfinished"),
+                     go_event("output", "m/acc", f"Test{mark}Unfinished", Output=f"panic {mark}\n")]
+            events = self.gherkin_suite({scenario: ("fail", steps)},
+                                        ["1 scenarios (1 failed)", "1 steps (1 failed)"], extra)
+            with self.subTest(decoration=repr(decoration)):
+                result, summary, raw, mode = self.live_report(events)
+                self.assertNotEqual(result.returncode, 0)
+                for name, text in (("stdout", result.stdout), ("stderr", result.stderr), ("summary", summary)):
+                    self.assertNotIn(self.MARK, text, name)
+                self.assertIn(f"Test{self.MARK}", raw)
+                self.assertIn(f"stderr {self.MARK}", raw)
+                self.assertEqual(mode, 0o600)
+                self.assertIn("scenario 1 of 1: FAIL\n", result.stdout)
+                self.assertIn("godog scenarios: 1 (1 failed)\n", result.stdout)
+                self.assertIn(": no result\n", result.stdout)
+                self.assertIn(": SKIP\n", result.stdout)
+                self.assertIn("- scenario 1 of 1: FAIL\n", summary)
+
+    def test_live_mode_needs_its_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            existing = Path(directory) / "raw"
+            existing.write_text("")
+            out, new, missing = (str(Path(directory) / name) for name in ("o", "r", "x"))
+            for options in (["--live", "--expect", missing, "--raw-output", new],
+                            ["--live", "--scenarios", "--raw-output", new],
+                            ["--live", "--scenarios", "--expect", missing],
+                            ["--raw-output", new, "--scenarios", "--expect", missing]):
+                with self.subTest(options=options):
+                    result = subprocess.run([sys.executable, "-I", "-B", str(REPORT), "--output", out,
+                                             *options, "--", "true"], capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+            expected = Path(directory) / "expected"
+            expected.write_text("m/acc\n")
+            result = subprocess.run([sys.executable, "-I", "-B", str(REPORT), "--output", out, "--live",
+                                     "--scenarios", "--expect", str(expected), "--raw-output", str(existing),
+                                     "--", "true", "-count=1"], capture_output=True, text=True, timeout=30)
+            self.assertEqual((result.returncode, existing.read_text()), (2, ""), result.stderr)
+
+    def test_live_mode_fails_on_stream_faults(self):
+        zero = self.gherkin_suite({}, ["No scenarios", "No steps"])
+        passing = self.gherkin_suite({"a": ("pass", [])}, ["1 scenarios (1 passed)", "0 steps"])
+        for name, events, expect, raw_text in (
+                ("zero scenarios", zero, ("m/acc",), None),
+                ("missing result", passing, ("m/acc", "m/other"), None),
+                ("malformed stream", passing, ("m/acc",), "\n".join(passing) + f"\nnot json {self.MARK}\n")):
+            with self.subTest(case=name):
+                result, summary, raw, _ = self.live_report(events, expect=expect, raw_text=raw_text)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(self.MARK, result.stdout + summary)
+                self.assertRegex(result.stdout, r"go test \(live\): [1-9]\d* problems")
+
     def test_summary_file_needs_a_title_or_scenarios(self):
         result, _ = self.report([], "--summary-file", "SUMMARY")
         self.assertEqual(result.returncode, 2)

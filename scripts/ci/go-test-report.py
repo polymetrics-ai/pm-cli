@@ -3,7 +3,8 @@
 
 Usage: go-test-report.py --output FILE [--scenarios] [--title TEXT]
                          [--fail-on-skip] [--expect FILE] [--deadline TIME]
-                         [--timeout SECONDS] [--summary-file FILE] -- COMMAND...
+                         [--timeout SECONDS] [--summary-file FILE]
+                         [--live --raw-output FILE] -- COMMAND...
 
 COMMAND must print `go test -json` events. The summary lists each package
 with its result and elapsed time (input for shard balancing) and repeats the
@@ -98,6 +99,17 @@ Without --title, the scenario section of the summary also lists each test
 with no result, each skipped test and each problem. --summary-file appends
 the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
 --summary-file requires --title, --scenarios or both.
+
+--live is the mode of the live runner (D2-A, L-e1 P5a). The log and the
+summary file then get no text from the test stream: no package, test,
+subtest or scenario name, no output line and no error text. They get only
+counts, the godog totals as numbers, the result words PASS, FAIL, SKIP and
+"no result", and ordinals ("test 4 of 9: FAIL", "scenario 2 of 3: FAIL").
+The full report and the standard error of COMMAND go to the --raw-output
+FILE, which the script creates with mode 0600 and refuses when it exists.
+--live requires --scenarios, --expect and --raw-output, and --raw-output
+requires --live. The other rules do not change. The live log holds no stream
+text by design: this is prevention, not detection.
 """
 import argparse
 import json
@@ -469,8 +481,8 @@ def unsignalled_members(group):
     return count
 
 
-def run_command(command, output, deadline, limit):
-    """Run COMMAND with stdout in OUTPUT.
+def run_command(command, output, deadline, limit, errors=None):
+    """Run COMMAND with stdout in OUTPUT, and stderr in ERRORS when it is given.
 
     Return (status, timed_out, received, cleanup). RECEIVED is the first
     signal that the script itself received, or None. A received signal forces
@@ -569,7 +581,7 @@ def run_command(command, output, deadline, limit):
     try:
         with output.open("wb") as stream:
             try:
-                process = subprocess.Popen(command, stdout=stream, start_new_session=True)
+                process = subprocess.Popen(command, stdout=stream, stderr=errors, start_new_session=True)
             except OSError as exc:
                 print(f"go test: cannot start the command: {exc}")
                 return early_status(), False, received[0] if received else None, None
@@ -688,6 +700,39 @@ def package_markdown(title, packages, failures, skips, fail_on_skip, status, pro
     return "\n".join(lines) + "\n"
 
 
+RESULT_WORDS = re.compile(r"(\d+) (passed|failed|skipped|undefined|pending|ambiguous)\b")
+
+
+def live_report(packages, order, results, unfinished, rows, totals, problems, failures, skips, status):
+    """The lines of --live: counts, result words and ordinals only.
+
+    No line holds text from the test stream. The godog totals are rebuilt
+    from their numbers and fixed words. Each problem is counted by kind.
+    """
+    counts = {}
+    for action, _ in packages.values():
+        counts[action] = counts.get(action, 0) + 1
+    lines = [f"go test (live): {len(packages)} package results: {counts.get('pass', 0)} PASS, "
+             f"{counts.get('fail', 0)} FAIL, {counts.get('skip', 0)} with no test files"]
+    tests = [key for key in order if key[1] is not None]
+    words = {"fail": "FAIL", "skip": "SKIP"}
+    for number, key in enumerate(tests, 1):
+        word = "no result" if key in unfinished else words.get(results.get(key))
+        if word:
+            lines.append(f"test {number} of {len(tests)}: {word}")
+    for number, (action, _, _) in enumerate(rows, 1):
+        lines.append(f"scenario {number} of {len(rows)}: {action.upper()}")
+    for line in totals:
+        match = TOTAL.match(line)
+        kind = "scenarios" if (match.group(3) or match.group(2)).startswith("scenario") else "steps"
+        parts = ", ".join(f"{count} {word}" for count, word in RESULT_WORDS.findall(line))
+        lines.append(f"godog {kind}: {match.group(1) or 0}" + (f" ({parts})" if parts else ""))
+    lines.append(f"go test (live): {len(problems)} problems; the private raw report names them")
+    lines.append(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
+                 f"{len(skips)} skipped tests, exit {status}")
+    return lines
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
@@ -705,8 +750,16 @@ def main():
                         help="seconds after its start at which the command stops")
     parser.add_argument("--summary-file", type=Path,
                         help="append the report as Markdown (requires --title or --scenarios)")
+    parser.add_argument("--live", action="store_true",
+                        help="print no stream text; the full report goes to --raw-output")
+    parser.add_argument("--raw-output", type=Path,
+                        help="the private file of the full report (mode 0600, must not exist)")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.live and not (args.scenarios and args.expect and args.raw_output):
+        parser.error("--live requires --scenarios, --expect and --raw-output")
+    if args.raw_output and not args.live:
+        parser.error("--raw-output requires --live")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("missing go test command")
@@ -720,7 +773,16 @@ def main():
         refused = filter_problem(command)
         if refused:
             parser.error(f"refused: {refused}")
-    status, timed_out, received, cleanup = run_command(command, args.output, args.deadline, args.timeout)
+    public, raw = sys.stdout, None
+    if args.live:
+        try:
+            raw = os.fdopen(os.open(args.raw_output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                    0o600), "w", encoding="utf-8")
+        except OSError:
+            parser.error("--raw-output must name a new file")
+        # From here on, every report line goes to the private raw file.
+        sys.stdout = raw
+    status, timed_out, received, cleanup = run_command(command, args.output, args.deadline, args.timeout, raw)
     packages, failures, output = {}, [], {}
     # started keeps the tests with a `run` event in first-seen order. A dict
     # keeps insertion order and checks membership in constant time.
@@ -797,7 +859,7 @@ def main():
         print(f"go test: {problem}")
     skip_failure = bool(args.fail_on_skip and skips)
     if args.title and args.summary_file:
-        with args.summary_file.open("a", encoding="utf-8") as summary:
+        with summary_stream(args.summary_file, raw) as summary:
             summary.write(package_markdown(args.title, packages, failures, skips,
                                            args.fail_on_skip, status, problems,
                                            intended if expected is not None else None,
@@ -813,7 +875,7 @@ def main():
         if problem:
             print(f"go test: scenario summary error: {problem}")
         if args.summary_file:
-            with args.summary_file.open("a", encoding="utf-8") as summary:
+            with summary_stream(args.summary_file, raw) as summary:
                 # Without --title, no package section names the tests with no
                 # result or the problems, so this section names them.
                 summary.write(markdown(rows, totals, problem,
@@ -823,7 +885,34 @@ def main():
                                        args.fail_on_skip))
     print(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
+    if raw is not None:
+        sys.stdout = public
+        raw.close()
+        lines = live_report(packages, order, results, unfinished, rows, totals,
+                            problems + ([problem] if problem else []), failures, skips, status)
+        print("\n".join(lines))
+        if args.summary_file:
+            with args.summary_file.open("a", encoding="utf-8") as summary:
+                summary.write("### Live run (no test names or output)\n\n" + "".join(f"- {line}\n" for line in lines))
     return status or (1 if failures or problem or problems or skip_failure else 0)
+
+
+class summary_stream:
+    """The summary file, or in --live mode the raw file, which stays open."""
+
+    def __init__(self, path, raw):
+        self.path, self.raw, self.file = path, raw, None
+
+    def __enter__(self):
+        if self.raw is not None:
+            return self.raw
+        self.file = self.path.open("a", encoding="utf-8")
+        return self.file
+
+    def __exit__(self, *exc):
+        if self.file is not None:
+            self.file.close()
+        return False
 
 
 if __name__ == "__main__":
