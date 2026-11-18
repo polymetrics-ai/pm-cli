@@ -1342,10 +1342,12 @@ class GoTestReport(unittest.TestCase):
 
         The first wait raises SIGNALS. Like the real wait, it then ends only on
         a wake byte: without one, a wait with no limit would block, so the
-        check fails. Return (result, waits made inside a signal handler).
+        check fails. It fails after the run, and after the check of the waits
+        made inside a signal handler, so that a reporter that waits there
+        fails for that reason first (#408 QA F2). Return (result, those waits).
         """
         module = self.load_reporter()
-        real, handler_waits, started = module.ExitWatch, [], []
+        real, handler_waits, started, missing_wake = module.ExitWatch, [], [], []
 
         class Watch:
             def __init__(self, pid, wake=None):
@@ -1366,7 +1368,7 @@ class GoTestReport(unittest.TestCase):
                 for signum in signals:
                     signal.raise_signal(signum)
                 if self.wake is None or not select.select([self.wake], [], [], 0)[0]:
-                    raise AssertionError("no wake byte: this wait would not end on the first signal")
+                    missing_wake.append(True)
                 return self.real.wait(0)
 
             def close(self):
@@ -1395,6 +1397,8 @@ class GoTestReport(unittest.TestCase):
                     if process.returncode is None:  # not reaped, so its ID still names it
                         process.kill()
                         process.wait(timeout=30)
+        self.assertEqual(handler_waits, [], "a signal handler waited for the exit event")
+        self.assertEqual(missing_wake, [], "no wake byte: this wait would not end on the first signal")
         return result, handler_waits
 
     def test_a_second_signal_cannot_stop_the_first_signals_unwind(self):
@@ -1411,17 +1415,22 @@ class GoTestReport(unittest.TestCase):
     def test_a_nested_signal_during_the_refusal_decision_changes_nothing(self):
         # brahmagupta round 6: the command exited, SIGTERM interrupts the wait,
         # and SIGHUP comes during the member list of the refusal decision.
-        nested = []
+        # The first member list is unsignalled_members, before the reap; the
+        # signal comes only in a later list, the one of the refusal decision
+        # (#408 QA F2), and the seam records the function that asked.
+        callers, nested = [], []
 
         def members(group):
-            if not nested:
-                nested.append(group)
+            caller = sys._getframe(1).f_code.co_name
+            callers.append(caller)
+            if caller != "unsignalled_members" and not nested:
+                nested.append(caller)
                 signal.raise_signal(signal.SIGHUP)
             return []
 
         result, handler_waits = self.run_with_signals(["/usr/bin/true"], [signal.SIGTERM], members, exit_first=True)
         self.assertEqual(handler_waits, [], "a signal handler waited for the exit event")
-        self.assertEqual(len(nested), 1)
+        self.assertEqual(nested, ["decide_refusals"], f"the nested signal came outside the decision: {callers}")
         self.assertEqual((result[0], result[2], result[3]), (128 + signal.SIGTERM, signal.SIGTERM, None), result)
         # Linux keeps its rule: each refusal fails the run.
         result, _ = self.run_with_signals(["/usr/bin/true"], [signal.SIGTERM], lambda group: [], True, "linux")
@@ -1496,8 +1505,16 @@ print(json.dumps({"result": list(result), "nested": nested}))
         # event, and the outer wait then wrote exited = False. The event source
         # of a real ExitWatch is replaced, so the check runs on each system.
         module = self.load_reporter()
-        process = subprocess.Popen([sys.executable, "-c", "pass"])
-        watch, nested, calls = module.ExitWatch(process.pid), [], []
+        # The child waits on its input until the watch exists, so the watch
+        # starts unexited: an exit before the kqueue registration would set
+        # exited and skip the replaced events (#408 QA F1).
+        process = subprocess.Popen([sys.executable, "-c", "import sys; sys.stdin.read()"], stdin=subprocess.PIPE)
+        try:
+            watch = module.ExitWatch(process.pid)
+        finally:
+            process.stdin.close()
+        nested, calls = [], []
+        self.assertFalse(watch.exited, "the child ended before the watch existed")
         exit_event = types.SimpleNamespace(filter=-5, fflags=0x80000000, ident=process.pid)
 
         class Queue:
