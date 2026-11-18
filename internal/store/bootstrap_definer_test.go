@@ -3,8 +3,11 @@ package store
 import (
 	"context"
 	"errors"
+	"net"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -339,4 +342,65 @@ func TestBootstrapRecordConflictOutsideTheFunctionClaimsNoInput(t *testing.T) {
 	if !errors.Is(err, ErrCommitOutcomeUnknown) {
 		t.Fatalf("bootstrap record conflict outside the function = %v; want %v", err, ErrCommitOutcomeUnknown)
 	}
+}
+
+// Go developer check, not acceptance proof. The connection and the identity
+// check of the bootstrap pool come before any transaction. Here a peer accepts
+// the connection and never answers. Defect: OpenBootstrapPool waits for it
+// with no limit of its own (the command context has no deadline).
+func TestBootstrapPoolIdentityCheckEndsAtItsLimit(t *testing.T) {
+	address := silentPostgresPeer(t)
+	previous := bootstrapIdentityLimit
+	bootstrapIdentityLimit = 200 * time.Millisecond
+	t.Cleanup(func() { bootstrapIdentityLimit = previous })
+	done := make(chan error, 1)
+	go func() {
+		pool, err := OpenBootstrapPool(context.Background(), "postgres://"+BootstrapRole+"@"+address+"/"+ApplicationDatabase+"?sslmode=disable")
+		if pool != nil {
+			pool.Close()
+		}
+		done <- err
+	}()
+	guard := time.NewTimer(10 * time.Second)
+	defer guard.Stop()
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("OpenBootstrapPool with a peer that never answers = nil; want an error at the identity limit")
+		}
+	case <-guard.C:
+		t.Fatal("OpenBootstrapPool did not return 10 s after it connected to a peer that never answers; want an end at its own limit")
+	}
+}
+
+// silentPostgresPeer accepts TCP connections on a loopback port and never
+// writes. It closes every connection when the test ends.
+func silentPostgresPeer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen for the silent peer: %v", err)
+	}
+	var mu sync.Mutex
+	var connections []net.Conn
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			connections = append(connections, connection)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = listener.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, connection := range connections {
+			_ = connection.Close()
+		}
+	})
+	return listener.Addr().String()
 }

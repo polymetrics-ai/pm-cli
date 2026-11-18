@@ -58,12 +58,21 @@ func OpenBootstrapPool(ctx context.Context, connectionString string) (*Pool, err
 		return nil, fmt.Errorf("open PostgreSQL bootstrap pool: %w", err)
 	}
 	pool := &Pool{inner: inner}
-	if err := pool.verifyBootstrapIdentity(ctx); err != nil {
+	// The connection and the identity check come before any transaction. A
+	// PostgreSQL that does not answer must not hold the bootstrap, so this work
+	// has its own limit. Nothing is written yet, so its end is a plain failure.
+	identityCtx, cancel := context.WithTimeout(ctx, bootstrapIdentityLimit)
+	defer cancel()
+	if err := pool.verifyBootstrapIdentity(identityCtx); err != nil {
 		inner.Close()
 		return nil, err
 	}
 	return pool, nil
 }
+
+// bootstrapIdentityLimit bounds the connection and the identity check of the
+// bootstrap pool. Only a Go developer check in this package changes it.
+var bootstrapIdentityLimit = 30 * time.Second
 
 func (pool *Pool) verifyBootstrapIdentity(ctx context.Context) error {
 	var database, role string
