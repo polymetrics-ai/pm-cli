@@ -112,12 +112,14 @@ func TestStartServicesKeepsSettledContainers(t *testing.T) {
 }
 
 // TestStartServicesBoundsTheHashCommand runs startServices against a fake
-// compose config --hash call that never ends. A child of the fake holds the
-// output pipe of the call. The call must end at its own deadline when the
-// caller set none, and at a cancellation of the caller. Each case expects an
-// error, no compose up call and no process of the call that holds its output
-// pipe (no exec.ErrWaitDelay). Each wait has one time limit. No sleep, no
-// retry.
+// compose config --hash call with a helper child in its process group. The
+// call must end at its own deadline when the caller set none, and at a
+// cancellation of the caller. After a failed or a successful call, no process
+// of the group may stay. A failed case expects an error and no compose up
+// call. Where the helper holds the alive pipe, the check reads that pipe after
+// the call returned: end of file proves that the helper exited, because the
+// exit of a process closes its descriptors. Each wait has one time limit. No
+// sleep, no retry.
 func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 	services := map[string]string{"postgres": "hash-postgres"}
 	containers := map[string][]string{"postgres": {"true hash-postgres"}}
@@ -141,6 +143,7 @@ func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 		fake := installFakeEngine(t, services, containers)
 		makeStallFIFO(t, fake, "stall")
 		started := makeStallFIFO(t, fake, "started")
+		helperExit := watchHelperExit(t, fake)
 		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
 		ctx, cancel := context.WithCancel(context.Background())
 		defer cancel()
@@ -159,7 +162,78 @@ func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 			t.Fatalf("startServices after a cancellation = %v; want the cancellation and no held output pipe", err)
 		}
 		assertNoComposeCall(t, fake)
+		assertHelperExited(t, fake, helperExit)
 	})
+
+	t.Run("a failed hash call leaves no process of its group", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		makeStallFIFO(t, fake, "stall")
+		makeStallFIFO(t, fake, "ready")
+		writeTestFile(t, filepath.Join(fake, "mode"), "exit\n", 0o600)
+		helperExit := watchHelperExit(t, fake)
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+
+		err := awaitStartServices(t, rt, context.Background())
+		if err == nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			t.Fatalf("startServices with a failed hash call = %v; want the failure of the call", err)
+		}
+		assertNoComposeCall(t, fake)
+		assertHelperExited(t, fake, helperExit)
+	})
+
+	t.Run("a successful hash call leaves no process of its group", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		makeStallFIFO(t, fake, "stall")
+		makeStallFIFO(t, fake, "ready")
+		writeTestFile(t, filepath.Join(fake, "mode"), "succeed\n", 0o600)
+		helperExit := watchHelperExit(t, fake)
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+
+		if err := awaitStartServices(t, rt, context.Background()); err != nil {
+			t.Fatalf("startServices with a successful hash call = %v", err)
+		}
+		if got, want := recordedUpCalls(t, fake), []string{"up -d --wait --no-recreate postgres"}; !slices.Equal(got, want) {
+			t.Fatalf("compose up calls = %q, want %q", got, want)
+		}
+		assertHelperExited(t, fake, helperExit)
+	})
+}
+
+// watchHelperExit makes the alive pipe and starts its one reader before the
+// hash call starts. The helper of the fake opens the write end and holds it.
+// The returned channel gets the result of the read: end of file when no
+// process holds the write end any more.
+func watchHelperExit(t *testing.T, directory string) <-chan error {
+	t.Helper()
+	path := makeStallFIFO(t, directory, "alive")
+	result := make(chan error, 1)
+	go func() {
+		reader, err := os.Open(path)
+		if err != nil {
+			result <- err
+			return
+		}
+		defer reader.Close()
+		_, err = reader.Read(make([]byte, 1))
+		result <- err
+	}()
+	return result
+}
+
+// assertHelperExited waits once, with one limit, for the result of the read
+// of the alive pipe. End of file proves that the helper exited.
+func assertHelperExited(t *testing.T, directory string, helperExit <-chan error) {
+	t.Helper()
+	select {
+	case err := <-helperExit:
+		if !errors.Is(err, io.EOF) {
+			t.Fatalf("read of the alive pipe = %v; want end of file", err)
+		}
+	case <-time.After(hashTestLimit):
+		pid, _ := os.ReadFile(filepath.Join(directory, "helper.pid"))
+		t.Fatalf("the helper (process %s) of the hash call still runs %s after the call returned",
+			strings.TrimSpace(string(pid)), hashTestLimit)
+	}
 }
 
 // hashTestLimit is the one time limit of each wait in the hash call checks.
@@ -257,12 +331,33 @@ func installFakeEngine(t *testing.T, hashes map[string]string, containers map[st
 for argument in "$@"; do
   if [ "$argument" = "--hash" ]; then
     if [ -p "$FAKE_ENGINE_DIR/stall" ]; then
-      # A child holds the output pipe of this call, as a helper process of a
-      # real Compose call can. Both wait for a writer that never comes.
-      sh -c 'read -r line < "$FAKE_ENGINE_DIR/stall"' &
-      if [ -p "$FAKE_ENGINE_DIR/started" ]; then
-        printf 'started\n' > "$FAKE_ENGINE_DIR/started"
-      fi
+      # A helper child stays in the process group of this call, as a helper
+      # process of a real Compose call can. It records its process ID, holds
+      # the write end of the alive pipe when that pipe exists, signals that it
+      # is ready, and then waits for a writer that never comes.
+      helper='echo $$ > "$FAKE_ENGINE_DIR/helper.pid"
+        if [ -p "$FAKE_ENGINE_DIR/alive" ]; then exec 3> "$FAKE_ENGINE_DIR/alive"; fi
+        if [ -p "$FAKE_ENGINE_DIR/ready" ]; then printf "ready\n" > "$FAKE_ENGINE_DIR/ready"; fi
+        if [ -p "$FAKE_ENGINE_DIR/started" ]; then printf "started\n" > "$FAKE_ENGINE_DIR/started"; fi
+        read -r line < "$FAKE_ENGINE_DIR/stall"'
+      mode=$(cat "$FAKE_ENGINE_DIR/mode" 2>/dev/null)
+      case "$mode" in
+        exit)
+          # The leader exits with an error while the helper holds the output.
+          sh -c "$helper" &
+          read -r line < "$FAKE_ENGINE_DIR/ready"
+          exit 1
+          ;;
+        succeed)
+          # The call succeeds, and the helper with no output pipe stays.
+          sh -c "$helper" > /dev/null 2>&1 &
+          read -r line < "$FAKE_ENGINE_DIR/ready"
+          cat "$FAKE_ENGINE_DIR/hashes"
+          exit 0
+          ;;
+      esac
+      # The leader and the helper wait for a writer that never comes.
+      sh -c "$helper" &
       read -r line < "$FAKE_ENGINE_DIR/stall"
       exit 0
     fi

@@ -1219,14 +1219,12 @@ func (rt *runtime) startServices(ctx context.Context, configuration config.Confi
 	return nil
 }
 
-// composeHashTimeout bounds one compose config --hash call. The hash call can
-// be the first Compose call of an up, so the limit also covers a first install
-// of the pinned Compose by tools/bootstrap.py. A developer check sets a
-// shorter value.
+// composeHashTimeout bounds one compose config --hash call, which runs
+// Compose through tools/bootstrap.py. A developer check sets a shorter value.
 var composeHashTimeout = 2 * time.Minute
 
-// composeHashWaitDelay bounds the wait for the output pipe of a hash call
-// after its process group got SIGKILL.
+// composeHashWaitDelay bounds the wait for the output pipes of a hash call
+// after its leader exited or got SIGKILL.
 const composeHashWaitDelay = 5 * time.Second
 
 // expectedServiceHashes returns the config hash that Compose computes for
@@ -1242,13 +1240,22 @@ func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration conf
 	command.Env = rt.composeEnvironment()
 	command.Stderr = rt.stderr
 	// The call and each process that it starts are one process group. When
-	// the context ends, SIGKILL goes to the whole group, so no process of the
-	// call keeps its output pipe open after the return. WaitDelay bounds the
-	// wait for that pipe if a process left the group.
+	// the context ends while the leader runs, SIGKILL goes to the whole group.
+	// WaitDelay bounds the wait for the output pipes after the leader exited,
+	// also when another process of the group still holds a pipe.
 	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
 	command.WaitDelay = composeHashWaitDelay
 	output, err := command.Output()
+	// The call ended with a success, a failure, the deadline or a
+	// cancellation. A process of its group can still run, also after Output
+	// reaped the leader. So SIGKILL goes to the whole group on every path. A
+	// process group keeps its ID while one of its processes runs, so the
+	// signal reaches only processes of this call. ESRCH means that no process
+	// of the group is left.
+	if command.Process != nil {
+		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	}
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("read Compose service configuration hashes: %w: %w", ctxErr, err)
