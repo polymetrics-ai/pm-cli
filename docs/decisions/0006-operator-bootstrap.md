@@ -41,7 +41,7 @@ Operator authority is a dedicated database credential for a new role, `pm_app_bo
   - it is not a member of `pm_app_migrator` or `pm_app_runtime`, and neither of those is a member of it.
 
   If a check fails, the migration fails and changes nothing. Then it applies the scoped grants.
-- **The grants.** `pm_app_bootstrap` gets no grant on any table. Its only write path is one function that `pm_app_migrator` owns and that runs with the owner's rights (`SECURITY DEFINER`). The function has a fixed search path (`pg_catalog, pg_temp`), and every name in it is schema-qualified. Only `pm_app_bootstrap` may execute it. `PUBLIC` may not execute it. The role keeps `CONNECT` on `pm_app` and `USAGE` on the schema. The function:
+- **The grants.** `pm_app_bootstrap` gets no grant on any table. Its only write path is one function that `pm_app_migrator` owns and that runs with the owner's rights (`SECURITY DEFINER`). The function has a fixed search path (`pg_catalog, pg_temp`), and every name in it is schema-qualified. Only `pm_app_bootstrap` may execute it. `PUBLIC` may not execute it. The role keeps `CONNECT` on `pm_app` from the deployment bootstrap. The migration grants it `USAGE` on the schema. The function:
   - checks its inputs (length, no control characters);
   - refuses an organization that already has any row. Examples are a bootstrap record, a workspace, an identity, a login binding, a membership, a provider account and an audit record. Only a new organization can be bootstrapped;
   - refuses an admin issuer and subject that already have a login binding in the deployment (see "An existing login binding");
@@ -100,7 +100,7 @@ The admin membership holds the right to manage memberships and connections. Its 
   - `docs/development/setup.md` states the operator duties: run the bootstrap once for each organization, then remove the bootstrap credential from the secrets directory.
 - Risk: a leaked bootstrap credential can bootstrap a new organization in the same deployment. The scope is the deployment and the organization, so one credential is not limited to one bootstrap. To use that organization, the holder also needs a login at the deployment's identity provider. The credential cannot add authority to an existing organization or change a login binding. Its only authority is the function. The function refuses an organization that has any row and an admin login that is already bound. The operator duty above limits this risk, and the stricter alternative above removes it.
 - New dependencies: none.
-- Owners who must change: `cmd/pm-server` (the subcommand), `internal/app` (the bootstrap service), `internal/store` and its migrations (the role check, the execute grant of the bootstrap function, the bootstrap record and the scope checks), `deploy/postgres/bootstrap.sql` (the role), the stack fixture (`tools/cmd/pm-stack-fixture`), `docs/development/setup.md`.
+- Owners who must change: `cmd/pm-server` (the subcommand), `internal/app` (the bootstrap service), `internal/store` and its migrations (the role check, the schema and function grants, the row-level security policies that the bootstrap function uses, the bootstrap record and the scope checks), `deploy/postgres/bootstrap.sql` (the role), the stack fixture (`tools/cmd/pm-stack-fixture`), `docs/development/setup.md`.
 
 ## Evidence
 
