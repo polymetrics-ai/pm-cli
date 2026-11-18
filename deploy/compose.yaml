@@ -183,8 +183,8 @@ services:
       - -port=8080
       - -port.grpc=18080
       - -dir=/data
-      # One volume and one spare slot for each of the default metadata
-      # collection and the configured artifact bucket.
+      # One volume each for the default metadata collection and the
+      # configured artifact bucket, and two spare slots in all.
       - -max=4
     volumes:
       - ${PM_STACK_DATA_DIR:?}/seaweed-volume:/data

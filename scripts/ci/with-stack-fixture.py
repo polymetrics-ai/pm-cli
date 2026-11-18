@@ -7,6 +7,7 @@ import base64
 import copy
 import hashlib
 import http.client
+import io
 import ipaddress
 import json
 import os
@@ -64,6 +65,10 @@ PODMAN_DEFAULT_CAPABILITIES = frozenset(
     }
 )
 PODMAN_TMPFS_DEFAULTS = frozenset({"rw", "rprivate", "noexec", "nosuid", "nodev", "tmpcopyup"})
+# The only engine records of an enabled no-new-privileges option (review
+# #316 F1). Docker keeps the Compose text, Podman reports the bare name. A
+# false value, another suffix or a conflicting entry is refused.
+NO_NEW_PRIVILEGES = frozenset({"no-new-privileges", "no-new-privileges:true", "no-new-privileges=true"})
 
 MAX_JSON_BYTES = 1 << 20
 MAX_GENERATOR_OUTPUT = 64 << 10
@@ -180,10 +185,20 @@ IDENTITY_FILES = {
     "ca.pem": 0o600,
     "server.pem": 0o640,
     "server-key.pem": 0o640,
-    "realm.json": 0o640,
     "admin-client-id": 0o600,
     "admin-client-secret": 0o600,
 }
+# The realm import has its own directory, which the provider mounts and lists
+# through the job account's group. It holds no other credential. When the job
+# removes the import, the file also leaves the container view; a file bind
+# mount keeps a removed file visible there (review #316 F2).
+IDENTITY_IMPORT_DIRECTORY = "import"
+IDENTITY_IMPORT_DIRECTORY_MODE = 0o750
+IDENTITY_IMPORT_FILES = {"realm.json": 0o640}
+IDENTITY_IMPORT_MOUNT = "/opt/keycloak/data/import"
+# Counts the entries of the import directory in the container with bash
+# builtins only. bash is the shell of the image's own kc.sh entrypoint.
+IDENTITY_IMPORT_COUNT = 'shopt -s nullglob dotglob; cd -- "$1" && set -- * && printf "%d\\n" "$#"'
 IDENTITY_PROBE_TIMEOUT = 10
 MAX_PROVIDER_LOG_BYTES = 4 << 20
 KEYCLOAK_READY_LINE = re.compile(
@@ -1087,12 +1102,18 @@ def validate_private_tree(root: Path) -> None:
             if status.st_uid != os.getuid():
                 raise FixtureError("generated fixture ownership is unsafe")
             if stat.S_ISDIR(status.st_mode):
-                if stat.S_IMODE(status.st_mode) & 0o077:
+                # The identity provider's non-root user lists its import
+                # directory through the job account's group, never as other.
+                listed = path == root / IDENTITY_DIRECTORY / IDENTITY_IMPORT_DIRECTORY
+                if stat.S_IMODE(status.st_mode) & 0o077 & ~(0o050 if listed else 0):
                     raise FixtureError("generated fixture directory is not private")
             elif stat.S_ISREG(status.st_mode):
                 # The identity provider's non-root user reads its mounted
                 # files through the job account's group, never as other.
-                shared = path.parent == root / IDENTITY_DIRECTORY and IDENTITY_FILES.get(name) == 0o640
+                shared = (path.parent == root / IDENTITY_DIRECTORY and IDENTITY_FILES.get(name) == 0o640) or (
+                    path.parent == root / IDENTITY_DIRECTORY / IDENTITY_IMPORT_DIRECTORY
+                    and IDENTITY_IMPORT_FILES.get(name) == 0o640
+                )
                 allowed = 0o040 if shared else 0
                 if stat.S_IMODE(status.st_mode) & 0o077 & ~allowed or status.st_size > MAX_JSON_BYTES:
                     raise FixtureError("generated fixture file is not private and bounded")
@@ -1162,12 +1183,22 @@ def validate_identity_files(fixture_root: Path) -> None:
         names = set(os.listdir(directory))
     except OSError as exc:
         raise FixtureError("identity provider material is unavailable") from exc
-    if names != set(IDENTITY_FILES):
+    if names != set(IDENTITY_FILES) | {IDENTITY_IMPORT_DIRECTORY}:
         raise FixtureError("identity provider material has an unexpected file set")
     for name, mode in IDENTITY_FILES.items():
         status = (directory / name).lstat()
         if not stat.S_ISREG(status.st_mode) or stat.S_IMODE(status.st_mode) != mode:
             raise FixtureError(f"identity provider file {name} has an unexpected mode")
+    imports = directory / IDENTITY_IMPORT_DIRECTORY
+    status = imports.lstat()
+    if not stat.S_ISDIR(status.st_mode) or stat.S_IMODE(status.st_mode) != IDENTITY_IMPORT_DIRECTORY_MODE:
+        raise FixtureError("identity provider import directory has an unexpected mode")
+    if set(os.listdir(imports)) != set(IDENTITY_IMPORT_FILES):
+        raise FixtureError("identity provider import directory has an unexpected file set")
+    for name, mode in IDENTITY_IMPORT_FILES.items():
+        status = (imports / name).lstat()
+        if not stat.S_ISREG(status.st_mode) or stat.S_IMODE(status.st_mode) != mode:
+            raise FixtureError(f"identity provider import {name} has an unexpected mode")
 
 
 def expected_temporal_profile(base: bytes, namespace: str) -> bytes:
@@ -1823,7 +1854,7 @@ def expected_mounts(service: str, fixture_root: Path, repo_root: Path) -> set[tu
         return {
             mount(identity / "server.pem", "/run/secrets/identity-provider-server.pem", False),
             mount(identity / "server-key.pem", "/run/secrets/identity-provider-server-key.pem", False),
-            mount(identity / "realm.json", "/opt/keycloak/data/import/realm.json", False),
+            mount(identity / IDENTITY_IMPORT_DIRECTORY, IDENTITY_IMPORT_MOUNT, False),
         }
     raise FixtureError("unknown fixture service mounts")
 
@@ -2013,7 +2044,7 @@ def validate_stack_container(
         if (
             not isinstance(security_opt, list)
             or not security_opt
-            or any(not str(item).startswith("no-new-privileges") for item in security_opt)
+            or any(not isinstance(item, str) or item not in NO_NEW_PRIVILEGES for item in security_opt)
         ):
             raise FixtureError("identity provider privilege boundary changed")
     wanted_ports = expected_ports(service, environment)
@@ -2031,6 +2062,13 @@ def validate_stack_container(
         build_output = "/opt/keycloak/lib/quarkus"
         if not isinstance(tmpfs, dict) or set(tmpfs) != {"/tmp", "/opt/keycloak/data", build_output}:
             raise FixtureError("identity provider tmpfs bounds changed")
+        # The build output must start with a copy of the image's build output
+        # (review #316 F6). No engine default is relied on: the engine record
+        # must name tmpcopyup. Docker keeps the Compose text, and Podman names
+        # tmpcopyup in each tmpfs record. Only then are the Podman defaults
+        # removed from the comparison below.
+        if "tmpcopyup" not in tmpfs_options(tmpfs[build_output], False):
+            raise FixtureError("identity provider build output does not start with the image copy")
         if tmpfs_options(tmpfs["/tmp"], podman) not in (
             {"mode=1777", "size=67108864"},
             {"mode=1777", "size=64m"},
@@ -2444,20 +2482,39 @@ def identity_provider_state(
     return f"provider={status} provider-exit={code} provider-oom={oom_code} provider-log={','.join(markers) or 'none'}"
 
 
-def require_secret_absent(data: bytes, secret: str, context: str, client_id: str | None = None) -> None:
-    """Refuse the raw admin secret and its plain and Basic Base64 forms.
+def secret_forms(secret: str, client_id: str | None = None) -> dict[str, bytes]:
+    """Return each form of the admin secret that the scan looks for, by name.
 
-    This is detection: an encoding at another offset is not found."""
+    This is detection: an encoding that starts at another offset of a longer
+    encoded value is not found."""
     raw = secret.encode("ascii")
-    forms = {raw}
-    candidates = [raw]
+    forms = {"the raw secret": raw}
+    candidates = [("the secret", raw)]
     if client_id is not None:
-        candidates.append(client_id.encode("ascii") + b":" + raw)
-    for value in candidates:
+        candidates.append(("its Basic credential", client_id.encode("ascii") + b":" + raw))
+    for name, value in candidates:
         encoded = base64.b64encode(value)
-        forms |= {encoded, encoded.rstrip(b"="), base64.urlsafe_b64encode(value).rstrip(b"=")}
-    if any(form in data for form in forms):
+        forms[f"Base64 of {name}"] = encoded
+        forms[f"unpadded Base64 of {name}"] = encoded.rstrip(b"=")
+        forms[f"unpadded Base64url of {name}"] = base64.urlsafe_b64encode(value).rstrip(b"=")
+    return forms
+
+
+def require_secret_absent(data: bytes, secret: str, context: str, client_id: str | None = None) -> None:
+    """Refuse each form of the admin secret that secret_forms names."""
+    if any(form in data for form in secret_forms(secret, client_id).values()):
         raise FixtureError(f"{context} holds the identity provider admin secret")
+
+
+def secret_scan_report(client_id: str) -> str:
+    """Name the snapshots and the forms that the secret scan checked (review #316 F8)."""
+    names = list(secret_forms("0" * 64, client_id))
+    return (
+        "identity provider: the container record and the provider log, both read before the HTTPS probes "
+        "and the admin token request, hold none of these forms of the admin secret: "
+        + "; ".join(names)
+        + ". An encoding that starts at another offset of a longer encoded value is not detected"
+    )
 
 
 def filesystem_type(path: Path, mountinfo: str) -> str:
@@ -2485,9 +2542,12 @@ def plain_http_refusal(host: str, port: int, realm: str) -> str:
         f"Host: {host}:{port}\r\nConnection: close\r\n\r\n"
     ).encode("ascii")
     timeout, by_phase = identity_probe_limit()
+    deadline = CLOCK() + timeout
     try:
-        with socket.create_connection((host, port), timeout=timeout) as connection:
+        with socket.create_connection((host, port), timeout=identity_time_left(deadline)) as connection:
+            connection.settimeout(identity_time_left(deadline))
             connection.sendall(request)
+            connection.settimeout(identity_time_left(deadline))
             reply = connection.recv(64)
     except (ConnectionResetError, BrokenPipeError):
         return "the connection was reset without an HTTP answer"
@@ -2516,6 +2576,96 @@ def identity_probe_limit() -> tuple[float, bool]:
     return call_limit(IDENTITY_PROBE_TIMEOUT)
 
 
+def identity_time_left(deadline: float) -> float:
+    """Return the time left before the deadline of one identity probe.
+
+    Each socket operation of a probe gets only this time, so the connection,
+    the TLS handshake, the request, the headers and the body together end by
+    one absolute deadline (review #316 F3). A per-operation socket timeout
+    alone lets an answer that keeps making progress run without a limit. No
+    time left raises TimeoutError.
+    """
+    left = deadline - CLOCK()
+    if left <= 0:
+        raise TimeoutError("the identity provider probe reached its deadline")
+    return left
+
+
+class DeadlineReader(io.RawIOBase):
+    """Read one socket. Each read gets only the time left before the deadline."""
+
+    def __init__(self, connection: Any, deadline: float) -> None:
+        super().__init__()
+        self.connection = connection
+        self.deadline = deadline
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        self.connection.settimeout(identity_time_left(self.deadline))
+        return self.connection.recv_into(buffer)
+
+
+class DeadlineSocket:
+    """The socket calls of http.client, under one absolute deadline.
+
+    http.client closes its socket before it reads a body that ends the
+    connection, so close() does nothing here. DeadlineHTTPSConnection.release
+    closes the TLS socket after the exchange.
+    """
+
+    def __init__(self, connection: Any, deadline: float) -> None:
+        self.connection = connection
+        self.deadline = deadline
+
+    def sendall(self, data: bytes) -> None:
+        view = memoryview(data)
+        while view:
+            self.connection.settimeout(identity_time_left(self.deadline))
+            view = view[self.connection.send(view) :]
+
+    def makefile(self, mode: str, *_args: Any, **_kwargs: Any) -> io.BufferedReader:
+        if mode != "rb":
+            raise ValueError("the deadline socket reads only binary data")
+        return io.BufferedReader(DeadlineReader(self.connection, self.deadline))
+
+    def close(self) -> None:
+        return None
+
+
+class DeadlineHTTPSConnection(http.client.HTTPSConnection):
+    """An HTTPS connection whose connection, TLS handshake, request, headers
+    and body share one absolute deadline (review #316 F3)."""
+
+    def __init__(self, host: str, port: int, context: ssl.SSLContext, deadline: float) -> None:
+        super().__init__(host, port, context=context)
+        self.tls_context = context
+        self.deadline = deadline
+        self.tls: Any = None
+
+    def connect(self) -> None:
+        raw = socket.create_connection((self.host, self.port), timeout=identity_time_left(self.deadline))
+        try:
+            # The TLS handshake is one socket operation: its timeout bounds
+            # the whole handshake.
+            raw.settimeout(identity_time_left(self.deadline))
+            self.tls = self.tls_context.wrap_socket(raw, server_hostname=self.host)
+        except BaseException:
+            raw.close()
+            raise
+        self.sock = DeadlineSocket(self.tls, self.deadline)
+
+    def release(self) -> None:
+        """Close the connection and its TLS socket."""
+        try:
+            self.close()
+        finally:
+            if self.tls is not None:
+                self.tls.close()
+                self.tls = None
+
+
 def identity_probe_deadline(by_phase: bool, exc: BaseException) -> None:
     """Raise PhaseDeadline for a probe timeout that the phase deadline set."""
     phase = Phase.current
@@ -2526,8 +2676,10 @@ def identity_probe_deadline(by_phase: bool, exc: BaseException) -> None:
 def identity_tls_name_probe(host: str, port: int, context: ssl.SSLContext) -> None:
     """Show that TLS for another name is refused: the certificate names only its address."""
     timeout, by_phase = identity_probe_limit()
+    deadline = CLOCK() + timeout
     try:
-        with socket.create_connection((host, port), timeout=timeout) as raw:
+        with socket.create_connection((host, port), timeout=identity_time_left(deadline)) as raw:
+            raw.settimeout(identity_time_left(deadline))
             with context.wrap_socket(raw, server_hostname="localhost"):
                 pass
         raise FixtureError("identity provider certificate verified for another name")
@@ -2570,7 +2722,7 @@ def identity_request(
     headers: Mapping[str, str] | None = None,
 ) -> tuple[int, Any]:
     timeout, by_phase = identity_probe_limit()
-    connection = http.client.HTTPSConnection(host, port, timeout=timeout, context=context)
+    connection = DeadlineHTTPSConnection(host, port, context, CLOCK() + timeout)
     try:
         connection.putrequest(method, path, skip_host=True, skip_accept_encoding=True)
         connection.putheader("Host", host_header or f"{host}:{port}")
@@ -2584,9 +2736,13 @@ def identity_request(
         status = response.status
     except (OSError, http.client.HTTPException) as exc:
         identity_probe_deadline(by_phase, exc)
+        if isinstance(exc, TimeoutError):
+            raise FixtureError(
+                f"identity provider HTTPS request did not end within its limit of {IDENTITY_PROBE_TIMEOUT} s"
+            ) from exc
         raise FixtureError("identity provider HTTPS request failed") from exc
     finally:
-        connection.close()
+        connection.release()
     if len(data) > MAX_JSON_BYTES:
         raise FixtureError("identity provider answer exceeds its limit")
     try:
@@ -2617,7 +2773,10 @@ def admin_client_roles(
         claims = json.loads(base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)))
     except (ValueError, json.JSONDecodeError) as exc:
         raise FixtureError("identity provider admin token is not a JWT") from exc
-    access = claims.get("resource_access") if isinstance(claims, dict) else None
+    if not isinstance(claims, dict):
+        # Review #316 F5: valid JSON that is not an object has no claims.
+        raise FixtureError("identity provider admin token claims are not a JSON object")
+    access = claims.get("resource_access")
     management = access.get("realm-management") if isinstance(access, dict) else None
     roles = management.get("roles") if isinstance(management, dict) else None
     if (
@@ -2662,6 +2821,42 @@ def operator_refusals(
     return refused
 
 
+def remove_realm_import(
+    imports: Path,
+    container_id: str,
+    docker: Path,
+    docker_config: Path,
+    endpoint: str,
+    docker_env: Mapping[str, str],
+    repo_root: Path,
+) -> None:
+    """Remove the realm import and check that both views are empty (review #316 F2).
+
+    The host view is the import directory on the job host. The container
+    view is the mounted import directory inside the running provider."""
+    for name in IDENTITY_IMPORT_FILES:
+        try:
+            (imports / name).unlink()
+        except OSError as exc:
+            raise FixtureError("identity provider realm import file was not removed") from exc
+    try:
+        remaining = os.listdir(imports)
+    except OSError as exc:
+        raise FixtureError("identity provider import directory is unavailable") from exc
+    if remaining:
+        raise FixtureError("identity provider realm import remains on the job host")
+    _, count, _ = run_capture(
+        docker_command(
+            docker, docker_config, endpoint, "container", "exec", container_id,
+            "/bin/bash", "-c", IDENTITY_IMPORT_COUNT, "bash", IDENTITY_IMPORT_MOUNT,
+        ),
+        env=docker_env, cwd=repo_root, timeout=DOCKER_TIMEOUT,
+        stage="list the identity provider import directory", max_output=64,
+    )
+    if count != b"0\n":
+        raise FixtureError("identity provider realm import remains in the container")
+
+
 def verify_identity_provider(
     environment: Mapping[str, str],
     resources: Mapping[str, Any],
@@ -2703,18 +2898,15 @@ def verify_identity_provider(
     require_secret_absent(record, secret, "identity provider container record", client_id)
     require_secret_absent(log, secret, "identity provider log", client_id)
 
-    realm_import = directory / "realm.json"
+    imports = directory / IDENTITY_IMPORT_DIRECTORY
     try:
         mountinfo = Path("/proc/self/mountinfo").read_text(encoding="utf-8", errors="replace")
     except OSError:
         mountinfo = ""
-    file_system = filesystem_type(realm_import.resolve(), mountinfo)
-    try:
-        realm_import.unlink()
-    except OSError as exc:
-        raise FixtureError("identity provider realm import file was not removed") from exc
-    if os.path.lexists(realm_import):
-        raise FixtureError("identity provider realm import file remains")
+    file_system = filesystem_type((imports / "realm.json").resolve(), mountinfo)
+    remove_realm_import(
+        imports, container_id, docker, docker_config, endpoint, docker_env, repo_root
+    )
 
     plain = plain_http_refusal(host, port, IDENTITY_REALM)
     context = identity_tls_context(directory / "ca.pem")
@@ -2745,11 +2937,11 @@ def verify_identity_provider(
         "1536 MiB memory, 512 processes, 2 CPUs, its own identity network"
     )
     report("identity provider: test realm admin client token holds only realm-management roles " + ", ".join(roles))
-    report("identity provider: the container record and the provider log hold no form of the admin secret")
+    report(secret_scan_report(client_id))
     report(
         "identity provider: realm import file was on "
         + (f"a memory file system ({file_system})" if memory_file_system else f"{file_system}, not a memory file system")
-        + "; removed after the ready line"
+        + "; removed after the ready line; the import directory is empty on the job host and in the container"
     )
 
 
