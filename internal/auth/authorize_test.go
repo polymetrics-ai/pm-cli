@@ -2,9 +2,12 @@ package auth_test
 
 import (
 	"context"
+	"crypto/rand"
 	"reflect"
 	"testing"
+	"time"
 
+	"github.com/polymetrics-ai/pm-cli/internal/app"
 	"github.com/polymetrics-ai/pm-cli/internal/auth"
 	"github.com/polymetrics-ai/pm-cli/internal/contract"
 	"github.com/polymetrics-ai/pm-cli/internal/store"
@@ -188,5 +191,75 @@ func betaResourceID(kind auth.ResourceKind, fixture *authFixture) string {
 		return fixture.artifact
 	default:
 		return ""
+	}
+}
+
+// grantNoConnectionOrOperation gives charlie a membership in the alpha
+// workspace that may read connections and runs but names no connection and no
+// operation, as the bootstrap admin has before its first connection.
+func grantNoConnectionOrOperation(t *testing.T, fixture *authFixture) contract.Actor {
+	t.Helper()
+	fixture.execMigrator(t, fixture.alpha, `
+		INSERT INTO pm.memberships (
+			org_id, workspace_id, membership_id, identity_id, role,
+			permissions, connection_ids, operation_ids, policy_epoch, control_revision
+		) VALUES ($1, $2, $3, $4, 'viewer', ARRAY['connection.read', 'run.read'],
+			ARRAY[]::text[], ARRAY[]::text[], 1, 1)
+	`, fixture.alpha.OrgID, fixture.alpha.WorkspaceID, "membership-"+fixture.charlie.PrincipalID, fixture.charlie.PrincipalID)
+	return directTestActor(fixture.charlie)
+}
+
+// Go developer check, not acceptance proof. The service of pm connections list,
+// for an actor whose grants name no connection. Defect at c59aa20: the
+// authorization returned a nil connection list, the store refused it as a
+// missing bound, and the server answered 500 internal_error.
+func TestConnectionListWithNoGrantedConnectionIsEmpty(t *testing.T) {
+	fixture := newAuthFixture(t)
+	actor := grantNoConnectionOrOperation(t, fixture)
+	authService := fixture.newAuthService(t)
+	identityService, err := app.NewIdentityService(app.IdentityServiceConfig{
+		Pool: fixture.pool, DeploymentID: fixture.deployment,
+		Authorize:        authService.AuthorizeResource,
+		ReceiptRetention: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewIdentityService(): %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	page, err := identityService.ListConnections(ctx, actor, fixture.alpha, "", 100)
+	if err != nil {
+		t.Fatalf("ListConnections() with no granted connection: %v; want an empty page", err)
+	}
+	if len(page.Items) != 0 || page.NextCursor != "" {
+		t.Fatalf("ListConnections() with no granted connection = %d items, cursor %q; want an empty page", len(page.Items), page.NextCursor)
+	}
+}
+
+// Go developer check, not acceptance proof. The service of pm runs list, for an
+// actor whose grants name no connection and no operation. Defect at c59aa20:
+// the authorization returned nil connection and operation lists, the store
+// refused them as a missing bound, and the server answered 500 internal_error.
+func TestRunListWithNoGrantedConnectionOrOperationIsEmpty(t *testing.T) {
+	fixture := newAuthFixture(t)
+	actor := grantNoConnectionOrOperation(t, fixture)
+	authService := fixture.newAuthService(t)
+	runService, err := app.NewRunService(app.RunServiceConfig{
+		Pool: fixture.pool, DeploymentID: fixture.deployment,
+		Authorize:        authService.AuthorizeResource,
+		Random:           rand.Reader,
+		ReceiptRetention: 7 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("NewRunService(): %v", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	page, err := runService.ListRuns(ctx, actor, fixture.alpha, "", nil, 100)
+	if err != nil {
+		t.Fatalf("ListRuns() with no granted connection or operation: %v; want an empty page", err)
+	}
+	if len(page.Items) != 0 || page.Next != "" {
+		t.Fatalf("ListRuns() with no granted connection or operation = %d items, next %q; want an empty page", len(page.Items), page.Next)
 	}
 }
