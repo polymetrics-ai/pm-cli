@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -222,9 +221,9 @@ func TestBootstrapWritesTheFirstWorkspaceOnceForEachScope(t *testing.T) {
 }
 
 // Check: concurrent bootstraps of one scope. Exactly one commits. Defect: a
-// race makes two first workspaces or two admins. Both bootstraps pass the
-// scope check before either inserts, so only the primary key of the
-// bootstrap record can refuse the second.
+// race makes two first workspaces or two admins. The first bootstrap holds
+// its open transaction before its function call while the second commits.
+// pm.operator_bootstrap of the first then finds the committed scope.
 func TestConcurrentBootstrapsOfOneScopeCommitOnce(t *testing.T) {
 	s := prepareBootstrapTestStore(t)
 	deploymentID := "deployment-" + randomHex(t, 8)
@@ -317,8 +316,8 @@ func TestBootstrapThatFailsPartWayWritesNothing(t *testing.T) {
 	}
 }
 
-// Check: the bootstrap role can write only the bootstrap rows, and only in
-// the deployment and organization of its scope. Defect: a role with more
+// Check: the bootstrap role can write the bootstrap rows only through
+// pm.operator_bootstrap. It holds no table privilege. Defect: a role with more
 // rights than the bootstrap needs.
 func TestBootstrapRoleCanWriteOnlyTheBootstrapRows(t *testing.T) {
 	s := prepareBootstrapTestStore(t)
@@ -366,29 +365,11 @@ func TestBootstrapRoleCanWriteOnlyTheBootstrapRows(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("read the bootstrap role table privileges: %v", err)
 	}
-	wantInserts := slices.Clone(bootstrapTables)
-	slices.Sort(wantInserts)
-	if len(changes) != 0 || !slices.Equal(inserts, wantInserts) ||
-		!slices.Equal(selects, []string{"auth_bootstrap_identities", "bootstrap_records"}) {
-		t.Fatalf("bootstrap role privileges: change %v, insert %v, select %v; want no change, insert %v, select on the two scope tables",
-			changes, inserts, selects, wantInserts)
-	}
-	for table, want := range map[string][]string{
-		"auth_bootstrap_identities": {"deployment_id", "issuer", "subject"},
-		"bootstrap_records":         {"deployment_id", "org_id"},
-	} {
-		result, err := admin.Query(ctx, `
-			SELECT attname FROM pg_attribute
-			WHERE attrelid = ('pm.' || $1)::regclass AND attnum > 0 AND NOT attisdropped
-			  AND has_column_privilege('pm_app_bootstrap', attrelid, attnum, 'SELECT')
-			ORDER BY attname`, table)
-		if err != nil {
-			t.Fatalf("read the readable columns of pm.%s: %v", table, err)
-		}
-		columns, err := pgx.CollectRows(result, pgx.RowTo[string])
-		if err != nil || !slices.Equal(columns, want) {
-			t.Fatalf("readable columns of pm.%s = %v (%v); want %v", table, columns, err, want)
-		}
+	// The role writes only through pm.operator_bootstrap, so it holds no
+	// privilege on any table or column of the schema (ADR 0006, F1 and N1).
+	if len(changes) != 0 || len(inserts) != 0 || len(selects) != 0 {
+		t.Fatalf("bootstrap role privileges: change %v, insert %v, select %v; want none",
+			changes, inserts, selects)
 	}
 	var forbidden bool
 	if err := admin.QueryRow(ctx, `
@@ -405,16 +386,16 @@ func TestBootstrapRoleCanWriteOnlyTheBootstrapRows(t *testing.T) {
 		       OR EXISTS (
 		           SELECT 1 FROM pg_proc AS p JOIN pg_namespace AS n ON n.oid = p.pronamespace
 		           WHERE n.nspname = 'pm' AND p.prosecdef
+		             AND p.oid <> 'pm.operator_bootstrap(text, text, text, text, text, text, text, text, text, text[], text[], text[], text[], bigint[], text, text)'::regprocedure
 		             AND has_function_privilege('pm_app_bootstrap', p.oid, 'EXECUTE'))
 		FROM pg_roles AS r WHERE r.rolname = 'pm_app_bootstrap'`).Scan(&forbidden); err != nil {
 		t.Fatalf("read the bootstrap role authority: %v", err)
 	}
 	if forbidden {
-		t.Fatal("bootstrap role has a role attribute, membership, database, schema, sequence or security-definer function authority")
+		t.Fatal("bootstrap role has a role attribute, membership, database, schema, sequence or other security-definer function authority")
 	}
 
-	// Row-level security: each insert outside the scope settings is refused,
-	// and the role cannot change or remove a row.
+	// With no table grant, each direct insert, change or removal is refused.
 	deploymentID := "deployment-" + randomHex(t, 8)
 	scope := newTestScope(t)
 	other := "org-" + randomHex(t, 8)
