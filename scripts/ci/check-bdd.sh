@@ -1,13 +1,28 @@
 #!/bin/sh
-# Runs the Gherkin acceptance suite inside the pinned CI image. This is the
-# behavior gate. The workflow starts it through scripts/ci/in-ci-image.sh.
+# Runs one shard of the stack run inside the pinned CI image, and in shard 3
+# also the Gherkin acceptance suite, the behavior gate. Each job stack-N of
+# the workflow starts it through scripts/ci/in-ci-image.sh:
 #
-# Before the Gherkin run, the script runs the stack run: the Go developer tests
-# of the stack packages (scripts/ci/go-packages.sh) against their own job-owned
-# stack. The Gherkin run then starts a fresh stack. Both runs always run and
-# report; the job fails when either run fails. Go developer tests are developer
-# checks, never acceptance proof of PM behavior. See docs/development/ci.md.
+#   check-bdd.sh --shard N    N is 1, 2 or 3
+#
+# The stack run of shard N runs the Go developer tests of the shard N packages
+# (scripts/ci/stack-shards.txt) against their own job-owned stack. In shard 3,
+# the Gherkin run then starts a fresh stack. Both runs of shard 3 always run
+# and report; the job fails when either run fails. Go developer tests are
+# developer checks, never acceptance proof of PM behavior. See
+# docs/development/ci.md.
 set -eu
+if [ "$#" -ne 2 ] || [ "$1" != --shard ]; then
+  printf '%s\n' 'usage: check-bdd.sh --shard 1|2|3' >&2
+  exit 2
+fi
+case "$2" in
+  1 | 2 | 3) shard=$2 ;;
+  *)
+    printf '%s\n' 'usage: check-bdd.sh --shard 1|2|3' >&2
+    exit 2
+    ;;
+esac
 # The time budget below starts here.
 started=$(date +%s)
 repo_root=$(CDPATH='' cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -37,9 +52,11 @@ export GOWORK=off
 export GOMAXPROCS=2
 export GOMEMLIMIT=768MiB
 export GOFLAGS=-p=2
-manifest="$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+# The cleanup step of job stack-N in bdd.yml reads this path.
+manifest="$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-s$shard.json"
 printf 'BDD candidate: %s\n' "${GITHUB_SHA:?Actual candidate SHA required}"
 printf 'Runner: %s\n' "${RUNNER_NAME:?Actual runner identity required}"
+printf 'Stack shard: %s\n' "$shard"
 
 # Each step line shows the seconds since the script started.
 step() {
@@ -67,6 +84,18 @@ pm_stack_ended() {
   esac
 }
 # --- functions that scripts/ci/test_setup.py runs: end ---
+
+# The partition. Each shard checks scripts/ci/stack-shards.txt before it
+# selects its packages: each stack run package in exactly one shard, no other
+# path and valid shard IDs. The checks job runs the same check. An invalid
+# partition stops this shard at once, so the bdd job cannot pass.
+step 'check the stack run partition (scripts/ci/stack-shards.txt)'
+# shellcheck source=scripts/ci/go-packages.sh disable=SC1091
+. scripts/ci/go-packages.sh
+if ! pm_check_shards; then
+  printf 'check-bdd: shard %s stops: scripts/ci/stack-shards.txt is not a valid partition of the stack run packages\n' "$shard" >&2
+  exit 1
+fi
 
 # The time budget. The workflow step has a frozen limit of 90 minutes
 # (bdd.yml). The script keeps 3 minutes of it for the start and stop of the
@@ -114,6 +143,9 @@ pm_stack_ended() {
 # If the prelude and the stack fixture start end after +3600, the stack go
 # test command stops at once. The end bound holds for a prelude of 2870 s or
 # less.
+# Shards 1 and 2 have no Gherkin run. After the receipt check, they run only
+# the toolchain check (one more finish allowance). So they end by +4060, or
+# by P + 1190 for a prelude that ends at P after +2870.
 #
 # gherkin_minimum is 0. A Gherkin reserve counts only on the path where the
 # stack run reaches its deadline and each fixture phase uses its whole
@@ -149,17 +181,16 @@ unset PM_API_GENERATE
 CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- -C tools build -o ../.cache/bin/pm-api-generate ./cmd/pm-api-generate
 python3 tools/bootstrap.py exec docker-compose -- version
 
-# Select the stack run packages by rule from scripts/ci/stack-packages.txt.
-# A selection failure fails the stack run, and the Gherkin run still runs.
-step 'select the Go test packages'
-# shellcheck source=scripts/ci/go-packages.sh disable=SC1091
-. scripts/ci/go-packages.sh
+# Select the packages of this shard from scripts/ci/stack-shards.txt. Each
+# stack list entry must still be a package that go list prints. A selection
+# failure fails the stack run, and in shard 3 the Gherkin run still runs.
+step "select the Go test packages of shard $shard"
 stack_status=0
 stack_ran=true
 if module=$(python3 tools/bootstrap.py exec go -- list -m) &&
   CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- list ./... > "$RUNNER_TEMP/bdd-go-packages.txt" &&
   pm_stack_entries > "$RUNNER_TEMP/bdd-stack-entries.txt" &&
-  pm_stack_run_packages < "$RUNNER_TEMP/bdd-stack-entries.txt" > "$RUNNER_TEMP/bdd-stack-packages.txt"; then
+  pm_shard_packages "$shard" > "$RUNNER_TEMP/bdd-stack-packages.txt"; then
   sed "s#^$module#.#" "$RUNNER_TEMP/bdd-go-packages.txt" > "$RUNNER_TEMP/bdd-go-packages-relative.txt"
   sed "s#^\.#$module#" "$RUNNER_TEMP/bdd-stack-packages.txt" > "$RUNNER_TEMP/bdd-stack-expected.txt"
   # A stack list entry or an excluded package that `go list ./...` does not
@@ -181,7 +212,7 @@ if module=$(python3 tools/bootstrap.py exec go -- list -m) &&
     printf '%s\n' 'check-bdd: the stack run selected no package' >&2
     stack_status=1
   fi
-  printf 'check-bdd: stack run packages (%s):\n' "$(wc -l < "$RUNNER_TEMP/bdd-stack-packages.txt" | tr -d ' ')"
+  printf 'check-bdd: stack run packages of shard %s (%s):\n' "$shard" "$(wc -l < "$RUNNER_TEMP/bdd-stack-packages.txt" | tr -d ' ')"
   sed 's/^/  /' "$RUNNER_TEMP/bdd-stack-packages.txt"
 else
   printf '%s\n' 'check-bdd: the package selection failed' >&2
@@ -191,11 +222,14 @@ fi
 # selects, from go list in the same environment, before the run. The Gherkin
 # run passes it to go-test-report.py --expect, so a package with no result, a
 # second result or an unexpected result fails the run. A failed or empty
-# selection means that the Gherkin run does not run, and the job fails.
+# selection means that the Gherkin run does not run, and the job fails. Only
+# shard 3 has the Gherkin run.
 gherkin_selected=false
 # go-packages.sh sets pm_gherkin_package.
 # shellcheck disable=SC2154
-if CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- list "$pm_gherkin_package/..." \
+if [ "$shard" -ne 3 ]; then
+  printf 'check-bdd: shard %s has no Gherkin run. Job stack-3 runs it\n' "$shard"
+elif CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- list "$pm_gherkin_package/..." \
   > "$RUNNER_TEMP/bdd-gherkin-expected.txt" && [ -s "$RUNNER_TEMP/bdd-gherkin-expected.txt" ]; then
   gherkin_selected=true
   printf 'check-bdd: Gherkin run packages (%s):\n' "$(wc -l < "$RUNNER_TEMP/bdd-gherkin-expected.txt" | tr -d ' ')"
@@ -225,7 +259,7 @@ if [ "$stack_status" -eq 0 ]; then
     --fail-on-skip --expect "$RUNNER_TEMP/bdd-stack-expected.txt" \
     --deadline "$stack_deadline" --timeout 3590 \
     --summary-file "$GITHUB_STEP_SUMMARY" \
-    --title 'Go developer tests: stack run (bdd job). Developer checks, not acceptance proof.' -- \
+    --title "Go developer tests: stack run, shard $shard (stack-$shard job). Developer checks, not acceptance proof." -- \
     env CGO_ENABLED=1 python3 tools/bootstrap.py exec go -- \
     test -json -p 1 -count=1 -timeout 15m $(cat "$RUNNER_TEMP/bdd-stack-packages.txt") ||
     stack_status=$?
@@ -235,18 +269,20 @@ else
   stack_ran=false
 fi
 
-# The Gherkin run starts on a fresh stack. The stack run's fixture is cleaned
-# up when its command ends, and its manifest stays as a cleaned receipt. Move
-# the receipt aside, so that the Gherkin fixture can own the manifest path that
-# the workflow's cleanup step reads. --check-receipt only reads the manifest
-# and checks the phase "cleaned"; it makes no Docker call and does not repeat
-# the cleanup. If the stack fixture is not clean, the manifest stays for the
-# cleanup step, and the Gherkin run does not start.
+# The stack run's fixture is cleaned up when its command ends, and its
+# manifest stays as a cleaned receipt. --check-receipt only reads the
+# manifest and checks the phase "cleaned"; it makes no Docker call and does
+# not repeat the cleanup. A fixture that is not clean fails the shard, and its
+# manifest stays for the cleanup step. In shard 3 the Gherkin run starts on a
+# fresh stack: the script moves the receipt aside, so that the Gherkin fixture
+# can own the manifest path that the workflow's cleanup step reads. If the
+# stack fixture is not clean, the Gherkin run does not start.
 gherkin_ready=true
 if [ -e "$manifest" ]; then
   step 'check the stack run fixture cleanup and keep its receipt'
   if python3 scripts/ci/with-stack-fixture.py --check-receipt "$manifest" &&
-    mv "$manifest" "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.stack-run-receipt.json"; then
+    { [ "$shard" -ne 3 ] ||
+      mv "$manifest" "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT-s3.stack-run-receipt.json"; }; then
     :
   else
     printf 'check-bdd: the Gherkin run did not run: the stack run fixture is not clean, so its manifest stays at %s for the cleanup step, and no fresh stack can start on that path\n' \
@@ -266,7 +302,9 @@ fi
 # --deadline bounds the whole run.
 gherkin_status=1
 gherkin_ran=false
-if ! "$gherkin_selected"; then
+if [ "$shard" -ne 3 ]; then
+  gherkin_status=0
+elif ! "$gherkin_selected"; then
   printf '%s\n' 'check-bdd: the Gherkin run did not run: its package selection failed' >&2
 elif "$gherkin_ready"; then
   step 'starting a fresh job-owned stack for the Gherkin run (acceptance suite)'
@@ -286,9 +324,15 @@ fi
 step 'compare the toolchain identity'
 python3 tools/bootstrap.py print-env > "$RUNNER_TEMP/bdd-toolchain-after.json"
 if "$stack_ran"; then stack_result="exit $stack_status"; else stack_result='did not run'; fi
-if "$gherkin_ran"; then gherkin_result="exit $gherkin_status"; else gherkin_result='did not run'; fi
-printf 'check-bdd: stack run (Go developer tests) %s; Gherkin run (acceptance suite) %s\n' \
-  "$stack_result" "$gherkin_result"
+if "$gherkin_ran"; then
+  gherkin_result="exit $gherkin_status"
+elif [ "$shard" -ne 3 ]; then
+  gherkin_result='is in shard 3'
+else
+  gherkin_result='did not run'
+fi
+printf 'check-bdd: shard %s: stack run (Go developer tests) %s; Gherkin run (acceptance suite) %s\n' \
+  "$shard" "$stack_result" "$gherkin_result"
 if ! cmp -s "$RUNNER_TEMP/bdd-toolchain.json" "$RUNNER_TEMP/bdd-toolchain-after.json"; then
   printf '%s\n' 'BDD native/tool identity drifted during execution' >&2
   exit 1

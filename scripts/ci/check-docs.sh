@@ -87,6 +87,12 @@ build_tools() {
 check_setup() {
   step 'check-setup.py'
   "$py" -I -B scripts/ci/check-setup.py --root . --policy scripts/ci/setup-policy.json
+  # The shard file of the stack run. Each shard of the bdd workflow checks it
+  # again before it selects its packages.
+  step 'pm_check_shards (scripts/ci/stack-shards.txt)'
+  # shellcheck source=scripts/ci/go-packages.sh disable=SC1091
+  . scripts/ci/go-packages.sh
+  pm_check_shards
 }
 
 check_python() {
