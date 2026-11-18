@@ -98,7 +98,10 @@ are not outlines.
 Without --title, the scenario section of the summary also lists each test
 with no result, each skipped test and each problem. --summary-file appends
 the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
---summary-file requires --title, --scenarios or both.
+--summary-file requires --title, --scenarios or both. A write to FILE that
+fails (for example, no space left on the device) fails the run: exit 1 and the
+fixed line "go test: the summary file FILE cannot be written: REASON". With
+--live, the traceback goes to the raw report, and the log gets one fixed line.
 
 --live (the live runner, D2-A, L-e1 P5a) puts no stream text in the log or the
 summary file: only counts, godog totals as numbers, the words PASS, FAIL, SKIP
@@ -890,12 +893,14 @@ def main():
     for problem in problems:
         print(f"go test: {problem}")
     skip_failure = bool(args.fail_on_skip and skips)
+    # The reason that a summary write failed, or None (#403 R4-2).
+    summary_error = None
     if args.title and args.summary_file:
-        with summary_stream(args.summary_file, raw) as summary:
-            summary.write(package_markdown(args.title, packages, failures, skips,
-                                           args.fail_on_skip, status, problems,
-                                           intended if expected is not None else None,
-                                           unfinished))
+        summary_error = write_summary(args.summary_file, raw,
+                                      package_markdown(args.title, packages, failures, skips,
+                                                       args.fail_on_skip, status, problems,
+                                                       intended if expected is not None else None,
+                                                       unfinished))
     problem = None
     if args.scenarios:
         problem = scenario_problem(rows, totals)
@@ -907,44 +912,55 @@ def main():
         if problem:
             print(f"go test: scenario summary error: {problem}")
         if args.summary_file:
-            with summary_stream(args.summary_file, raw) as summary:
-                # Without --title, no package section names the tests with no
-                # result or the problems, so this section names them.
-                summary.write(markdown(rows, totals, problem,
-                                       () if args.title else unfinished,
-                                       () if args.title else problems,
-                                       () if args.title else skips,
-                                       args.fail_on_skip))
+            # Without --title, no package section names the tests with no
+            # result or the problems, so this section names them.
+            summary_error = summary_error or write_summary(
+                args.summary_file, raw, markdown(rows, totals, problem,
+                                                 () if args.title else unfinished,
+                                                 () if args.title else problems,
+                                                 () if args.title else skips,
+                                                 args.fail_on_skip))
+    if summary_error:
+        # A caller must not read a missing summary as a test failure, so a fixed line names it.
+        print(f"go test: the summary file {args.summary_file} cannot be written: {summary_error}")
     print(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
     if raw is not None:
         sys.stdout = public
-        raw.close()
         lines = live_report(packages, order, results, unfinished, rows, totals,
                             problems + ([problem] if problem else []), failures, skips, status)
         print("\n".join(lines))
+        # The raw report stays open until the summary is written, so that it keeps the
+        # traceback of a failed write; public output gets only fixed text (#403 R4-2).
         if args.summary_file:
-            with args.summary_file.open("a", encoding="utf-8") as summary:
-                summary.write("### Live run (no test names or output)\n\n" + "".join(f"- {line}\n" for line in lines))
-    return status or (1 if failures or problem or problems or skip_failure else 0)
+            try:
+                with args.summary_file.open("a", encoding="utf-8") as summary:
+                    summary.write("### Live run (no test names or output)\n\n"
+                                  + "".join(f"- {line}\n" for line in lines))
+            except OSError:
+                raw.write(traceback.format_exc())
+                summary_error = "see the private raw report"
+                print("go test (live): the summary file cannot be written; only the private raw report "
+                      "holds the details")
+        raw.close()
+    return status or (1 if failures or problem or problems or skip_failure or summary_error else 0)
 
 
-class summary_stream:
-    """The summary file, or in --live mode the raw file, which stays open."""
+def write_summary(path, raw, text):
+    """Append TEXT to the summary file PATH, or in --live mode to the raw file.
 
-    def __init__(self, path, raw):
-        self.path, self.raw, self.file = path, raw, None
-
-    def __enter__(self):
-        if self.raw is not None:
-            return self.raw
-        self.file = self.path.open("a", encoding="utf-8")
-        return self.file
-
-    def __exit__(self, *exc):
-        if self.file is not None:
-            self.file.close()
-        return False
+    Return None, or the reason that the write failed (for example "No space left
+    on device"), so that the run can end with a fixed line and exit 1.
+    """
+    if raw is not None:
+        raw.write(text)
+        return None
+    try:
+        with path.open("a", encoding="utf-8") as summary:
+            summary.write(text)
+    except OSError as error:
+        return error.strerror or type(error).__name__
+    return None
 
 
 if __name__ == "__main__":

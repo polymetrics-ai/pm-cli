@@ -584,11 +584,13 @@ class GoTestReport(unittest.TestCase):
         return [sys.executable, str(path)]
 
     def report(self, events, *options, exit_status=0, raw=None, expect=None, command=None,
-               env=None):
+               env=None, unwritable_summary=False):
         with tempfile.TemporaryDirectory() as directory:
             stream = Path(directory) / "events.json"
             stream.write_text(raw if raw is not None else "\n".join(events) + ("\n" if events else ""))
             summary = Path(directory) / "summary.md"
+            if unwritable_summary:  # a folder: each write to it fails, as on a full disk
+                summary.mkdir()
             fake = command or [*self.program(
                 "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))"),
                 str(stream), str(exit_status), "-count=1"]
@@ -602,8 +604,25 @@ class GoTestReport(unittest.TestCase):
                  *options, "--", *fake],
                 capture_output=True, text=True, timeout=120,
                 env=dict(os.environ, **(env or {})))
-            text = summary.read_text() if summary.exists() else ""
+            text = summary.read_text() if summary.is_file() else ""
         return result, text
+
+    def test_a_failed_summary_write_fails_with_a_fixed_line(self):
+        # #403 R4-2: on a full disk the summary write raised after the failure groups, so the
+        # run ended with exit 1, no summary and a traceback on stderr only. Now a fixed line
+        # names the summary file, the report ends normally, and the exit is 1.
+        for events in ([go_event("run", "m/p", "TestOK"), go_event("pass", "m/p", "TestOK"),
+                        go_event("pass", "m/p", Elapsed=0.1)],
+                       [go_event("run", "m/p", "TestBad"), go_event("fail", "m/p", "TestBad"),
+                        go_event("fail", "m/p", Elapsed=0.1)]):
+            with self.subTest(result=json.loads(events[1])["Action"]):
+                result, summary = self.report(events, "--title", "Unit run", "--summary-file", "SUMMARY",
+                                              unwritable_summary=True)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertRegex(result.stdout, r"go test: the summary file \S+summary\.md cannot be written: \S")
+                self.assertIn("go test: 1 packages,", result.stdout)
+                self.assertNotIn("Traceback", result.stdout + result.stderr)
+                self.assertEqual(summary, "")
 
     def test_package_without_test_files_is_not_a_test_skip(self):
         events = [go_event("skip", "m/empty", Elapsed=0),
@@ -638,9 +657,9 @@ class GoTestReport(unittest.TestCase):
         failed = [go_event("run", "m/p", "TestBad"), go_event("fail", "m/p", "TestBad"),
                   go_event("fail", "m/p", Elapsed=0.1)]
         result, summary = self.report(failed, "--title", "Unit run", "--summary-file", "SUMMARY")
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("::group::FAIL m/p TestBad", result.stdout)
-        self.assertIn("- `m/p TestBad`", summary)
+        self.assertIn("- `m/p TestBad`", summary, result.stdout + result.stderr)
         broken = [json.dumps({"Action": "build-fail", "ImportPath": "m/q [m/q.test]"})]
         result, _ = self.report(broken)
         self.assertEqual(result.returncode, 1)
@@ -1798,7 +1817,8 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
     # L-e1 P5a: a marker in names and output, with and without control characters.
     MARK = "LIVE-MARK-41c7"
 
-    def live_report(self, events, *options, expect=("m/acc",), raw_text=None, reporter=None):
+    def live_report(self, events, *options, expect=("m/acc",), raw_text=None, reporter=None,
+                    unwritable_summary=False):
         """Run the reporter with --live. Return (result, summary, raw report, raw mode)."""
         with tempfile.TemporaryDirectory() as directory:
             stream = Path(directory) / "events.json"
@@ -1806,6 +1826,8 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
             expected = Path(directory) / "expected.txt"
             expected.write_text("".join(f"{package}\n" for package in expect))
             raw, summary = Path(directory) / "raw", Path(directory) / "summary.md"
+            if unwritable_summary:  # a folder: each write to it fails, as on a full disk
+                summary.mkdir()
             fake = self.program("import sys; sys.stdout.write(open(sys.argv[1]).read()); "
                                 "sys.stderr.write(sys.argv[2])")
             result = subprocess.run(
@@ -1814,7 +1836,7 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
                  "--fail-on-skip", "--summary-file", str(summary), *options, "--", *fake, str(stream),
                  f"stderr {self.MARK}\n", "-count=1"],
                 capture_output=True, text=True, timeout=120)
-            text = summary.read_text() if summary.exists() else ""
+            text = summary.read_text() if summary.is_file() else ""
             report = raw.read_text() if raw.exists() else ""
             mode = raw.stat().st_mode & 0o777 if raw.exists() else None
         return result, text, report, mode
@@ -1875,6 +1897,21 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
         self.assertIn("the reporter stopped on an internal error", result.stdout)
         self.assertNotIn(self.MARK, result.stdout + result.stderr + summary)
         self.assertIn(self.MARK, raw)
+
+    def test_live_mode_keeps_a_failed_summary_write_private(self):
+        # #403 R4-2: the raw report was closed before the summary write, so a failed write
+        # lost its traceback. It stays open now: the traceback goes there, and the log gets
+        # one fixed line and exit 1, also for a passing suite.
+        good = self.gherkin_suite({"a": ("pass", [])}, ["1 scenarios (1 passed)", "0 steps"])
+        self.assertEqual(self.live_report(good)[0].returncode, 0)  # the control
+        result, summary, raw, _ = self.live_report(good, unwritable_summary=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("go test (live): the summary file cannot be written; only the private raw report "
+                      "holds the details", result.stdout)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertNotIn("summary.md", result.stdout + result.stderr)
+        self.assertIn("Traceback", raw)
+        self.assertIn("IsADirectoryError", raw)
 
     def test_live_mode_needs_its_options(self):
         with tempfile.TemporaryDirectory() as directory:
