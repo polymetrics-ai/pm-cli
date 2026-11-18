@@ -841,7 +841,7 @@ class PhaseDeadlineTests(unittest.TestCase):
             self.assertEqual(self.manifest(path)["phase"], "cleanup_failed")
 
     def test_phase_deadline_limits_match_the_bdd_budget(self):
-        # check-bdd.sh adds the unlimited wait after a SIGKILL to each phase.
+        # check-bdd.sh adds the post-SIGKILL wait (PROCESS_TERM_GRACE, 10 s), outside the phase deadline.
         script = (ROOT / "scripts/ci/check-bdd.sh").read_text()
         grace = FIXTURE.PROCESS_TERM_GRACE
         self.assertIn(f"\nstart_allowance={FIXTURE.START_PHASE_LIMIT + grace}\n", script)
