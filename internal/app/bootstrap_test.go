@@ -131,11 +131,12 @@ func TestBootstrapWritesTheAdminAndMapsStoreRefusals(t *testing.T) {
 		storeErr error
 		want     error
 	}{
-		"scope bootstrapped": {store.ErrBootstrapScopeExists, ErrBootstrapScopeExists},
-		"login bound":        {store.ErrBootstrapLoginBound, ErrBootstrapLoginBound},
-		"credential refused": {store.ErrBootstrapAuthority, ErrBootstrapAuthority},
-		"commit uncertain":   {errors.Join(store.ErrCommitOutcomeUnknown, errors.New("commit store transaction")), ErrBootstrapOutcomeUnknown},
-		"store failure":      {errors.New("insert workspace: connection reset"), ErrBootstrapFailed},
+		"scope bootstrapped":           {store.ErrBootstrapScopeExists, ErrBootstrapScopeExists},
+		"scope taken by another input": {store.ErrBootstrapScopeOtherInput, ErrBootstrapScopeOtherInput},
+		"login bound":                  {store.ErrBootstrapLoginBound, ErrBootstrapLoginBound},
+		"credential refused":           {store.ErrBootstrapAuthority, ErrBootstrapAuthority},
+		"commit uncertain":             {errors.Join(store.ErrCommitOutcomeUnknown, errors.New("commit store transaction")), ErrBootstrapOutcomeUnknown},
+		"store failure":                {errors.New("insert workspace: connection reset"), ErrBootstrapFailed},
 	} {
 		t.Run(name, func(t *testing.T) {
 			configuration.Write = (&recordingWrite{err: testCase.storeErr}).write
