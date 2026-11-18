@@ -538,6 +538,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/v1/workspaces/{workspace_id}/memberships/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Add connections to a workspace membership
+         * @description Adds active connections of the workspace to the membership. The request must name the current control_revision of the membership. The update removes no connection and changes no other grant. The actor must be a user that acts without a delegation, and it must hold workspace.access.manage. The user can add connections to its own membership. Then the user must also hold connection.manage. For another membership, the user can add only connections that its own current grants hold. When the membership holds each connection already, the result is unchanged and the control revision stays the same.
+         */
+        patch: operations["updateMembership"];
+        trace?: never;
+    };
     "/v1/workspaces/{workspace_id}/memberships/{id}/revoke": {
         parameters: {
             query?: never;
@@ -1014,6 +1037,8 @@ export interface components {
             /** Format: uri */
             verification_uri: string;
         };
+        /** @description Whole seconds until the stored next poll time of the device challenge, rounded up, as RFC 9110 delay-seconds from 1 to 60. The server sends it in Retry-After with device_authorization_pending and device_poll_too_soon only. */
+        DevicePollRetryAfterSeconds: string;
         DeviceProof: {
             challenge_id: string;
             proof: string;
@@ -1117,6 +1142,14 @@ export interface components {
             };
             protocol: components["schemas"]["ProtocolMetadata"];
         };
+        MembershipUpdateRequest: {
+            membership: {
+                /** @description Connection IDs to add, in strictly ascending byte order. */
+                add_connection_ids: string[];
+                membership_ref: string;
+            };
+            protocol: components["schemas"]["ProtocolMetadata"];
+        };
         MutationReplayResponse: {
             effective_actor_ref?: string;
             outcome_reference: components["schemas"]["SafeOutcomeReference"];
@@ -1129,7 +1162,7 @@ export interface components {
             result_revision: string;
         };
         /** @enum {string} */
-        MutationResultDisposition: "created" | "revoked" | "unchanged";
+        MutationResultDisposition: "created" | "updated" | "revoked" | "unchanged";
         MutationResultResponse: {
             effective_actor_ref?: string;
             outcome_reference: components["schemas"]["SafeOutcomeReference"];
@@ -1618,6 +1651,28 @@ export interface components {
         };
     };
     responses: {
+        /** @description Device login conflict. A device_authorization_pending answer carries Retry-After. A login_challenge_used answer does not. */
+        DevicePoll409: {
+            headers: {
+                /** @description Whole seconds until the next permitted poll of the device challenge. A device_authorization_pending answer carries it. A login_challenge_used answer does not. */
+                "Retry-After"?: components["schemas"]["DevicePollRetryAfterSeconds"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
+        /** @description Device login limit. A device_poll_too_soon answer carries Retry-After. An authentication_rate_limited answer does not. */
+        DevicePoll429: {
+            headers: {
+                /** @description Whole seconds until the next permitted poll of the device challenge. A device_poll_too_soon answer carries it. An authentication_rate_limited answer does not. */
+                "Retry-After"?: components["schemas"]["DevicePollRetryAfterSeconds"];
+                [name: string]: unknown;
+            };
+            content: {
+                "application/problem+json": components["schemas"]["Problem"];
+            };
+        };
         /** @description Malformed or unsupported typed request */
         Problem400: {
             headers: {
@@ -2006,9 +2061,9 @@ export interface operations {
             400: components["responses"]["Problem400"];
             401: components["responses"]["Problem401"];
             403: components["responses"]["Problem403"];
-            409: components["responses"]["Problem409"];
+            409: components["responses"]["DevicePoll409"];
             410: components["responses"]["Problem410"];
-            429: components["responses"]["Problem429"];
+            429: components["responses"]["DevicePoll429"];
             503: components["responses"]["Problem503"];
         };
     };
@@ -2848,6 +2903,48 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MutationResultResponse"];
+                };
+            };
+            400: components["responses"]["Problem400"];
+            401: components["responses"]["Problem401"];
+            403: components["responses"]["Problem403"];
+            404: components["responses"]["Problem404"];
+            409: components["responses"]["Problem409"];
+            410: components["responses"]["Problem410"];
+            412: components["responses"]["Problem412"];
+            428: components["responses"]["Problem428"];
+            503: components["responses"]["Problem503"];
+        };
+    };
+    updateMembership: {
+        parameters: {
+            query?: never;
+            header: {
+                "Idempotency-Key": components["parameters"]["IdempotencyKey"];
+                /** @description Required for a new mutation after current authorization and receipt lookup; exact replay is resolved before new-mutation revision checks. A supplied value must match the intent envelope. */
+                "If-Match"?: components["parameters"]["IfMatch"];
+                /** @description Required and verified for authenticated browser mutations; never substitutes for the current session or explicit authorization. */
+                "X-CSRF-Token"?: components["parameters"]["CSRFToken"];
+            };
+            path: {
+                workspace_id: components["parameters"]["WorkspaceID"];
+                id: components["parameters"]["ResourceID"];
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MembershipUpdateRequest"];
+            };
+        };
+        responses: {
+            /** @description Original updated or unchanged result, or exact safe replay */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MutationResultResponse"] | components["schemas"]["MutationReplayResponse"];
                 };
             };
             400: components["responses"]["Problem400"];

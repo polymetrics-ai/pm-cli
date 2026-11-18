@@ -304,6 +304,51 @@ func (service *Service) RevokeMembership(ctx context.Context, request RevokeMemb
 	return RevokeMembership200JSONResponse(body), nil
 }
 
+// UpdateMembership adds connections to a membership under its current
+// control revision. The revision travels as for revoke: the protocol
+// expected_revision and If-Match.
+func (service *Service) UpdateMembership(ctx context.Context, request UpdateMembershipRequestObject) (UpdateMembershipResponseObject, error) {
+	state, scope, err := scopedState(ctx, request.WorkspaceId)
+	if err != nil {
+		return asProblemResponse(err, nil), nil
+	}
+	if request.Body == nil || request.Body.Membership.MembershipRef != request.Id ||
+		request.Body.Membership.AddConnectionIds == nil {
+		return invalidRequestResponse(), nil
+	}
+	control, err := parseMutationControl(request.Params.IdempotencyKey, request.Body.Protocol, request.Params.IfMatch)
+	if err != nil {
+		return invalidRequestResponse(), nil
+	}
+	result, err := service.identity.UpdateMembership(ctx, state.identity.Actor, scope, app.UpdateMembership{
+		MembershipID:  request.Id,
+		ConnectionIDs: cloneStrings(request.Body.Membership.AddConnectionIds),
+		Control:       control,
+	})
+	if err != nil {
+		return asMutationProblemResponse(err, request.Body.Protocol.RequestKey, api.SafeOutcomeReferenceKindMembership, request.Id), nil
+	}
+	disposition := api.MutationResultDispositionUpdated
+	if result.Mutation.Unchanged {
+		disposition = api.MutationResultDispositionUnchanged
+	}
+	fresh, replay, err := mutationResponses(result.Mutation, result.Membership.MembershipID, api.SafeOutcomeReferenceKindMembership, state.identity.Actor, disposition)
+	if err != nil {
+		return nil, err
+	}
+	setETag(ctx, result.Membership.ControlRevision)
+	body := api.UpdateMembership200JSONResponseBody{}
+	if result.Mutation.Replayed {
+		err = body.FromMutationReplayResponse(replay)
+	} else {
+		err = body.FromMutationResultResponse(fresh)
+	}
+	if err != nil {
+		return nil, err
+	}
+	return UpdateMembership200JSONResponse(body), nil
+}
+
 func (service *Service) ListDelegations(ctx context.Context, request ListDelegationsRequestObject) (ListDelegationsResponseObject, error) {
 	state, scope, err := scopedState(ctx, request.WorkspaceId)
 	if err != nil {

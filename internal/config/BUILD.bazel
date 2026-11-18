@@ -21,13 +21,18 @@ go_test(
     srcs = [
         "artifacts_test.go",
         "connectors_test.go",
+        "device_poll_interval_schema_test.go",
+        "device_poll_interval_test.go",
+        "device_poll_interval_value_test.go",
         "provider_http_test.go",
         "provider_sql_test.go",
         "server_test.go",
         "worker_test.go",
     ],
+    data = ["//schemas:server-config.schema.json"],
     deps = [
         ":config",
         "//internal/contract",
+        "@com_github_santhosh_tekuri_jsonschema_v6//:jsonschema",
     ],
 )

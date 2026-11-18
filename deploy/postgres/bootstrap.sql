@@ -12,6 +12,7 @@ BEGIN
         SELECT * FROM (VALUES
             ('pm_app_migrator', '/var/lib/postgresql/pm-stack-secrets/pm-app-migrator-password'),
             ('pm_app_runtime', '/var/lib/postgresql/pm-stack-secrets/pm-app-runtime-password'),
+            ('pm_app_bootstrap', '/var/lib/postgresql/pm-stack-secrets/pm-app-bootstrap-password'),
             ('temporal_migrator', '/var/lib/postgresql/pm-stack-secrets/temporal-migrator-password'),
             ('temporal_runtime', '/var/lib/postgresql/pm-stack-secrets/temporal-runtime-password'),
             ('temporal_visibility_migrator', '/var/lib/postgresql/pm-stack-secrets/temporal-visibility-migrator-password'),
@@ -57,11 +58,11 @@ ALTER DATABASE temporal_visibility OWNER TO temporal_visibility_migrator;
 ALTER DATABASE pm_objects_meta OWNER TO pm_objects_migrator;
 
 REVOKE CONNECT ON DATABASE pm_app FROM PUBLIC;
-REVOKE CREATE, TEMPORARY ON DATABASE pm_app FROM PUBLIC, pm_app_runtime;
+REVOKE CREATE, TEMPORARY ON DATABASE pm_app FROM PUBLIC, pm_app_runtime, pm_app_bootstrap;
 REVOKE CONNECT ON DATABASE temporal FROM PUBLIC;
 REVOKE CONNECT ON DATABASE temporal_visibility FROM PUBLIC;
 REVOKE CONNECT ON DATABASE pm_objects_meta FROM PUBLIC;
-GRANT CONNECT ON DATABASE pm_app TO pm_app_migrator, pm_app_runtime;
+GRANT CONNECT ON DATABASE pm_app TO pm_app_migrator, pm_app_runtime, pm_app_bootstrap;
 GRANT CONNECT ON DATABASE temporal TO temporal_migrator, temporal_runtime;
 GRANT CONNECT ON DATABASE temporal_visibility TO temporal_visibility_migrator, temporal_visibility_runtime;
 GRANT CONNECT ON DATABASE pm_objects_meta TO pm_objects_migrator, pm_objects_runtime;

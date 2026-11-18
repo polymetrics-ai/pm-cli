@@ -58,6 +58,12 @@
         "source_url": "https://github.com/gin-gonic/gin/tree/73726dc606796a025971fe451f0aa6f1b9b847f6"
       },
       {
+        "path": "github.com/godbus/dbus/v5",
+        "version": "v5.2.2",
+        "license": "BSD-2-Clause",
+        "source_url": "https://github.com/godbus/dbus/tree/a8ac15ba63645f02ffd57f4b443203279ab40b30"
+      },
+      {
         "path": "github.com/jackc/pgx/v5",
         "version": "v5.11.0",
         "license": "MIT",
