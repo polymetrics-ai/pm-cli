@@ -62,11 +62,13 @@ func TestTemporalConnectFailureKeepsItsCause(t *testing.T) {
 // goroutine, and then close the connection. Channels force the order. The
 // check has no sleep and no retry, and each wait has one time limit. Every
 // exit of the check releases and stops the helper (startHeldConnectionCheck).
+// One deadline, made before the setup, bounds the dial, the wait for the
+// accepted connection and the waits for the stop, as at a4202d5.
 func TestHeldConnectionCleanupWaitsForAnAcceptedConnection(t *testing.T) {
-	check := startHeldConnectionCheck(t)
-	defer check.client.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), heldConnectionLimit)
 	defer cancel()
+	check := startHeldConnectionCheck(t, ctx)
+	defer check.client.Close()
 
 	check.stop()
 	// The cleanup closed the listener and waits for the accept goroutine, or
@@ -97,9 +99,11 @@ func TestHeldConnectionCleanupWaitsForAnAcceptedConnection(t *testing.T) {
 // reads the end of the stream. The check has no sleep and no retry, and the
 // read has one time limit.
 func TestHeldConnectionCheckCleansUpAfterAnEarlyExit(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), heldConnectionLimit)
+	defer cancel()
 	var check *heldConnectionCheck
 	t.Run("an exit while the helper holds the connection", func(t *testing.T) {
-		check = startHeldConnectionCheck(t)
+		check = startHeldConnectionCheck(t, ctx)
 	})
 	if check == nil {
 		t.Fatal("the run ended before the helper held the connection")
@@ -127,12 +131,13 @@ const heldConnectionLimit = 10 * time.Second
 
 // startHeldConnectionCheck starts holdConnections on a loopback listener,
 // dials it once and waits until the accept goroutine holds the connection in
-// its accepted hook. Before the dial, it registers one cleanup for every exit
-// of the test, also a failure or a timeout: the cleanup starts the stop,
-// releases the hook and waits once for the stop, with one time limit. The
-// stop closes the listener, joins the accept goroutine and closes the held
-// connection. The caller closes the client.
-func startHeldConnectionCheck(t *testing.T) *heldConnectionCheck {
+// its accepted hook. The dial and that wait use the deadline of ctx, which
+// the test makes before it calls this function. Before the dial, it registers
+// one cleanup for every exit of the test, also a failure or a timeout: the
+// cleanup starts the stop, releases the hook and waits once for the stop,
+// with one time limit. The stop closes the listener, joins the accept
+// goroutine and closes the held connection. The caller closes the client.
+func startHeldConnectionCheck(t *testing.T, ctx context.Context) *heldConnectionCheck {
 	t.Helper()
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
@@ -170,8 +175,6 @@ func startHeldConnectionCheck(t *testing.T) *heldConnectionCheck {
 		}
 	})
 
-	ctx, cancel := context.WithTimeout(context.Background(), heldConnectionLimit)
-	defer cancel()
 	var dialer net.Dialer
 	client, err := dialer.DialContext(ctx, "tcp4", listener.Addr().String())
 	if err != nil {
