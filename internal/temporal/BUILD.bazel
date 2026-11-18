@@ -39,6 +39,7 @@ go_test(
         "outbox_test.go",
         "physical_test.go",
         "projection_test.go",
+        "worker_client_test.go",
     ],
     embed = [":temporal"],
     env_inherit = [

@@ -45,6 +45,7 @@ func RegisterActivities(registry worker.Registry, service *Service) error {
 	registry.RegisterActivityWithOptions(service.ExecuteUnit, activity.RegisterOptions{Name: contract.ExecuteActivityName})
 	registry.RegisterActivityWithOptions(service.ApplyCommand, activity.RegisterOptions{Name: contract.CommandActivityName})
 	registry.RegisterActivityWithOptions(service.FinalizeRunProjection, activity.RegisterOptions{Name: contract.ProjectActivityName})
+	registry.RegisterActivityWithOptions(service.EndRunAfterUnitFailure, activity.RegisterOptions{Name: contract.UnitFailureActivityName})
 	if service.worker.SupportsScheduledAdmission() {
 		registry.RegisterActivityWithOptions(service.AdmitScheduledRun, activity.RegisterOptions{Name: contract.ScheduleActivityName})
 	}
@@ -98,7 +99,7 @@ func (service *Service) ExecuteUnit(
 	defer stopHeartbeats()
 	result, err := service.worker.ExecuteUnit(ctx, execution, request, updateHeartbeat)
 	if err != nil {
-		return nil, temporalWorkerError(err)
+		return nil, temporalUnitError(activity.GetInfo(ctx), time.Now(), err)
 	}
 	return &result, nil
 }
@@ -127,6 +128,21 @@ func (service *Service) FinalizeRunProjection(
 		return nil, nonRetryableInvalidRequest()
 	}
 	result, err := service.worker.FinalizeRunProjection(ctx, execution, request)
+	if err != nil {
+		return nil, temporalWorkerError(err)
+	}
+	return &result, nil
+}
+
+func (service *Service) EndRunAfterUnitFailure(
+	ctx context.Context,
+	request contract.WorkflowUnitRequest,
+) (*contract.WorkflowProjectionResult, error) {
+	execution, err := currentExecution(ctx, contract.RunWorkflowType, contract.ScheduledWorkflowType)
+	if err != nil {
+		return nil, nonRetryableInvalidRequest()
+	}
+	result, err := service.worker.EndRunAfterUnitFailure(ctx, execution, request)
 	if err != nil {
 		return nil, temporalWorkerError(err)
 	}
@@ -223,6 +239,26 @@ func startActivityHeartbeats(
 			<-stopped
 		})
 	}
+}
+
+// temporalUnitError maps an ExecuteUnit error. When another attempt still
+// holds the unit's task lease, the attempt did nothing, and its retry waits for
+// the remaining lease time from the stored lease end. Without that delay, the
+// default backoff can place the claiming attempt near the end of
+// ScheduleToClose. When the lease ends at or after the ScheduleToClose end, the
+// error keeps the default retry, as for every other transient error.
+func temporalUnitError(info activity.Info, now time.Time, err error) error {
+	var held *app.WorkerLeaseHeldError
+	if errors.As(err, &held) && held.RetryAfter > 0 &&
+		!info.ScheduledTime.IsZero() && info.ScheduleToCloseTimeout > 0 &&
+		now.Add(held.RetryAfter).Before(info.ScheduledTime.Add(info.ScheduleToCloseTimeout)) {
+		return temporal.NewApplicationErrorWithOptions(
+			"worker operation is temporarily unavailable",
+			failureTransient,
+			temporal.ApplicationErrorOptions{NextRetryDelay: held.RetryAfter},
+		)
+	}
+	return temporalWorkerError(err)
 }
 
 func temporalWorkerError(err error) error {

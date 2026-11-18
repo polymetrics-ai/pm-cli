@@ -60,6 +60,22 @@ func workerFailure(kind, cause error) error {
 	return &WorkerFailure{Kind: kind, Cause: cause}
 }
 
+// WorkerLeaseHeldError reports that another attempt still holds the task
+// lease of a unit, so this attempt claimed nothing and did nothing else. It
+// unwraps to store.ErrClaimLost. RetryAfter is the remaining lease time,
+// measured on the database clock from the stored lease end.
+type WorkerLeaseHeldError struct {
+	RetryAfter time.Duration
+}
+
+func (held *WorkerLeaseHeldError) Error() string {
+	return "worker task lease is held by another attempt"
+}
+
+func (held *WorkerLeaseHeldError) Unwrap() error {
+	return store.ErrClaimLost
+}
+
 type ScheduledRunAdmitter func(
 	context.Context,
 	contract.WorkflowExecution,
@@ -104,6 +120,10 @@ type WorkerService struct {
 	artifactPublisher         *objects.Publisher
 	maximumResultBytes        int64
 	sqlBounds                 SQLBoundsResolver
+	// beforeLeaseDecision runs in the prepare transaction just before
+	// claimWorkerTask reads the stored lease. Production sets no value. Only
+	// the Go developer checks set it, through lease_decision_export_test.go.
+	beforeLeaseDecision func(context.Context) error
 }
 
 func NewWorkerService(configuration WorkerServiceConfig) (*WorkerService, error) {
@@ -430,10 +450,12 @@ type workerUnitPlan struct {
 	task              contract.Task
 	dispatch          store.DispatchRecord
 	lease             store.Lease
+	leaseDeadline     time.Time
 	permit            store.AccountPermit
 	handler           ResolvedHandler
 	request           ExecutionRequest
 	reconcile         bool
+	unadmitted        bool
 	existing          *contract.WorkflowUnitResult
 	resultReservation store.ObjectReservation
 }
@@ -470,37 +492,56 @@ func (service *WorkerService) ExecuteUnit(
 	stopHeartbeats := startWorkerHeartbeats(ctx, heartbeat, progress, plan.timeouts.Heartbeat)
 	defer stopHeartbeats()
 
-	var callbackCtx context.Context
-	var cancel context.CancelFunc
+	// The provider callback, the publication step and the settlement take
+	// their limits from this context, so none of them is planned to end after
+	// the task lease ends.
+	ctx, cancelLease := workerLeaseContext(ctx, plan.leaseDeadline)
+	defer cancelLease()
+
+	// A reconcile callback has no accepted run deadline.
+	acceptedDeadline := plan.state.deadline
 	if plan.reconcile {
-		callbackCtx, cancel = context.WithTimeout(ctx, plan.timeouts.Transport)
-	} else {
-		callbackCtx, cancel = workerCallbackContext(
-			ctx, plan.state.deadline, plan.timeouts.Transport,
-		)
+		acceptedDeadline = time.Time{}
 	}
 	var observation ExecutionObservation
 	var callbackErr error
-	if plan.reconcile {
-		observation, callbackErr = plan.handler.Reconcile(callbackCtx, plan.request)
-	} else {
-		observation, callbackErr = plan.handler.Execute(callbackCtx, plan.request)
-	}
-	continuationPublication, continuationPublicationErr := plan.request.continuation.preparedForResult(observation.Result)
-	resultForPublication := observation.Result
-	if continuationPublicationErr != nil {
-		resultForPublication = nil
-	}
-	publication, resultPublicationErr := service.prepareWorkerResult(callbackCtx, plan, resultForPublication)
-	publicationErr := errors.Join(continuationPublicationErr, resultPublicationErr)
-	cancel()
+	var publication, continuationPublication *objects.PreparedPublication
+	var publicationErr error
+	// An unadmitted recovery runs no callback and publishes nothing. Its durable
+	// permit already proves that no send happened, and the settlement records
+	// that fact from the permit alone.
+	if !plan.unadmitted {
+		callbackCtx, cancel := workerCallbackContext(
+			ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+		)
+		if plan.reconcile {
+			observation, callbackErr = plan.handler.Reconcile(callbackCtx, plan.request)
+		} else {
+			observation, callbackErr = plan.handler.Execute(callbackCtx, plan.request)
+		}
+		// The transport limit bounds the provider callback only. The publication of
+		// PM's own objects starts after the provider callback context ends.
+		cancel()
 
-	settlementDeadline := plan.state.deadline
-	if plan.reconcile {
-		settlementDeadline = time.Time{}
+		publicationCtx, publicationCancel := workerPublicationContext(
+			ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+		)
+		var continuationPublicationErr error
+		continuationPublication, continuationPublicationErr = plan.request.continuation.publishForResult(
+			publicationCtx, observation.Result,
+		)
+		resultForPublication := observation.Result
+		if continuationPublicationErr != nil {
+			resultForPublication = nil
+		}
+		var resultPublicationErr error
+		publication, resultPublicationErr = service.prepareWorkerResult(publicationCtx, plan, resultForPublication)
+		publicationErr = errors.Join(continuationPublicationErr, resultPublicationErr)
+		publicationCancel()
 	}
+
 	settleCtx, settleCancel := workerSettlementContext(
-		ctx, settlementDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
+		ctx, acceptedDeadline, plan.timeouts.Heartbeat, plan.timeouts.Transport,
 	)
 	defer settleCancel()
 	result, err := service.settleWorkerUnit(settleCtx, execution, request, plan, observation, publication, continuationPublication, publicationErr, callbackErr)
@@ -690,8 +731,11 @@ func (service *WorkerService) prepareWorkerUnit(
 			return workerFailure(ErrWorkerConflict, errors.New("dispatch state and attempt evidence are inconsistent"))
 		}
 
+		// A local time from before the claim: the lease deadline adds the lease
+		// TTL to it (workerLeaseDeadline).
+		claimStarted := time.Now()
 		lease, err := claimWorkerTask(
-			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend,
+			ctx, tx, state, execution, taskRef, timeouts.StartToClose, !freshSend, service.beforeLeaseDecision,
 		)
 		if err != nil {
 			return err
@@ -727,12 +771,13 @@ func (service *WorkerService) prepareWorkerUnit(
 			}
 		}
 		var permit store.AccountPermit
+		unadmitted := false
 		if freshSend {
 			permitRequest := store.AccountPermitRequest{
 				PermitID: permitID, ConnectionID: state.input.ConnectionID,
 				OwnerID: permitOwner, Units: 1, TTL: permitTTL,
 			}
-			if handler.Kind == HandlerHTTP && state.input.ResultControls.HasContinuation() {
+			if permitReservedUntilAdmission(handler.Kind, state.input.ResultControls) {
 				permit, err = reserveWorkerPermit(ctx, tx, permitRequest, connection.ProviderAccountID)
 			} else {
 				permit, err = AcquirePermit(ctx, tx, permitRequest, connection.ProviderAccountID)
@@ -757,12 +802,13 @@ func (service *WorkerService) prepareWorkerUnit(
 			case store.AccountPermitDispatched, store.AccountPermitUnknown:
 				// A recorded attempt may only enter reconciliation; permit
 				// expiry cannot erase or re-authorize its possible effect.
-			case store.AccountPermitReserved:
-				return workerFailure(ErrWorkerConflict, errors.New("unused account permit conflicts with dispatch evidence"))
+			case store.AccountPermitReserved, store.AccountPermitExpired:
+				// The permit never left reserved, so the physical-call boundary
+				// never admitted a send. The witness is checked against the
+				// recorded attempt below; without it the conflict stands.
+				unadmitted = true
 			case store.AccountPermitResolved:
 				return workerFailure(ErrWorkerConflict, errors.New("resolved account permit lacks durable settlement"))
-			case store.AccountPermitExpired:
-				return workerFailure(ErrWorkerConflict, errors.New("expired account permit cannot authorize the sealed dispatch"))
 			default:
 				return workerFailure(ErrWorkerConflict, errors.New("account permit state is unsupported"))
 			}
@@ -810,15 +856,29 @@ func (service *WorkerService) prepareWorkerUnit(
 				attempt.ReceiptRef != attemptRef {
 				return workerFailure(ErrWorkerConflict, errors.New("durable dispatch attempt conflicts with sealed identity"))
 			}
+			// Stored outcomes returned earlier, so this unit has exactly one
+			// recorded attempt and no member outcome.
+			if unadmitted && !unadmittedPermitWitness(
+				handler.Kind, state.input.ResultControls, dispatch, attempt, permit, permit,
+			) {
+				if permit.State == store.AccountPermitExpired {
+					return workerFailure(ErrWorkerConflict, errors.New("expired account permit cannot authorize the sealed dispatch"))
+				}
+				return workerFailure(ErrWorkerConflict, errors.New("unused account permit conflicts with dispatch evidence"))
+			}
 		default:
 			return workerFailure(ErrWorkerConflict, errors.New("sealed worker dispatch has multiple physical attempts"))
 		}
 		plan.task = task
 		plan.dispatch = dispatch
 		plan.lease = lease
+		plan.leaseDeadline = workerLeaseDeadline(claimStarted, lease)
 		plan.permit = permit
 		plan.handler = handler
 		plan.reconcile = !freshSend
+		// An unadmitted retry runs no callback: its permit proves that the
+		// recorded attempt was never admitted to a send.
+		plan.unadmitted = unadmitted
 		plan.request = ExecutionRequest{
 			Scope: state.route.Scope, ConnectionID: state.input.ConnectionID, PermitRef: permit.PermitID,
 			ReconciliationOnly: !freshSend,
@@ -872,6 +932,7 @@ func claimWorkerTask(
 	ref store.TaskRef,
 	maxTTL time.Duration,
 	reconciliationOnly bool,
+	beforeLeaseDecision func(context.Context) error,
 ) (store.Lease, error) {
 	ownerID, err := workerRecordID("task-owner-v1-", struct {
 		RunID         string `json:"run_id"`
@@ -889,10 +950,23 @@ func claimWorkerTask(
 		return store.Lease{}, workerFailure(ErrWorkerAuthorization, errors.New("worker lease authority has elapsed"))
 	}
 	expectedFence := uint64(0)
+	if beforeLeaseDecision != nil {
+		if err := beforeLeaseDecision(ctx); err != nil {
+			return store.Lease{}, err
+		}
+	}
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
-		if current.ExpiresAt.After(state.now) {
-			return store.Lease{}, store.ErrClaimLost
+		// Preparation runs after loadWorkerRunState sampled state.now, and it
+		// can outlast the stored lease. The lease decision reads the database
+		// time again and uses that one sample for the expiry comparison and
+		// for the remaining lease time.
+		decidedAt, err := store.ReadAuthenticationTime(ctx, tx)
+		if err != nil {
+			return store.Lease{}, err
+		}
+		if current.ExpiresAt.After(decidedAt) {
+			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(decidedAt)}
 		}
 		expectedFence = current.Fence
 	} else if !errors.Is(err, store.ErrNotFound) {
@@ -1005,14 +1079,46 @@ func (service *WorkerService) settleWorkerUnit(
 		if err != nil {
 			return err
 		}
+		permit, err := store.LoadAccountPermit(ctx, tx, plan.permit.PermitID)
+		if err != nil {
+			return err
+		}
+		// noSend is true only while the durable permit proves that the recorded
+		// attempt was never admitted. Every unsent settlement that relies on it
+		// moves a reserved permit by its reserved-state compare-and-set later
+		// in this transaction. If that compare-and-set loses, the transaction
+		// rolls back and writes no outcome.
+		noSend := unadmittedPermitWitness(
+			plan.handler.Kind, plan.state.input.ResultControls, dispatch,
+			plan.request.Attempt, plan.permit, permit,
+		)
 		// Result publication, callback completion, and provider-effect truth are
 		// separate durable concerns. A complete valid member settlement remains
 		// authoritative even when result publication is unavailable or the
 		// callback also reports an error. Only incomplete/invalid member truth
-		// degrades the effect to unknown.
+		// degrades the effect to unknown, unless the permit proves no send.
 		outcomes := observation.Outcomes
-		if contract.ValidateSettlement(dispatch.Intent, outcomes) != nil {
-			outcomes = unknownWorkerOutcomes(dispatch.Intent, now, plan.request.Attempt.ReceiptRef)
+		unadmittedRecovered := false
+		switch {
+		case plan.unadmitted:
+			if !noSend {
+				// The permit left reserved after this retry was prepared, so a
+				// send may have been admitted. Write nothing: the next attempt
+				// takes the reconciliation path.
+				return store.ErrAccountPermitStale
+			}
+			outcomes = uniformWorkerOutcomes(dispatch.Intent, contract.OutcomeUnsent, now, plan.request.Attempt.ReceiptRef)
+			unadmittedRecovered = true
+		case contract.ValidateSettlement(dispatch.Intent, outcomes) != nil:
+			if !plan.reconcile && noSend && len(observation.Outcomes) == 0 {
+				// The callback returned no outcome, and the permit proves that
+				// no send was admitted. Only the worker, not the callback, would
+				// make this unknown. Any other invalid observation stays unknown.
+				outcomes = uniformWorkerOutcomes(dispatch.Intent, contract.OutcomeUnsent, now, plan.request.Attempt.ReceiptRef)
+				unadmittedRecovered = true
+			} else {
+				outcomes = uniformWorkerOutcomes(dispatch.Intent, contract.OutcomeUnknown, now, plan.request.Attempt.ReceiptRef)
+			}
 		}
 		attemptSummary, err := store.WorkerSettlementSummary(dispatch.Intent, outcomes)
 		if err != nil {
@@ -1053,10 +1159,6 @@ func (service *WorkerService) settleWorkerUnit(
 		if err != nil {
 			return workerFailure(ErrWorkerConflict, err)
 		}
-		permit, err := store.LoadAccountPermit(ctx, tx, plan.permit.PermitID)
-		if err != nil {
-			return err
-		}
 		if updatedTask.State == contract.RunStateReconciling {
 			updatedTask.OrchestrationCondition = contract.OrchestrationUnknown
 		} else {
@@ -1065,8 +1167,16 @@ func (service *WorkerService) settleWorkerUnit(
 		if err := updatedTask.Validate(); err != nil {
 			return workerFailure(ErrWorkerConflict, err)
 		}
+		unsentWithoutSend := noSend && uniformWorkerOutcomeState(outcomes, contract.OutcomeUnsent)
 		switch {
 		case localCompletion:
+			if permit.State == store.AccountPermitExpired {
+				// The permit expired before this unit settled, so the unit no
+				// longer holds its capacity. Write nothing. The expired permit
+				// still proves that no send was admitted, so the retry settles
+				// every member unsent.
+				return store.ErrAccountPermitStale
+			}
 			if permit.State != store.AccountPermitReserved {
 				return workerFailure(ErrWorkerConflict, errors.New("verified local result has a dispatched account permit"))
 			}
@@ -1074,11 +1184,11 @@ func (service *WorkerService) settleWorkerUnit(
 			if permit.State != store.AccountPermitDispatched && permit.State != store.AccountPermitUnknown {
 				return workerFailure(ErrWorkerConflict, errors.New("unknown settlement has incompatible account permit state"))
 			}
-		case attemptSummary.Unsent != 0 && permit.State == store.AccountPermitReserved:
-			// A continuation callback can fail before reaching the one-use
-			// physical admission boundary. The reserved permit proves the
-			// provider send was not admitted, but only a verified local result
-			// may release it; ordinary expiry retains bounded accounting.
+		case unsentWithoutSend:
+			// A continuation unit can stop before the one-use physical admission
+			// boundary. Its permit proves that the boundary admitted no send, so
+			// the unit releases the reserved permit below in this transaction.
+			// An expired permit returned its capacity already.
 		case permit.State != store.AccountPermitDispatched && permit.State != store.AccountPermitUnknown:
 			return workerFailure(ErrWorkerConflict, errors.New("known settlement has incompatible account permit state"))
 		}
@@ -1106,6 +1216,7 @@ func (service *WorkerService) settleWorkerUnit(
 			publicationErr != nil,
 			callbackErr != nil,
 			localCompletion,
+			unadmittedRecovered,
 			retry,
 		)
 		if _, err := store.CommitSettlement(ctx, tx, commit); err != nil {
@@ -1126,10 +1237,19 @@ func (service *WorkerService) settleWorkerUnit(
 					return err
 				}
 			}
-		case attemptSummary.Unsent != 0 && permit.State == store.AccountPermitReserved:
-			// Keep the unused non-local reservation charged until its ordinary
-			// expiry; ReleaseUnusedAccountPermit is reserved for verified local
-			// continuation completion.
+		case unsentWithoutSend:
+			if permit.State == store.AccountPermitReserved {
+				// The reserved-state compare-and-set is the witness. If a
+				// concurrent admission moved the permit first, it fails, and
+				// the whole settlement rolls back.
+				released, err := store.ReleaseUnusedAccountPermit(ctx, tx, permit)
+				if err != nil {
+					return err
+				}
+				if released.State != store.AccountPermitReleased {
+					return workerFailure(ErrWorkerConflict, errors.New("unused unsent permit was not released"))
+				}
+			}
 		default:
 			if _, err := store.ResolveAccountPermit(ctx, tx, permit); err != nil {
 				return err
@@ -1158,6 +1278,7 @@ func workerSettlementCommit(
 	resultPublicationUnavailable bool,
 	callbackFailed bool,
 	localCompletion bool,
+	unadmittedRecovered bool,
 	retry *store.WorkerRetryPlan,
 ) store.SettlementCommit {
 	reasonCodes := []string{"member_settlement"}
@@ -1169,6 +1290,9 @@ func workerSettlementCommit(
 	}
 	if localCompletion {
 		reasonCodes = append(reasonCodes, "verified_local_continuation_result")
+	}
+	if unadmittedRecovered {
+		reasonCodes = append(reasonCodes, "unadmitted_attempt_recovered")
 	}
 	if retry != nil {
 		reasonCodes = append(reasonCodes, "worker_retry_prepared")
@@ -1217,8 +1341,11 @@ func workerSettlementCommit(
 	}
 }
 
-func unknownWorkerOutcomes(
+// uniformWorkerOutcomes gives every member of the dispatch the same state. The
+// durable attempt receipt is the assertion that identifies the exact attempt.
+func uniformWorkerOutcomes(
 	dispatch contract.Dispatch,
+	state contract.OutcomeState,
 	observedAt time.Time,
 	attemptRef string,
 ) []contract.MemberOutcome {
@@ -1226,11 +1353,62 @@ func unknownWorkerOutcomes(
 	for _, memberID := range dispatch.OrderedMemberIDs {
 		outcomes = append(outcomes, contract.MemberOutcome{
 			MemberID: memberID, EffectKey: dispatch.EffectKey, DispatchID: dispatch.DispatchID,
-			State: contract.OutcomeUnknown, ObservedAt: observedAt.UTC(),
+			State: state, ObservedAt: observedAt.UTC(),
 			AssertionRefs: []string{attemptRef},
 		})
 	}
 	return outcomes
+}
+
+func uniformWorkerOutcomeState(outcomes []contract.MemberOutcome, state contract.OutcomeState) bool {
+	if len(outcomes) == 0 {
+		return false
+	}
+	for _, outcome := range outcomes {
+		if outcome.State != state {
+			return false
+		}
+	}
+	return true
+}
+
+// permitReservedUntilAdmission reports whether a fresh unit leaves its account
+// permit reserved after the prepare step. Only the physical-call boundary then
+// moves it to dispatched, immediately before a send.
+func permitReservedUntilAdmission(kind HandlerKind, controls contract.ResultControls) bool {
+	return kind == HandlerHTTP && controls.HasContinuation()
+}
+
+// unadmittedPermitWitness reports whether the current durable permit proves
+// that the recorded attempt was never admitted to a physical send.
+//
+// store.AuthorizeAccountPermit is the only transition from reserved to
+// dispatched, and the physical-call boundary commits it before the transport
+// sends. No transition returns a permit to reserved, and expiry also requires
+// reserved. So a permit that is still reserved, or that expired from reserved,
+// proves that no request left for this attempt. The permit must be the one
+// that the attempt was recorded with, and a reserved permit must still be moved
+// by its reserved-state compare-and-set in the settlement transaction.
+func unadmittedPermitWitness(
+	kind HandlerKind,
+	controls contract.ResultControls,
+	dispatch store.DispatchRecord,
+	attempt contract.Attempt,
+	held store.AccountPermit,
+	current store.AccountPermit,
+) bool {
+	if !permitReservedUntilAdmission(kind, controls) ||
+		current.State != store.AccountPermitReserved && current.State != store.AccountPermitExpired {
+		return false
+	}
+	return dispatch.State == store.DispatchPossiblySent && len(dispatch.Attempts) == 1 &&
+		sameWorkerPhysicalAttempt(dispatch.Attempts[0], attempt) &&
+		attempt.AttemptID == dispatch.Intent.AttemptID && attempt.DispatchID == dispatch.Intent.DispatchID &&
+		attempt.RecordedAt.Equal(current.ReservedAt) &&
+		current.Scope.Equal(held.Scope) && current.PermitID == held.PermitID &&
+		current.ConnectionID == held.ConnectionID && current.ProviderAccountID == held.ProviderAccountID &&
+		current.OwnerID == held.OwnerID && current.Units == held.Units && current.Fence == held.Fence &&
+		current.ReservedAt.Equal(held.ReservedAt)
 }
 
 func (service *WorkerService) ApplyCommand(
@@ -1420,6 +1598,241 @@ func workerProjectionCommit(run contract.RunRecord, projectionKey string) (store
 			Kind:      "worker_projection_recorded", PayloadRef: run.Spec.RunID,
 		},
 	}, nil
+}
+
+// unitActivityFailedReason is the public reason code of a run that the
+// workflow ended after a unit activity failed.
+const unitActivityFailedReason = "unit_activity_failed"
+
+const workerUnitFailureKeyPrefix = "unit-failure-v1-"
+
+// EndRunAfterUnitFailure ends the run after the workflow saw that a unit
+// activity failed and that Temporal will not run it again. It reads the
+// durable effect ledger and writes only the run record and its side records.
+// It resolves no handler, claims no task lease, takes no permit, records no
+// attempt and calls no provider.
+//
+// The ledger decides the end state. An unknown effect keeps the run
+// reconciling until a sound witness settles it. When no effect is unknown and
+// an effect is unsent, the run ends failed, or partial after a known success.
+// The run row lock orders this step and a fresh attempt, because prepare locks
+// the same row before it records the attempt.
+func (service *WorkerService) EndRunAfterUnitFailure(
+	ctx context.Context,
+	execution contract.WorkflowExecution,
+	request contract.WorkflowUnitRequest,
+) (contract.WorkflowProjectionResult, error) {
+	if service == nil || ctx == nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, nil)
+	}
+	if err := execution.Validate(); err != nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, err)
+	}
+	if err := request.Validate(); err != nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, err)
+	}
+	projectionKey, err := workerUnitFailureKey(request)
+	if err != nil {
+		return contract.WorkflowProjectionResult{}, workerFailure(ErrWorkerInvalidRequest, err)
+	}
+	var result contract.WorkflowProjectionResult
+	err = service.withinWorkerRun(ctx, execution, request.Run, func(
+		ctx context.Context,
+		tx *store.Transaction,
+		state workerRunState,
+	) error {
+		current, err := store.LoadWorkerRunForUpdate(ctx, tx, request.Run.RunID)
+		if err != nil {
+			return err
+		}
+		if receipt, found, err := store.LoadWorkerProjectionReceipt(
+			ctx, tx, request.Run.RunID, request.Run.Generation, projectionKey,
+		); err != nil {
+			return err
+		} else if found {
+			result = receipt.Result
+			return nil
+		}
+		if err := requireWorkerRunUnit(ctx, tx, request); err != nil {
+			return err
+		}
+		if workerTerminalState(current.State) {
+			result = contract.WorkflowProjectionResult{
+				RunID: current.Spec.RunID, Revision: current.Revision, State: current.State,
+			}
+			_, err := store.InsertWorkerProjectionReceipt(
+				ctx, tx, current.Spec.RunID, request.Run.Generation, projectionKey, result,
+			)
+			return err
+		}
+		now, err := store.ReadAuthenticationTime(ctx, tx)
+		if err != nil {
+			return err
+		}
+		projectedAt := now
+		if projectedAt.Before(current.ProjectionObservedAt) {
+			projectedAt = current.ProjectionObservedAt
+		}
+		// Only durable cancellation or the original deadline authorizes the
+		// closure of an unattempted retry. Without them, the retry keeps its
+		// effect unknown, so the run stays reconciling.
+		if current.CancelRequested || !now.Before(state.deadline) {
+			if err := store.CloseUnattemptedWorkerRetries(ctx, tx, current.Spec.RunID); err != nil {
+				return err
+			}
+		}
+		effects, err := store.ListWorkerRunEffects(ctx, tx, current.Spec.RunID)
+		if err != nil {
+			return err
+		}
+		var updated contract.RunRecord
+		switch {
+		case current.CancelRequested && (len(effects) == 0 || workerEffectsKnownUnsent(effects)):
+			updated, err = projectKnownUnsentWorkerCancellation(current, effects, projectedAt)
+		case len(effects) == 0:
+			return workerFailure(ErrWorkerCapabilityUnavailable, errors.New("run has no durable effect ledger to end"))
+		default:
+			updated, err = projectUnitFailureWorkerEnd(current, effects, projectedAt)
+		}
+		if err != nil {
+			return workerFailure(ErrWorkerConflict, err)
+		}
+		// The workflow fails with the unit error after this step, so Temporal
+		// reports the same orchestration condition.
+		updated.OrchestrationCondition = contract.OrchestrationFailed
+		if err := updated.Validate(); err != nil {
+			return workerFailure(ErrWorkerConflict, err)
+		}
+		if _, err := store.CommitRunTransition(
+			ctx, tx, workerUnitFailureEndCommit(updated, projectionKey, request.Unit.TaskID),
+		); err != nil {
+			return err
+		}
+		result = contract.WorkflowProjectionResult{
+			RunID: updated.Spec.RunID, Revision: updated.Revision, State: updated.State,
+		}
+		if err := result.Validate(); err != nil {
+			return err
+		}
+		_, err = store.InsertWorkerProjectionReceipt(
+			ctx, tx, updated.Spec.RunID, request.Run.Generation, projectionKey, result,
+		)
+		return err
+	})
+	if err != nil {
+		return contract.WorkflowProjectionResult{}, service.mapWorkerError(err)
+	}
+	return result, nil
+}
+
+// requireWorkerRunUnit refuses a failed unit that is not a task of this run
+// with a sealed dispatch.
+func requireWorkerRunUnit(ctx context.Context, tx *store.Transaction, request contract.WorkflowUnitRequest) error {
+	taskRef := store.TaskRef{RunID: request.Run.RunID, TaskID: request.Unit.TaskID}
+	if _, err := store.LoadTask(ctx, tx, taskRef); err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return workerFailure(ErrWorkerConflict, errors.New("failed unit is not a task of this run"))
+		}
+		return err
+	}
+	var err error
+	if request.Unit.DispatchID == "" {
+		_, err = store.LoadInitialWorkerDispatch(ctx, tx, taskRef)
+	} else {
+		_, err = store.LoadDispatch(ctx, tx, taskRef, request.Unit.DispatchID)
+	}
+	if errors.Is(err, store.ErrNotFound) {
+		return workerFailure(ErrWorkerConflict, errors.New("failed unit has no sealed dispatch in this run"))
+	}
+	return err
+}
+
+// projectUnitFailureWorkerEnd keeps the effect aggregate when an effect is
+// unknown or when no effect is unsent. Otherwise every unsent effect provably
+// had no attempt that could send, and the run ends failed, or partial after a
+// known success.
+func projectUnitFailureWorkerEnd(
+	current contract.RunRecord,
+	effects []contract.EffectRecord,
+	observedAt time.Time,
+) (contract.RunRecord, error) {
+	aggregate, err := current.ReconcileEffects(effects, false, "", observedAt)
+	if err != nil {
+		return contract.RunRecord{}, err
+	}
+	summary := aggregate.EffectSummary
+	if summary.Unknown != 0 || summary.Unsent == 0 {
+		return aggregate, nil
+	}
+	next := contract.RunStateFailed
+	if summary.Succeeded+summary.Unchanged != 0 {
+		next = contract.RunStatePartial
+	}
+	// One transition from the stored record keeps the revision step at one.
+	base := current
+	base.EffectSummary = summary
+	base.UnknownEffectCount = 0
+	ended, err := base.Transition(next, unitActivityFailedReason, observedAt)
+	if err != nil {
+		return contract.RunRecord{}, err
+	}
+	ended.ProjectionObservedAt = observedAt
+	if err := ended.Validate(); err != nil {
+		return contract.RunRecord{}, err
+	}
+	return ended, nil
+}
+
+func workerUnitFailureKey(request contract.WorkflowUnitRequest) (string, error) {
+	return workerRecordID(workerUnitFailureKeyPrefix, struct {
+		Scope        contract.Scope          `json:"scope"`
+		RunID        string                  `json:"run_id"`
+		Generation   uint64                  `json:"generation"`
+		IntentDigest contract.SemanticDigest `json:"intent_digest"`
+		TaskID       string                  `json:"task_id"`
+		DispatchID   contract.DispatchID     `json:"dispatch_id"`
+	}{
+		request.Run.Scope, request.Run.RunID, request.Run.Generation, request.Run.IntentDigest,
+		request.Unit.TaskID, request.Unit.DispatchID,
+	})
+}
+
+// workerUnitFailureEndCommit uses the side-record kinds of the final run
+// projection. Its record IDs derive from the unit failure key, so they never
+// match a final or repair projection.
+func workerUnitFailureEndCommit(run contract.RunRecord, projectionKey, taskID string) store.RunTransitionCommit {
+	base := strings.TrimPrefix(projectionKey, workerUnitFailureKeyPrefix)
+	payload := contract.SafePayload{
+		References: []contract.SafeReference{
+			{Name: "run", Ref: run.Spec.RunID},
+			{Name: "projection", Ref: projectionKey},
+			{Name: "task", Ref: taskID},
+		},
+		Counts: []contract.SafeCount{
+			{Name: "run_revision", Value: run.Revision},
+			{Name: "unknown", Value: run.UnknownEffectCount},
+		},
+		ReasonCodes: []string{"worker_projection", unitActivityFailedReason},
+	}
+	return store.RunTransitionCommit{
+		Run: run,
+		Receipt: store.Receipt{
+			ReceiptID: "worker-unit-failure-receipt-v1-" + base,
+			Kind:      "worker_projection", RunID: run.Spec.RunID, Payload: payload,
+		},
+		Audit: store.AuditEntry{
+			AuditID: "worker-unit-failure-audit-v1-" + base,
+			Action:  "worker_run_projected", TargetRef: run.Spec.RunID, Payload: payload,
+		},
+		Event: store.EventInput{
+			EventID: "worker-unit-failure-event-v1-" + base,
+			Type:    "worker_run_projected", Payload: payload,
+		},
+		Outbox: store.OutboxCommand{
+			CommandID: "worker-unit-failure-outbox-v1-" + base,
+			Kind:      "worker_projection_recorded", PayloadRef: run.Spec.RunID,
+		},
+	}
 }
 
 func (service *WorkerService) withinWorkerRun(
@@ -2345,12 +2758,17 @@ func projectKnownUnsentWorkerCancellation(
 		aggregate.EffectSummary.Total() != aggregate.EffectSummary.Unsent {
 		return contract.RunRecord{}, errors.New("cancelled run contains an effect that is not known unsent")
 	}
-	cancelled, err := current.Transition(contract.RunStateCancelled, "cancel_requested", observedAt)
+	// The stored record can keep an unknown count from an earlier projection
+	// after a definitive-unsent settlement changed the ledger. Install the
+	// ledger summary first, because a terminal transition refuses a positive
+	// unknown count. One transition keeps the revision step at one.
+	base := current
+	base.EffectSummary = aggregate.EffectSummary
+	base.UnknownEffectCount = 0
+	cancelled, err := base.Transition(contract.RunStateCancelled, "cancel_requested", observedAt)
 	if err != nil {
 		return contract.RunRecord{}, err
 	}
-	cancelled.EffectSummary = aggregate.EffectSummary
-	cancelled.UnknownEffectCount = 0
 	cancelled.OrchestrationCondition = contract.OrchestrationCancelled
 	cancelled.ProjectionObservedAt = observedAt
 	if err := cancelled.Validate(); err != nil {
@@ -2441,14 +2859,41 @@ func minWorkerDuration(left, right time.Duration) time.Duration {
 	return right
 }
 
+// workerCallbackContext bounds the provider callback of one unit: Execute, or
+// Reconcile when acceptedDeadline is zero. The callback ends at the earlier of
+// one transport limit (worker.activity_timeouts.transport) from now and one
+// settlement reserve before the settlement cutoff (workerSettlementCutoff).
+//
+// So a callback that uses its whole bound ends at least one reserve before the
+// settlement deadline, whichever of the accepted run deadline and the activity
+// attempt deadline comes first. ExecuteUnit gives it the lease context
+// (workerLeaseContext), so the lease deadline counts as the attempt deadline
+// when it comes first. The settlement gets that reserve less the time
+// that the callback and the publication step take to return after their
+// deadlines.
+//
+// The publication step (workerPublicationContext) ends one settlement reserve
+// before the settlement cutoff. When the settlement cutoff limits this bound,
+// the callback and the publication step end at the same time and share the
+// time before it. A callback that then uses its whole bound leaves the
+// publication step no time. The worker then settles the unit with a
+// publication failure, which does not change the provider member outcomes.
+// When a settlement cutoff exists and the transport limit ends this bound
+// first, the publication step keeps the time between the callback deadline
+// and its own deadline. When neither ctx nor acceptedDeadline gives a cutoff,
+// only the transport limit bounds the callback, and the publication step has
+// no deadline of its own (workerPublicationContext). That case does not occur
+// in production, because the activity attempt always has a deadline.
 func workerCallbackContext(
 	ctx context.Context,
 	acceptedDeadline time.Time,
-	transport time.Duration,
+	heartbeatTimeout time.Duration,
+	transportTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	deadline := time.Now().Add(transport)
-	if acceptedDeadline.Before(deadline) {
-		deadline = acceptedDeadline
+	deadline := time.Now().Add(transportTimeout)
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	if cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve); ok && cutoff.Add(-reserve).Before(deadline) {
+		deadline = cutoff.Add(-reserve)
 	}
 	return context.WithDeadline(ctx, deadline)
 }
@@ -2459,20 +2904,107 @@ func workerSettlementContext(
 	heartbeatTimeout time.Duration,
 	transportTimeout time.Duration,
 ) (context.Context, context.CancelFunc) {
-	now := time.Now()
-	deadline := now.Add(transportTimeout)
-	if !acceptedDeadline.IsZero() && acceptedDeadline.Before(deadline) {
-		deadline = acceptedDeadline
-	}
-	if activityDeadline, ok := ctx.Deadline(); ok {
-		reserve := minWorkerDuration(heartbeatTimeout/2, transportTimeout/2)
-		if reserve <= 0 {
-			reserve = time.Nanosecond
-		}
-		activitySettlementDeadline := activityDeadline.Add(-reserve)
-		if activitySettlementDeadline.Before(deadline) {
-			deadline = activitySettlementDeadline
-		}
+	deadline := time.Now().Add(transportTimeout)
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	if cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve); ok && cutoff.Before(deadline) {
+		deadline = cutoff
 	}
 	return context.WithDeadline(context.WithoutCancel(ctx), deadline)
+}
+
+// workerPublicationContext bounds the publication of PM's own objects for one
+// unit: the continuation envelope and the result. The transport limit
+// (worker.activity_timeouts.transport) bounds the provider callback only, so
+// this context does not inherit the callback deadline.
+//
+// The step ends one settlement reserve before the settlement cutoff. The cutoff
+// is the earlier of the accepted run deadline and one reserve before the
+// activity attempt deadline. ExecuteUnit gives this function the lease context
+// (workerLeaseContext), so the lease deadline counts as the attempt deadline
+// when it comes first. So the publication step does not use the reserve that
+// it leaves for the settlement, whichever deadline comes first. The bound
+// of the provider callback (workerCallbackContext) ends no later than the
+// bound of this step, so a late callback does not use that reserve either.
+//
+// Each object-store request in the step keeps its own bound,
+// artifacts.execution.request_timeout, in the object-store adapter. The
+// PostgreSQL bind in objects.Publisher.Upload has no bound of its own. It
+// relies on this context.
+//
+// When ctx has no deadline and the unit has no accepted deadline, the step has
+// no bound of its own. That cannot occur in ExecuteUnit, which always gives
+// the lease context. It cannot occur in production either. The worker runs
+// ExecuteUnit as a Temporal activity with a StartToClose timeout
+// (internal/workflows/options.go), and contract.ActivityTimeouts.Validate
+// requires that timeout to be positive (internal/contract/workflow.go).
+func workerPublicationContext(
+	ctx context.Context,
+	acceptedDeadline time.Time,
+	heartbeatTimeout time.Duration,
+	transportTimeout time.Duration,
+) (context.Context, context.CancelFunc) {
+	reserve := workerSettlementReserve(heartbeatTimeout, transportTimeout)
+	cutoff, ok := workerSettlementCutoff(ctx, acceptedDeadline, reserve)
+	if !ok {
+		return context.WithCancel(ctx)
+	}
+	return context.WithDeadline(ctx, cutoff.Add(-reserve))
+}
+
+// workerLeaseDeadline is the local time at which a task lease ends at the
+// latest. claimStarted is a local time taken before the claim. The function
+// adds the lease TTL (ExpiresAt minus ClaimedAt, both in the PostgreSQL clock)
+// to it. So it compares no local time with a PostgreSQL time, and, when the
+// two clocks run at the same rate, the result is not later than the real end
+// of the lease.
+func workerLeaseDeadline(claimStarted time.Time, lease store.Lease) time.Time {
+	return claimStarted.Add(lease.ExpiresAt.Sub(lease.ClaimedAt))
+}
+
+// workerLeaseContext is the context from which the steps of one unit take
+// their limits: the provider callback, the publication step and the
+// settlement. Its deadline is the earlier of the deadline of ctx and the lease
+// deadline. The settlement needs a current task lease, so a step that ends
+// after the lease ends makes the settlement fail with a stale task fence, and
+// the unit then settles nothing. A zero lease deadline ends every step at once.
+//
+// In the Temporal activity the attempt deadline usually comes first: the claim
+// follows the start of the attempt, and the lease TTL is at most the sealed
+// start_to_close. This context then keeps the attempt deadline exactly. But
+// claimWorkerTask also limits the TTL of a fresh lease to the accepted run
+// lifetime that remained at state.now, the database time that the worker
+// sampled before the preparation. workerLeaseDeadline adds that TTL to
+// claimStarted, a later local time. So the derived lease deadline can be up
+// to the preparation time after the accepted run deadline, and a shortened
+// lease does not always come first. When the derived lease deadline comes
+// before the attempt deadline, each step can end earlier than with the attempt
+// deadline alone: the settlement cutoff can move to one reserve before the
+// lease deadline. A caller with a later deadline, or with none, also gets the
+// lease deadline.
+func workerLeaseContext(ctx context.Context, leaseDeadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithDeadline(ctx, leaseDeadline)
+}
+
+// workerSettlementCutoff is the latest time at which a unit settlement may end:
+// the accepted run deadline, or one settlement reserve before the activity
+// attempt deadline, whichever is earlier. ok is false when neither exists.
+func workerSettlementCutoff(ctx context.Context, acceptedDeadline time.Time, reserve time.Duration) (time.Time, bool) {
+	cutoff := acceptedDeadline
+	if activityDeadline, ok := ctx.Deadline(); ok {
+		activityCutoff := activityDeadline.Add(-reserve)
+		if cutoff.IsZero() || activityCutoff.Before(cutoff) {
+			cutoff = activityCutoff
+		}
+	}
+	return cutoff, !cutoff.IsZero()
+}
+
+// workerSettlementReserve is the part of the activity attempt that the worker
+// keeps free after the settlement deadline.
+func workerSettlementReserve(heartbeatTimeout, transportTimeout time.Duration) time.Duration {
+	reserve := minWorkerDuration(heartbeatTimeout/2, transportTimeout/2)
+	if reserve <= 0 {
+		reserve = time.Nanosecond
+	}
+	return reserve
 }

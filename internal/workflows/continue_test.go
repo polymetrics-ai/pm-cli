@@ -16,8 +16,10 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	commonpb "go.temporal.io/api/common/v1"
 	enumspb "go.temporal.io/api/enums/v1"
 	historypb "go.temporal.io/api/history/v1"
+	workflowpb "go.temporal.io/api/workflow/v1"
 	workflowservice "go.temporal.io/api/workflowservice/v1"
 	"go.temporal.io/sdk/activity"
 	sdkclient "go.temporal.io/sdk/client"
@@ -560,20 +562,9 @@ func (harness *productionWorkflowHarness) relayAdmitted(
 	if err := relay.RunOnce(ctx); err != nil {
 		t.Fatal(err)
 	}
-	var runID string
-	for runID == "" {
-		description, err := harness.client.DescribeWorkflowExecution(ctx, admitted.WorkflowID, "")
-		if err == nil {
-			runID = description.GetWorkflowExecutionInfo().GetExecution().GetRunId()
-			if runID != "" {
-				break
-			}
-		}
-		select {
-		case <-ctx.Done():
-			t.Fatal("relayed workflow did not become observable")
-		case <-time.After(20 * time.Millisecond):
-		}
+	runID, err := relayedWorkflowRunID(ctx, harness.client, admitted.WorkflowID)
+	if err != nil {
+		t.Fatal(err)
 	}
 	testfixture.CleanupWorkflowChain(
 		t, harness.client, harness.options.Namespace, admitted.WorkflowID, runID,
@@ -634,6 +625,97 @@ func (harness *productionWorkflowHarness) relayAdmitted(
 	return harness.client.GetWorkflow(ctx, canonical.WorkflowID, runID), canonical
 }
 
+// workflowDescriber is the one client call that relayedWorkflowRunID makes.
+type workflowDescriber interface {
+	DescribeWorkflowExecution(
+		ctx context.Context,
+		workflowID, runID string,
+	) (*workflowservice.DescribeWorkflowExecutionResponse, error)
+}
+
+// relayedWorkflowRunID asks Temporal once for the run that the relay started.
+// relay.RunOnce returns without an error only after Temporal answered the
+// start request (StartOrReconcile in internal/temporal/outbox.go). So this
+// answer must name the run. A missing run is a failure, not a reason to ask
+// again.
+func relayedWorkflowRunID(ctx context.Context, client workflowDescriber, workflowID string) (string, error) {
+	description, err := client.DescribeWorkflowExecution(ctx, workflowID, "")
+	if err != nil {
+		return "", fmt.Errorf("describe the relayed workflow: %w", err)
+	}
+	runID := description.GetWorkflowExecutionInfo().GetExecution().GetRunId()
+	if runID == "" {
+		return "", errors.New("the relayed workflow has no run after the relay started it")
+	}
+	return runID, nil
+}
+
+// TestRelayedWorkflowRunIDAsksOnce checks the start wait of relayAdmitted with
+// a scripted client. It needs no stack. A repeated request or a timed pause
+// in relayedWorkflowRunID fails it.
+func TestRelayedWorkflowRunIDAsksOnce(t *testing.T) {
+	t.Run("one answer gives the run with no timed pause", func(t *testing.T) {
+		client := &scriptedDescriber{answers: []describeAnswer{{runID: "relayed-run-1"}}}
+		// A timed pause stops on this ended context before the request.
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		runID, err := relayedWorkflowRunID(ctx, client, "pm/run/relayed")
+		if err != nil || runID != "relayed-run-1" {
+			t.Fatalf("relayed run = %q error %v; want relayed-run-1 from one answer", runID, err)
+		}
+		if client.calls != 1 {
+			t.Fatalf("describe requests = %d; want 1", client.calls)
+		}
+	})
+	t.Run("a missing run fails without a second request", func(t *testing.T) {
+		client := &scriptedDescriber{answers: []describeAnswer{{runID: ""}, {runID: "relayed-run-2"}}}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		runID, err := relayedWorkflowRunID(ctx, client, "pm/run/relayed")
+		if err == nil || client.calls != 1 {
+			t.Fatalf("relayed run = %q error %v after %d describe requests; want a failure after 1", runID, err, client.calls)
+		}
+	})
+	t.Run("an error answer fails without a second request", func(t *testing.T) {
+		client := &scriptedDescriber{answers: []describeAnswer{
+			{err: errors.New("workflow not found")}, {runID: "relayed-run-3"},
+		}}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		runID, err := relayedWorkflowRunID(ctx, client, "pm/run/relayed")
+		if err == nil || client.calls != 1 {
+			t.Fatalf("relayed run = %q error %v after %d describe requests; want a failure after 1", runID, err, client.calls)
+		}
+	})
+}
+
+type describeAnswer struct {
+	runID string
+	err   error
+}
+
+// scriptedDescriber gives its answers in order and repeats the last one.
+type scriptedDescriber struct {
+	answers []describeAnswer
+	calls   int
+}
+
+func (client *scriptedDescriber) DescribeWorkflowExecution(
+	_ context.Context,
+	workflowID, _ string,
+) (*workflowservice.DescribeWorkflowExecutionResponse, error) {
+	client.calls++
+	answer := client.answers[min(client.calls, len(client.answers))-1]
+	if answer.err != nil {
+		return nil, answer.err
+	}
+	return &workflowservice.DescribeWorkflowExecutionResponse{
+		WorkflowExecutionInfo: &workflowpb.WorkflowExecutionInfo{
+			Execution: &commonpb.WorkflowExecution{WorkflowId: workflowID, RunId: answer.runID},
+		},
+	}, nil
+}
+
 type blockingExecutionController struct {
 	entered      chan struct{}
 	release      chan struct{}
@@ -666,17 +748,45 @@ func (controller *blockingExecutionController) Reconcile(
 	return successfulExecutionObservation(request), nil
 }
 
-type callbackTiming struct {
-	remaining time.Duration
-	elapsed   time.Duration
+// callbackStop is what the first provider callback saw through the registered
+// production activity: its context deadline and the attempt deadline when it
+// started, and when and why its context ended.
+type callbackStop struct {
+	deadline        time.Time
+	remaining       time.Duration
+	attemptDeadline time.Time
+	errAtStart      error
+	stoppedAt       time.Time
+	elapsed         time.Duration
+	err             error
+	cause           error
+	problem         error
 }
 
+// errLaterCallback ends a callback after the first one. A later callback
+// belongs to a retried attempt. It returns at once, so a retry does not wait
+// for a second transport window. Settlement reads only that the callback
+// returned an error.
+var errLaterCallback = errors.New("controlled provider callback of a retried attempt returns at once")
+
+// timeoutExecutionController is the provider callback of R12 C09. The first
+// callback waits until the production activity ends its context. The wait has
+// two bounds: the activity attempt deadline, which ends the parent context, and
+// stopWaiting, which the test calls at cleanup.
 type timeoutExecutionController struct {
-	finished chan callbackTiming
+	mu           sync.Mutex
+	calls        int
+	first        callbackStop
+	firstStopped chan struct{}
+	abandon      chan struct{}
+	abandonOnce  sync.Once
 }
 
 func newTimeoutExecutionController() *timeoutExecutionController {
-	return &timeoutExecutionController{finished: make(chan callbackTiming, 1)}
+	return &timeoutExecutionController{
+		firstStopped: make(chan struct{}),
+		abandon:      make(chan struct{}),
+	}
 }
 
 func (controller *timeoutExecutionController) Execute(
@@ -684,14 +794,65 @@ func (controller *timeoutExecutionController) Execute(
 	_ app.ExecutionRequest,
 ) (app.ExecutionObservation, error) {
 	started := time.Now()
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		return app.ExecutionObservation{}, errors.New("provider transport context has no deadline")
+	controller.mu.Lock()
+	controller.calls++
+	first := controller.calls == 1
+	controller.mu.Unlock()
+	if !first {
+		return app.ExecutionObservation{}, errLaterCallback
 	}
-	remaining := time.Until(deadline)
-	<-ctx.Done()
-	controller.finished <- callbackTiming{remaining: remaining, elapsed: time.Since(started)}
-	return app.ExecutionObservation{}, ctx.Err()
+
+	observed := callbackStop{errAtStart: ctx.Err()}
+	deadline, ok := ctx.Deadline()
+	switch {
+	case !ok:
+		observed.problem = errors.New("provider transport context has no deadline")
+	case !activity.IsActivity(ctx):
+		observed.problem = errors.New("provider transport context is outside the activity attempt")
+	default:
+		observed.deadline = deadline
+		observed.remaining = time.Until(deadline)
+		observed.attemptDeadline = activity.GetInfo(ctx).Deadline
+	}
+	if observed.problem == nil {
+		select {
+		case <-ctx.Done():
+			observed.stoppedAt = time.Now()
+			observed.elapsed = observed.stoppedAt.Sub(started)
+			observed.err = ctx.Err()
+			observed.cause = context.Cause(ctx)
+		case <-controller.abandon:
+			observed.problem = errors.New("the test ended before the provider callback context ended")
+		}
+	}
+	controller.mu.Lock()
+	controller.first = observed
+	controller.mu.Unlock()
+	close(controller.firstStopped)
+	if observed.problem != nil {
+		return app.ExecutionObservation{}, observed.problem
+	}
+	return app.ExecutionObservation{}, observed.err
+}
+
+// waitFirstStop waits until the first callback has stopped, or until ctx ends.
+// It returns the first callback and the number of callbacks.
+func (controller *timeoutExecutionController) waitFirstStop(ctx context.Context) (callbackStop, int, bool) {
+	select {
+	case <-controller.firstStopped:
+	case <-ctx.Done():
+		controller.mu.Lock()
+		defer controller.mu.Unlock()
+		return callbackStop{}, controller.calls, false
+	}
+	controller.mu.Lock()
+	defer controller.mu.Unlock()
+	return controller.first, controller.calls, true
+}
+
+// stopWaiting releases a first callback that still waits for its context.
+func (controller *timeoutExecutionController) stopWaiting() {
+	controller.abandonOnce.Do(func() { close(controller.abandon) })
 }
 
 func (controller *timeoutExecutionController) Reconcile(

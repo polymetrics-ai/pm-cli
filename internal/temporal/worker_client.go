@@ -145,14 +145,16 @@ func validateWorkflowValue(value interface{}) error {
 	// Admit only registered, constant metadata; never arbitrary strings or ints.
 	switch value := value.(type) {
 	case string:
-		if value != contract.WorkflowRunDeadlineProjectionChangeID {
+		if value != contract.WorkflowRunDeadlineProjectionChangeID &&
+			value != contract.WorkflowUnitFailureEndChangeID {
 			return errors.New("workflow version marker change is not admitted")
 		}
 		return nil
 	case *string:
 		return validateWorkflowValue(*value)
 	case workflow.Version:
-		if value != contract.WorkflowRunDeadlineProjectionVersion {
+		if value != contract.WorkflowRunDeadlineProjectionVersion &&
+			value != contract.WorkflowUnitFailureEndVersion {
 			return errors.New("workflow version marker version is not admitted")
 		}
 		return nil

@@ -137,6 +137,35 @@ func executeProjection(
 	return result, nil
 }
 
+// errUnitFailureEndResult marks an end result that is invalid or names
+// another run. The caller reports it without the result's values.
+var errUnitFailureEndResult = errors.New("unit failure activity returned a result that does not name the run")
+
+// executeUnitFailureEnd runs the activity that ends the run after a unit
+// activity failed. It refuses a result that is invalid or names another run
+// with errUnitFailureEndResult.
+func executeUnitFailureEnd(
+	ctx workflow.Context,
+	request contract.WorkflowUnitRequest,
+	timeouts contract.ActivityTimeouts,
+) error {
+	if err := request.Validate(); err != nil {
+		return err
+	}
+	activityCtx, err := activityContext(ctx, timeouts)
+	if err != nil {
+		return err
+	}
+	var result contract.WorkflowProjectionResult
+	if err := workflow.ExecuteActivity(activityCtx, contract.UnitFailureActivityName, request).Get(activityCtx, &result); err != nil {
+		return err
+	}
+	if result.Validate() != nil || result.RunID != request.Run.RunID {
+		return errUnitFailureEndResult
+	}
+	return nil
+}
+
 func drainControlSignals(
 	ctx workflow.Context,
 	state *coordinatorState,
