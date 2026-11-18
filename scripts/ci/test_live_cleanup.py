@@ -10,6 +10,7 @@ owner steps.
 """
 import os
 from pathlib import Path
+import pwd
 import subprocess
 import sys
 import tempfile
@@ -17,6 +18,8 @@ import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
 UID = os.getuid()
+# The subordinate UID range of the live account in the fake /etc/subuid.
+SUBUID = 100000
 SINKS = ("service-logs container-logs container-records temporal-history postgresql object-store "
          "step-summary test-output host-processes").split()
 RECEIPT = "".join(f"sink={name} count=0 complete\n" for name in SINKS) + "complete=true\n"
@@ -71,6 +74,11 @@ class Host:
         (self.run_root / "scan-receipt").write_text(RECEIPT)
         (self.run_root / "fixture").mkdir()
         (self.home / "pm-live-cache/77-1").mkdir(parents=True)
+        (self.root / "etc").mkdir()
+        # One range for pmlive (the runner check) and one for the user of the
+        # test (the cleanup check, which runs as that user).
+        (self.root / "etc/subuid").write_text(
+            f"pmlive:{SUBUID}:65536\n{pwd.getpwuid(UID).pw_name}:{SUBUID}:65536\n")
 
     def tool(self, name, code):
         path = self.bin / name
@@ -190,9 +198,11 @@ class CleanupCheck(unittest.TestCase):
         self.host.process(10, UID)
         self.host.process(11, UID, "/system.slice/pm-live-runner.service")
         self.host.process(12, UID + 1)
+        self.host.process(13, SUBUID + 7)
         result = self.check()
         self.assertEqual(result.returncode, 0, result.stdout)
-        self.assertIn("report, not a gate: 1 processes of the live UID outside the runner service", result.stdout)
+        self.assertIn("report, not a gate: 2 processes of the live UID or its subordinate UIDs outside the runner "
+                      "service", result.stdout)
 
 
 class RunnerCheck(unittest.TestCase):
@@ -214,10 +224,10 @@ class RunnerCheck(unittest.TestCase):
             (self.runner / path).parent.mkdir(parents=True, exist_ok=True)
             (self.runner / path).write_text(text)
         self.unit = host.root / "etc/systemd/system/pm-live-runner.service"
-        self.unit.parent.mkdir(parents=True)
+        self.unit.parent.mkdir(parents=True, exist_ok=True)
         self.unit.write_text("[Service]\nUser=pmlive\nExecStart=/opt/pm-live/actions-runner/run.sh\n"
                              "EnvironmentFile=/opt/pm-live/actions-runner/.env\n")
-        (host.root / "etc/pm-live").mkdir()
+        (host.root / "etc/pm-live").mkdir(exist_ok=True)
         (host.home / ".config/containers").mkdir(parents=True)
         (host.home / ".bashrc").write_text("# fixed\n")
         (host.home / ".local/share/containers/storage").mkdir(parents=True)
@@ -270,11 +280,23 @@ class RunnerCheck(unittest.TestCase):
                 self.assertEqual(result.returncode, 1, result.stdout)
                 self.assertEqual(self.list.read_bytes(), self.recorded)
 
+    # crrao m1: a process of a subordinate UID of pmlive, and a range that is
+    # missing, unreadable or not one range. Each fails the gate.
+    SUBUID_FAULTS = {
+        "subordinate UID process": lambda self: self.host.process(23, SUBUID + 5),
+        "subordinate UID range end": lambda self: self.host.process(24, SUBUID + 65535),
+        "no range": lambda self: (self.host.root / "etc/subuid").write_text(""),
+        "two ranges": lambda self: (self.host.root / "etc/subuid").write_text(
+            f"pmlive:{SUBUID}:65536\npmlive:300000:65536\n"),
+        "unreadable range": lambda self: (self.host.root / "etc/subuid").chmod(0),
+    }
+
     def test_the_gate(self):
         cases = {"live UID process": lambda: self.host.process(20, UID),
                  "user manager cgroup": lambda: self.host.process(21, UID, f"/user.slice/user-{UID}.slice/user@{UID}.service/init.scope"),
                  "unreadable entry": lambda: (self.host.process(22, UID + 1) / "status").chmod(0),
-                 "runtime folder": lambda: self.host.runtime.mkdir(parents=True)}
+                 "runtime folder": lambda: self.host.runtime.mkdir(parents=True),
+                 **{name: (lambda fault=fault: fault(self)) for name, fault in self.SUBUID_FAULTS.items()}}
         for name, fault in cases.items():
             with self.subTest(case=name):
                 self.tearDown()
@@ -293,7 +315,8 @@ class RunnerCheck(unittest.TestCase):
                  "user manager cgroup": (lambda: self.host.process(
                      21, UID, f"/user.slice/user-{UID}.slice/user@{UID}.service/init.scope"), 1),
                  "unreadable entry": (lambda: (self.host.process(22, UID + 1) / "status").chmod(0), 1),
-                 "runtime folder": (lambda: self.host.runtime.mkdir(parents=True), 1)}
+                 "runtime folder": (lambda: self.host.runtime.mkdir(parents=True), 1),
+                 **{name: ((lambda fault=fault: fault(self)), 1) for name, fault in self.SUBUID_FAULTS.items()}}
         for name, (fault, expected) in cases.items():
             with self.subTest(case=name):
                 self.tearDown()
@@ -308,6 +331,19 @@ class RunnerCheck(unittest.TestCase):
                     self.assertNotEqual(list(folder.iterdir()), [], folder)
                 self.assertNotIn("list", result.stdout)
                 self.assertEqual(self.list.read_bytes(), self.recorded)
+
+    def test_unit_rules_hold_for_a_recorded_unit(self):
+        # crrao m1: the list holds what the owner installed, so these lines are
+        # recorded first. Only the unit rules can refuse them.
+        for line, expected in (("KillMode=process\n", 1), ("Slice=user.slice\n", 1),
+                               ("KillMode=control-group\n", 0)):
+            with self.subTest(line=line):
+                self.tearDown()
+                self.setUp()
+                self.unit.write_text(self.unit.read_text() + line)
+                self.assertEqual(self.host.run(self.script, "--record").returncode, 0)
+                result = self.check()
+                self.assertEqual(result.returncode, expected, result.stdout)
 
     def test_record_refuses_a_forbidden_file(self):
         (self.host.home / ".ssh").mkdir()

@@ -85,18 +85,29 @@ if [ "${1:-}" = --record ]; then
   exit 1
 fi
 
-# 1. The gate: no process of the live UID, also in the user manager's or the
-# engine's cgroup (N1), and no runtime folder. An unreadable entry fails.
+# 1. The gate: no process of the live UID or of its one subordinate UID range
+# in /etc/subuid (crrao m1), also in the user manager's or the engine's cgroup
+# (N1), and no runtime folder. An unreadable entry fails. A missing or
+# unreadable range, or more than one range, fails.
 gate=0
+range=$(/usr/bin/awk -F : -v user="$user" -v uid="$uid" '
+  $1 == user || $1 == uid { lines++; if (NF == 3 && $2 ~ /^[0-9]+$/ && $3 ~ /^[1-9][0-9]*$/) { low = $2; high = $2 + $3 } }
+  END { if (lines == 1 && high != "") print low, high }' "$root/etc/subuid" 2> /dev/null)
+if [ -z "$range" ]; then
+  fail "the subordinate UID range of $user in /etc/subuid is missing, unreadable or not one range" && gate=1
+  range='-1 -1'
+fi
 for entry in "$proc"/[0-9]*; do
   [ -d "$entry" ] || continue
-  ids=$(/usr/bin/awk '$1 == "Uid:" { print $2, $3, $4, $5; exit }' "$entry/status" 2> /dev/null)
-  if [ -z "$ids" ]; then
+  state=$(/usr/bin/awk -v uid="$uid" -v low="${range% *}" -v high="${range#* }" '$1 == "Uid:" {
+    for (i = 2; i <= 5; i++) if ($i == uid || ($i >= low && $i < high)) { print "live"; exit }
+    print "other"; exit }' "$entry/status" 2> /dev/null)
+  if [ -z "$state" ]; then
     # An entry that is gone ended after the listing.
     [ ! -d "$entry" ] || { fail "process entry ${entry##*/} cannot be read" && gate=1; }
     continue
   fi
-  case " $ids " in *" $uid "*) fail "process ${entry##*/} runs as $user" && gate=1 ;; esac
+  [ "$state" = other ] || { fail "process ${entry##*/} runs as $user or a subordinate UID of it" && gate=1; }
 done
 if [ -e "$root/run/user/$uid" ]; then fail "$root/run/user/$uid exists" && gate=1; fi
 [ "$gate" -ne 0 ] || pass "no $user process and no runtime folder"
@@ -164,6 +175,10 @@ for line in "User=$user" ExecStart=/opt/pm-live/actions-runner/run.sh Environmen
 done
 if /usr/bin/grep -E '^[[:space:]]*Slice=' -- "$unit" 2> /dev/null | /usr/bin/grep -qvxF Slice=system.slice; then
   fail 'the unit runs outside system.slice'
+fi
+# The service stop must kill each process of the cgroup, whatever its UID.
+if /usr/bin/grep -E '^[[:space:]]*KillMode=' -- "$unit" 2> /dev/null | /usr/bin/grep -qvxF KillMode=control-group; then
+  fail 'the unit has a KillMode other than control-group'
 fi
 
 if [ "$status" -eq 0 ]; then pass 'the runner may start'; else fail 'do not start the runner'; fi

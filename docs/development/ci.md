@@ -452,17 +452,17 @@ The owner installs root-owned copies of [live-cleanup-check.sh](../../scripts/ci
 2. It removes the token file by name. `rm` removes a symbolic link itself, never its target. The token directory must then be empty. The directory stays.
 3. It resets the engine of the account (`podman system reset --force`). Then no container, pod, volume or image may stay, and only the default network.
 4. It removes the run roots and the cache folder with `podman unshare rm -rf`, and checks that both are absent.
-5. Only `in-job`: it reports the number of processes of the live UID outside the cgroup of the runner service. This is a report, not a gate. The live UID can move its own processes inside its user cgroup tree.
+5. Only `in-job`: it reports the number of processes of the live UID and of its subordinate UIDs outside the cgroup of the runner service. This is a report, not a gate. The live UID can move its own processes inside its user cgroup tree.
 
 Any failure exits 1, and the cleanup is then uncertain (owner step 14).
 
 `live-runner-check.sh` runs as root before each start of the runner:
 
-1. The gate: no process of the live UID in `/proc`, also not in the cgroup of the user manager or of the engine. An entry that cannot be read fails. `/run/user/<uid>` must not exist.
+1. The gate: `/proc` must show no process of the live UID or of its subordinate UID range. This includes the cgroups of the user manager and of the engine. Root reads the range from `/etc/subuid`. A missing or unreadable range, or more than one range, fails. An entry that cannot be read fails. `/run/user/<uid>` must not exist.
 2. Only when the gate passes, it empties the work folder `/var/lib/pm-live/work`, `_diag`, the engine storage `~/.local/share/containers` and the cache folder. A symbolic link in these paths fails.
 3. It compares the files with the root-held list `/etc/pm-live/runner-files.sha256`. The list has the owner, group, mode, SHA-256 and path of each file. It covers `/opt/pm-live/actions-runner` except `_diag`, the unit file, and the home folder of the live account except the emptied folders. A `~/.ssh` folder and a file in `~/.config/systemd/user/` also fail.
 4. The live account has no crontab and no `at` job.
-5. The runner has the key `disableUpdate` set to `true` in `.runner` (`--disableupdate`). The unit has the lines `User=pmlive`, `ExecStart=/opt/pm-live/actions-runner/run.sh` and `EnvironmentFile=/opt/pm-live/actions-runner/.env`, and no slice other than `system.slice`.
+5. The runner has the key `disableUpdate` set to `true` in `.runner` (`--disableupdate`). The unit has the lines `User=pmlive`, `ExecStart=/opt/pm-live/actions-runner/run.sh` and `EnvironmentFile=/opt/pm-live/actions-runner/.env`, and no slice other than `system.slice`. A `KillMode=` line other than `KillMode=control-group` fails, because the service stop must kill each process of its cgroup, whatever its UID.
 
 Any failure exits 1, and the owner does not start the runner. The check never records the list. `live-runner-check.sh --record` records it. The owner runs it once at install, last, and again only after a change that the owner made.
 

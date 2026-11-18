@@ -133,15 +133,24 @@ done
 # 5. in-job: a report, not a gate (R2-4, N1). The live UID can move its own
 # processes in its user cgroup tree, so this list proves nothing.
 if [ "$mode" = in-job ]; then
+  # The live UID and its subordinate UID range in /etc/subuid (crrao m1).
+  range=$(/usr/bin/awk -F : -v user="$(/usr/bin/id -un)" -v uid="$uid" '
+    ($1 == user || $1 == uid) && NF == 3 { print $2, $2 + $3; exit }' "$root/etc/subuid" 2> /dev/null)
+  [ -n "$range" ] || {
+    printf '%s\n' 'live-cleanup-check: report: the subordinate UID range is unknown'
+    range='-1 -1'
+  }
   count=0
   for entry in "$proc"/[0-9]*; do
-    owner=$(/usr/bin/awk '$1 == "Uid:" { print $2; exit }' "$entry/status" 2> /dev/null) || continue
-    [ "$owner" = "$uid" ] || continue
+    state=$(/usr/bin/awk -v uid="$uid" -v low="${range% *}" -v high="${range#* }" '$1 == "Uid:" {
+      for (i = 2; i <= 5; i++) if ($i == uid || ($i >= low && $i < high)) { print "live"; exit } }' \
+      "$entry/status" 2> /dev/null) || continue
+    [ "$state" = live ] || continue
     group=$(/usr/bin/awk -F '::' '/^0::/ { print $2; exit }' "$entry/cgroup" 2> /dev/null)
     case "$group" in /system.slice/pm-live-runner.service | /system.slice/pm-live-runner.service/*) continue ;; esac
     count=$((count + 1))
   done
-  printf 'live-cleanup-check: report, not a gate: %s processes of the live UID outside the runner service\n' "$count"
+  printf 'live-cleanup-check: report, not a gate: %s processes of the live UID or its subordinate UIDs outside the runner service\n' "$count"
 fi
 
 if [ "$status" -eq 0 ]; then pass "$mode cleanup"; else fail "$mode cleanup: uncertain"; fi
