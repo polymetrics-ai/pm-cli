@@ -1427,6 +1427,70 @@ class GoTestReport(unittest.TestCase):
         result, _ = self.run_with_signals(["/usr/bin/true"], [signal.SIGTERM], lambda group: [], True, "linux")
         self.assertIn("refused to send", result[3] or "")
 
+    # crrao I8 at b558b4a: the child runs the reporter with no deadline and
+    # no timeout, every group signal refused (forced Darwin). SIGTERM comes
+    # during the real main wait, and SIGINT during its refusal handling.
+    TWO_SIGNALS_CHILD = """\
+import importlib.util, json, signal, subprocess, sys
+from pathlib import Path
+report, out, hold = sys.argv[1:4]
+spec = importlib.util.spec_from_file_location("go_test_report", report)
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module.KILL_GRACE, module.sys.platform, module.live_group_members = 1, "darwin", lambda group: []
+started, nested, real = [], [], module.ExitWatch
+class Recording(subprocess.Popen):
+    def __init__(self, *arguments, **options):
+        super().__init__(*arguments, **options)
+        started.append(self)
+def refused(group, signum):
+    if signum == signal.SIGTERM and not nested:
+        nested.append(signum)
+        signal.raise_signal(signal.SIGINT)
+    raise PermissionError(1, "Operation not permitted")
+class SignalledWatch:
+    def __init__(self, pid, wake=None):
+        self.real, self.first = (real(pid) if wake is None else real(pid, wake)), True
+    exited = property(lambda self: self.real.exited)
+    def wait(self, timeout):
+        if self.first:
+            self.first = False
+            signal.raise_signal(signal.SIGTERM)
+        return self.real.wait(timeout)
+    def close(self):
+        self.real.close()
+module.subprocess.Popen, module.os.killpg, module.ExitWatch = Recording, refused, SignalledWatch
+result = module.run_command(["/bin/sh", "-c", 'read line < "$0"', hold], Path(out), None, None)
+for process in started:
+    if process.returncode is None:
+        process.kill()
+        process.wait(timeout=30)
+print(json.dumps({"result": list(result), "nested": nested}))
+"""
+
+    def test_two_signals_without_a_deadline_still_end_the_run(self):
+        # The command reads a FIFO that the test holds and never writes. The
+        # outer timeout is the limit of this check: b558b4a waits with no end.
+        with tempfile.TemporaryDirectory() as directory:
+            child, hold = Path(directory) / "child.py", Path(directory) / "hold"
+            child.write_text(self.TWO_SIGNALS_CHILD)
+            os.mkfifo(hold)
+            end = os.open(hold, os.O_RDWR)
+            try:
+                result = subprocess.run([sys.executable, "-I", "-B", str(child), str(REPORT),
+                                         str(Path(directory) / "out.json"), str(hold)],
+                                        capture_output=True, text=True, timeout=60)
+            except subprocess.TimeoutExpired:
+                self.fail("the run did not end: a wait with no limit after two signals (crrao I8)")
+            finally:
+                os.close(end)  # the command reads the end of the FIFO and exits
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            report = json.loads(result.stdout.splitlines()[-1])
+            self.assertEqual(report["nested"], [signal.SIGTERM])
+            self.assertEqual(report["result"][:3], [128 + signal.SIGTERM, False, signal.SIGTERM], report)
+            self.assertIn("refused to send", report["result"][3])
+            self.assertIn("did not end 1 seconds after the last SIGKILL", report["result"][3])
+
     def test_an_observed_exit_stays_recorded(self):
         # brahmagupta round 6 F2: a nested wait consumed the one-shot exit
         # event, and the outer wait then wrote exited = False. The event source
