@@ -6,8 +6,8 @@
 | --- | --- | --- |
 | `pre-commit` hook | Required Gitleaks scan of staged changes. `gofmt`, `go vet`, Staticcheck and `go test` on changed packages that need no stack. `check-setup.py` when a staged path is under `scripts/`, `.github/`, `.agents/`, `tools/`, `build/ci/` or `docs/development/`, or is `AGENTS.md`. A change that only adds Go files runs no check from `check-docs.sh` in this hook, unless a Go file is under `tools/`, `scripts/` or `build/ci/`. Such a file selects `setup` | A failure stops the commit |
 | `commit-msg` hook | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) check of the subject line | A failure stops the commit |
-| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push. On macOS, it runs all six checks on the host | A failure stops the push |
-| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the Gherkin acceptance suite in `tests/acceptance`. Job `checks`: the static checks in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
+| `pre-push` hook | Refuses a push to `main`. Scans outgoing history with Gitleaks. Runs `go build ./...`, `go vet ./...` and `go test` of every package that needs no stack. Runs [check-docs.sh](../../scripts/ci/check-docs.sh), the `checks` job, one time for each push, without the `unit` check, because the hook ran those packages already. On macOS, it runs six of these checks on the host. It leaves out `image`, which runs only inside the job image | A failure stops the push |
+| CI ([bdd.yml](../../.github/workflows/bdd.yml)) | Job `bdd`: the stack run of the Go developer tests, then the Gherkin acceptance suite in `tests/acceptance` on a fresh stack. Job `checks`: the static checks and the unit run of the Go developer tests in `check-docs.sh` | `bdd` is a required check. `checks` becomes a required check only by an owner decision |
 
 Install the scanner once per user. Install the hooks once per clone:
 
@@ -16,7 +16,7 @@ python3 -I -B scripts/dev/secret_scan.py install
 make hooks
 ```
 
-The hooks are developer checks. Go tests are not acceptance proof (OD-05). Only the Gherkin suite is acceptance proof. The `checks` job runs static checks, not behavior tests.
+The hooks are developer checks. Go tests are not acceptance proof (OD-05). Only the Gherkin suite is acceptance proof. The `checks` job runs static checks and Go developer tests, not behavior tests. The stack run in the `bdd` job also runs Go developer tests. A pass of a Go test run in CI is not acceptance proof of PM behavior.
 
 On Linux, the `pre-push` hook runs inside the pinned job image through `sh scripts/ci/in-ci-image.sh dev -- COMMAND...`. The `pre-commit` hook selects its checks on the host first. It enters the image only when the staged change has a Go file or a path that a check above names. Other commits run only the secret scan, on the host, and start no container. On Linux, bootstrap accepts only the native environment of that image (see [Pinned job image and native environment](#pinned-job-image-and-native-environment)). Developer entry checks the host scanner's checksum and mounts the binary read-only at `/opt/pmcli-gitleaks`. A hook that enters the container scans inside the container. The scanner mount does not change the image or its native profile. Generic developer commands do not scan the index. On macOS, the hooks run on the host (see [macOS hosts](#macos-hosts)). The `commit-msg` hook always runs on the host.
 
@@ -35,7 +35,7 @@ On macOS, the hooks run on the host. The `pre-push` hook, and a `pre-commit` hoo
 
 The hooks select the Python interpreter for `check-docs.sh`. They try `python3`, `python3.13`, `python3.12` and `python3.11` on `PATH`, in that order. They select the first one that is Python 3.11 or later and imports the four modules. The hook prints the version of that interpreter and gives its name to `check-docs.sh` in `PMCLI_PYTHON`. If no interpreter qualifies, the hook prints the prerequisite and stops the commit or push. The hook does not skip the `python` check. Other Python commands still use the first `python3` on `PATH`. Examples are the secret scan, `generate.sh` and `check-boundaries.sh`. CI ignores `PMCLI_PYTHON` and uses `python3`.
 
-The macOS hooks skip no check. They run the same six checks as the CI `checks` job, and they print no skip notice.
+The macOS hooks skip one check: `image`. It checks the keyring layer of the job image, and a macOS host is not that image. The `pre-push` hook runs the unit packages and the other six checks of the CI `checks` job. It writes a notice to stderr that it left out `image`. The `checks` job, the `bdd` job and the Linux `pre-push` hook run `image`. The `pre-commit` hook selects only `setup`, so it does not run `image` on any OS.
 
 ## Required developer secret scans
 
@@ -63,28 +63,185 @@ Secret detection is pattern-based and cannot prove that content has no credentia
 
 The `bdd` workflow runs on every push to any branch of this repository by the owner account. A pull request shows the result of its head commit, because a status belongs to a commit. Pull request events do not start CI, so a fork pull request never reaches the self-hosted runners. Only collaborators can push branches or open pull requests.
 
-The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci/check-bdd.sh) in the pinned job image. The script starts the job-owned dependency stack and runs `go test ./tests/acceptance/...`. Strict godog fails the run on an undefined or pending step. A failed suite is never retried.
+The job checks out the exact pushed SHA and runs [check-bdd.sh](../../scripts/ci/check-bdd.sh) in the pinned job image. The script first runs `check-ci-image.py`, so the required job checks the keyring layer of its own image (see [The keyring layer](#the-keyring-layer)). A failure fails the job. The script then runs two Go test runs. Each run gets its own job-owned dependency stack:
+
+1. The stack run: the Go developer tests of the stack packages. The script starts a stack and runs `go test -json -p 1 -count=1 -timeout 15m` of these packages. The packages share one schema, its roles and one Temporal history, so they run one package at a time.
+2. The Gherkin run: the script starts a fresh stack and runs `go test -json -p 1 -count=1 -timeout 40m ./tests/acceptance/...`. No stack-run test runs on this stack. Strict godog fails the run on an undefined or pending step. A failed suite is never retried. Before the stack run, the script takes the intended set of the Gherkin run from `go list ./tests/acceptance/...`. It uses the same pattern and the same environment as the run. The report checks the set with `--expect`. If that selection fails or selects no package, the Gherkin run does not run, the log says so, and the job fails.
+
+The Gherkin run also runs when the stack run fails, and the stack run does not stop for a Gherkin failure. The job fails when either run fails. A stack run command that ends on a signal (exit 129, 130 or 143) is a stack run failure. The log says so, and the receipt check and the Gherkin run still run. A job cancellation is different. The container init passes the signal to `check-bdd.sh`, which sets no trap, and `sh` in the CI image (dash) stops the script at once. So a cancelled script does not reach the Gherkin run. The log shows two fixture starts, one for each run. The script compares the toolchain identity before the first run and after the last run.
+
+The stack run is a developer check. It is not acceptance proof of PM behavior. A failed test fails the run. A test that calls `t.Skip` also fails the run, and the log and the job summary name it. Before the stack run, the script builds `.cache/bin/pm-api-generate` from the candidate and unsets `PM_API_GENERATE`, because the `internal/api` tests use the generator at that default path. Each step line of the log shows the seconds since the script started, so the log shows the order of the phases.
+
+### Time budget of the `bdd` job
+
+The frozen step limit is 90 minutes, and the frozen job limit is 100 minutes. `check-bdd.sh` keeps 3 minutes of the step for the start and stop of the job container. So its own work ends within 87 minutes of its start, also on the failure path. The owner decided on 2026-11-17 that the stack go test command stops one hour after the start. It stopped after 20 minutes before, and a cold build with the Keycloak start could use up that time. `go-test-report.py --deadline` stops the go test command of each run at an absolute time, and the run still reports. The fixture start before that command and the fixture cleanup after it have their own phase deadlines (see [Fixture phase deadlines](#fixture-phase-deadlines)). `--timeout` also stops each go test command after its own start. The limit is 3590 seconds for the stack run and 1140 seconds (19 minutes) for the Gherkin run. Each limit plus the 60-second stop grace (see below) ends before the 61-minute command limit of `with-stack-fixture.py`. So the reporter, not the wrapper, ends the run. The stack `--timeout` can stop the stack command before its deadline only when that command starts less than 10 s after the script. The tool builds and the stack fixture start come before that command. The `-timeout 15m` of the stack run does not change. It limits one package test binary. A stopped run gets `SIGTERM`, then `SIGKILL` after 30 seconds, and exit status 124. When the reporter itself receives `SIGTERM`, `SIGINT` or `SIGHUP`, it passes the signal to the process group of the command. It waits up to 30 seconds for the command to stop, then sends `SIGKILL`. It prints `the reporter received SIG... and stopped the command` and exits with 128 plus the signal number. This also happens when the command exits 0. When a command ends, the reporter stops each process that is left in its process group. It sends that `SIGKILL` before it reaps the command. Until the reap, no new process or process group can get the ID of the command. After that `SIGKILL`, the reporter sends no more signals to the group. A signal that the reporter receives later is only recorded, and it still fails the run. It waits for the end of the command with a pidfd (Linux) or a kqueue process filter (macOS), which do not reap it. The system can refuse a signal to the process group (permission denied). Then a test process can still run. So the run fails, and the log names the refused signal. On Linux, and so in CI, each refusal fails the run. macOS also refuses a signal to a group whose only member is the command after it has exited and before the reporter reaps it. So only on macOS, which runs the developer hooks, a refusal does not always fail the run. It does not fail the run when the command has exited and `ps` shows no live member of the group.
+
+After the last `SIGKILL` and before the reap, the reporter also lists the live members of the group. On Linux it reads `/proc`, and on other systems it reads `ps`. Linux reports success for a group signal when one member gets it. So a live member that the reporter may not signal (permission denied) did not get the `SIGKILL`. Such a member fails the run with a fixed message, and so does a member list that the reporter cannot read. The message names no process and no command line. Each wait after the last `SIGKILL` has a limit of 30 seconds, because the system can refuse that `SIGKILL`. A command that has not ended by then is not reaped, so its ID stays reserved, and the run fails with a cleanup message.
+
+So a stopped go test command can end up to 60 s after its stop. That is 30 s of `SIGTERM` grace and a bounded wait of up to 30 s after the `SIGKILL`. This is the 60 s stop grace of the budget. The member list and the report writing come in addition. On Linux, the member list reads `/proc`, and nothing limits that read. On other systems, `ps` has a limit of 10 s, and its collection after a kill has a limit of 5 s. Nothing limits the report writing.
+
+The table gives each part of the run step on the script clock, with #358's limits and the allowances of #370. P is the end of the prelude (row 1).
+
+| Row | Part of the run step | Limit | Enforced |
+| --- | --- | --- | --- |
+| 0 | Image build before the script, only when the image is missing | none | no. This is E4 exception 2. A cold build takes about 16 minutes |
+| 1 | Prelude: image check, tool builds, `go list`, package selection | none. The budget assumes 8 minutes (480 s) or less | no |
+| 2 | Stack fixture start | 720 s phase deadline, plus up to 10 s after a `SIGKILL` (730 s allowance) | yes |
+| 3 | Stack `go test` | stops at +3600 s, then 60 s stop grace | yes |
+| 4 | Stack fixture cleanup | 360 s phase deadline, plus up to 10 s after a `SIGKILL` (370 s allowance) | yes |
+| 5 | Receipt check, with no Docker call | 15 s finish allowance. It also holds the member list and the report writing of the stack run | no. The receipt check and the member list take less than 1 s. The report writing is not measured |
+| 6 | Gherkin fixture start | 720 s phase deadline, plus up to 10 s after a `SIGKILL` (730 s allowance) | yes |
+| 7 | Gherkin `go test` | stops at +4775 s or after 19 minutes, then 60 s stop grace | yes |
+| 8 | Gherkin fixture cleanup | 360 s phase deadline, plus up to 10 s after a `SIGKILL` (370 s allowance) | yes |
+| 9 | Finish: toolchain identity, summary | 15 s finish allowance. It also holds the member list and the report writing of the Gherkin run | no. The finish and the member list take less than 1 s. The report writing is not measured |
+| — | Workflow cleanup step: container stop, cleanup container start, `--cleanup` | 6-minute step limit. `--cleanup` has a 300 s phase deadline, plus up to 10 s after a `SIGKILL` | yes, for `--cleanup` |
+
+Rows 2 to 8 have a limit. The arithmetic, with rows 5 and 9 at their full 15 s finish allowance:
+
+- Row 2 ends by P + 730.
+- Row 3 stops at the later of +3600 and the end of row 2. It ends 60 s later: max(3600, P + 730) + 60.
+- Rows 4, 5 and 6 add 370, 15 and 730. So row 6 ends by max(3600, P + 730) + 1175 = max(+4775 s, P + 1905 s).
+- Row 7 stops at the later of +4775 and the end of row 6, and ends 60 s later. Row 8 adds 370.
+- So row 8 ends by max(+5205 s, P + 2335 s). The 2335 s are 730 + 60 + 370 + 15 + 730 + 60 + 370.
+- Row 9 adds 15 s. So the script ends by max(+5220 s, P + 2350 s). With P of 2870 s or less, this is +5220 s, the budget. The budget adds 3 minutes for the job container (5400 s, the 90-minute step).
+
+Before #370, the budget used a 30 s stop grace, the bare 720 s and 360 s phase deadlines and a 60 s finish allowance. With the real stop and phase times, its longest path ended at +5310 s, 90 s after the end of the step.
+
+Rows 0, 1, 5 and 9 have no enforced limit. The member list and the report writing of each run also have no enforced limit. Together with row 5 or row 9, they must fit the 15 s finish allowance. E4 exception 2 stays: a cold image build, or a long prelude together with phases at their deadlines, can pass the step limit. Then the Gherkin run may not report, and the frozen cleanup step still removes the live fixture (see [Cleanup after an abrupt stop](#cleanup-after-an-abrupt-stop)). The design (v3 §4.5) gave max(+2760 s, P + 2160 s) for the old +1200 s stop, without the two stop graces.
+
+The stack go test command stops 3600 s (60 minutes) after the start. The Gherkin go test command stops 4775 s after the start. On the longest path, the stack run ends by +3660 s and its cleanup by +4030 s. The receipt check ends by +4045 s and the Gherkin fixture start by +4775 s. The Gherkin run ends by +4835 s, its cleanup by +5205 s and the toolchain check by +5220 s. So the script ends 87 minutes after the start in the worst case. With the 3 minutes for the job container, the step ends by 90 minutes. With the 6-minute cleanup step and 4 minutes for the checkout and the runner, the job ends by 100 minutes.
+
+The script keeps no reserve of Gherkin test time (`gherkin_minimum` is 0). On one path, the Gherkin run can get no test time. On that path, the stack run reaches its deadline. Then the stack cleanup uses its full 370 s, and the Gherkin fixture start uses its full 730 s. The Gherkin run then reports that it stopped at its deadline, and the job fails. E4 is narrowed on that path. On a normal run, the Gherkin go test command keeps its own 19-minute limit (`--timeout 1140`).
+
+#### Fixture phase deadlines
+
+[with-stack-fixture.py](../../scripts/ci/with-stack-fixture.py) has one deadline for each whole fixture phase, on a monotonic clock:
+
+- The fixture start: 720 s, from the private fixture directory to the running fixture.
+- The fixture cleanup in the run step: 360 s.
+- The fixture cleanup of `--cleanup` in the workflow cleanup step: 300 s. The 6-minute step also stops the job container (`stop -t 10`) and starts the cleanup container. The other 60 s are for these, or 50 s when `--cleanup` ends 10 s after its deadline.
+
+Each Docker call and helper call in a phase gets the smaller of its own limit and the time that is left in the phase. Examples of own limits are 30 s for one Docker call and 600 s for `pm-stack up`. The stop grace of a stopped call is also limited to the time that is left. After the `SIGKILL`, the wrapper waits up to 10 s (`PROCESS_TERM_GRACE`) for the end of the call. The phase does not limit that wait. So a phase can end up to 10 s after its deadline. The start ends by 730 s, the cleanup in the run step by 370 s and `--cleanup` by 310 s. A phase that reaches its deadline fails with `the fixture <phase> phase reached its deadline (<limit> s)`. A call that reaches its own limit prints `<stage> timed out: the call reached its own limit of <limit> s`. So the log tells the two causes apart. After a start deadline, no command runs on that fixture. The manifest stays for the workflow cleanup step. After a cleanup deadline, its phase is `cleanup_failed` with the code `cleanup-phase-deadline`.
+
+The wrapper stops the process group of a call that reached its limit. It sends `SIGTERM` to the group and waits for the exit of the call process without a reap. Then it sends `SIGKILL` to the group, and only then it reaps the call process. It uses the same pidfd or kqueue method as the reporter. So no new process or process group can get the ID before the last group signal. A call process that something already reaped is refused, with no signal.
+
+E4 exception 4 of #278 is slow Docker calls that each end in time. The phase deadlines end it for rows 2, 4, 6 and 8 and for `--cleanup`. Each phase now ends by its deadline, plus up to 10 s to stop a call after its `SIGKILL`.
+
+The phase deadlines replace the breakdown below, from before issue #286. The figures are conditional command allowances, not deadlines. Each sum holds only when each call ends just inside its own limit. It also needs the resource counts that the table states.
+
+One resource discovery makes 13 list calls and up to 12 inspect calls: up to 25 calls, or 750 s. The inspect calls are for the stack containers, the cleanup helper and the network.
+
+| Fixture start part | Allowance |
+| --- | --- |
+| Daemon check | 30 s |
+| Generator | 60 s |
+| Discovery before the start, on an empty project: 13 calls | 390 s |
+| `pm-stack up` | 600 s |
+| Discovery after the start: 22 calls | 660 s |
+| Total | 1,740 s (29 minutes) |
+
+| Fixture cleanup part | Allowance |
+| --- | --- |
+| Daemon check | 30 s |
+| Five discoveries | 750, 750, 420, 390 and 390 s |
+| Helper stop and removal | 60 s |
+| Drain | 120 s |
+| Container stop, and up to 10 container removals | 75 s and 300 s |
+| Network removal | 30 s |
+| PostgreSQL cleanup helper: create 30 s, inspect 30 s, start 60 s, remove 30 s | 150 s |
+| Total | 3,465 s (57 minutes 45 seconds) |
+
+The log has one `starting a fresh job-owned stack` line before each fixture start. A cold image build happens in the same step before `check-bdd.sh` starts, and this budget does not include it. On that path, the worst case can pass the step limit, and the Gherkin run may not report. The frozen cleanup step then still removes the live fixture (see the next section).
+
+### Cleanup after an abrupt stop
+
+The frozen cleanup step of `bdd.yml` stops the job container and runs `with-stack-fixture.py --cleanup` on one manifest path: `$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json`. The wrapper writes its manifest at that path before it lets Docker start anything. So each live fixture is always under that path, and the cleanup step removes it after an abrupt stop. The stack run uses the path first. When its fixture is clean, the manifest stays as a receipt in the phase `cleaned`. `check-bdd.sh` checks the receipt with `with-stack-fixture.py --check-receipt`, which only reads the manifest, checks the phase `cleaned` and makes no Docker call. It then moves the receipt to `pmcli-bdd-<run>-<attempt>.stack-run-receipt.json`. The rename is in one directory, so the path holds either the cleaned receipt or no file, and no fixture is live. The Gherkin run then writes a new manifest at the same path.
+
+If the stack fixture is not clean, the receipt check fails, and the manifest stays at the path for the cleanup step. `check-bdd.sh` does not repeat the cleanup. The Gherkin run does not run, the log says so with the reason, and the job fails. Both runs report only on the other paths.
+
+The `--cleanup` of the cleanup step has its own 300 s phase deadline (see [Fixture phase deadlines](#fixture-phase-deadlines)). This is the end state when it reaches that deadline:
+
+- `--cleanup` exits 1. The cleanup step fails, and so the job fails.
+- The wrapper sets the manifest phase to `cleanup_failed`, with the diagnostic code `cleanup-phase-deadline`. If that manifest write also fails, the manifest keeps its earlier phase. Another cleanup failure also gives the phase `cleanup_failed`, with its own code.
+- The fixture can stay on the runner host: its containers, its network, its volumes and its private folder (`pm-stack-job-*` in `RUNNER_TEMP`). No later step of the job removes them.
+- If the 6-minute step limit stops the step first, the manifest keeps the phase that it had. The job also fails.
+
+GitHub documents that the runner empties `RUNNER_TEMP` at the start and at the end of each job. So the manifest can be gone after the job. Then the owner, or an operator with host access, acts in this order:
+
+1. If the manifest is still there, run the cleanup from a shell on the runner host. Use the same CI-image entry as the workflow cleanup step:
+
+   ```sh
+   sh scripts/ci/in-ci-image.sh run bdd-cleanup -- python3 scripts/ci/with-stack-fixture.py \
+     --cleanup "$RUNNER_TEMP/pmcli-bdd-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT.json"
+   ```
+
+   A direct `with-stack-fixture.py --cleanup` on the host does not work. The wrapper uses the socket `/var/run/docker.sock`, which exists only in the job container. It also checks the manifest against `RUNNER_TEMP` and the run identity. The command has these prerequisites:
+
+   - It runs as the original runner user.
+   - It runs from the checkout at the repository root that the manifest records, at the same commit. This root is inside `GITHUB_WORKSPACE`. The wrapper refuses a manifest that records another root, and it runs the operator `pm-stack` from that root.
+   - The operator `.cache/bin/pm-stack` of that commit is in that checkout. When the checkout of the job still holds it, do not build it again. Else build it through the CI image, with the same run variables set:
+
+     ```sh
+     sh scripts/ci/in-ci-image.sh run bdd-build -- sh -c \
+       'GOCACHE="$PMCLI_CACHE_DIR/go-build" GOMODCACHE="$PMCLI_CACHE_DIR/go-mod" CGO_ENABLED=0 python3 tools/bootstrap.py exec go -- build -o .cache/bin/pm-stack ./cmd/pm-stack'
+     ```
+
+     This is the `pm-stack` build of `check-bdd.sh`, with the same Go caches. When stack containers stay, the cleanup runs `pm-stack drain --dependency all`. Without the operator, the cleanup records `operator-drain`, and the fixture can stay. Then step 2 applies.
+   - `GITHUB_RUN_ID`, `GITHUB_RUN_ATTEMPT`, `GITHUB_WORKSPACE` and `RUNNER_TEMP` have the values of that run. `RUNNER_TEMP` is the existing folder that holds the manifest.
+   - The Podman socket of the runner user is available: `PMCLI_ENGINE_SOCKET`, else `$XDG_RUNTIME_DIR/podman/podman.sock`, else `/run/user/<uid>/podman/podman.sock`.
+   - `PMCLI_CACHE_DIR` has the value from the runner `.env`, or it is unset when the runner uses the default under `HOME`. Then the cleanup container finds the pinned Compose in the same cache.
+2. If the manifest is gone, or a prerequisite is not available, find the fixture by its project label (`pmci-*`) in a host health read. The owner decides on the removal, and the operator then removes the fixture by hand.
 
 [go-test-report.py](../../scripts/ci/go-test-report.py) `--scenarios` lists each scenario with its result and the godog totals (`N scenarios (...)`, `N steps (...)`). It does this also when the suite passes. The list is at the end of the `bdd` job log and in the job summary on the workflow run page. A passing run fails when the godog scenario total is missing or differs from the number of scenarios in the test stream.
+
+The Gherkin run also fails in these cases (issue #350). The log and the job summary name each cause:
+
+- godog reports 0 scenarios: `0 scenarios ran`.
+- The godog step total shows skipped steps: `the godog step total has <N> skipped steps`.
+- A Go test or subtest of the Gherkin package calls `t.Skip`. The Gherkin run has `--fail-on-skip`. The log prints `skipped test fails this run: <package> <test>`.
+
+Only these totals and skip events fail the run. When the step total shows skipped steps, the log and the summary also name the cause:
+
+- `skipped step: <scenario> / <step>` for each skipped step. godog v0.16.0 prints a skipped step in cyan, and the reporter finds it by that color.
+- `skipped scenario: <scenario>` for a scenario whose steps are all skipped.
+
+godog also prints the template steps of a Scenario Outline in cyan, whatever their result. So the reporter takes no names from an outline. A skipped step of a Scenario Outline, or of a Background after the first scenario, fails the run only through the step total. The reporter does not name such a step.
+
+For the stack run and the unit run, `go-test-report.py --title` adds a separate section to the job summary. The section has the Go test totals, each package with its result and time, each failed or skipped test and each problem. The Gherkin run has no `--title`, so its scenario section lists each test with no result, each skipped test and each problem. The godog totals stay in that section. `--expect` gives the import paths that the run selected from `go list` before the run. The log and the summary give the size of this intended set and the number of package results. Each one must have exactly one package result. A missing, duplicated or unexpected package result, an empty stream or a line that is not a JSON event fails the run. A test or subtest can start (a `run` event) and have no result (no `pass`, `fail` or `skip` event). Such a test also fails the run, also in a package that passes. An example is a test whose goroutine panics: the test binary exits, and the panic output belongs to that test. The log prints the test as `FAIL (no result)` with its output, the problem list names it, and the job summary lists it. A test that pauses and continues, and then gets a result, is not such a test. The two runs use no `-run` and no build-tag filter. With `--expect`, a guard accepts only the options `-json`, `-p`, `-count`, `-timeout` and `-race`. The first four are the options of the CI commands. `-race` is in the list for the stack run of #312, and today no CI command uses it. The guard refuses each other option before the command runs. Examples are `-exec`, `-overlay` and `-toolexec`, which can change what runs (crrao N1), and the test filters `-run`, `-skip`, `-list`, `-short`, `-failfast` and `-tags`. It reads the forms `-name`, `--name` and `-test.name`, with `=value` or, in the command, with the value as the next word. It also refuses `-args`. It splits `GOFLAGS` at the characters that go splits it at (space, tab, newline, carriage return). go reads a quoted `GOFLAGS` field without its quotes, so the guard refuses a `GOFLAGS` value with a quote character. It also refuses a `GOFLAGS` field that is not an option, and a `GOFLAGS` option with a value that has no `=value` form, which go also refuses. It does not read a `GOFLAGS` value from the go environment file (`go env -w`). The command and `GOFLAGS` together must set the test count exactly once, to 1 (`-count=1`). A nonzero exit of the command, of the fixture wrapper or of its cleanup fails the run. The `bdd` job summary keeps this section apart from the Gherkin section with the godog totals. With `--fail-on-skip`, a skipped test fails the run. A package with no test files shows as `SKIP (no test files)`. That is not a test skip, and it does not fail the run.
 
 A new push to a working branch cancels the older run for that branch. Runs on `main` are never cancelled. A force-push is admitted on a working branch and refused on `main`.
 
 Missing prerequisites, test failures and cleanup failures remain failures.
 
-[stack-packages.txt](../../scripts/ci/stack-packages.txt) lists the packages that need the dependency stack. The hooks skip them. [check-foundation.sh](../../scripts/ci/check-foundation.sh) still runs every package, including the stack packages. The shards need a GitHub Actions environment. No workflow runs them. A developer cannot run them locally as they are.
+### Go test package selection
+
+[stack-packages.txt](../../scripts/ci/stack-packages.txt) is the one list of the packages that need the dependency stack. [go-packages.sh](../../scripts/ci/go-packages.sh) holds the selection rule. The `checks` job, the `bdd` job and the hooks read the list only through it. Each root-module package that `go list ./...` prints goes to one place:
+
+| Place | Packages |
+| --- | --- |
+| Unit run (`checks` job) | Every package that is not in the stack list and not excluded |
+| Stack run (`bdd` job) | Every stack list entry except `tests/acceptance` and the excluded packages |
+| Gherkin run (`bdd` job) | `tests/acceptance` |
+| Exclusion list | `tests/client-parity`. It also runs the Playwright browser tests, which need a browser as well as the stack. Issue #274 runs it in CI. The `bdd` job log prints this name and reason |
+
+The rule selects the packages, so a new package goes to the unit run with no list edit. A package that needs the stack fails in the unit run until you add it to the stack list. The stack tests fail, and do not skip, without their fixture inputs. A stack list entry that `go list ./...` does not print fails the `bdd` job, and the log names the path. The hooks skip the stack packages and the excluded packages.
+
+[check-foundation.sh](../../scripts/ci/check-foundation.sh) has its own package lists. No workflow runs it. The shards need a GitHub Actions environment. A developer cannot run them locally as they are.
 
 ## The `checks` check
 
-The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these six checks:
+The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these eight checks:
 
 - `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
-- `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
+- `python`: `test_setup.py`, `test_runner_admission.py`, `test_ci_image.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`. `test_ci_image.py` tests the fail paths of `check-ci-image.py` with fixtures. It is a developer check, not acceptance proof.
 - `generate`: `generate.sh --check` for the API and the connectors.
 - `gofmt`: `gofmt -l` on every tracked Go file.
 - `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
 - `tools`: `go test` for the tools module.
+- `image`: `check-ci-image.py`, inside the job image. It checks the keyring layer (see [The keyring layer](#the-keyring-layer)). It fails outside a container.
+- `unit`: the unit run. `go test -json -count=1 -timeout 10m` of every root-module package outside the stack list and the exclusion list (see [Go test package selection](#go-test-package-selection)). `go-test-report.py --timeout 600` stops the run after 10 minutes and still reports. A failed or skipped test fails the check, and so does a missing or duplicated package result. The log and the job summary list each package with its result and time. These tests are developer checks, not acceptance proof. The `pre-push` hook does not select `unit`, because it runs the same packages itself (`pm_push_checks` in `scripts/dev/hook-lib.sh`).
 
-In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh setup boundaries`. `check-docs.sh --list` prints the check names. The hooks read the names from it. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins and govulncheck are not in this job.
+In CI, the script installs the pinned, checksummed Gitleaks binary into the job cache when the cache has no binary. Run all checks locally with `sh scripts/ci/in-ci-image.sh dev -- sh scripts/ci/check-docs.sh`. To run some checks, give their names, for example `check-docs.sh setup boundaries`. `check-docs.sh --list` prints the check names. The hooks read the names from it. Browser generation, stack-package Go tests, SBOM and licence reports, Bazel, image pins, `go vet`, Staticcheck and govulncheck are not in this job. The stack-package Go tests run in the `bdd` job.
 
 Issue #64 removed the `atlas` and `docs` checks. A Go-only change needs no ownership record and no new Foundation Atlas projection. The store dependency rule moved from Atlas to `check-boundaries.sh`, and it stays a blocking rule. No non-test package under `internal/store` may depend on `internal/app`, `internal/auth` or their subpackages, directly or through another package. For a violation, the check writes `Store depends on a consumer package: <store package> -> <consumer package>` and exits with code 1.
 
@@ -145,6 +302,52 @@ sh scripts/ci/in-ci-image.sh run capture -- \
 
 CI never refreshes the profile. A build that differs from the committed profile
 fails at `bootstrap: native environment drift`.
+
+### The keyring layer
+
+The last package layer of the image gives a private Secret Service to the `pm`
+`os` session store (#323, LOGIN condition D1-9). It installs `dbus-daemon`,
+`dbus-bin`, `dbus-session-bus-common` and `gnome-keyring` from the same
+snapshot, with no recommended packages: 72 packages, 113,958 KiB (about
+111 MiB) by their `Installed-Size` fields.
+[keyring-packages.txt](../../build/ci/keyring-packages.txt) records each
+package that the layer installs, with its version. The layer starts no
+service for a job. During the image build, package scripts run install
+commands, for example `systemd-tmpfiles --create` in the postinst of
+`systemd`. A job harness starts `/usr/bin/dbus-daemon` with its own
+configuration and no service directory, and then `/usr/bin/gnome-keyring-daemon`.
+
+The layer gives these guarantees. The `image` check verifies each one in the
+image, in the `checks` job and at the start of the required `bdd` job:
+
+- `dbus-x11` is not installed. No file or link named `dbus-launch` is in a
+  directory of the image `PATH` or of the runtime `PATH`, or anywhere that the
+  privilege walk reads.
+- No D-Bus service file activates `org.freedesktop.secrets` or starts
+  `gnome-keyring-daemon`. The layer removes the three service files of
+  `gnome-keyring`. The check follows symlinked service directories, and it
+  fails on a service directory that it cannot read.
+- The privilege walk reads the root file system of the image. It stops at a
+  directory on another device, as `find -xdev` does. It still scans regular
+  files that are mount points, and directory mounts on the same device. No
+  file that it reads has a file capability. The setuid and setgid files are exactly the
+  12 files of the Ubuntu base in
+  [privileged-files.txt](../../build/ci/privileged-files.txt), with their mode
+  and owner. The `dbus` package makes `dbus-daemon-launch-helper` setuid root
+  through `dpkg-statoverride`. The layer replaces that statoverride with mode
+  `0754`. The check runs as the job user, so it cannot read some directories.
+  A directory that the job user can search but cannot list fails, because the
+  job user can run a file in it. Each directory that the job user cannot
+  search must be a recorded `closed` directory whose mode denies search to
+  others.
+- Each recorded package has its recorded version. An installed package that
+  is not in the record does not fail the check. The privilege walk covers such
+  a package only for its privileged files.
+- The first line of `dbus-daemon --version` and `gnome-keyring-daemon
+  --version` is exactly the version line of the recorded version.
+
+A change to the layer or to the snapshot changes the record and the native
+profile in the same commit.
 
 ## Operate a runner without sudo
 

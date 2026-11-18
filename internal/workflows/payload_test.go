@@ -438,17 +438,28 @@ func TestHistoryAndPayloadBounds(t *testing.T) {
 		if err := run.Get(ctx, &result); err != nil {
 			t.Fatal(err)
 		}
-		var timing callbackTiming
-		select {
-		case timing = <-controller.finished:
-		case <-ctx.Done():
-			t.Fatal("provider callback did not observe its transport deadline")
+		// The checks below use only what the callback context holds when the
+		// callback starts. The time at which the callback stops depends on an
+		// answer to every heartbeat in the transport window, which a shared
+		// Temporal server does not bound (issue #292).
+		// TestWorkerCallbackStopsAtTransportDeadline in internal/app checks the
+		// stop against a fake frontend.
+		callback, calls := controller.firstCall()
+		if calls == 0 {
+			t.Fatal("provider callback did not run")
 		}
-		if timing.remaining < 4500*time.Millisecond || timing.remaining > 5*time.Second {
-			t.Fatalf("provider callback deadline remaining = %s; want the explicit 5s transport bound", timing.remaining)
+		t.Logf("provider callbacks = %d; first callback context at start: error %v, cause %v",
+			calls, callback.err, callback.cause)
+		if callback.problem != nil {
+			t.Fatal(callback.problem)
 		}
-		if timing.elapsed < 4500*time.Millisecond || timing.elapsed >= 10*time.Second {
-			t.Fatalf("provider callback stopped after %s; want transport stop before 10s attempt expiry", timing.elapsed)
+		if callback.remaining < 4500*time.Millisecond || callback.remaining > 5*time.Second {
+			t.Fatalf("provider callback deadline remaining = %s (context error %v, cause %v); want the explicit 5s transport bound",
+				callback.remaining, callback.err, callback.cause)
+		}
+		if !callback.deadline.Before(callback.attemptDeadline) {
+			t.Fatalf("provider callback deadline %s is not before the activity attempt deadline %s (context error %v, cause %v); want the transport bound inside the 10s attempt",
+				callback.deadline, callback.attemptDeadline, callback.err, callback.cause)
 		}
 		history := readWorkflowHistory(t, ctx, harness.client, input.WorkflowID, run.GetRunID())
 		var executeSchedules int

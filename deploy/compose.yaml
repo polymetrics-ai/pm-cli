@@ -15,7 +15,7 @@ services:
     command:
       - |
         install -d -m 0700 -o postgres -g postgres /var/lib/postgresql/pm-stack-secrets
-        for secret in pm-app-migrator-password pm-app-runtime-password temporal-migrator-password temporal-runtime-password temporal-visibility-migrator-password temporal-visibility-runtime-password objects-migrator-password objects-runtime-password denied-password; do
+        for secret in pm-app-migrator-password pm-app-runtime-password pm-app-bootstrap-password temporal-migrator-password temporal-runtime-password temporal-visibility-migrator-password temporal-visibility-runtime-password objects-migrator-password objects-runtime-password denied-password; do
           install -m 0600 -o postgres -g postgres "/run/pm-stack-secrets/$$secret" "/var/lib/postgresql/pm-stack-secrets/$$secret"
         done
         install -m 0600 -o postgres -g postgres /run/pm-stack-secrets/server-key.pem /var/lib/postgresql/server-key.pem
@@ -38,6 +38,7 @@ services:
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/superuser-password:/run/pm-stack-secrets/superuser-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-migrator-password:/run/pm-stack-secrets/pm-app-migrator-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-runtime-password:/run/pm-stack-secrets/pm-app-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-bootstrap-password:/run/pm-stack-secrets/pm-app-bootstrap-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-migrator-password:/run/pm-stack-secrets/temporal-migrator-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-runtime-password:/run/pm-stack-secrets/temporal-runtime-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-visibility-migrator-password:/run/pm-stack-secrets/temporal-visibility-migrator-password:ro
@@ -73,6 +74,7 @@ services:
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/superuser-password:/run/pm-stack-secrets/superuser-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-migrator-password:/run/pm-stack-secrets/pm-app-migrator-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-runtime-password:/run/pm-stack-secrets/pm-app-runtime-password:ro
+      - ${PM_STACK_POSTGRES_SECRET_DIR:?}/pm-app-bootstrap-password:/run/pm-stack-secrets/pm-app-bootstrap-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-migrator-password:/run/pm-stack-secrets/temporal-migrator-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-runtime-password:/run/pm-stack-secrets/temporal-runtime-password:ro
       - ${PM_STACK_POSTGRES_SECRET_DIR:?}/temporal-visibility-migrator-password:/run/pm-stack-secrets/temporal-visibility-migrator-password:ro
@@ -144,8 +146,8 @@ services:
     environment:
       GODEBUG: fips140=on
       WEED_CONFIG_DIR: /etc/seaweedfs
-      # Grow one volume at a time so the default collection cannot consume
-      # the artifact bucket's bounded slot during a fresh deployment.
+      # Grow one volume at a time. pm-stack up grows one volume for the
+      # artifact bucket and one for the default collection before ready.
       WEED_MASTER_VOLUME_GROWTH_COPY_1: "1"
     command:
       - master
@@ -181,8 +183,9 @@ services:
       - -port=8080
       - -port.grpc=18080
       - -dir=/data
-      # One default metadata collection and one configured artifact bucket.
-      - -max=2
+      # One volume each for the default metadata collection and the
+      # configured artifact bucket, and two spare slots in all.
+      - -max=4
     volumes:
       - ${PM_STACK_DATA_DIR:?}/seaweed-volume:/data
       - ${PM_STACK_STATE_DIR:?}/security.toml:/etc/seaweedfs/security.toml:ro
