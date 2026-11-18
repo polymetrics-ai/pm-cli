@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -10,11 +11,13 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -42,9 +45,56 @@ const (
 	maximumSecretBytes       = 64 << 10
 	readinessTimeout         = 2 * time.Minute
 	deploymentLockRetryDelay = 100 * time.Millisecond
+
+	// The job identity provider is a test-only Keycloak in its own Compose
+	// overlay. Only this service may publish on the second loopback address.
+	identityProviderService          = "keycloak"
+	identityProviderNetwork          = "identity-private"
+	identityProviderComposeFile      = "deploy/compose.identity.yaml"
+	identityProviderBinding          = "${PM_STACK_IDENTITY_PROVIDER_HOST:?}:${PM_STACK_IDENTITY_PROVIDER_PORT:?}:8443"
+	identityProviderUserVariable     = "${PM_STACK_IDENTITY_PROVIDER_USER:?}"
+	identityProviderImageUser        = "1000:0"
+	identityProviderBuildOutput      = "/opt/keycloak/lib/quarkus"
+	identityProviderReadinessTimeout = 4 * time.Minute
+	// identityProviderStartTimeout bounds the Compose start of the provider.
+	// The start can pull the pinned image, so it is longer than the readiness
+	// wait (review F7).
+	identityProviderStartTimeout = 10 * time.Minute
+	// The resource limits that D1-7 admits for the provider (review F5).
+	identityProviderMaximumCPUs        = 2.0
+	identityProviderMaximumMemoryBytes = 1536 << 20
+	identityProviderMaximumPids        = 512
 )
 
 var projectNamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{2,62}$`)
+
+// identityProviderMounts are the only mounts that the provider may have, as
+// Compose volume strings: each one read-only (review F3). The realm import is
+// a directory mount, so a removed import file also leaves the container view
+// (#316 review F2).
+var identityProviderMounts = []string{
+	"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server.pem:/run/secrets/identity-provider-server.pem:ro",
+	"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/server-key.pem:/run/secrets/identity-provider-server-key.pem:ro",
+	"${PM_STACK_IDENTITY_PROVIDER_DIR:?}/import:/opt/keycloak/data/import:ro",
+}
+
+// identityProviderTmpfs are the only tmpfs mounts that the provider may have.
+// The build output is writable and starts with a copy of the image's build
+// output (review F3, F6).
+var identityProviderTmpfs = []string{
+	"/tmp:size=64m,mode=1777",
+	"/opt/keycloak/data:size=128m,mode=1777",
+	identityProviderBuildOutput + ":size=64m,mode=0770,tmpcopyup",
+}
+
+var identityProviderRealmPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,62}$`)
+
+var identityProviderVariables = []string{
+	"PM_STACK_IDENTITY_PROVIDER_HOST",
+	"PM_STACK_IDENTITY_PROVIDER_PORT",
+	"PM_STACK_IDENTITY_PROVIDER_ISSUER",
+	"PM_STACK_IDENTITY_PROVIDER_DIR",
+}
 
 var processDeploymentFence = make(chan struct{}, 1)
 
@@ -70,8 +120,22 @@ type runtime struct {
 	images            map[string]string
 	uid               string
 	gid               string
+	identityProvider  *identityProvider
+	identityUser      string
 	stdout            io.Writer
 	stderr            io.Writer
+	// masterCallLimit is the time limit of one SeaweedFS master call. Zero
+	// means defaultMasterCallLimit.
+	masterCallLimit time.Duration
+}
+
+// identityProvider is the job-owned test identity provider that the job
+// environment selects. It is nil for every other stack.
+type identityProvider struct {
+	host   string
+	port   string
+	issuer string
+	dir    string
 }
 
 type imageLock struct {
@@ -95,6 +159,48 @@ type composeService struct {
 	Ports       []string `yaml:"ports"`
 	Privileged  bool     `yaml:"privileged"`
 	Volumes     []string `yaml:"volumes"`
+	User        string   `yaml:"user"`
+	ReadOnly    bool     `yaml:"read_only"`
+	CapDrop     []string `yaml:"cap_drop"`
+	SecurityOpt []string `yaml:"security_opt"`
+	Networks    []string `yaml:"networks"`
+	Command     []string `yaml:"command"`
+	Tmpfs       []string `yaml:"tmpfs"`
+}
+
+// identityOverlay is the identity provider overlay. pm-stack decodes it with
+// known fields only, so a key that this type does not name, for example
+// devices or an external network, refuses the overlay (D1-7, D1-8).
+type identityOverlay struct {
+	Services map[string]identityOverlayService `yaml:"services"`
+	Networks map[string]identityOverlayNetwork `yaml:"networks"`
+}
+
+type identityOverlayService struct {
+	Image           string   `yaml:"image"`
+	Restart         string   `yaml:"restart"`
+	Init            bool     `yaml:"init"`
+	User            string   `yaml:"user"`
+	ReadOnly        bool     `yaml:"read_only"`
+	CapDrop         []string `yaml:"cap_drop"`
+	CapAdd          []string `yaml:"cap_add"`
+	SecurityOpt     []string `yaml:"security_opt"`
+	Command         []string `yaml:"command"`
+	Ports           []string `yaml:"ports"`
+	Volumes         []string `yaml:"volumes"`
+	Tmpfs           []string `yaml:"tmpfs"`
+	Networks        []string `yaml:"networks"`
+	NetworkMode     string   `yaml:"network_mode"`
+	Privileged      bool     `yaml:"privileged"`
+	CPUs            *float64 `yaml:"cpus"`
+	MemLimit        *string  `yaml:"mem_limit"`
+	PidsLimit       *int64   `yaml:"pids_limit"`
+	StopGracePeriod string   `yaml:"stop_grace_period"`
+}
+
+type identityOverlayNetwork struct {
+	Driver string            `yaml:"driver"`
+	Labels map[string]string `yaml:"labels"`
 }
 
 type postgresConnection struct {
@@ -114,7 +220,7 @@ type renderTemplate struct {
 
 // Run is the stable operator entry point. It loads and validates the complete
 // requested action before any init, start, stop, or delete operation is run.
-func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.Writer) (err error) {
 	if stdout == nil {
 		stdout = io.Discard
 	}
@@ -122,6 +228,17 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 		stderr = io.Discard
 	}
 
+	if len(args) > 0 && args[0] == "up" {
+		// Every failure of an explicit pm-stack up has a fixed step code,
+		// also before upStack runs: parsing its arguments, and opening,
+		// loading and validating the configuration (review F9, round 2 F1).
+		defer func() {
+			var step *stepError
+			if err != nil && !errors.As(err, &step) {
+				err = &stepError{step: "configuration", err: err}
+			}
+		}()
+	}
 	options, err := parseCommand(args)
 	if err != nil {
 		return err
@@ -186,7 +303,9 @@ func Run(ctx context.Context, args []string, stdin io.Reader, stdout, stderr io.
 }
 
 // CheckStack verifies the selected PostgreSQL schemas and roles, the
-// authenticated Temporal namespace, and authenticated S3 bucket access.
+// authenticated Temporal namespace, authenticated S3 bucket access, and, for
+// bundled artifacts, a writable volume for the bucket and the default
+// collection.
 func CheckStack(ctx context.Context, configuration config.Configuration, stdout, stderr io.Writer) error {
 	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
@@ -319,39 +438,90 @@ func requestedLifecycle(action string, selected dependencySet) (config.Prelaunch
 	return config.Prelaunch{Lifecycle: requests}, nil
 }
 
-func upStack(ctx context.Context, configuration config.Configuration, selected dependencySet, stdout, stderr io.Writer) error {
-	if len(selected) == 0 {
-		return CheckStack(ctx, configuration, stdout, stderr)
+// stepError names the failed step of pm-stack up, and causeError the cause of
+// a failed provider check, with fixed codes. The job launcher prints only the
+// codes, never the error text, which can name a path or an address.
+type stepError struct {
+	step string
+	err  error
+}
+
+func (e *stepError) Error() string { return e.err.Error() }
+func (e *stepError) Unwrap() error { return e.err }
+
+// identityProviderCAError keeps the cause of an unreadable identity provider
+// CA. Its text is fixed, because the cause can name a private path (review
+// F4). errors.Is and errors.As still reach the cause.
+type identityProviderCAError struct{ cause error }
+
+func (*identityProviderCAError) Error() string   { return "identity provider CA is unreadable" }
+func (e *identityProviderCAError) Unwrap() error { return e.cause }
+
+type causeError struct{ code, text string }
+
+func (e causeError) Error() string { return e.text }
+
+// FailedStep returns "<step>" or "<step>/<cause>" for err, or "".
+func FailedStep(err error) string {
+	var step *stepError
+	var cause causeError
+	if !errors.As(err, &step) {
+		return ""
+	} else if errors.As(step.err, &cause) {
+		return step.step + "/" + cause.code
 	}
+	return step.step
+}
+
+func upStack(ctx context.Context, configuration config.Configuration, selected dependencySet, stdout, stderr io.Writer) (err error) {
+	if len(selected) == 0 {
+		if err := CheckStack(ctx, configuration, stdout, stderr); err != nil {
+			return &stepError{step: "stack-ready", err: err}
+		}
+		return nil
+	}
+	step := "configuration"
+	defer func() {
+		if err != nil {
+			err = &stepError{step: step, err: err}
+		}
+	}()
 	rt, err := newRuntime(configuration, stdout, stderr)
 	if err != nil {
 		return err
 	}
+	step = "deployment-lock"
 	lock, err := acquireDeploymentLock(ctx, rt.stateDir)
 	if err != nil {
 		return err
 	}
 	defer releaseDeploymentLock(lock)
+	step = "render"
 	if err := rt.render(configuration); err != nil {
 		return err
 	}
+	step = "compose-validate"
 	if err := rt.validateCompose(ctx, configuration); err != nil {
 		return err
 	}
 
+	step = "postgres-start"
 	if selected[config.DependencyPostgres] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "--wait", "postgres"); err != nil {
+		if err := rt.startServices(ctx, configuration, true, "postgres"); err != nil {
 			return fmt.Errorf("start PostgreSQL: %w", err)
 		}
 	}
+	step = "migrate"
 	if err := migrateUnderLock(ctx, configuration, selected, rt); err != nil {
 		return err
 	}
 
 	if selected[config.DependencyTemporal] {
-		if err := rt.compose(ctx, configuration, "up", "-d", "temporal"); err != nil {
+		step = "temporal-start"
+		if err := rt.startServices(ctx, configuration, false, "temporal"); err != nil {
 			return fmt.Errorf("start Temporal: %w", err)
 		}
+		step = "temporal-namespace"
 		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 			return ensureTemporalNamespace(checkCtx, configuration, rt, true)
 		}); err != nil {
@@ -360,23 +530,31 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyArtifacts] {
-		for _, services := range [][]string{
-			{"up", "-d", "seaweed-master"},
-			{"up", "-d", "seaweed-volume"},
-			{"up", "-d", "seaweed-filer"},
-			{"up", "-d", "seaweed-s3-a", "seaweed-s3-b", "caddy"},
-		} {
-			if err := rt.compose(ctx, configuration, services...); err != nil {
-				return fmt.Errorf("start artifact services: %w", err)
-			}
-		}
-		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
+		if err := startArtifacts(ctx, configuration, rt, &step, func(checkCtx context.Context) error {
 			return ensureArtifactBucket(checkCtx, configuration, rt, true)
 		}); err != nil {
-			return fmt.Errorf("initialize artifact bucket: %w", err)
+			return err
 		}
 	}
 
+	if rt.identityProvider != nil {
+		// --no-recreate keeps a running provider: the job removes its realm
+		// import file after the first ready answer.
+		step = "identity-provider-start"
+		if err := startWithin(ctx, identityProviderStartTimeout, func(startCtx context.Context) error {
+			return rt.compose(startCtx, configuration, "up", "-d", "--no-recreate", identityProviderService)
+		}); err != nil {
+			return fmt.Errorf("start the job identity provider: %w", err)
+		}
+		step = "identity-provider-ready"
+		if err := waitFor(ctx, identityProviderReadinessTimeout, func(checkCtx context.Context) error {
+			return checkIdentityProvider(checkCtx, rt.identityProvider)
+		}); err != nil {
+			return fmt.Errorf("job identity provider readiness: %w", err)
+		}
+	}
+
+	step = "stack-ready"
 	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
 		return checkLive(checkCtx, configuration, rt)
 	}); err != nil {
@@ -446,7 +624,10 @@ func drainStack(ctx context.Context, configuration config.Configuration, selecte
 	}
 	defer releaseDeploymentLock(lock)
 
-	services := make([]string, 0, 8)
+	services := make([]string, 0, 9)
+	if rt.identityProvider != nil {
+		services = append(services, identityProviderService)
+	}
 	if selected[config.DependencyArtifacts] {
 		services = append(services, "caddy", "seaweed-s3-a", "seaweed-s3-b", "seaweed-filer", "seaweed-volume", "seaweed-master")
 	}
@@ -496,6 +677,8 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	if len(bundledDependencies(configuration)) == 0 {
 		return rt, nil
 	}
+	// PM's own services publish only on 127.0.0.1. The job identity provider
+	// has its own variables and is checked after the port selection below.
 	if host := os.Getenv("PM_STACK_PUBLISH_HOST"); host != "" && host != "127.0.0.1" {
 		return nil, fmt.Errorf("published infrastructure ports must bind only to 127.0.0.1")
 	}
@@ -516,6 +699,10 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	if err != nil {
 		return nil, err
 	}
+	rt.identityProvider, err = identityProviderFromEnvironment(os.Getenv, rt.ports)
+	if err != nil {
+		return nil, err
+	}
 	if err := rt.validateBundledEndpoints(configuration); err != nil {
 		return nil, err
 	}
@@ -528,8 +715,94 @@ func newRuntime(configuration config.Configuration, stdout, stderr io.Writer) (*
 	}
 	rt.uid = strconv.Itoa(os.Getuid())
 	rt.gid = strconv.Itoa(os.Getgid())
+	// Compose validation interpolates the overlay before the engine is known.
+	// rt.compose replaces this value with the engine-specific user.
+	rt.identityUser = rt.uid + ":" + rt.gid
 
 	return rt, nil
+}
+
+// identityProviderFromEnvironment returns the job identity provider that the
+// environment selects, or nil when it selects none. Its address must be a
+// second IPv4 loopback address, so that PM cookies for 127.0.0.1 never reach it.
+func identityProviderFromEnvironment(lookup func(string) string, ports map[string]string) (*identityProvider, error) {
+	values := make(map[string]string, len(identityProviderVariables))
+	for _, name := range identityProviderVariables {
+		if value := lookup(name); value != "" {
+			values[name] = value
+		}
+	}
+	if len(values) == 0 {
+		return nil, nil
+	}
+	if len(values) != len(identityProviderVariables) {
+		return nil, fmt.Errorf("the job identity provider requires %s together", strings.Join(identityProviderVariables, ", "))
+	}
+	host := values["PM_STACK_IDENTITY_PROVIDER_HOST"]
+	if err := validateIdentityProviderHost(host); err != nil {
+		return nil, err
+	}
+	port := values["PM_STACK_IDENTITY_PROVIDER_PORT"]
+	if number, err := strconv.Atoi(port); err != nil || number < 1024 || number > 65535 || strconv.Itoa(number) != port {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_PORT must be an explicit non-privileged TCP port")
+	}
+	for name, value := range ports {
+		if value == port {
+			return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_PORT and %s must not publish the same port", name)
+		}
+	}
+	issuer := values["PM_STACK_IDENTITY_PROVIDER_ISSUER"]
+	realm, found := strings.CutPrefix(issuer, "https://"+net.JoinHostPort(host, port)+"/realms/")
+	if !found || !identityProviderRealmPattern.MatchString(realm) {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_ISSUER must be the exact HTTPS realm issuer at the identity provider address")
+	}
+	directory := values["PM_STACK_IDENTITY_PROVIDER_DIR"]
+	if !filepath.IsAbs(directory) || filepath.Clean(directory) != directory {
+		return nil, fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_DIR must be an absolute clean path")
+	}
+	resolved, err := filepath.EvalSymlinks(directory)
+	if err != nil {
+		return nil, fmt.Errorf("identity provider directory is unavailable")
+	}
+	if info, err := os.Stat(resolved); err != nil || !info.IsDir() {
+		return nil, fmt.Errorf("identity provider directory is not a directory")
+	}
+	if _, err := readBundleFile(resolved, "ca.pem"); err != nil {
+		return nil, &identityProviderCAError{cause: err}
+	}
+	return &identityProvider{host: host, port: port, issuer: issuer, dir: resolved}, nil
+}
+
+// validateIdentityProviderHost admits only a canonical IPv4 loopback address
+// other than 127.0.0.1. It refuses wildcard and non-loopback addresses.
+func validateIdentityProviderHost(host string) error {
+	address, err := netip.ParseAddr(host)
+	if err == nil && address.IsUnspecified() {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must not be a wildcard address")
+	}
+	if err != nil || !address.Is4() || address.String() != host {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must be a canonical IPv4 address")
+	}
+	if !address.IsLoopback() {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must not be a non-loopback address")
+	}
+	if address == netip.AddrFrom4([4]byte{127, 0, 0, 1}) {
+		return fmt.Errorf("PM_STACK_IDENTITY_PROVIDER_HOST must differ from the first loopback address that PM uses")
+	}
+	return nil
+}
+
+// identityProviderUser selects a non-root container user that can read the
+// provider's group-readable mounts. A rootless engine maps container group 0
+// to the job account's group, so the image's own user 1000:0 reads them.
+func identityProviderUser(rootless bool, uid, gid int) (string, error) {
+	if rootless {
+		return identityProviderImageUser, nil
+	}
+	if uid == 0 || gid == 0 {
+		return "", fmt.Errorf("the job identity provider must not run as the root account or group")
+	}
+	return strconv.Itoa(uid) + ":" + strconv.Itoa(gid), nil
 }
 
 func repositoryRoot() (string, error) {
@@ -795,6 +1068,10 @@ func loadImageLock(root string) (map[string]string, error) {
 			Repository: "docker.io/library/caddy", Tag: "2.11.4",
 			IndexDigest: "sha256:13ba145cba2f3e28fa801994876e4c086d1b95d5aa2a520a734765ffb6b12017",
 		},
+		"keycloak": {
+			Repository: "docker.io/keycloak/keycloak", Tag: "26.8.1",
+			IndexDigest: "sha256:3f3c5f8e03c614774b4bd9173b88391fefa4153bfc010d8012d59ad825377332",
+		},
 		"postgres": {
 			Repository: "docker.io/library/postgres", Tag: postgresVersion,
 			IndexDigest: "sha256:f1c3376c26f2609ab9f29f71f824103fe2fcd8ee0346485cb6122a4f93df6f94",
@@ -826,34 +1103,166 @@ func loadImageLock(root string) (map[string]string, error) {
 	return images, nil
 }
 
+// validateComposeSource checks the bundled projection and the identity
+// provider overlay. Every service publishes only on 127.0.0.1, except the
+// identity provider, which publishes exactly its second loopback binding.
 func validateComposeSource(root string) error {
-	contents, err := os.ReadFile(filepath.Join(root, "deploy/compose.yaml"))
+	bundled, err := readComposeDocument(root, "deploy/compose.yaml", "bundled Compose projection")
 	if err != nil {
-		return fmt.Errorf("read bundled Compose projection: %w", err)
+		return err
+	}
+	if len(bundled.Services) == 0 {
+		return fmt.Errorf("bundled Compose projection contains no services")
+	}
+	if _, exists := bundled.Services[identityProviderService]; exists {
+		return fmt.Errorf("service %q must stay outside the bundled Compose projection", identityProviderService)
+	}
+	identity, err := readComposeDocument(root, identityProviderComposeFile, "identity provider Compose overlay")
+	if err != nil {
+		return err
+	}
+	for name := range identity.Services {
+		if name != identityProviderService {
+			return fmt.Errorf("service %q must not join the identity provider overlay", name)
+		}
+	}
+	if _, exists := identity.Services[identityProviderService]; !exists {
+		return fmt.Errorf("identity provider overlay does not define service %q", identityProviderService)
+	}
+	for _, document := range []composeDocument{bundled, identity} {
+		for name, service := range document.Services {
+			if service.Privileged || service.NetworkMode == "host" {
+				return fmt.Errorf("service %q requests prohibited host privileges", name)
+			}
+			for _, binding := range service.Ports {
+				if name == identityProviderService {
+					if binding != identityProviderBinding {
+						return fmt.Errorf("service %q publishes a port outside its second loopback binding", name)
+					}
+				} else if !strings.HasPrefix(binding, "127.0.0.1:") {
+					return fmt.Errorf("service %q publishes a non-loopback port", name)
+				}
+			}
+			for _, mount := range service.Volumes {
+				if strings.Contains(mount, "/var/run/docker.sock") {
+					return fmt.Errorf("service %q mounts the Docker socket", name)
+				}
+			}
+		}
+	}
+	overlay, err := readIdentityOverlay(root)
+	if err != nil {
+		return err
+	}
+	return validateIdentityOverlay(overlay)
+}
+
+// readIdentityOverlay decodes the identity provider overlay with known
+// fields only.
+func readIdentityOverlay(root string) (identityOverlay, error) {
+	contents, err := os.ReadFile(filepath.Join(root, identityProviderComposeFile))
+	if err != nil {
+		return identityOverlay{}, errors.New("read identity provider Compose overlay: the file is unavailable")
+	}
+	decoder := yaml.NewDecoder(bytes.NewReader(contents))
+	decoder.KnownFields(true)
+	var overlay identityOverlay
+	if err := decoder.Decode(&overlay); err != nil {
+		return identityOverlay{}, fmt.Errorf("parse identity provider Compose overlay: %w", err)
+	}
+	return overlay, nil
+}
+
+// validateIdentityOverlay checks the D1-7 and D1-8 conditions of the overlay:
+// the one service, its own network definition, no capability, no new
+// privileges, the exact mount and tmpfs sets, and the resource limits.
+func validateIdentityOverlay(overlay identityOverlay) error {
+	provider, exists := overlay.Services[identityProviderService]
+	if !exists || len(overlay.Services) != 1 {
+		return fmt.Errorf("identity provider overlay must define only service %q", identityProviderService)
+	}
+	network, exists := overlay.Networks[identityProviderNetwork]
+	if !exists || len(overlay.Networks) != 1 || network.Driver != "bridge" ||
+		len(network.Labels) != 1 || network.Labels["ai.polymetrics.pm-stack"] != "true" {
+		return fmt.Errorf("service %q must use its own bridge network %q, defined only in its overlay with the stack label", identityProviderService, identityProviderNetwork)
+	}
+	if provider.User != identityProviderUserVariable || !provider.ReadOnly ||
+		!slices.Equal(provider.CapDrop, []string{"ALL"}) || len(provider.CapAdd) != 0 ||
+		!slices.Equal(provider.SecurityOpt, []string{"no-new-privileges:true"}) ||
+		!slices.Equal(provider.Networks, []string{identityProviderNetwork}) ||
+		provider.NetworkMode != "" || provider.Privileged || provider.Restart != "no" ||
+		!slices.Equal(provider.Ports, []string{identityProviderBinding}) {
+		return fmt.Errorf("service %q must run as the selected non-root user with no capabilities, no new privileges, a read-only root file system, restart no, its own network and one published port", identityProviderService)
+	}
+	// The pinned stock image has no persisted Keycloak build, so Keycloak
+	// refuses start --optimized. start builds once into a writable tmpfs that
+	// starts with a copy of the image's build output.
+	buildOutput := identityProviderTmpfs[len(identityProviderTmpfs)-1]
+	if len(provider.Command) == 0 || provider.Command[0] != "start" || slices.Contains(provider.Command, "--optimized") ||
+		!slices.Contains(provider.Tmpfs, buildOutput) {
+		return fmt.Errorf("service %q must run start without --optimized and with the writable tmpfs %q, because the pinned stock image has no persisted build", identityProviderService, buildOutput)
+	}
+	if !sameStrings(provider.Volumes, identityProviderMounts) {
+		return fmt.Errorf("service %q must have exactly the admitted read-only mounts", identityProviderService)
+	}
+	if !sameStrings(provider.Tmpfs, identityProviderTmpfs) {
+		return fmt.Errorf("service %q must have exactly the admitted tmpfs mounts", identityProviderService)
+	}
+	memory, memoryOK := composeMemoryBytes(provider.MemLimit)
+	if provider.CPUs == nil || *provider.CPUs <= 0 || *provider.CPUs > identityProviderMaximumCPUs ||
+		!memoryOK || memory > identityProviderMaximumMemoryBytes ||
+		provider.PidsLimit == nil || *provider.PidsLimit <= 0 || *provider.PidsLimit > identityProviderMaximumPids {
+		return fmt.Errorf("service %q must set cpus, mem_limit and pids_limit within the admitted limits", identityProviderService)
+	}
+	return nil
+}
+
+// sameStrings reports whether the two lists hold the same strings, each once.
+func sameStrings(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	sortedGot, sortedWant := slices.Clone(got), slices.Clone(want)
+	slices.Sort(sortedGot)
+	slices.Sort(sortedWant)
+	return slices.Equal(sortedGot, sortedWant) && len(slices.Compact(sortedGot)) == len(sortedWant)
+}
+
+// composeMemoryBytes reads a Compose memory size: a positive integer with an
+// optional b, k, m or g suffix. It refuses any other form.
+func composeMemoryBytes(value *string) (int64, bool) {
+	if value == nil || *value == "" {
+		return 0, false
+	}
+	text := strings.ToLower(*value)
+	multiplier := int64(1)
+	switch text[len(text)-1] {
+	case 'b':
+		text = text[:len(text)-1]
+	case 'k':
+		multiplier, text = 1<<10, text[:len(text)-1]
+	case 'm':
+		multiplier, text = 1<<20, text[:len(text)-1]
+	case 'g':
+		multiplier, text = 1<<30, text[:len(text)-1]
+	}
+	number, err := strconv.ParseInt(text, 10, 64)
+	if err != nil || number <= 0 || number > (1<<62)/multiplier {
+		return 0, false
+	}
+	return number * multiplier, true
+}
+
+func readComposeDocument(root, relative, description string) (composeDocument, error) {
+	contents, err := os.ReadFile(filepath.Join(root, relative))
+	if err != nil {
+		return composeDocument{}, fmt.Errorf("read %s: %w", description, err)
 	}
 	var document composeDocument
 	if err := yaml.Unmarshal(contents, &document); err != nil {
-		return fmt.Errorf("parse bundled Compose projection: %w", err)
+		return composeDocument{}, fmt.Errorf("parse %s: %w", description, err)
 	}
-	if len(document.Services) == 0 {
-		return fmt.Errorf("bundled Compose projection contains no services")
-	}
-	for name, service := range document.Services {
-		if service.Privileged || service.NetworkMode == "host" {
-			return fmt.Errorf("service %q requests prohibited host privileges", name)
-		}
-		for _, binding := range service.Ports {
-			if !strings.HasPrefix(binding, "127.0.0.1:") {
-				return fmt.Errorf("service %q publishes a non-loopback port", name)
-			}
-		}
-		for _, mount := range service.Volumes {
-			if strings.Contains(mount, "/var/run/docker.sock") {
-				return fmt.Errorf("service %q mounts the Docker socket", name)
-			}
-		}
-	}
-	return nil
+	return document, nil
 }
 
 func (rt *runtime) render(configuration config.Configuration) error {
@@ -1093,11 +1502,18 @@ func (rt *runtime) composeEnvironment() []string {
 		"PM_STACK_IMAGE_TEMPORAL_SERVER": rt.images["temporal-server"],
 		"PM_STACK_IMAGE_SEAWEEDFS":       rt.images["seaweedfs"],
 		"PM_STACK_IMAGE_CADDY":           rt.images["caddy"],
+		"PM_STACK_IMAGE_KEYCLOAK":        rt.images["keycloak"],
 		"COMPOSE_DISABLE_ENV_FILE":       "true",
 		"COMPOSE_ENV_FILES":              "",
 	}
 	for name, value := range rt.ports {
 		values[name] = value
+	}
+	if provider := rt.identityProvider; provider != nil {
+		values["PM_STACK_IDENTITY_PROVIDER_HOST"] = provider.host
+		values["PM_STACK_IDENTITY_PROVIDER_PORT"] = provider.port
+		values["PM_STACK_IDENTITY_PROVIDER_DIR"] = provider.dir
+		values["PM_STACK_IDENTITY_PROVIDER_USER"] = rt.identityUser
 	}
 	environment := make([]string, 0, len(os.Environ())+len(values))
 	for _, entry := range os.Environ() {
@@ -1125,6 +1541,9 @@ func (rt *runtime) composeArguments(configuration config.Configuration, argument
 		"--project-name", rt.project,
 		"-f", filepath.Join(rt.root, "deploy/compose.yaml"),
 		"-f", filepath.Join(rt.root, "deploy/compose.managed.yaml"),
+	}
+	if rt.identityProvider != nil {
+		command = append(command, "-f", filepath.Join(rt.root, identityProviderComposeFile))
 	}
 	if configuration.Postgres().Ownership == config.OwnershipBundled {
 		command = append(command, "--profile", "bundled-postgres")
@@ -1156,6 +1575,132 @@ func (rt *runtime) compose(ctx context.Context, configuration config.Configurati
 	return nil
 }
 
+// serviceContainer is the state of one Compose service container that
+// decides whether pm-stack up keeps it.
+type serviceContainer struct {
+	running    bool
+	configHash string
+}
+
+// settledService reports whether a service keeps its container: the service
+// has exactly one container, the container runs, and its Compose config hash
+// label equals the hash that Compose expects for the current configuration.
+// A changed configuration, a missing container, a stopped container or an
+// unknown hash goes through the normal up.
+func settledService(expectedHash string, containers []serviceContainer) bool {
+	return expectedHash != "" &&
+		len(containers) == 1 &&
+		containers[0].running &&
+		containers[0].configHash == expectedHash
+}
+
+// startServices runs compose up for the named services. A settled service
+// (settledService) goes through up --no-recreate, so its running container
+// stays. Compose otherwise recreates a running container when the engine
+// reports a network ID that Compose cannot match, also when the configuration
+// is unchanged (rootless Podman). Every other service goes through the normal
+// up, which creates, starts or recreates it.
+func (rt *runtime) startServices(ctx context.Context, configuration config.Configuration, wait bool, services ...string) error {
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return err
+	}
+	expected, err := rt.expectedServiceHashes(ctx, configuration, services)
+	if err != nil {
+		return err
+	}
+	var recreate, keep []string
+	for _, service := range services {
+		containers, err := rt.serviceContainers(ctx, service)
+		if err != nil {
+			return err
+		}
+		if settledService(expected[service], containers) {
+			keep = append(keep, service)
+		} else {
+			recreate = append(recreate, service)
+		}
+	}
+	arguments := []string{"up", "-d"}
+	if wait {
+		arguments = append(arguments, "--wait")
+	}
+	if len(recreate) > 0 {
+		if err := rt.compose(ctx, configuration, append(slices.Clone(arguments), recreate...)...); err != nil {
+			return err
+		}
+	}
+	if len(keep) > 0 {
+		keepArguments := append(slices.Clone(arguments), "--no-recreate")
+		if err := rt.compose(ctx, configuration, append(keepArguments, keep...)...); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// expectedServiceHashes returns the config hash that Compose computes for
+// each named service from the current configuration.
+func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration config.Configuration, services []string) (map[string]string, error) {
+	command := exec.CommandContext(ctx, "python3",
+		rt.composeArguments(configuration, "config", "--hash", strings.Join(services, ","))...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	command.Stderr = rt.stderr
+	output, err := command.Output()
+	if err != nil {
+		return nil, fmt.Errorf("read Compose service configuration hashes: %w", err)
+	}
+	hashes := make(map[string]string, len(services))
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			continue
+		}
+		if len(fields) != 2 {
+			return nil, fmt.Errorf("Compose service configuration hash output is malformed")
+		}
+		hashes[fields[0]] = fields[1]
+	}
+	return hashes, nil
+}
+
+// serviceContainers returns the state of the containers of one service of
+// this Compose project. One-off containers (compose run) are not included.
+func (rt *runtime) serviceContainers(ctx context.Context, service string) ([]serviceContainer, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	list := exec.CommandContext(ctx, "docker", "ps", "--all", "--quiet", "--no-trunc",
+		"--filter", "label=com.docker.compose.project="+rt.project,
+		"--filter", "label=com.docker.compose.service="+service,
+		"--filter", "label=com.docker.compose.oneoff=False")
+	list.Dir = rt.root
+	output, err := list.Output()
+	if err != nil {
+		return nil, fmt.Errorf("list the %s service containers: %w", service, err)
+	}
+	ids := strings.Fields(string(output))
+	containers := make([]serviceContainer, 0, len(ids))
+	for _, id := range ids {
+		inspect := exec.CommandContext(ctx, "docker", "inspect", "--format",
+			`{{.State.Running}} {{index .Config.Labels "com.docker.compose.config-hash"}}`, id)
+		inspect.Dir = rt.root
+		state, err := inspect.Output()
+		if err != nil {
+			return nil, fmt.Errorf("inspect a %s service container: %w", service, err)
+		}
+		fields := strings.Fields(string(state))
+		if len(fields) == 0 {
+			return nil, fmt.Errorf("inspect a %s service container: empty state", service)
+		}
+		container := serviceContainer{running: fields[0] == "true"}
+		if len(fields) == 2 {
+			container.configHash = fields[1]
+		}
+		containers = append(containers, container)
+	}
+	return containers, nil
+}
+
 func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
@@ -1170,13 +1715,34 @@ func (rt *runtime) resolveContainerIdentity(ctx context.Context) error {
 		return err
 	}
 	rt.uid, rt.gid = uid, gid
+	if rt.identityProvider != nil {
+		rootless, err := rootlessDaemon(output)
+		if err != nil {
+			return err
+		}
+		rt.identityUser, err = identityProviderUser(rootless, os.Getuid(), os.Getgid())
+		if err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
 func containerIdentity(output []byte, uid, gid int) (string, string, error) {
+	rootless, err := rootlessDaemon(output)
+	if err != nil {
+		return "", "", err
+	}
+	if rootless {
+		return "0", "0", nil
+	}
+	return strconv.Itoa(uid), strconv.Itoa(gid), nil
+}
+
+func rootlessDaemon(output []byte) (bool, error) {
 	var options []string
 	if err := json.Unmarshal(output, &options); err != nil || options == nil {
-		return "", "", fmt.Errorf("Docker security options are invalid")
+		return false, fmt.Errorf("Docker security options are invalid")
 	}
 	rootless, remapped := false, false
 	for _, option := range options {
@@ -1184,13 +1750,10 @@ func containerIdentity(output []byte, uid, gid int) (string, string, error) {
 		rootless = rootless || name == "name=rootless"
 		remapped = remapped || name == "name=userns"
 	}
-	if rootless {
-		return "0", "0", nil
+	if !rootless && remapped {
+		return false, fmt.Errorf("rootful Docker userns-remap requires an explicit bind-mount ownership mapping")
 	}
-	if remapped {
-		return "", "", fmt.Errorf("rootful Docker userns-remap requires an explicit bind-mount ownership mapping")
-	}
-	return strconv.Itoa(uid), strconv.Itoa(gid), nil
+	return rootless, nil
 }
 
 func (rt *runtime) validateCompose(ctx context.Context, configuration config.Configuration) error {
@@ -1266,6 +1829,82 @@ func checkLive(ctx context.Context, configuration config.Configuration, rt *runt
 	}
 	if err := ensureArtifactBucket(ctx, configuration, rt, false); err != nil {
 		return fmt.Errorf("artifact readiness: %w", err)
+	}
+	if configuration.Artifacts().Ownership == config.OwnershipBundled {
+		if err := ensureArtifactVolumes(ctx, configuration, rt, false); err != nil {
+			return fmt.Errorf("artifact readiness: %w", err)
+		}
+	}
+	if rt.identityProvider != nil {
+		if err := checkIdentityProvider(ctx, rt.identityProvider); err != nil {
+			return fmt.Errorf("job identity provider readiness: %w", err)
+		}
+	}
+	return nil
+}
+
+// transportFailure returns the fixed class of a failed discovery request.
+func transportFailure(err error) string {
+	var certificate *tls.CertificateVerificationError
+	var network net.Error
+	switch {
+	case errors.Is(err, syscall.ECONNREFUSED):
+		return "connection-refused"
+	case errors.Is(err, syscall.ECONNRESET), errors.Is(err, io.EOF), errors.Is(err, io.ErrUnexpectedEOF):
+		return "connection-closed"
+	case errors.As(err, &certificate):
+		return "tls-certificate"
+	case errors.As(err, &network) && network.Timeout():
+		return "timeout"
+	}
+	return "unavailable"
+}
+
+// checkIdentityProvider reads the realm discovery document over TLS that the
+// identity provider CA and the exact IP address verify. The provider is ready
+// only when it names the exact configured issuer, whatever the request host.
+// Errors omit the address and the response.
+func checkIdentityProvider(ctx context.Context, provider *identityProvider) error {
+	ca, err := readBundleFile(provider.dir, "ca.pem")
+	if err != nil {
+		return &identityProviderCAError{cause: err}
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(ca) {
+		return fmt.Errorf("identity provider CA bundle is invalid")
+	}
+	transport := &http.Transport{
+		TLSClientConfig:   &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots, ServerName: provider.host},
+		DisableKeepAlives: true,
+	}
+	defer transport.CloseIdleConnections()
+	httpClient := &http.Client{
+		Transport:     transport,
+		Timeout:       10 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, provider.issuer+"/.well-known/openid-configuration", nil)
+	if err != nil {
+		return fmt.Errorf("build identity provider discovery request")
+	}
+	response, err := httpClient.Do(request)
+	if err != nil {
+		code := transportFailure(err)
+		return causeError{code, "identity provider discovery is unavailable: " + code}
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		code, text := fmt.Sprintf("status-%d", response.StatusCode), "identity provider discovery returned status"
+		return causeError{code, fmt.Sprintf("%s %d", text, response.StatusCode)}
+	}
+	var discovery struct {
+		Issuer string `json:"issuer"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&discovery); err != nil {
+		return causeError{"not-json", "identity provider discovery is not JSON"}
+	}
+	if discovery.Issuer != provider.issuer {
+		return causeError{"issuer-mismatch", "identity provider discovery does not name the exact configured issuer"}
 	}
 	return nil
 }
@@ -1402,9 +2041,9 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 	if err != nil {
 		return err
 	}
-	temporalClient, err := client.Dial(options)
+	temporalClient, err := client.DialContext(ctx, options)
 	if err != nil {
-		return fmt.Errorf("connect authenticated Temporal client")
+		return temporalConnectError{cause: err}
 	}
 	defer temporalClient.Close()
 	service := temporalClient.WorkflowService()
@@ -1445,6 +2084,33 @@ func ensureTemporalNamespace(ctx context.Context, configuration config.Configura
 		return fmt.Errorf("Temporal server version mismatch")
 	}
 	return nil
+}
+
+// temporalConnectError keeps the cause of a failed Temporal connection for
+// errors.As. Its text names only the class of the cause. The SDK text can
+// name the endpoint or its address, so the text does not include it.
+type temporalConnectError struct {
+	cause error
+}
+
+func (e temporalConnectError) Error() string {
+	var deadline *serviceerror.DeadlineExceeded
+	var canceled *serviceerror.Canceled
+	var unavailable *serviceerror.Unavailable
+	switch {
+	case errors.As(e.cause, &deadline):
+		return "connect authenticated Temporal client: the server did not answer within the connection limit"
+	case errors.As(e.cause, &canceled):
+		return "connect authenticated Temporal client: the check was cancelled"
+	case errors.As(e.cause, &unavailable):
+		return "connect authenticated Temporal client: the server refused or closed the connection"
+	default:
+		return "connect authenticated Temporal client: the connection failed"
+	}
+}
+
+func (e temporalConnectError) Unwrap() error {
+	return e.cause
 }
 
 func artifactClient(configuration config.Configuration, rt *runtime) (*s3.Client, error) {
@@ -1509,27 +2175,271 @@ func ensureArtifactBucket(ctx context.Context, configuration config.Configuratio
 	return nil
 }
 
+// seaweedMasterOrigin is the HTTP origin of the SeaweedFS master on the
+// private stack network. pm-stack calls it inside the master container, so
+// the admin API is not published outside that network.
+const seaweedMasterOrigin = "http://seaweed-master:9333"
+
+const (
+	// defaultMasterCallLimit bounds one compose exec call to the SeaweedFS
+	// master, from its start to the end of the process.
+	defaultMasterCallLimit = 30 * time.Second
+	// masterCallWaitDelay bounds the wait for the output of a master call
+	// after its limit kills the process. A child that keeps the output open
+	// cannot block the call longer.
+	masterCallWaitDelay = 5 * time.Second
+)
+
+// masterLimit returns the time limit of one SeaweedFS master call.
+func (rt *runtime) masterLimit() time.Duration {
+	if rt.masterCallLimit > 0 {
+		return rt.masterCallLimit
+	}
+	return defaultMasterCallLimit
+}
+
+// seaweedTopology is the part of the master's /dir/status document that
+// pm-stack reads: the volume slots and the writable volumes of each layout.
+type seaweedTopology struct {
+	Max     *int64 `json:"Max"`
+	Free    *int64 `json:"Free"`
+	Layouts []struct {
+		Collection string   `json:"collection"`
+		Writables  []uint32 `json:"writables"`
+	} `json:"Layouts"`
+}
+
+// writable returns the number of writable volumes of the layouts whose
+// collection is exactly the given collection. The default collection is "".
+func (topology seaweedTopology) writable(collection string) int {
+	count := 0
+	for _, layout := range topology.Layouts {
+		if layout.Collection == collection {
+			count += len(layout.Writables)
+		}
+	}
+	return count
+}
+
+// seaweedMaster calls one master endpoint with curl inside the master
+// container and returns the response body. A non-2xx response fails. The
+// Compose and curl diagnostics can name the private service address and the
+// bucket, so pm-stack does not show them. Each call ends within its own time
+// limit (masterLimit) plus masterCallWaitDelay, or earlier at the deadline of
+// ctx.
+func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Configuration, path string, query url.Values) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, rt.masterLimit())
+	defer cancel()
+	if err := rt.resolveContainerIdentity(ctx); err != nil {
+		return nil, err
+	}
+	target := seaweedMasterOrigin + path
+	if len(query) > 0 {
+		target += "?" + query.Encode()
+	}
+	command := exec.CommandContext(ctx, "python3", rt.composeArguments(configuration,
+		"exec", "-T", "seaweed-master", "curl", "-fsS", "-m", "10", target)...)
+	command.Dir = rt.root
+	command.Env = rt.composeEnvironment()
+	command.WaitDelay = masterCallWaitDelay
+	return command.Output()
+}
+
+func (rt *runtime) artifactVolumeStatus(ctx context.Context, configuration config.Configuration) (seaweedTopology, error) {
+	output, err := rt.seaweedMaster(ctx, configuration, "/dir/status", nil)
+	if err != nil {
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
+	}
+	var status struct {
+		Topology *seaweedTopology `json:"Topology"`
+	}
+	if err := json.Unmarshal(output, &status); err != nil || status.Topology == nil ||
+		status.Topology.Max == nil || status.Topology.Free == nil {
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
+	}
+	return *status.Topology, nil
+}
+
+// checkArtifactVolumeCapacity is a read-only readiness fact: the master
+// reports volume slots, so the volume server has joined the master.
+func checkArtifactVolumeCapacity(ctx context.Context, configuration config.Configuration, rt *runtime) error {
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if *topology.Max < 1 {
+		return fmt.Errorf("artifact volume server has not joined the master")
+	}
+	return nil
+}
+
+// startArtifacts starts the bundled artifact store for pm-stack up, then
+// waits for the bucket. ensureBucket is the bucket step. It sets *step to the
+// fixed code of the part that runs: artifacts-start for the services, the
+// capacity wait and the volume grow (startArtifactStore), and artifact-bucket
+// for the bucket wait. The launcher accepts only these listed codes
+// (STACK_FAILED_STEP), so no new code is added.
+func startArtifacts(ctx context.Context, configuration config.Configuration, rt *runtime, step *string, ensureBucket func(context.Context) error) error {
+	*step = "artifacts-start"
+	if err := startArtifactStore(ctx, configuration, rt); err != nil {
+		return err
+	}
+	*step = "artifact-bucket"
+	// The start-up wait repeats only the bucket step.
+	if err := waitFor(ctx, readinessTimeout, ensureBucket); err != nil {
+		return fmt.Errorf("initialize artifact bucket: %w", err)
+	}
+	return nil
+}
+
+// startArtifactStore starts the services of the bundled artifact store for
+// pm-stack up. startArtifacts then waits for the bucket.
+//
+// It grows the artifact volumes after the volume server joins the master and
+// before seaweed-filer starts (#381). The filer writes its metadata log to the
+// default collection about one minute after it starts. In SeaweedFS 4.46 that
+// write grows a default volume when the default collection has no writable
+// volume, and /vol/grow grows without a check. A grow by pm-stack after the
+// filer starts can read the status before that growth and grow after it. The
+// stack is then ready with two default volumes and one spare slot. On a fresh
+// or stopped stack, no SeaweedFS service writes to a volume before the filer
+// starts. On a running stack, the filer already runs and can write while
+// pm-stack up grows.
+//
+// The bucket collection gets its volume before the bucket exists. A SeaweedFS
+// 4.46 bucket create decides from the bucket directory only, so it creates a
+// bucket whose collection already has a volume.
+func startArtifactStore(ctx context.Context, configuration config.Configuration, rt *runtime) error {
+	for _, services := range [][]string{{"seaweed-master"}, {"seaweed-volume"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	// The start-up wait repeats only the read-only capacity fact. The volume
+	// grow runs after the wait, once.
+	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
+		return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
+	}); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	for _, services := range [][]string{{"seaweed-filer"}, {"seaweed-s3-a", "seaweed-s3-b", "caddy"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	return nil
+}
+
+// ensureArtifactVolumes requires a writable volume for the artifact bucket
+// and for the default collection. Without one, the first object write of a
+// run waits for SeaweedFS to grow the volume. With grow, it reads the status,
+// asks the master once to grow one volume for each layout that has no
+// writable volume, and reads the status again. It never repeats a grow. Each
+// pm-stack up holds the deployment lock, and a second up finds the volumes
+// and grows nothing. pm-stack up calls it with grow before it starts
+// seaweed-filer (startArtifactStore). So on a fresh or stopped stack, the
+// filer does not run during the grow. On a running stack, it does. Without
+// grow, it only reads.
+//
+// A grow request that fails or reaches its time limit can still have grown a
+// volume, so the error does not say that no volume grew. The same pm-stack up
+// does not repeat the grow. The next pm-stack up reads the status first and
+// grows only a layout that has no writable volume.
+func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
+	// missing is the text of the final check. growFailed is the text of a
+	// grow request that got no success answer: the volume may have grown.
+	layouts := []struct {
+		collection string
+		missing    string
+		growFailed string
+	}{
+		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume",
+			"no success answer arrived for the grow request of the artifact bucket. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
+		{"", "default collection has no writable volume",
+			"no success answer arrived for the grow request of the default collection. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
+	}
+	topology, err := rt.artifactVolumeStatus(ctx, configuration)
+	if err != nil {
+		return err
+	}
+	if grow {
+		grown := false
+		for _, layout := range layouts {
+			if topology.writable(layout.collection) > 0 {
+				continue
+			}
+			query := url.Values{"count": {"1"}}
+			if layout.collection != "" {
+				query.Set("collection", layout.collection)
+			}
+			if _, err := rt.seaweedMaster(ctx, configuration, "/vol/grow", query); err != nil {
+				return errors.New(layout.growFailed)
+			}
+			grown = true
+		}
+		if grown {
+			if topology, err = rt.artifactVolumeStatus(ctx, configuration); err != nil {
+				return err
+			}
+		}
+	}
+	for _, layout := range layouts {
+		if topology.writable(layout.collection) < 1 {
+			return errors.New(layout.missing)
+		}
+	}
+	return nil
+}
+
+// startWithin runs start with its own deadline (review F7). rt.compose runs
+// the process with exec.CommandContext, which stops the process when the
+// deadline passes and returns after its exit. A start that passes the
+// deadline keeps the step code of its caller, with the cause timeout.
+func startWithin(ctx context.Context, limit time.Duration, start func(context.Context) error) error {
+	startCtx, cancel := context.WithTimeout(ctx, limit)
+	defer cancel()
+	err := start(startCtx)
+	if err != nil && ctx.Err() == nil && errors.Is(startCtx.Err(), context.DeadlineExceeded) {
+		return fmt.Errorf("the start did not end within %s: %w", limit,
+			causeError{code: "timeout", text: "the start passed its deadline"})
+	}
+	return err
+}
+
+// waitFor repeats check until it passes, with one outer deadline for the
+// whole wait (review F8). Each attempt derives from that deadline, and an
+// attempt that passes after the deadline does not count.
 func waitFor(ctx context.Context, timeout time.Duration, check func(context.Context) error) error {
-	deadline := time.Now().Add(timeout)
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	var last error
 	for {
-		attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
+		attempt, stop := context.WithTimeout(waitCtx, 10*time.Second)
 		last = check(attempt)
-		cancel()
-		if last == nil {
-			return nil
-		}
+		stop()
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
-		if time.Now().After(deadline) {
-			return last
+		if waitCtx.Err() != nil {
+			if last == nil {
+				last = causeError{code: "timeout", text: "the check passed only after the wait limit"}
+			}
+			return fmt.Errorf("the wait passed its limit of %s: %w", timeout, last)
+		}
+		if last == nil {
+			return nil
 		}
 		timer := time.NewTimer(time.Second)
 		select {
-		case <-ctx.Done():
+		case <-waitCtx.Done():
 			timer.Stop()
-			return ctx.Err()
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("the wait passed its limit of %s: %w", timeout, last)
 		case <-timer.C:
 		}
 	}
