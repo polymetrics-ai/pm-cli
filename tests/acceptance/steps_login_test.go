@@ -276,9 +276,10 @@ func (s *loginScenario) close() error {
 // deadline bounds the write, the exit and the end of the output: the exit
 // limit of the command line, or the end of the parent context if that comes
 // first (#402 review F2). The write runs in a goroutine. At the deadline the
-// step kills the process, closes the pipe and joins the write before it
-// returns. It needs exit code 0. A failure message shows the output by its
-// form only.
+// step kills the process, joins the output readers, closes the pipe and joins
+// the write before it returns. Each other early return also joins the output
+// readers (stopExchangeProcess). It needs exit code 0. A failure message
+// shows the output by its form only.
 func runDeviceExchange(parent context.Context, binary string, args, environment []string, challenge *deviceChallenge) error {
 	exitLimit, err := exchangeExitLimit(args)
 	if err != nil {
@@ -324,12 +325,19 @@ func runDeviceExchange(parent context.Context, binary string, args, environment 
 }
 
 // stopExchangeProcess ends a login-exchange process that is still running,
-// with SIGKILL, and waits for its exit with the kill limit.
+// with SIGKILL, and waits for its exit with the kill limit. Then it joins the
+// output readers (#402 review R2-F1).
 func stopExchangeProcess(p *exchangeProcess) error {
 	if p.stdin != nil {
 		_ = p.stdin.Close()
 		p.stdin = nil
 	}
+	return errors.Join(killExchangeProcess(p), p.joinOutput())
+}
+
+// killExchangeProcess sends SIGKILL to a login-exchange process that is
+// still running and waits for its exit with the kill limit.
+func killExchangeProcess(p *exchangeProcess) error {
 	select {
 	case <-p.exited:
 		return nil
@@ -346,6 +354,25 @@ func stopExchangeProcess(p *exchangeProcess) error {
 	case <-timer.C:
 		return fmt.Errorf("the device login exchange did not end within %s after SIGKILL", killLimit)
 	}
+}
+
+// joinOutput waits for the end of the output with the kill limit. A process
+// that pm started can keep the output pipes open after pm ends. Then
+// joinOutput closes the read ends, joins the readers and fails. The close
+// ends the blocked reads: os.File.Close cancels the pending I/O of a pipe.
+func (p *exchangeProcess) joinOutput() error {
+	timer := time.NewTimer(killLimit)
+	defer timer.Stop()
+	select {
+	case <-p.outputEnded:
+		return nil
+	case <-timer.C:
+	}
+	for _, reader := range p.readEnds {
+		_ = reader.Close()
+	}
+	<-p.outputEnded
+	return fmt.Errorf("a process that pm sessions login-exchange started kept the output open for %s after the stop. The step closed the read ends", killLimit)
 }
 
 // namesBootstrappedWorkspace is the K1b step "the lane command stdout names

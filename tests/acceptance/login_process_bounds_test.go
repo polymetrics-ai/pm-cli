@@ -1,6 +1,8 @@
 package acceptance
 
 import (
+	"bufio"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +14,7 @@ import (
 )
 
 // processCheckGuard ends a broken check of the login process bounds (#402
-// review F1 to F3). A correct run ends long before it.
+// review F1 to F3, R2-F1 and R2-F2). A correct run ends long before it.
 const processCheckGuard = laneCommandTimeout + killLimit
 
 // releasePipe returns the path of a named pipe that a fake process reads one
@@ -51,6 +53,104 @@ func joinOnCleanup(t *testing.T, name string) chan struct{} {
 		}
 	})
 	return finished
+}
+
+// descendantLine is the shell line of a fake descendant: a process that a
+// fake pm starts in the background and leaves running (#402 review R2-F2).
+// It keeps the stdout and the stderr of the fake pm open. It writes
+// "started" to the end pipe, reads one line from the release pipe and
+// writes "ended" to the end pipe as its last command.
+const descendantLine = `( echo started > "$END"; read _ < "$RELEASE"; echo ended > "$END" ) &`
+
+// fakeDescendant holds the environment of a fake descendant and the lines
+// that the reader of its end pipe got.
+type fakeDescendant struct {
+	environment []string
+	lines       <-chan string
+}
+
+// startFakeDescendant makes the release pipe and the end pipe of a fake
+// descendant and starts the reader of the end pipe. Call it before the start
+// of the fake pm. The test holds both named pipes open for read and write
+// (O_RDWR), so no open waits. The cleanup writes the release line and waits,
+// within the guard, for the "ended" line. When that line does not come, the
+// cleanup fails the test and ends the reader with a stop line. Then it joins
+// the reader. The release pipe closes after that wait, so a late open of the
+// release pipe still gets the line.
+func startFakeDescendant(t *testing.T, name string) *fakeDescendant {
+	t.Helper()
+	dir := t.TempDir()
+	releasePath, endPath := filepath.Join(dir, "release"), filepath.Join(dir, "end")
+	for _, path := range []string{releasePath, endPath} {
+		if err := syscall.Mkfifo(path, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	release, err := os.OpenFile(releasePath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = release.Close() })
+	end, err := os.OpenFile(endPath, os.O_RDWR, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines := make(chan string, 3)
+	t.Cleanup(func() {
+		_, _ = release.Write([]byte("release\n"))
+		guard := time.NewTimer(processCheckGuard)
+		defer guard.Stop()
+		if !awaitLine(lines, "ended\n", guard.C) {
+			t.Errorf("%s did not end within %s after the release", name, processCheckGuard)
+			_, _ = end.Write([]byte("stop\n"))
+		}
+		for range lines {
+		}
+		_ = end.Close()
+	})
+	go func() {
+		defer close(lines)
+		reader := bufio.NewReader(end)
+		for {
+			line, err := reader.ReadString('\n')
+			if err != nil {
+				return
+			}
+			lines <- line
+			if line == "ended\n" || line == "stop\n" {
+				return
+			}
+		}
+	}()
+	return &fakeDescendant{environment: []string{"RELEASE=" + releasePath, "END=" + endPath}, lines: lines}
+}
+
+// waitStart waits, within the guard, for the "started" line.
+func (d *fakeDescendant) waitStart() error {
+	guard := time.NewTimer(processCheckGuard)
+	defer guard.Stop()
+	if !awaitLine(d.lines, "started\n", guard.C) {
+		return errors.New("the fake descendant did not start")
+	}
+	return nil
+}
+
+// awaitLine reads lines until it gets want. It reports false when the
+// channel closes or the timer fires first.
+func awaitLine(lines <-chan string, want string, timer <-chan time.Time) bool {
+	for {
+		select {
+		case line, open := <-lines:
+			if !open {
+				return false
+			}
+			if line == want {
+				return true
+			}
+		case <-timer:
+			return false
+		}
+	}
 }
 
 // writeFakePM writes an executable shell script and returns its path.
@@ -128,12 +228,12 @@ func TestRunAsUserKeepsTheCredentialOutOfTheDiagnostics(t *testing.T) {
 // TestRunPMProcessEndsWhenADescendantKeepsTheOutput (#402 review F3): pm
 // exits, and a process that it started keeps the stdout pipe open. The wait
 // of runPMProcess must still end, with a failure, and not wait for that
-// process.
+// process. The cleanup joins that process (#402 review R2-F2).
 func TestRunPMProcessEndsWhenADescendantKeepsTheOutput(t *testing.T) {
 	finished := joinOnCleanup(t, "runPMProcess")
-	release := releasePipe(t)
-	script := writeFakePM(t, "#!/bin/sh\n( read _ < \"$RELEASE\" ) &\nexit 0\n")
-	environment := []string{"PATH=/usr/bin:/bin", "LANG=C", "RELEASE=" + release}
+	descendant := startFakeDescendant(t, "the process that the fake pm started")
+	script := writeFakePM(t, "#!/bin/sh\n"+descendantLine+"\nexit 0\n")
+	environment := append([]string{"PATH=/usr/bin:/bin", "LANG=C"}, descendant.environment...)
 	ended := make(chan error, 1)
 	go func() {
 		defer close(finished)

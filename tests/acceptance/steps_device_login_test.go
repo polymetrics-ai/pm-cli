@@ -144,9 +144,13 @@ type exchangeProcess struct {
 	command *exec.Cmd
 	// stdin is the write end of the stdin pipe until the step writes the
 	// proof and closes it.
-	stdin       *os.File
-	stdout      boundedOutput
-	stderr      boundedOutput
+	stdin  *os.File
+	stdout boundedOutput
+	stderr boundedOutput
+	// readEnds are the read ends of the stdout and stderr pipes. The readers
+	// close them at end of file. stopExchangeProcess closes them when the
+	// output does not end.
+	readEnds    [2]*os.File
 	first       chan firstLine
 	outputEnded chan struct{}
 	exited      chan struct{}
@@ -922,6 +926,7 @@ func startExchangeProcess(binary string, args, environment []string) (*exchangeP
 	p := &exchangeProcess{
 		command:     command,
 		stdin:       stdinWriter,
+		readEnds:    [2]*os.File{stdoutReader, stderrReader},
 		first:       make(chan firstLine, 1),
 		outputEnded: make(chan struct{}),
 		exited:      make(chan struct{}),
