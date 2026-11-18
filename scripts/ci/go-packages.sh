@@ -20,6 +20,13 @@
 
 pm_stack_list=scripts/ci/stack-packages.txt
 pm_shard_list=scripts/ci/stack-shards.txt
+# Deliberate fault for the #286a canary K2, only on the throwaway branch
+# agent/286a-canary-k2-3, which never merges. Only in CI (GITHUB_ACTIONS is
+# "true"), the shard check reads a faulty copy of the shard file. The git
+# hooks keep the real file, so they can commit and push this branch.
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  pm_shard_list=scripts/ci/canary-k2-stack-shards.txt
+fi
 pm_gherkin_package=./tests/acceptance
 
 # pm_stack_entries prints the entries of the stack list, one ./relative package
