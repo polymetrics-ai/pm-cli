@@ -182,8 +182,8 @@ class SetupContracts(unittest.TestCase):
             "retired runner label": lambda r, _: text(r, WORKFLOW,
                 lambda s: s.replace("pm-cli-vps", "pm-cli-qual-20260911-r8")),
             "job container moves the workspace": lambda r, _: text(r, WORKFLOW,
-                lambda s: s.replace("    timeout-minutes: 60\n",
-                                    "    timeout-minutes: 60\n    container: ubuntu:24.04\n")),
+                lambda s: s.replace("    timeout-minutes: 100\n",
+                                    "    timeout-minutes: 100\n    container: ubuntu:24.04\n")),
             "suite outside the CI image": lambda r, _: text(r, WORKFLOW,
                 lambda s: s.replace("run: sh scripts/ci/in-ci-image.sh run bdd -- ", "run: ")),
             "renamed required check": lambda r, _: text(r, WORKFLOW,
@@ -1235,6 +1235,53 @@ class BddReceiptStep(unittest.TestCase):
         self.assertEqual(
             [line.strip() for line in commands if "--check-receipt" in line],
             ['if python3 scripts/ci/with-stack-fixture.py --check-receipt "$manifest" &&'])
+
+
+class BddTimeBudget(unittest.TestCase):
+    """The time limits of the bdd job (owner decision of 2026-11-17: the stack
+    go test command stops one hour after the start of check-bdd.sh)."""
+
+    def module(self, name, path):
+        spec = importlib.util.spec_from_file_location(name, path)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    def test_limits_fit_one_hour_of_stack_tests(self):
+        script = CHECK_BDD.read_text()
+        # The budget lines of check-bdd.sh, run with the script start at 0.
+        lines = [line for line in script.splitlines()
+                 if re.match(r"^(budget|start_allowance|cleanup_allowance|finish_allowance|stop_grace|"
+                             r"gherkin_minimum|gherkin_deadline|stack_deadline)=", line)]
+        self.assertEqual(len(lines), 8, lines)
+        result = subprocess.run(["/bin/sh", "-c", "started=0\n" + "\n".join(lines)
+                                 + '\necho "$budget $stack_deadline $gherkin_deadline"'],
+                                capture_output=True, text=True, timeout=30)
+        budget, stack_deadline, gherkin_deadline = map(int, result.stdout.split())
+        self.assertEqual((budget, stack_deadline, gherkin_deadline), (5220, 3600, 4770))
+        text = script.replace("\\\n", " ")
+        stack = re.search(r'--deadline "\$stack_deadline" --timeout (\d+) .* -timeout (\w+) \$\(cat', text)
+        gherkin = re.search(r'--deadline "\$gherkin_deadline" --timeout (\d+) ', text)
+        stack_timeout, gherkin_timeout = int(stack.group(1)), int(gherkin.group(1))
+        self.assertEqual((stack_timeout, stack.group(2), gherkin_timeout), (3600, "15m", 1140))
+        child_timeout = self.module("stack_fixture", ROOT / "scripts/ci/with-stack-fixture.py").CHILD_TIMEOUT
+        kill_grace = self.module("go_test_report", REPORT).KILL_GRACE
+        self.assertEqual(child_timeout, 3660)
+        # The reporter, not the wrapper, ends each run.
+        self.assertLess(stack_timeout + kill_grace, child_timeout)
+        self.assertLess(gherkin_timeout + kill_grace, child_timeout)
+        workflow = (ROOT / WORKFLOW).read_text()
+        bdd = workflow[workflow.index("\n  bdd:\n"):workflow.index("\n  checks:\n")]
+        job = int(re.search(r"\n    timeout-minutes: (\d+)\n", bdd).group(1))
+        step = int(re.search(r"- name: Run the Gherkin acceptance suite\n        timeout-minutes: (\d+)\n",
+                             bdd).group(1))
+        cleanup = int(re.search(r"- name: Clean up the job container and dependency fixture\n"
+                                r"        if: always\(\)\n        timeout-minutes: (\d+)\n", bdd).group(1))
+        self.assertEqual((step, job, cleanup), (90, 100, 6))
+        # The step keeps 3 minutes for the job container; the job keeps the
+        # cleanup step and 4 minutes for the checkout and the runner.
+        self.assertEqual(step * 60, budget + 3 * 60)
+        self.assertEqual(job, step + cleanup + 4)
 
 
 class GoPackageSelection(unittest.TestCase):
