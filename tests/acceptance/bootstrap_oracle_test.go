@@ -251,8 +251,9 @@ func oracleScope(t *testing.T, membership func(map[string]any)) (*bootstrapRun, 
 		"provider_accounts": map[string]any{"org_id": input.OrgID, "provider_account_id": "account-1", "provider": "postgres"},
 		"bootstrap_records": map[string]any{"deployment_id": "pm-acceptance-oracle", "org_id": input.OrgID,
 			"workspace_id": input.WorkspaceID, "admin_identity_id": "identity-1", "membership_id": "membership-1"},
-		"workspace_audit_entries": map[string]any{"org_id": input.OrgID, "requested_actor_kind": "operator",
-			"effective_actor_kind": "operator"},
+		"workspace_audit_entries": map[string]any{"org_id": input.OrgID,
+			"requested_actor_id": "bootstrap", "requested_actor_kind": "operator",
+			"effective_actor_id": "bootstrap", "effective_actor_kind": "operator"},
 	}
 	state := bootstrapState{"audit_entries": nil}
 	for table, row := range rows {
@@ -269,6 +270,32 @@ func TestBootstrapScopeCheckAcceptsAdminMembership(t *testing.T) {
 	run, state := oracleScope(t, nil)
 	if err := checkScope(state, run, true); err != nil {
 		t.Fatalf("the check refuses a correct admin membership: %v", err)
+	}
+}
+
+// K1a says that the audit record names the operator bootstrap as its actor.
+// Defect: a check that reads only the actor kinds and accepts an audit record
+// of another operator actor.
+func TestBootstrapScopeCheckRefusesAnAuditOfAnotherActor(t *testing.T) {
+	cases := map[string]map[string]any{
+		"another requested and effective actor": {"requested_actor_id": "someone-else", "effective_actor_id": "someone-else"},
+		"another requested actor":               {"requested_actor_id": "someone-else", "effective_actor_id": "bootstrap"},
+		"another effective actor":               {"requested_actor_id": "bootstrap", "effective_actor_id": "someone-else"},
+	}
+	for name, ids := range cases {
+		run, state := oracleScope(t, nil)
+		audit := map[string]any{"org_id": run.input.OrgID, "requested_actor_kind": "operator", "effective_actor_kind": "operator"}
+		for column, value := range ids {
+			audit[column] = value
+		}
+		encoded, err := json.Marshal(audit)
+		if err != nil {
+			t.Fatalf("encode the %s audit row: %v", name, err)
+		}
+		state["workspace_audit_entries"] = []string{string(encoded)}
+		if err := checkScope(state, run, true); err == nil {
+			t.Errorf("the check accepts an audit record with %s and the operator kinds", name)
+		}
 	}
 }
 

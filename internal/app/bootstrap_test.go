@@ -131,11 +131,12 @@ func TestBootstrapWritesTheAdminAndMapsStoreRefusals(t *testing.T) {
 		storeErr error
 		want     error
 	}{
-		"scope bootstrapped": {store.ErrBootstrapScopeExists, ErrBootstrapScopeExists},
-		"login bound":        {store.ErrBootstrapLoginBound, ErrBootstrapLoginBound},
-		"credential refused": {store.ErrBootstrapAuthority, ErrBootstrapAuthority},
-		"commit uncertain":   {errors.Join(store.ErrCommitOutcomeUnknown, errors.New("commit store transaction")), ErrBootstrapOutcomeUnknown},
-		"store failure":      {errors.New("insert workspace: connection reset"), ErrBootstrapFailed},
+		"scope bootstrapped":           {store.ErrBootstrapScopeExists, ErrBootstrapScopeExists},
+		"scope taken by another input": {store.ErrBootstrapScopeOtherInput, ErrBootstrapScopeOtherInput},
+		"login bound":                  {store.ErrBootstrapLoginBound, ErrBootstrapLoginBound},
+		"credential refused":           {store.ErrBootstrapAuthority, ErrBootstrapAuthority},
+		"commit uncertain":             {errors.Join(store.ErrCommitOutcomeUnknown, errors.New("commit store transaction")), ErrBootstrapOutcomeUnknown},
+		"store failure":                {errors.New("insert workspace: connection reset"), ErrBootstrapFailed},
 	} {
 		t.Run(name, func(t *testing.T) {
 			configuration.Write = (&recordingWrite{err: testCase.storeErr}).write
@@ -143,6 +144,26 @@ func TestBootstrapWritesTheAdminAndMapsStoreRefusals(t *testing.T) {
 				t.Fatalf("bootstrap with store error %v = %v; want %v", testCase.storeErr, err, testCase.want)
 			}
 		})
+	}
+}
+
+// Go developer check, not acceptance proof. No Gherkin scenario checks the
+// text of these bootstrap lines. Each error text is the exact stderr line after
+// "pm-server: ", and docs/development/setup.md names it. Defect: a changed line
+// that an operator or a script reads.
+func TestBootstrapLinesWithoutAScenarioAreExact(t *testing.T) {
+	for _, testCase := range []struct {
+		err  error
+		line string
+	}{
+		{ErrBootstrapScopeOtherInput, "bootstrap scope is already bootstrapped with another input"},
+		{ErrBootstrapInput, "bootstrap input is invalid"},
+		{ErrBootstrapFailed, "bootstrap failed and wrote nothing"},
+		{ErrBootstrapOutcomeUnknown, "bootstrap outcome is unknown. Run the bootstrap again with the same input to learn the outcome"},
+	} {
+		if testCase.err.Error() != testCase.line {
+			t.Errorf("bootstrap line = %q; want exactly %q", testCase.err.Error(), testCase.line)
+		}
 	}
 }
 

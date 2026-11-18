@@ -4,6 +4,9 @@ go_library(
     name = "pm-server_lib",
     srcs = [
         "bootstrap.go",
+        "listening_darwin.go",
+        "listening_linux.go",
+        "listening_other.go",
         "main.go",
     ],
     importpath = "github.com/polymetrics-ai/pm-cli/cmd/pm-server",

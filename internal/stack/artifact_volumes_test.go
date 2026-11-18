@@ -1,14 +1,19 @@
 package stack
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"io"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 )
 
 const (
@@ -19,6 +24,9 @@ const (
 	defaultGrowCall    = "http://seaweed-master:9333/vol/grow?count=1"
 	unjoinedStatus     = `{"Topology":{"Max":0,"Free":0,"Layouts":null}}`
 	bucketMissingError = "artifact bucket has no writable volume"
+	// The texts of a grow request that got no success answer.
+	bucketGrowFailedError  = "no success answer arrived for the grow request of the artifact bucket. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."
+	defaultGrowFailedError = "no success answer arrived for the grow request of the default collection. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."
 )
 
 // TestEnsureArtifactVolumes runs ensureArtifactVolumes against fake python3
@@ -61,7 +69,15 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 			before:    freshMasterStatus,
 			growExit:  22,
 			wantGrows: []string{bucketGrowCall},
-			wantError: bucketMissingError,
+			wantError: bucketGrowFailedError,
+		},
+		{
+			name:      "a refused grow of the default collection fails with its own text",
+			grow:      true,
+			before:    bucketOnlyStatus,
+			growExit:  22,
+			wantGrows: []string{defaultGrowCall},
+			wantError: defaultGrowFailedError,
 		},
 		{
 			name:      "a grow of no volume fails with the named error",
@@ -83,19 +99,19 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 			name:      "an unreadable status fails",
 			grow:      true,
 			statusErr: true,
-			wantError: "read the artifact volume status",
+			wantError: "cannot read the artifact volume status",
 		},
 		{
 			name:      "a status that is not JSON fails",
 			grow:      true,
 			before:    "not json",
-			wantError: "read the artifact volume status",
+			wantError: "cannot read the artifact volume status",
 		},
 		{
 			name:      "a status without a topology fails",
 			grow:      true,
 			before:    `{"Version":"4.46"}`,
-			wantError: "read the artifact volume status",
+			wantError: "cannot read the artifact volume status",
 		},
 		{
 			name: "only the exact collection names the bucket layout",
@@ -139,6 +155,173 @@ func TestEnsureArtifactVolumes(t *testing.T) {
 	}
 }
 
+// TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit runs the grow step
+// against a fake master whose /vol/grow call never answers: the fake starts a
+// child that waits on a FIFO that no process writes, and the child keeps the
+// output of the call open. Defect it catches: a grow call that does not end
+// when its context ends, or that waits for the output of a child after that,
+// blocks pm-stack up until the caller stops it. The step must end with an
+// error that does not say that no volume grew, after exactly one grow call.
+//
+// The call limit here is one hour, so no call of the step can meet it: the
+// status read and the start of each fake process take as long as the host
+// needs. The grow call ends because the test ends the context of the step at
+// one product event: the fake has recorded the grow call. An earlier version
+// used a 3 s call limit for every call, so on a loaded host the status read
+// met that limit on correct code. TestSeaweedMasterEndsAHungCallAtItsLimit
+// checks the call limit itself.
+func TestEnsureArtifactVolumesEndsAHungGrowAtTheCallLimit(t *testing.T) {
+	fake := installHungGrowMaster(t, freshMasterStatus)
+	rt := &runtime{root: fake, project: "pm-artifact-volumes-test", stdout: io.Discard, stderr: io.Discard,
+		masterCallLimit: time.Hour}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	started := growStarted(t, fake)
+	done := make(chan error, 1)
+	go func() {
+		done <- ensureArtifactVolumes(ctx, noRecreateTestConfiguration(t), rt, true)
+	}()
+	var err error
+	// The one guard: a step that never returns fails the test. It measures no
+	// time of a call.
+	guard := time.After(30 * time.Second)
+	select {
+	case <-started:
+		cancel()
+	case err = <-done:
+		t.Fatalf("the grow step returned %v before the fake recorded a grow call", err)
+	case <-guard:
+		t.Fatal("the fake recorded no grow call")
+	}
+	select {
+	case err = <-done:
+	case <-guard:
+		t.Fatal("the grow step did not return after its context ended: the hung master call does not end")
+	}
+	const want = bucketGrowFailedError
+	if err == nil || err.Error() != want {
+		t.Fatalf("ensureArtifactVolumes error = %v, want %q", err, want)
+	}
+	if got := recordedMasterCalls(t, fake, "grow.log"); !slices.Equal(got, []string{bucketGrowCall}) {
+		t.Fatalf("grow calls = %q, want exactly %q", got, bucketGrowCall)
+	}
+}
+
+// TestSeaweedMasterEndsAHungCallAtItsLimit calls the master once, with a
+// call limit of 1 s and no deadline of the caller, against the fake whose
+// /vol/grow call never answers and whose child keeps the output open.
+// Defect it catches: a master call with no time limit of its own, or one that
+// waits for the output of a child after its limit. Whichever process of the
+// call runs when the limit comes (docker or python3), the call must end with
+// an error. The result does not depend on how fast a process starts.
+func TestSeaweedMasterEndsAHungCallAtItsLimit(t *testing.T) {
+	fake := installHungGrowMaster(t, freshMasterStatus)
+	rt := &runtime{root: fake, project: "pm-artifact-volumes-test", stdout: io.Discard, stderr: io.Discard,
+		masterCallLimit: time.Second}
+	// Read the start signal, so that a fast call reaches the child that keeps
+	// the output open, and the output wait after the limit is in the check.
+	growStarted(t, fake)
+	done := make(chan error, 1)
+	go func() {
+		query := url.Values{"collection": {"pm-development-artifacts"}, "count": {"1"}}
+		_, err := rt.seaweedMaster(context.Background(), noRecreateTestConfiguration(t), "/vol/grow", query)
+		done <- err
+	}()
+	// The one guard: a call that never returns fails the test. The limit is
+	// 1 s and the output wait after it is masterCallWaitDelay.
+	select {
+	case err := <-done:
+		if err == nil {
+			t.Fatal("the hung master call succeeded, want an error at its limit")
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatal("the master call did not return: the hung call has no effective time limit")
+	}
+}
+
+// growStarted returns a channel that closes when the fake master has recorded
+// a grow call. The fake writes to the FIFO grow.started after it records the
+// call and before it waits. The read ends at that write, or at the cleanup.
+func growStarted(t *testing.T, directory string) <-chan struct{} {
+	t.Helper()
+	fifo := filepath.Join(directory, "grow.started")
+	started := make(chan struct{})
+	go func() {
+		if reader, err := os.Open(fifo); err == nil {
+			buffer := make([]byte, 1)
+			if n, _ := reader.Read(buffer); n == 1 {
+				close(started)
+			}
+			_ = reader.Close()
+		}
+	}()
+	t.Cleanup(func() {
+		if writer, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+	})
+	return started
+}
+
+// installHungGrowMaster writes fake python3 and docker programs and puts them
+// first on PATH. /dir/status prints the status document. /vol/grow records
+// its URL, writes to the FIFO grow.started (it waits there until a reader
+// opens it), and then runs cat on a FIFO that no process writes, so the call
+// never ends and cat keeps its output open. A cleanup opens the FIFO for
+// writing once, so a waiting cat ends with the test.
+func installHungGrowMaster(t *testing.T, status string) string {
+	t.Helper()
+	directory := t.TempDir()
+	bin := filepath.Join(directory, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	fifo := filepath.Join(directory, "grow.fifo")
+	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(directory, "grow.started"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if writer, err := os.OpenFile(fifo, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+	})
+	writeTestFile(t, filepath.Join(directory, "status"), status, 0o600)
+	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
+for argument in "$@"; do
+  url=$argument
+done
+case "$url" in
+  */dir/status)
+    cat "$FAKE_MASTER_DIR/status"
+    ;;
+  */vol/grow\?*)
+    printf '%s\n' "$url" >> "$FAKE_MASTER_DIR/grow.log"
+    printf 'started' > "$FAKE_MASTER_DIR/grow.started"
+    cat "$FAKE_MASTER_DIR/grow.fifo"
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	writeTestFile(t, filepath.Join(bin, "docker"), `#!/bin/sh
+case "$1" in
+  info)
+    printf '%s\n' '["name=seccomp,profile=builtin"]'
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	t.Setenv("FAKE_MASTER_DIR", directory)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
+	return directory
+}
+
 // TestCheckArtifactVolumeCapacity checks the read-only fact that the start-up
 // wait of pm-stack up waits for: the volume server has joined the master.
 func TestCheckArtifactVolumeCapacity(t *testing.T) {
@@ -163,6 +346,319 @@ func TestCheckArtifactVolumeCapacity(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestStartArtifactStoreGrowsTheVolumesBeforeTheFilerStarts runs
+// startArtifacts (startArtifactStore, then the bucket wait) against fake
+// python3 (docker compose through tools/bootstrap.py) and docker programs on
+// PATH. The fakes record each
+// compose up call, each /vol/grow call and the bucket step in one ordered
+// log. Defect it catches (#381): pm-stack up grows the artifact volumes after
+// seaweed-filer starts. The filer writes its metadata log to the default
+// collection about one minute after it starts. In SeaweedFS 4.46 that write
+// grows a default volume when the default collection has no writable volume.
+// When pm-stack reads the master status before that growth and grows after
+// it, the stack is ready with two default volumes and only one spare slot.
+func TestStartArtifactStoreGrowsTheVolumesBeforeTheFilerStarts(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		before string
+		after  string
+		want   []string
+	}{
+		{
+			name:   "a fresh master grows both volumes before the filer starts",
+			before: freshMasterStatus,
+			after:  readyMasterStatus,
+			want: []string{
+				"up seaweed-master",
+				"up seaweed-volume",
+				"grow " + bucketGrowCall,
+				"grow " + defaultGrowCall,
+				"up seaweed-filer",
+				"up seaweed-s3-a seaweed-s3-b caddy",
+				"bucket",
+			},
+		},
+		{
+			name:   "a second up with writable volumes grows nothing",
+			before: readyMasterStatus,
+			want: []string{
+				"up seaweed-master",
+				"up seaweed-volume",
+				"up seaweed-filer",
+				"up seaweed-s3-a seaweed-s3-b caddy",
+				"bucket",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := installFakeArtifactStore(t, test.before, test.after)
+			rt := &runtime{root: fake, project: "pm-artifact-store-test", stdout: io.Discard, stderr: io.Discard}
+			ensureBucket := func(context.Context) error {
+				return appendTestLine(filepath.Join(fake, "order.log"), "bucket")
+			}
+			step := "before"
+			if err := startArtifacts(context.Background(), noRecreateTestConfiguration(t), rt, &step, ensureBucket); err != nil {
+				t.Fatalf("startArtifacts: %v", err)
+			}
+			if got := recordedMasterCalls(t, fake, "order.log"); !slices.Equal(got, test.want) {
+				t.Fatalf("artifact store start order = %q, want %q: each /vol/grow must come before seaweed-filer starts", got, test.want)
+			}
+		})
+	}
+}
+
+// TestArtifactStartFailuresReportTheirStep checks the fixed step codes of
+// startArtifacts. A failure of the services, the capacity wait or the volume
+// grow reports artifacts-start. A failure of the bucket wait reports
+// artifact-bucket. The launcher accepts only these listed codes
+// (STACK_FAILED_STEP in scripts/ci/with-stack-fixture.py).
+func TestArtifactStartFailuresReportTheirStep(t *testing.T) {
+	notJoined := `{"Topology":{"Max":0,"Free":0,"Layouts":null},"Version":"4.46"}`
+	for _, test := range []struct {
+		name     string
+		before   string
+		after    string
+		capacity bool
+		bucket   bool
+		wantStep string
+		wantLog  []string
+	}{
+		{
+			// The first capacity request that reaches the fake master
+			// ends the wait (#336 round 3 F2). So both service starts are
+			// complete, and the wait ends in the capacity check, not at a
+			// time limit.
+			name:     "the capacity wait ends before the volume server joins",
+			before:   notJoined,
+			after:    notJoined,
+			capacity: true,
+			wantStep: "artifacts-start",
+			wantLog:  []string{"up seaweed-master", "up seaweed-volume"},
+		},
+		{
+			name:     "the volume grow leaves no writable volume",
+			before:   freshMasterStatus,
+			after:    freshMasterStatus,
+			wantStep: "artifacts-start",
+			wantLog:  []string{"up seaweed-master", "up seaweed-volume", "grow " + bucketGrowCall, "grow " + defaultGrowCall},
+		},
+		{
+			name:     "the bucket step fails",
+			before:   readyMasterStatus,
+			bucket:   true,
+			wantStep: "artifact-bucket",
+			wantLog: []string{
+				"up seaweed-master",
+				"up seaweed-volume",
+				"up seaweed-filer",
+				"up seaweed-s3-a seaweed-s3-b caddy",
+				"bucket",
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			fake := installFakeArtifactStore(t, test.before, test.after)
+			rt := &runtime{root: fake, project: "pm-artifact-store-test", stdout: io.Discard, stderr: io.Discard}
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// A deadlock guard only. A correct run ends at an observed
+			// event long before it.
+			ctx, stop := context.WithTimeout(ctx, artifactStartDeadlockGuard)
+			defer stop()
+			var capacityRequested func() bool
+			if test.capacity {
+				capacityRequested = cancelAtFirstCapacityRequest(t, cancel)
+			}
+			ensureBucket := func(context.Context) error {
+				if err := appendTestLine(filepath.Join(fake, "order.log"), "bucket"); err != nil {
+					return err
+				}
+				if test.bucket {
+					// The parent context ends with this attempt, so the
+					// bucket wait ends at once.
+					cancel()
+					return context.Canceled
+				}
+				return nil
+			}
+			step := "before"
+			err := startArtifacts(ctx, noRecreateTestConfiguration(t), rt, &step, ensureBucket)
+			if err == nil {
+				t.Fatal("startArtifacts passed")
+			}
+			if step != test.wantStep {
+				t.Fatalf("failed step = %q, want %q (error: %v)", step, test.wantStep, err)
+			}
+			if test.capacity {
+				if !capacityRequested() {
+					t.Fatalf("no capacity request reached the fake master (error: %v)", err)
+				}
+				if !errors.Is(err, context.Canceled) {
+					t.Fatalf("the capacity wait did not end at the observed capacity request: %v", err)
+				}
+			}
+			if got := recordedMasterCalls(t, fake, "order.log"); !slices.Equal(got, test.wantLog) {
+				t.Fatalf("artifact store calls = %q, want %q", got, test.wantLog)
+			}
+		})
+	}
+}
+
+// artifactStartDeadlockGuard ends a broken artifact start test. A correct
+// run never reaches it.
+const artifactStartDeadlockGuard = time.Minute
+
+// cancelAtFirstCapacityRequest puts a python3 wrapper first on PATH, before
+// the fake of installFakeArtifactStore. When a /dir/status request (the
+// capacity check) reaches the fake master, the wrapper writes one line to a
+// named pipe, then runs the fake. A goroutine opens the pipe, which waits
+// until that first request, reads the line and calls cancel. The returned
+// function reports whether a capacity request came. It also ends the wait
+// of the goroutine when no request came.
+func cancelAtFirstCapacityRequest(t *testing.T, cancel context.CancelFunc) func() bool {
+	t.Helper()
+	directory := t.TempDir()
+	signal := filepath.Join(directory, "capacity")
+	if err := syscall.Mkfifo(signal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	bin := filepath.Join(directory, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
+for argument in "$@"; do
+  last=$argument
+done
+case "$last" in
+  */dir/status)
+    printf 'capacity\n' > "$FAKE_CAPACITY_SIGNAL"
+    ;;
+esac
+exec "$FAKE_STORE_DIR/bin/python3" "$@"
+`, 0o700)
+	t.Setenv("FAKE_CAPACITY_SIGNAL", signal)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	seen := make(chan bool, 1)
+	done := make(chan struct{})
+	t.Cleanup(func() { close(done) })
+	go func() {
+		file, err := os.OpenFile(signal, os.O_RDONLY, 0)
+		if err != nil {
+			seen <- false
+			return
+		}
+		defer file.Close()
+		line, _ := bufio.NewReader(file).ReadString('\n')
+		requested := line == "capacity\n"
+		if requested {
+			cancel()
+		}
+		seen <- requested
+		// The read end stays open until the test ends, so that a later
+		// capacity request never waits for a reader.
+		<-done
+	}()
+	return func() bool {
+		// When no capacity request came, the goroutine still waits in
+		// open. A writer that opens and closes the pipe ends that wait.
+		if writer, err := os.OpenFile(signal, os.O_WRONLY|syscall.O_NONBLOCK, 0); err == nil {
+			_ = writer.Close()
+		}
+		select {
+		case requested := <-seen:
+			return requested
+		case <-time.After(artifactStartDeadlockGuard):
+			t.Fatal("the capacity signal reader did not end")
+			return false
+		}
+	}
+}
+
+// installFakeArtifactStore writes fake python3 and docker programs and puts
+// them first on PATH. The fake python3 prints no Compose config hash, so each
+// service goes through the normal up, and it records each compose up call in
+// order.log. It answers each compose exec call to the master like
+// installFakeMaster: /dir/status prints the before document until a grow call
+// was made, and the after document then. /vol/grow records its URL in
+// order.log. The fake docker lists no service container. It returns the
+// directory that holds the documents and the log.
+func installFakeArtifactStore(t *testing.T, before, after string) string {
+	t.Helper()
+	directory := t.TempDir()
+	bin := filepath.Join(directory, "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, filepath.Join(directory, "status-before"), before, 0o600)
+	writeTestFile(t, filepath.Join(directory, "status-after"), after, 0o600)
+	writeTestFile(t, filepath.Join(bin, "python3"), `#!/bin/sh
+for argument in "$@"; do
+  if [ "$argument" = "--hash" ]; then
+    exit 0
+  fi
+  last=$argument
+done
+call=" $* "
+case "$call" in
+  *" exec -T seaweed-master curl -fsS -m 10 "*)
+    case "$last" in
+      */dir/status)
+        if [ -f "$FAKE_STORE_DIR/grown" ]; then
+          cat "$FAKE_STORE_DIR/status-after"
+        else
+          cat "$FAKE_STORE_DIR/status-before"
+        fi
+        ;;
+      */vol/grow\?*)
+        printf 'grow %s\n' "$last" >> "$FAKE_STORE_DIR/order.log"
+        : > "$FAKE_STORE_DIR/grown"
+        printf '%s\n' '{"count":1}'
+        ;;
+      *)
+        exit 64
+        ;;
+    esac
+    ;;
+  *" up -d "*)
+    services=${call#* up -d }
+    printf 'up %s\n' "${services% }" >> "$FAKE_STORE_DIR/order.log"
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	writeTestFile(t, filepath.Join(bin, "docker"), `#!/bin/sh
+case "$1" in
+  info)
+    printf '%s\n' '["name=seccomp,profile=builtin"]'
+    ;;
+  ps)
+    ;;
+  *)
+    exit 64
+    ;;
+esac
+`, 0o700)
+	t.Setenv("FAKE_STORE_DIR", directory)
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin"+string(os.PathListSeparator)+"/bin")
+	return directory
+}
+
+// appendTestLine appends one line to a log of a fake.
+func appendTestLine(path, line string) error {
+	file, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := file.WriteString(line + "\n"); err != nil {
+		_ = file.Close()
+		return err
+	}
+	return file.Close()
 }
 
 // installFakeMaster writes fake python3 and docker programs and puts them
