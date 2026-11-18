@@ -202,6 +202,12 @@
         "source_url": "https://go.googlesource.com/sync/+/f75267d8412fc1dfd12b343644a7ea46e4d9c85d"
       },
       {
+        "path": "golang.org/x/sys",
+        "version": "v0.47.0",
+        "license": "BSD-3-Clause",
+        "source_url": "https://go.googlesource.com/sys/+/9e7e939dcafac07e8ab4cffa6e5fc74908413f00"
+      },
+      {
         "path": "golang.org/x/time",
         "version": "v0.16.0",
         "license": "BSD-3-Clause",
