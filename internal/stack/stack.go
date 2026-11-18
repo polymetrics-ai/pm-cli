@@ -122,6 +122,9 @@ type runtime struct {
 	identityUser      string
 	stdout            io.Writer
 	stderr            io.Writer
+	// masterCallLimit is the time limit of one SeaweedFS master call. Zero
+	// means defaultMasterCallLimit.
+	masterCallLimit time.Duration
 }
 
 // identityProvider is the job-owned test identity provider that the job
@@ -525,30 +528,10 @@ func upStack(ctx context.Context, configuration config.Configuration, selected d
 	}
 
 	if selected[config.DependencyArtifacts] {
-		step = "artifacts-start"
-		for _, services := range [][]string{
-			{"seaweed-master"},
-			{"seaweed-volume"},
-			{"seaweed-filer"},
-			{"seaweed-s3-a", "seaweed-s3-b", "caddy"},
-		} {
-			if err := rt.startServices(ctx, configuration, false, services...); err != nil {
-				return fmt.Errorf("start artifact services: %w", err)
-			}
-		}
-		step = "artifact-bucket"
-		// The start-up wait repeats only the bucket step and the read-only
-		// capacity fact. The volume grow runs after the wait, once.
-		if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
-			if err := ensureArtifactBucket(checkCtx, configuration, rt, true); err != nil {
-				return err
-			}
-			return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
+		if err := startArtifacts(ctx, configuration, rt, &step, func(checkCtx context.Context) error {
+			return ensureArtifactBucket(checkCtx, configuration, rt, true)
 		}); err != nil {
-			return fmt.Errorf("initialize artifact bucket: %w", err)
-		}
-		if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
-			return fmt.Errorf("initialize artifact volumes: %w", err)
+			return err
 		}
 	}
 
@@ -2194,6 +2177,24 @@ func ensureArtifactBucket(ctx context.Context, configuration config.Configuratio
 // the admin API is not published outside that network.
 const seaweedMasterOrigin = "http://seaweed-master:9333"
 
+const (
+	// defaultMasterCallLimit bounds one compose exec call to the SeaweedFS
+	// master, from its start to the end of the process.
+	defaultMasterCallLimit = 30 * time.Second
+	// masterCallWaitDelay bounds the wait for the output of a master call
+	// after its limit kills the process. A child that keeps the output open
+	// cannot block the call longer.
+	masterCallWaitDelay = 5 * time.Second
+)
+
+// masterLimit returns the time limit of one SeaweedFS master call.
+func (rt *runtime) masterLimit() time.Duration {
+	if rt.masterCallLimit > 0 {
+		return rt.masterCallLimit
+	}
+	return defaultMasterCallLimit
+}
+
 // seaweedTopology is the part of the master's /dir/status document that
 // pm-stack reads: the volume slots and the writable volumes of each layout.
 type seaweedTopology struct {
@@ -2220,8 +2221,12 @@ func (topology seaweedTopology) writable(collection string) int {
 // seaweedMaster calls one master endpoint with curl inside the master
 // container and returns the response body. A non-2xx response fails. The
 // Compose and curl diagnostics can name the private service address and the
-// bucket, so pm-stack does not show them.
+// bucket, so pm-stack does not show them. Each call ends within its own time
+// limit (masterLimit) plus masterCallWaitDelay, or earlier at the deadline of
+// ctx.
 func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Configuration, path string, query url.Values) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, rt.masterLimit())
+	defer cancel()
 	if err := rt.resolveContainerIdentity(ctx); err != nil {
 		return nil, err
 	}
@@ -2233,20 +2238,21 @@ func (rt *runtime) seaweedMaster(ctx context.Context, configuration config.Confi
 		"exec", "-T", "seaweed-master", "curl", "-fsS", "-m", "10", target)...)
 	command.Dir = rt.root
 	command.Env = rt.composeEnvironment()
+	command.WaitDelay = masterCallWaitDelay
 	return command.Output()
 }
 
 func (rt *runtime) artifactVolumeStatus(ctx context.Context, configuration config.Configuration) (seaweedTopology, error) {
 	output, err := rt.seaweedMaster(ctx, configuration, "/dir/status", nil)
 	if err != nil {
-		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
 	}
 	var status struct {
 		Topology *seaweedTopology `json:"Topology"`
 	}
 	if err := json.Unmarshal(output, &status); err != nil || status.Topology == nil ||
 		status.Topology.Max == nil || status.Topology.Free == nil {
-		return seaweedTopology{}, fmt.Errorf("read the artifact volume status")
+		return seaweedTopology{}, fmt.Errorf("cannot read the artifact volume status")
 	}
 	return *status.Topology, nil
 }
@@ -2264,20 +2270,93 @@ func checkArtifactVolumeCapacity(ctx context.Context, configuration config.Confi
 	return nil
 }
 
+// startArtifacts starts the bundled artifact store for pm-stack up, then
+// waits for the bucket. ensureBucket is the bucket step. It sets *step to the
+// fixed code of the part that runs: artifacts-start for the services, the
+// capacity wait and the volume grow (startArtifactStore), and artifact-bucket
+// for the bucket wait. The launcher accepts only these listed codes
+// (STACK_FAILED_STEP), so no new code is added.
+func startArtifacts(ctx context.Context, configuration config.Configuration, rt *runtime, step *string, ensureBucket func(context.Context) error) error {
+	*step = "artifacts-start"
+	if err := startArtifactStore(ctx, configuration, rt); err != nil {
+		return err
+	}
+	*step = "artifact-bucket"
+	// The start-up wait repeats only the bucket step.
+	if err := waitFor(ctx, readinessTimeout, ensureBucket); err != nil {
+		return fmt.Errorf("initialize artifact bucket: %w", err)
+	}
+	return nil
+}
+
+// startArtifactStore starts the services of the bundled artifact store for
+// pm-stack up. startArtifacts then waits for the bucket.
+//
+// It grows the artifact volumes after the volume server joins the master and
+// before seaweed-filer starts (#381). The filer writes its metadata log to the
+// default collection about one minute after it starts. In SeaweedFS 4.46 that
+// write grows a default volume when the default collection has no writable
+// volume, and /vol/grow grows without a check. A grow by pm-stack after the
+// filer starts can read the status before that growth and grow after it. The
+// stack is then ready with two default volumes and one spare slot. On a fresh
+// or stopped stack, no SeaweedFS service writes to a volume before the filer
+// starts. On a running stack, the filer already runs and can write while
+// pm-stack up grows.
+//
+// The bucket collection gets its volume before the bucket exists. A SeaweedFS
+// 4.46 bucket create decides from the bucket directory only, so it creates a
+// bucket whose collection already has a volume.
+func startArtifactStore(ctx context.Context, configuration config.Configuration, rt *runtime) error {
+	for _, services := range [][]string{{"seaweed-master"}, {"seaweed-volume"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	// The start-up wait repeats only the read-only capacity fact. The volume
+	// grow runs after the wait, once.
+	if err := waitFor(ctx, readinessTimeout, func(checkCtx context.Context) error {
+		return checkArtifactVolumeCapacity(checkCtx, configuration, rt)
+	}); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	if err := ensureArtifactVolumes(ctx, configuration, rt, true); err != nil {
+		return fmt.Errorf("initialize artifact volumes: %w", err)
+	}
+	for _, services := range [][]string{{"seaweed-filer"}, {"seaweed-s3-a", "seaweed-s3-b", "caddy"}} {
+		if err := rt.startServices(ctx, configuration, false, services...); err != nil {
+			return fmt.Errorf("start artifact services: %w", err)
+		}
+	}
+	return nil
+}
+
 // ensureArtifactVolumes requires a writable volume for the artifact bucket
 // and for the default collection. Without one, the first object write of a
 // run waits for SeaweedFS to grow the volume. With grow, it reads the status,
 // asks the master once to grow one volume for each layout that has no
 // writable volume, and reads the status again. It never repeats a grow. Each
 // pm-stack up holds the deployment lock, and a second up finds the volumes
-// and grows nothing. Without grow, it only reads.
+// and grows nothing. pm-stack up calls it with grow before it starts
+// seaweed-filer (startArtifactStore). So on a fresh or stopped stack, the
+// filer does not run during the grow. On a running stack, it does. Without
+// grow, it only reads.
+//
+// A grow request that fails or reaches its time limit can still have grown a
+// volume, so the error does not say that no volume grew. The same pm-stack up
+// does not repeat the grow. The next pm-stack up reads the status first and
+// grows only a layout that has no writable volume.
 func ensureArtifactVolumes(ctx context.Context, configuration config.Configuration, rt *runtime, grow bool) error {
+	// missing is the text of the final check. growFailed is the text of a
+	// grow request that got no success answer: the volume may have grown.
 	layouts := []struct {
 		collection string
 		missing    string
+		growFailed string
 	}{
-		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume"},
-		{"", "default collection has no writable volume"},
+		{configuration.Artifacts().Bucket, "artifact bucket has no writable volume",
+			"no success answer arrived for the grow request of the artifact bucket. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
+		{"", "default collection has no writable volume",
+			"no success answer arrived for the grow request of the default collection. A volume may have grown. Run pm-stack up again. It reads the volume status before it grows."},
 	}
 	topology, err := rt.artifactVolumeStatus(ctx, configuration)
 	if err != nil {
@@ -2294,7 +2373,7 @@ func ensureArtifactVolumes(ctx context.Context, configuration config.Configurati
 				query.Set("collection", layout.collection)
 			}
 			if _, err := rt.seaweedMaster(ctx, configuration, "/vol/grow", query); err != nil {
-				return fmt.Errorf("%s: the master did not grow a volume", layout.missing)
+				return errors.New(layout.growFailed)
 			}
 			grown = true
 		}
