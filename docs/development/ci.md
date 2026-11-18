@@ -453,7 +453,7 @@ Any failure exits 1, and the cleanup is then uncertain (owner step 14).
 
 Any failure exits 1, and the owner does not start the runner. The check never records the list. `live-runner-check.sh --record` records it. The owner runs it once at install, last, and again only after a change that the owner made.
 
-After each run, the owner stops the runner service and runs `runuser -u pmlive -- env -i PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/<uid> /etc/pm-live/hooks/live-cleanup-check.sh post-stop`. Then the owner runs `loginctl terminate-user pmlive` as root. The `/proc` gate of `live-runner-check.sh` then runs again before the next start.
+After each run, the owner stops the runner service and runs `runuser -u pmlive -- env -i PATH=/usr/bin:/bin XDG_RUNTIME_DIR=/run/user/<uid> /etc/pm-live/hooks/live-cleanup-check.sh post-stop`. Then the owner runs `loginctl terminate-user pmlive` as root. Then the owner runs `env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --gate` as root. The `--gate` mode runs only step 1, the `/proc` gate. It empties nothing and compares nothing. A failure means an uncertain cleanup (owner step 14). The full check runs again before the next start.
 
 The runner is in `/opt/pm-live/actions-runner`. Root owns it, except `_diag`. Its `.env` belongs to root, with mode 0644. Its configuration and credential files `.runner`, `.credentials` and `.credentials_rsaparams` belong to root and the group `pmlive`, with mode 0640. A root-owned system service, `/etc/systemd/system/pm-live-runner.service`, starts the runner. Its work folder is `/var/lib/pm-live/work`.
 

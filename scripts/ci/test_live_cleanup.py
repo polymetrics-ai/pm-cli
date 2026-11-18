@@ -285,6 +285,30 @@ class RunnerCheck(unittest.TestCase):
                 self.assertIn("not emptied, because the gate failed", result.stdout)
                 self.assertTrue((self.host.root / "var/lib/pm-live/work/job").exists())
 
+    def test_gate_mode_checks_only_the_processes(self):
+        # Owner step 13a: --gate runs only the /proc gate. It empties and
+        # compares nothing, also when it fails.
+        cases = {"clean": (lambda: None, 0),
+                 "live UID process": (lambda: self.host.process(20, UID), 1),
+                 "user manager cgroup": (lambda: self.host.process(
+                     21, UID, f"/user.slice/user-{UID}.slice/user@{UID}.service/init.scope"), 1),
+                 "unreadable entry": (lambda: (self.host.process(22, UID + 1) / "status").chmod(0), 1),
+                 "runtime folder": (lambda: self.host.runtime.mkdir(parents=True), 1)}
+        for name, (fault, expected) in cases.items():
+            with self.subTest(case=name):
+                self.tearDown()
+                self.setUp()
+                self.host.process(30, UID + 1)
+                (self.runner / ".env").write_text("A=2\n")
+                fault()
+                result = self.host.run(self.script, "--gate")
+                self.assertEqual(result.returncode, expected, result.stdout)
+                for folder in (self.host.root / "var/lib/pm-live/work", self.runner / "_diag",
+                               self.host.home / ".local/share/containers", self.host.home / "pm-live-cache"):
+                    self.assertNotEqual(list(folder.iterdir()), [], folder)
+                self.assertNotIn("list", result.stdout)
+                self.assertEqual(self.list.read_bytes(), self.recorded)
+
     def test_record_refuses_a_forbidden_file(self):
         (self.host.home / ".ssh").mkdir()
         result = self.host.run(self.script, "--record")

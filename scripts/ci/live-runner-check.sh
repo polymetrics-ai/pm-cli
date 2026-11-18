@@ -5,7 +5,10 @@
 #
 #   env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh
 #   env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --record
+#   env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --gate
 #
+# --gate runs only step 1, the /proc gate, and changes nothing. The owner runs
+# it after loginctl terminate-user pmlive (owner step 13a).
 # --record writes the root-held file list. The owner runs it once at install,
 # last (owner step 6a). The check never records, also when it fails (R2-6).
 # Any failure exits 1, and the owner does not start the runner. See "Live
@@ -37,9 +40,9 @@ fail() {
   status=1
 }
 case "${1:-}" in
-  '' | --record) ;;
+  '' | --record | --gate) ;;
   *)
-    printf '%s\n' 'usage: live-runner-check.sh [--record]' >&2
+    printf '%s\n' 'usage: live-runner-check.sh [--record | --gate]' >&2
     exit 2
     ;;
 esac
@@ -97,6 +100,10 @@ for entry in "$proc"/[0-9]*; do
 done
 if [ -e "$root/run/user/$uid" ]; then fail "$root/run/user/$uid exists" && gate=1; fi
 [ "$gate" -ne 0 ] || pass "no $user process and no runtime folder"
+if [ "${1:-}" = --gate ]; then
+  if [ "$status" -eq 0 ]; then pass 'the gate passed'; else fail 'the gate failed: the cleanup is uncertain'; fi
+  exit "$status"
+fi
 
 # 2. Empty the work folder, _diag, the engine storage and the cache folder.
 # Only after the gate: no process of the live UID can change a path, and no
