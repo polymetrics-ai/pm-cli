@@ -270,6 +270,17 @@ class HookCheckSelection(unittest.TestCase):
             capture_output=True, text=True, timeout=30, env=env,
         )
 
+    def test_live_suites_and_files_are_registered(self):
+        # L-e1 P4: the checks job runs the live suites; the setup check requires the files.
+        script = CHECK_DOCS.read_text()
+        for suite in ("test_runner_admission_live.py", "test_live_launcher.py", "test_live_cleanup.py"):
+            self.assertIn(f"scripts/ci/{suite}", script)
+        required = set(json.loads(POLICY.read_text())["required_files"])
+        self.assertLessEqual({f"scripts/ci/{name}" for name in (
+            "runner_admission_live.py", "runner-admission-live.sh", "test_runner_admission_live.py",
+            "test_live_launcher.py", "live-cleanup-check.sh", "live-runner-check.sh", "test_live_cleanup.py")},
+            required)
+
     def test_check_names_come_from_the_script(self):
         result = subprocess.run(["/bin/sh", str(CHECK_DOCS), "--list"],
                                 capture_output=True, text=True, timeout=30)
@@ -573,11 +584,13 @@ class GoTestReport(unittest.TestCase):
         return [sys.executable, str(path)]
 
     def report(self, events, *options, exit_status=0, raw=None, expect=None, command=None,
-               env=None):
+               env=None, unwritable_summary=False):
         with tempfile.TemporaryDirectory() as directory:
             stream = Path(directory) / "events.json"
             stream.write_text(raw if raw is not None else "\n".join(events) + ("\n" if events else ""))
             summary = Path(directory) / "summary.md"
+            if unwritable_summary:  # a folder: each write to it fails, as on a full disk
+                summary.mkdir()
             fake = command or [*self.program(
                 "import sys; sys.stdout.write(open(sys.argv[1]).read()); sys.exit(int(sys.argv[2]))"),
                 str(stream), str(exit_status), "-count=1"]
@@ -591,8 +604,25 @@ class GoTestReport(unittest.TestCase):
                  *options, "--", *fake],
                 capture_output=True, text=True, timeout=120,
                 env=dict(os.environ, **(env or {})))
-            text = summary.read_text() if summary.exists() else ""
+            text = summary.read_text() if summary.is_file() else ""
         return result, text
+
+    def test_a_failed_summary_write_fails_with_a_fixed_line(self):
+        # #403 R4-2: on a full disk the summary write raised after the failure groups, so the
+        # run ended with exit 1, no summary and a traceback on stderr only. Now a fixed line
+        # names the summary file, the report ends normally, and the exit is 1.
+        for events in ([go_event("run", "m/p", "TestOK"), go_event("pass", "m/p", "TestOK"),
+                        go_event("pass", "m/p", Elapsed=0.1)],
+                       [go_event("run", "m/p", "TestBad"), go_event("fail", "m/p", "TestBad"),
+                        go_event("fail", "m/p", Elapsed=0.1)]):
+            with self.subTest(result=json.loads(events[1])["Action"]):
+                result, summary = self.report(events, "--title", "Unit run", "--summary-file", "SUMMARY",
+                                              unwritable_summary=True)
+                self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+                self.assertRegex(result.stdout, r"go test: the summary file \S+summary\.md cannot be written: \S")
+                self.assertIn("go test: 1 packages,", result.stdout)
+                self.assertNotIn("Traceback", result.stdout + result.stderr)
+                self.assertEqual(summary, "")
 
     def test_package_without_test_files_is_not_a_test_skip(self):
         events = [go_event("skip", "m/empty", Elapsed=0),
@@ -627,9 +657,9 @@ class GoTestReport(unittest.TestCase):
         failed = [go_event("run", "m/p", "TestBad"), go_event("fail", "m/p", "TestBad"),
                   go_event("fail", "m/p", Elapsed=0.1)]
         result, summary = self.report(failed, "--title", "Unit run", "--summary-file", "SUMMARY")
-        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
         self.assertIn("::group::FAIL m/p TestBad", result.stdout)
-        self.assertIn("- `m/p TestBad`", summary)
+        self.assertIn("- `m/p TestBad`", summary, result.stdout + result.stderr)
         broken = [json.dumps({"Action": "build-fail", "ImportPath": "m/q [m/q.test]"})]
         result, _ = self.report(broken)
         self.assertEqual(result.returncode, 1)
@@ -1783,6 +1813,138 @@ print(json.dumps({"result": list(result), "reaped": started[0].returncode is not
         command = [*self.program("import os, signal; os.kill(os.getpid(), signal.SIGTERM)"), "-count=1"]
         result, _ = self.report([], expect=["m/a"], command=command)
         self.assertEqual(result.returncode, 143)
+
+    # L-e1 P5a: a marker in names and output, with and without control characters.
+    MARK = "LIVE-MARK-41c7"
+
+    def live_report(self, events, *options, expect=("m/acc",), raw_text=None, reporter=None,
+                    unwritable_summary=False):
+        """Run the reporter with --live. Return (result, summary, raw report, raw mode)."""
+        with tempfile.TemporaryDirectory() as directory:
+            stream = Path(directory) / "events.json"
+            stream.write_text(raw_text if raw_text is not None else "\n".join(events) + "\n")
+            expected = Path(directory) / "expected.txt"
+            expected.write_text("".join(f"{package}\n" for package in expect))
+            raw, summary = Path(directory) / "raw", Path(directory) / "summary.md"
+            if unwritable_summary:  # a folder: each write to it fails, as on a full disk
+                summary.mkdir()
+            fake = self.program("import sys; sys.stdout.write(open(sys.argv[1]).read()); "
+                                "sys.stderr.write(sys.argv[2])")
+            result = subprocess.run(
+                [*(reporter or [sys.executable, "-I", "-B", str(REPORT)]), "--output",
+                 str(Path(directory) / "out.json"), "--live", "--raw-output", str(raw), "--scenarios", "--expect", str(expected),
+                 "--fail-on-skip", "--summary-file", str(summary), *options, "--", *fake, str(stream),
+                 f"stderr {self.MARK}\n", "-count=1"],
+                capture_output=True, text=True, timeout=120)
+            text = summary.read_text() if summary.is_file() else ""
+            report = raw.read_text() if raw.exists() else ""
+            mode = raw.stat().st_mode & 0o777 if raw.exists() else None
+        return result, text, report, mode
+
+    def test_live_mode_prints_no_stream_text(self):
+        for decoration in ("", "\x1b[31m\r\x07\t"):
+            mark = self.MARK + decoration
+            scenario = f"{mark} scenario"
+            steps = [f"    \x1b[31mWhen\x1b[0m \x1b[31m{mark} step\x1b[0m\n"]
+            extra = [go_event("run", "m/acc", f"Test{mark}Fail"),
+                     go_event("output", "m/acc", f"Test{mark}Fail", Output=f"error {mark}\n"),
+                     go_event("fail", "m/acc", f"Test{mark}Fail"),
+                     go_event("run", "m/acc", f"TestParent/{mark}sub"),
+                     go_event("output", "m/acc", f"TestParent/{mark}sub", Output=f"skip {mark}\n"),
+                     go_event("skip", "m/acc", f"TestParent/{mark}sub"),
+                     go_event("run", "m/acc", f"Test{mark}Unfinished"),
+                     go_event("output", "m/acc", f"Test{mark}Unfinished", Output=f"panic {mark}\n")]
+            events = self.gherkin_suite({scenario: ("fail", steps)},
+                                        ["1 scenarios (1 failed)", "1 steps (1 failed)"], extra)
+            with self.subTest(decoration=repr(decoration)):
+                result, summary, raw, mode = self.live_report(events)
+                self.assertNotEqual(result.returncode, 0)
+                for name, text in (("stdout", result.stdout), ("stderr", result.stderr), ("summary", summary)):
+                    self.assertNotIn(self.MARK, text, name)
+                self.assertIn(f"Test{self.MARK}", raw)
+                self.assertIn(f"stderr {self.MARK}", raw)
+                self.assertEqual(mode, 0o600)
+                self.assertIn("scenario 1 of 1: FAIL\n", result.stdout)
+                self.assertIn("godog scenarios: 1 (1 failed)\n", result.stdout)
+                self.assertIn(": no result\n", result.stdout)
+                self.assertIn(": SKIP\n", result.stdout)
+                self.assertIn("- scenario 1 of 1: FAIL\n", summary)
+
+    def test_live_mode_hides_typed_field_faults_and_errors(self):
+        # #403 F1: a wrong-typed field reached a public traceback. Each fault must fail privately.
+        good = self.gherkin_suite({"a": ("pass", [])}, ["1 scenarios (1 passed)", "0 steps"])
+        faults = {"Elapsed": go_event("pass", "m/acc", Elapsed=self.MARK),
+                  "Action": json.dumps({"Action": [self.MARK], "Package": "m/acc"}),
+                  "Test": go_event("run", "m/acc", Test={"x": self.MARK}),
+                  "Package": json.dumps({"Action": "pass", "Package": [self.MARK]}),
+                  "Output": go_event("output", "m/acc", "TestFeatures", Output=[self.MARK])}
+        for field, event in faults.items():
+            with self.subTest(field=field):
+                result, summary, raw, _ = self.live_report(good[:-1] + [event, good[-1]])
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(self.MARK, result.stdout + result.stderr + summary)
+                self.assertIn(self.MARK, raw)
+        # Any other error: its text holds the marker and goes only to the raw file.
+        wrapper = self.program(
+            "import importlib.util, sys\n"
+            f"spec = importlib.util.spec_from_file_location('report', {str(REPORT)!r})\n"
+            "module = importlib.util.module_from_spec(spec)\nspec.loader.exec_module(module)\n"
+            f"def broken(*arguments):\n    raise ValueError({self.MARK!r})\n"
+            "module.scenario_report = broken\nsys.argv[0] = 'go-test-report.py'\n"
+            "sys.exit(module.live_guarded_main())\n")
+        result, summary, raw, _ = self.live_report(good, reporter=wrapper)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("the reporter stopped on an internal error", result.stdout)
+        self.assertNotIn(self.MARK, result.stdout + result.stderr + summary)
+        self.assertIn(self.MARK, raw)
+
+    def test_live_mode_keeps_a_failed_summary_write_private(self):
+        # #403 R4-2: the raw report was closed before the summary write, so a failed write
+        # lost its traceback. It stays open now: the traceback goes there, and the log gets
+        # one fixed line and exit 1, also for a passing suite.
+        good = self.gherkin_suite({"a": ("pass", [])}, ["1 scenarios (1 passed)", "0 steps"])
+        self.assertEqual(self.live_report(good)[0].returncode, 0)  # the control
+        result, summary, raw, _ = self.live_report(good, unwritable_summary=True)
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertIn("go test (live): the summary file cannot be written; only the private raw report "
+                      "holds the details", result.stdout)
+        self.assertNotIn("Traceback", result.stdout + result.stderr)
+        self.assertNotIn("summary.md", result.stdout + result.stderr)
+        self.assertIn("Traceback", raw)
+        self.assertIn("IsADirectoryError", raw)
+
+    def test_live_mode_needs_its_options(self):
+        with tempfile.TemporaryDirectory() as directory:
+            existing = Path(directory) / "raw"
+            existing.write_text("")
+            out, new, missing = (str(Path(directory) / name) for name in ("o", "r", "x"))
+            for options in (["--live", "--expect", missing, "--raw-output", new],
+                            ["--live", "--scenarios", "--raw-output", new],
+                            ["--live", "--scenarios", "--expect", missing],
+                            ["--raw-output", new, "--scenarios", "--expect", missing]):
+                with self.subTest(options=options):
+                    result = subprocess.run([sys.executable, "-I", "-B", str(REPORT), "--output", out,
+                                             *options, "--", "true"], capture_output=True, text=True, timeout=30)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+            expected = Path(directory) / "expected"
+            expected.write_text("m/acc\n")
+            result = subprocess.run([sys.executable, "-I", "-B", str(REPORT), "--output", out, "--live",
+                                     "--scenarios", "--expect", str(expected), "--raw-output", str(existing),
+                                     "--", "true", "-count=1"], capture_output=True, text=True, timeout=30)
+            self.assertEqual((result.returncode, existing.read_text()), (2, ""), result.stderr)
+
+    def test_live_mode_fails_on_stream_faults(self):
+        zero = self.gherkin_suite({}, ["No scenarios", "No steps"])
+        passing = self.gherkin_suite({"a": ("pass", [])}, ["1 scenarios (1 passed)", "0 steps"])
+        for name, events, expect, raw_text in (
+                ("zero scenarios", zero, ("m/acc",), None),
+                ("missing result", passing, ("m/acc", "m/other"), None),
+                ("malformed stream", passing, ("m/acc",), "\n".join(passing) + f"\nnot json {self.MARK}\n")):
+            with self.subTest(case=name):
+                result, summary, raw, _ = self.live_report(events, expect=expect, raw_text=raw_text)
+                self.assertNotEqual(result.returncode, 0)
+                self.assertNotIn(self.MARK, result.stdout + summary)
+                self.assertRegex(result.stdout, r"go test \(live\): [1-9]\d* problems")
 
     def test_summary_file_needs_a_title_or_scenarios(self):
         result, _ = self.report([], "--summary-file", "SUMMARY")

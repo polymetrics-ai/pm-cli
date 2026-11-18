@@ -3,7 +3,8 @@
 
 Usage: go-test-report.py --output FILE [--scenarios] [--title TEXT]
                          [--fail-on-skip] [--expect FILE] [--deadline TIME]
-                         [--timeout SECONDS] [--summary-file FILE] -- COMMAND...
+                         [--timeout SECONDS] [--summary-file FILE]
+                         [--live --raw-output FILE] -- COMMAND...
 
 COMMAND must print `go test -json` events. The summary lists each package
 with its result and elapsed time (input for shard balancing) and repeats the
@@ -97,7 +98,19 @@ are not outlines.
 Without --title, the scenario section of the summary also lists each test
 with no result, each skipped test and each problem. --summary-file appends
 the same report as Markdown to FILE (for example $GITHUB_STEP_SUMMARY).
---summary-file requires --title, --scenarios or both.
+--summary-file requires --title, --scenarios or both. A write to FILE that
+fails (for example, no space left on the device) fails the run: exit 1 and the
+fixed line "go test: the summary file FILE cannot be written: REASON". With
+--live, the traceback goes to the raw report, and the log gets one fixed line.
+
+--live (the live runner, D2-A, L-e1 P5a) puts no stream text in the log or the
+summary file: only counts, godog totals as numbers, the words PASS, FAIL, SKIP
+and "no result", and ordinals ("test 4 of 9: FAIL"). The full report and the
+stderr of COMMAND go to the new --raw-output FILE (mode 0600). --live requires
+--scenarios, --expect and --raw-output, and --raw-output requires --live. The
+other options do not require --live. A known event field of the wrong type is a
+malformed line. Any other error writes its traceback only to
+the raw file and exits 1 with one fixed line. This is prevention, not detection.
 """
 import argparse
 import json
@@ -109,6 +122,7 @@ import signal
 import subprocess
 import sys
 import time
+import traceback
 
 # godog colors its output. The escape byte can be absent from the event text,
 # so the color codes match with and without it.
@@ -469,8 +483,8 @@ def unsignalled_members(group):
     return count
 
 
-def run_command(command, output, deadline, limit):
-    """Run COMMAND with stdout in OUTPUT.
+def run_command(command, output, deadline, limit, errors=None):
+    """Run COMMAND with stdout in OUTPUT, and stderr in ERRORS when it is given.
 
     Return (status, timed_out, received, cleanup). RECEIVED is the first
     signal that the script itself received, or None. A received signal forces
@@ -572,7 +586,7 @@ def run_command(command, output, deadline, limit):
     try:
         with output.open("wb") as stream:
             try:
-                process = subprocess.Popen(command, stdout=stream, start_new_session=True)
+                process = subprocess.Popen(command, stdout=stream, stderr=errors, start_new_session=True)
             except OSError as exc:
                 print(f"go test: cannot start the command: {exc}")
                 return early_status(), False, received[0] if received else None, None
@@ -691,6 +705,66 @@ def package_markdown(title, packages, failures, skips, fail_on_skip, status, pro
     return "\n".join(lines) + "\n"
 
 
+RESULT_WORDS = re.compile(r"(\d+) (passed|failed|skipped|undefined|pending|ambiguous)\b")
+
+
+def live_report(packages, order, results, unfinished, rows, totals, problems, failures, skips, status):
+    """The --live lines: counts, result words and ordinals, with no stream text."""
+    counts = {}
+    for action, _ in packages.values():
+        counts[action] = counts.get(action, 0) + 1
+    lines = [f"go test (live): {len(packages)} package results: {counts.get('pass', 0)} PASS, "
+             f"{counts.get('fail', 0)} FAIL, {counts.get('skip', 0)} with no test files"]
+    tests = [key for key in order if key[1] is not None]
+    words = {"fail": "FAIL", "skip": "SKIP"}
+    for number, key in enumerate(tests, 1):
+        word = "no result" if key in unfinished else words.get(results.get(key))
+        if word:
+            lines.append(f"test {number} of {len(tests)}: {word}")
+    for number, (action, _, _) in enumerate(rows, 1):
+        lines.append(f"scenario {number} of {len(rows)}: {action.upper()}")
+    for line in totals:
+        match = TOTAL.match(line)
+        kind = "scenarios" if (match.group(3) or match.group(2)).startswith("scenario") else "steps"
+        parts = ", ".join(f"{count} {word}" for count, word in RESULT_WORDS.findall(line))
+        lines.append(f"godog {kind}: {match.group(1) or 0}" + (f" ({parts})" if parts else ""))
+    lines.append(f"go test (live): {len(problems)} problems; the private raw report names them")
+    lines.append(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
+                 f"{len(skips)} skipped tests, exit {status}")
+    return lines
+
+
+# The raw file and the public stdout of --live mode, for live_guarded_main().
+LIVE = {"raw": None, "public": None}
+# The known event fields and their types. In --live mode an event with a known
+# field of another type is malformed (#403 F1).
+LIVE_FIELDS = (("Action", str), ("Package", str), ("ImportPath", str), ("Test", str), ("Output", str),
+               ("Elapsed", (int, float)))
+
+
+def typed(event):
+    return all(name not in event or (isinstance(event[name], kind) and not isinstance(event[name], bool))
+               for name, kind in LIVE_FIELDS)
+
+
+def live_guarded_main():
+    """main(), with no stream text on public output for any error in --live mode."""
+    try:
+        return main()
+    except Exception:
+        if LIVE["raw"] is None:
+            raise
+        sys.stdout = LIVE["public"]
+        try:
+            LIVE["raw"].write(traceback.format_exc())
+            LIVE["raw"].close()
+        except (OSError, ValueError):
+            pass
+        print("go test (live): the reporter stopped on an internal error; only the private raw report "
+              "holds the details")
+        return 1
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
@@ -708,8 +782,16 @@ def main():
                         help="seconds after its start at which the command stops")
     parser.add_argument("--summary-file", type=Path,
                         help="append the report as Markdown (requires --title or --scenarios)")
+    parser.add_argument("--live", action="store_true",
+                        help="print no stream text; the full report goes to --raw-output")
+    parser.add_argument("--raw-output", type=Path,
+                        help="the private file of the full report (mode 0600, must not exist)")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
+    if args.live and not (args.scenarios and args.expect and args.raw_output):
+        parser.error("--live requires --scenarios, --expect and --raw-output")
+    if args.raw_output and not args.live:
+        parser.error("--raw-output requires --live")
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
     if not command:
         parser.error("missing go test command")
@@ -723,7 +805,17 @@ def main():
         refused = filter_problem(command)
         if refused:
             parser.error(f"refused: {refused}")
-    status, timed_out, received, cleanup = run_command(command, args.output, args.deadline, args.timeout)
+    public, raw = sys.stdout, None
+    if args.live:
+        try:
+            raw = os.fdopen(os.open(args.raw_output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                                    0o600), "w", encoding="utf-8")
+        except OSError:
+            parser.error("--raw-output must name a new file")
+        # From here on, every report line goes to the private raw file.
+        LIVE.update(raw=raw, public=public)
+        sys.stdout = raw
+    status, timed_out, received, cleanup = run_command(command, args.output, args.deadline, args.timeout, raw)
     packages, failures, output = {}, [], {}
     # started keeps the tests with a `run` event in first-seen order. A dict
     # keeps insertion order and checks membership in constant time.
@@ -736,7 +828,9 @@ def main():
             print(line)
             malformed += 1
             continue
-        if not isinstance(event, dict):
+        if not isinstance(event, dict) or (args.live and not typed(event)):
+            if args.live:
+                print(line)
             malformed += 1
             continue
         events += 1
@@ -799,12 +893,14 @@ def main():
     for problem in problems:
         print(f"go test: {problem}")
     skip_failure = bool(args.fail_on_skip and skips)
+    # The reason that a summary write failed, or None (#403 R4-2).
+    summary_error = None
     if args.title and args.summary_file:
-        with args.summary_file.open("a", encoding="utf-8") as summary:
-            summary.write(package_markdown(args.title, packages, failures, skips,
-                                           args.fail_on_skip, status, problems,
-                                           intended if expected is not None else None,
-                                           unfinished))
+        summary_error = write_summary(args.summary_file, raw,
+                                      package_markdown(args.title, packages, failures, skips,
+                                                       args.fail_on_skip, status, problems,
+                                                       intended if expected is not None else None,
+                                                       unfinished))
     problem = None
     if args.scenarios:
         problem = scenario_problem(rows, totals)
@@ -816,18 +912,56 @@ def main():
         if problem:
             print(f"go test: scenario summary error: {problem}")
         if args.summary_file:
-            with args.summary_file.open("a", encoding="utf-8") as summary:
-                # Without --title, no package section names the tests with no
-                # result or the problems, so this section names them.
-                summary.write(markdown(rows, totals, problem,
-                                       () if args.title else unfinished,
-                                       () if args.title else problems,
-                                       () if args.title else skips,
-                                       args.fail_on_skip))
+            # Without --title, no package section names the tests with no
+            # result or the problems, so this section names them.
+            summary_error = summary_error or write_summary(
+                args.summary_file, raw, markdown(rows, totals, problem,
+                                                 () if args.title else unfinished,
+                                                 () if args.title else problems,
+                                                 () if args.title else skips,
+                                                 args.fail_on_skip))
+    if summary_error:
+        # A caller must not read a missing summary as a test failure, so a fixed line names it.
+        print(f"go test: the summary file {args.summary_file} cannot be written: {summary_error}")
     print(f"go test: {len(packages)} packages, {len(failures) + len(unfinished)} failures, "
           f"{len(skips)} skipped tests, exit {status}")
-    return status or (1 if failures or problem or problems or skip_failure else 0)
+    if raw is not None:
+        sys.stdout = public
+        lines = live_report(packages, order, results, unfinished, rows, totals,
+                            problems + ([problem] if problem else []), failures, skips, status)
+        print("\n".join(lines))
+        # The raw report stays open until the summary is written, so that it keeps the
+        # traceback of a failed write; public output gets only fixed text (#403 R4-2).
+        if args.summary_file:
+            try:
+                with args.summary_file.open("a", encoding="utf-8") as summary:
+                    summary.write("### Live run (no test names or output)\n\n"
+                                  + "".join(f"- {line}\n" for line in lines))
+            except OSError:
+                raw.write(traceback.format_exc())
+                summary_error = "see the private raw report"
+                print("go test (live): the summary file cannot be written; only the private raw report "
+                      "holds the details")
+        raw.close()
+    return status or (1 if failures or problem or problems or skip_failure or summary_error else 0)
+
+
+def write_summary(path, raw, text):
+    """Append TEXT to the summary file PATH, or in --live mode to the raw file.
+
+    Return None, or the reason that the write failed (for example "No space left
+    on device"), so that the run can end with a fixed line and exit 1.
+    """
+    if raw is not None:
+        raw.write(text)
+        return None
+    try:
+        with path.open("a", encoding="utf-8") as summary:
+            summary.write(text)
+    except OSError as error:
+        return error.strerror or type(error).__name__
+    return None
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(live_guarded_main())

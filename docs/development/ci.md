@@ -233,7 +233,7 @@ The rule selects the packages, so a new package goes to the unit run with no lis
 The `checks` job is in the same workflow as `bdd`. It has the same admission condition, runner labels and pinned checkout. It runs in parallel with `bdd` and does not wait for it. It runs [check-docs.sh](../../scripts/ci/check-docs.sh) in the pinned job image. The script first builds `.cache/bin/pm-api-generate` and `pmgen` from the candidate with the pinned toolchain. Then it runs these seven checks:
 
 - `setup`: `check-setup.py` (required files, links, skills, ShellCheck, actionlint and the frozen `bdd.yml`).
-- `python`: `test_setup.py`, `test_runner_admission.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
+- `python`: `test_setup.py`, `test_runner_admission.py`, `test_runner_admission_live.py`, `test_live_launcher.py`, `test_live_cleanup.py`, `test_stack_fixture.py`, `tools/test_bootstrap.py` and `test_secret_scan.py`.
 - `generate`: `generate.sh --check` for the API and the connectors.
 - `gofmt`: `gofmt -l` on every tracked Go file.
 - `boundaries`: `check-boundaries.sh` (the native import boundary and the store dependency rule).
@@ -357,10 +357,14 @@ and the Podman socket gives a job full control of that user's containers.
 
 Mitigations:
 
-- Only events from `karthik-sivadas` on this repository run: open same-repo PRs
-  against `main` and non-forced pushes to `main`. Both the workflow `if:` guards
-  and the admission hook check this before any step runs. Keep fork PR workflows
-  disabled.
+- Only events from `karthik-sivadas` on this repository run. A push by that
+  account to any branch runs `bdd.yml`. The admission hook refuses pull request
+  events. It admits a force-push on a working branch and refuses it on `main`
+  ([runner_admission.py](../../scripts/ci/runner_admission.py) and the `if:`
+  guard of `bdd.yml`). Both the workflow `if:` guard and the admission hook
+  check this before any step runs. Keep fork PR workflows disabled.
+- The live runner has a separate account and its own admission. See
+  [Live runner (D2-A)](#live-runner-d2-a).
 - Workflows have `contents: read`, use no secrets and check out with
   `persist-credentials: false`.
 - Runners are ephemeral, so a stolen runner registration is good for one job.
@@ -397,6 +401,91 @@ shellcheck --shell=sh scripts/ci/runner-admission.sh
 
 Synthetic admission is not live workflow proof; exercise a real push job after
 each hook update.
+
+## Live runner (D2-A)
+
+This section describes the repository parts of the live runner that L-e1 adds for issue #72. Developer checks cover them. No live run used them yet, and nothing in this section is acceptance proof. The live workflow, the harness scans and the rehearsal come with L-e2. Only the owner creates the live account `pmlive`, the token, the runner, the memory file system and the hook install. No agent does these steps.
+
+### Live admission
+
+The live runner has its own policy, [runner_admission_live.py](../../scripts/ci/runner_admission_live.py), and its own wrapper, [runner-admission-live.sh](../../scripts/ci/runner-admission-live.sh). The shared policy does not change, and it refuses each live event. The live policy admits a job only when each of these checks passes:
+
+| Check | Rule |
+| --- | --- |
+| `require_runner_identity` | `PMCLI_RUNNER_UID` is ASCII digits. The hook runs as that UID, and the UID is not 0. |
+| `require_repository` | `GITHUB_REPOSITORY` and the payload `repository.full_name` are both `polymetrics-ai/pm-cli`. |
+| `require_actor` | `GITHUB_ACTOR`, `GITHUB_TRIGGERING_ACTOR` and the payload `sender.login` are each the owner account. |
+| `require_event` | `GITHUB_EVENT_NAME` is `workflow_dispatch`. The payload `inputs` is absent, JSON `null` or an empty object. |
+| `require_live_ref` | `GITHUB_REF` and the payload `ref` are both exactly `refs/heads/main`. |
+| `require_workflow` | `GITHUB_WORKFLOW_REF` is exactly `polymetrics-ai/pm-cli/.github/workflows/live-w2.yml@refs/heads/main`. |
+| `require_first_attempt` | `GITHUB_RUN_ATTEMPT` is exactly `1`. So a re-run cannot run an earlier approved commit again. |
+| `require_approved_sha` | `GITHUB_SHA` is 40 lower-case hex digits. `GITHUB_WORKFLOW_SHA` is equal to it, and `/etc/pm-live/approved-sha` holds exactly that value. |
+| `require_run_kind` | `/etc/pm-live/run-kind` holds exactly `rehearsal` or `w2`. |
+
+Each compare is a full-string compare. `read_root_file` opens `/`, `etc`, `pm-live` and the file one at a time with `O_NOFOLLOW`, so a symbolic link in any component refuses. Each directory and the file must belong to root and must not be group- or world-writable. The file must be a regular file of 64 bytes or less. It holds the value and exactly one final line break, with no carriage return and no NUL. An empty file refuses every job. A refusal prints one fixed line and no event value. The wrapper runs the policy with `/usr/bin/timeout 10 /usr/bin/python3 -I -B`. The developer checks give `read_root_file` a temporary root and owner as function parameters. No environment variable changes them.
+
+### Launcher live mode
+
+`in-ci-image.sh live NAME -- COMMAND...` starts the job container of a live run. The `run` mode does not change. Before the image build, the live mode checks the token channel:
+
+- `PMCLI_LIVE_TOKEN_FILE` must be `/run/user/<uid>/pm-live/w2-token`, where `<uid>` is the runner UID. `realpath` must give the same path, so no component is a symbolic link.
+- The token directory must be a directory of the runner UID, with mode 0700, on `tmpfs`.
+- The token file must be a regular file of the runner UID, with mode 0600, of 20 to 4096 bytes.
+
+Any failure stops the launcher with a fixed line, before the image build. Then the live mode does these steps:
+
+- It creates the run root `/run/user/<uid>/pm-live-run/<run id>-<attempt>/` with mode 0700, checks that it is on `tmpfs` and mounts it at the same path. In the container, `RUNNER_TEMP` names it. So the fixture root, the secret root, the manifest, the raw report of the reporter and the scan copies are on the memory file system.
+- It mounts only the token directory, read-write, at `/run/pm-live-token`. The container gets `PMCLI_LIVE_TOKEN_FILE=/run/pm-live-token/w2-token`. No argument and no environment value holds the token.
+- It mounts `/etc/pm-live/run-kind` read-only at `/run/pm-live-run-kind`, and the step summary file at its own path.
+- It creates the empty cache folder `~/pm-live-cache/<run id>-<attempt>/`. `PMCLI_CACHE_DIR`, `HOME` and `PM_TOOLS_CACHE` point into it.
+- It always builds the image, with the tag `localhost/pmcli-live:<run id>-<attempt>`, and prints the image ID.
+- It adds `--pid host`, only in the live mode. It adds no privilege flag, no capability and no device. It sets `--security-opt no-new-privileges`, so a set-user-ID program in the image gets no new privileges.
+
+A run root or a cache folder that exists already refuses the run. The residuals are:
+
+- With `--pid host`, the container can read the command line of each process of each user where `/proc` has no `hidepid`. It can also signal the processes of the live account. The scans read only the processes of the live UID.
+- `--network host` stays. On a host that the shared runner account also uses, branch jobs can reach the loopback ports of the live stack. Each live stack connection uses TLS against the private CA of the job, and each service needs credentials from the 0700 secret root. A separate host or a private network is the stronger option.
+
+### Reporter live mode
+
+`go-test-report.py --live --raw-output FILE` is the live mode of the reporter. The log and the job summary then hold no text from the test stream. They hold no package, test, subtest or scenario name, no output line and no error text. They hold only counts, the godog totals as numbers, the result words `PASS`, `FAIL`, `SKIP` and `no result`, and ordinals such as `test 4 of 9: FAIL`. The full report and the standard error of the command go to FILE. The reporter creates FILE with mode 0600 and refuses a FILE that exists. `--live` requires `--scenarios`, `--expect` and `--raw-output`. The other rules of the reporter do not change. Limit: the live log holds no stream text by design. This is prevention, not detection.
+
+### Cleanup check and runner check
+
+The owner installs root-owned copies of [live-cleanup-check.sh](../../scripts/ci/live-cleanup-check.sh) and [live-runner-check.sh](../../scripts/ci/live-runner-check.sh) in `/etc/pm-live/hooks/`. The workflow and the owner run those copies, never the copy in a checkout. Each script starts again with `env -i PATH=/usr/bin:/bin` and calls each tool by its absolute path.
+
+`live-cleanup-check.sh in-job` (the always-run step) and `live-cleanup-check.sh post-stop` (the owner, after the runner stops) run as the live account. The script reads no job variable and no label. Each step runs, also after a failed step, and each result stays:
+
+1. Only `in-job`: it reads the scan receipt `scan-receipt` in the run root. Each line is `sink=NAME count=N complete` or `sink=NAME count=N incomplete`, and the last line is `complete=true`. The sinks are `service-logs`, `container-logs`, `container-records`, `temporal-history`, `postgresql`, `object-store`, `step-summary`, `test-output` and `host-processes`. Each line must have exactly this form, with one space between the fields and nothing more. A missing receipt, a missing or repeated sink, an `incomplete` line or a count above 0 fails. A line with other or extra fields, and an unknown line, also fail. The live harness of L-e2 writes the receipt.
+2. It opens the token directory once, without following a link, and checks its owner and its mode 0700 on that descriptor. It removes `w2-token` relative to the descriptor (`unlinkat`), so a symbolic link is removed itself, never its target. The token directory must then be empty, through the same descriptor. A directory that is a link, has another owner or another mode fails. The directory stays.
+3. It resets the engine of the account (`podman system reset --force`). Then no container, pod, volume or image may stay, and only the default network.
+4. It removes the run roots and the cache folder with `podman unshare rm -rf`, and checks that both are absent.
+5. Only `in-job`: it reports the number of processes of the live UID and of its subordinate UIDs outside the cgroup of the runner service. This is a report, not a gate. The live UID can move its own processes inside its user cgroup tree.
+
+Any failure exits 1, and the cleanup is then uncertain (owner step 14).
+
+`live-runner-check.sh` runs as root before each start of the runner:
+
+1. The gate: `/proc` must show no process of the live UID or of its subordinate UID range. This includes the cgroups of the user manager and of the engine. Root reads the range from `/etc/subuid`. A missing or unreadable range, or more than one range, fails. A process folder that cannot be listed, or that lists no process, fails. An entry that cannot be read fails. `/run/user/<uid>` must not exist.
+2. Only when the gate passes, it empties the work folder `/var/lib/pm-live/work`, `_diag`, the engine storage `~/.local/share/containers` and the cache folder. A symbolic link in these paths fails. A deletion or a listing that fails also fails.
+3. Only when the gate passes, it compares the files with the root-held list `/etc/pm-live/runner-files.sha256`. The list has the owner, group, mode, SHA-256 and path of each file. It covers `/opt/pm-live/actions-runner` except `_diag`, the unit file, and the home folder of the live account except the emptied folders. A `~/.ssh` folder and a file in `~/.config/systemd/user/` also fail.
+4. The live account has no crontab and no `at` job. `atq` lists the `at` jobs. Without `atq`, the check passes only when it proves that no `atd` program and no `at` spool folder exist. A path that cannot be looked up, for example through a link loop or a folder that cannot be searched, fails.
+5. Only when the gate passes, it reads the runner settings and the unit. The runner has the key `disableUpdate` set to `true` in `.runner` (`--disableupdate`). The unit has the lines `User=pmlive`, `ExecStart=/opt/pm-live/actions-runner/run.sh` and `EnvironmentFile=/opt/pm-live/actions-runner/.env`, and no slice other than `system.slice`. A `KillMode=` line other than `KillMode=control-group` fails, because the service stop must kill each process of its cgroup, whatever its UID. A drop-in folder `pm-live-runner.service.d` in `/etc/systemd/system`, `/run/systemd/system` or `/usr/lib/systemd/system` fails, because it can change the unit.
+
+A failure to list, read, stat or hash a file fails the compare and `--record`. `--record` writes the new list to a temporary file in the folder of the list. It replaces the old list only when each write and the final flush succeed. Else the old list stays. The fresh list of the compare is also written in that folder, never in `/tmp`. Install requirement: root owns `/etc/pm-live` and `/etc/pm-live/runner-files.sha256`, and group and others cannot write them. Two controls check it. At each live job, `read_root_file` in the admission hook opens `/`, `/etc` and `/etc/pm-live` one at a time without following a link. It refuses the job when root does not own one of them, or when group or others can write it. Before the compare, `live-runner-check.sh` applies the same `require_owned` rules to `/`, `/etc`, `/etc/pm-live` and the list. Before `--record`, it applies them to the three folders. It does not check an old list that `--record` replaces. A failed check exits 1, and the compare does not read the list. An empty list is never recorded, and an empty baseline or an empty fresh list fails the compare. Any failure exits 1, and the owner does not start the runner. The check never records the list. `live-runner-check.sh --record` records it. The owner runs it once at install, last, and again only after a change that the owner made.
+
+After each run, the owner stops the runner service and runs `runuser -u pmlive -- env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-cleanup-check.sh post-stop`. The script sets `XDG_RUNTIME_DIR=/run/user/<uid>` itself, after its `env -i` restart. Then the owner runs `loginctl terminate-user pmlive` as root. Then the owner runs `env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --gate` as root. The `--gate` mode runs only step 1, the `/proc` gate. It empties nothing and compares nothing. A failure means an uncertain cleanup (owner step 14). The full check runs again before the next start.
+
+The runner is in `/opt/pm-live/actions-runner`. Root owns it, except `_diag`. Its `.env` belongs to root, with mode 0644. Its configuration and credential files `.runner`, `.credentials` and `.credentials_rsaparams` belong to root and the group `pmlive`, with mode 0640. A root-owned system service, `/etc/systemd/system/pm-live-runner.service`, starts the runner. Its work folder is `/var/lib/pm-live/work`.
+
+### Install the live hook (owner)
+
+1. Copy `runner-admission-live.sh` and `runner_admission_live.py` from the merged commit into `/etc/pm-live/hooks/`, with owner root and mode 0644.
+2. Copy `live-cleanup-check.sh` and `live-runner-check.sh` into `/etc/pm-live/hooks/`, with owner root and mode 0755.
+3. Set `ACTIONS_RUNNER_HOOK_JOB_STARTED=/etc/pm-live/hooks/runner-admission-live.sh` in `/opt/pm-live/actions-runner/.env`.
+4. In a checkout of the merged commit, run `python3 -I -B scripts/ci/test_runner_admission_live.py`.
+5. Create `/etc/pm-live/approved-sha` and `/etc/pm-live/run-kind`, with owner root and mode 0644. They stay empty until a run.
+6. Last, record the file list: `env -i PATH=/usr/bin:/bin /etc/pm-live/hooks/live-runner-check.sh --record`.
 
 ## Retire the old runner
 
