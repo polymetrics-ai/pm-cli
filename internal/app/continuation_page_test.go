@@ -505,7 +505,7 @@ func TestUnitStepsEndBeforeTheTaskLeaseEnds(t *testing.T) {
 		attempt time.Duration
 		lease   time.Duration
 	}{
-		{name: "attempt deadline 30 ms before the lease end", attempt: 9990 * time.Millisecond, lease: 10030 * time.Millisecond},
+		{name: "attempt deadline 40 ms before the lease end", attempt: 9990 * time.Millisecond, lease: 10030 * time.Millisecond},
 		{name: "attempt deadline near the cutoff", attempt: 3990 * time.Millisecond, lease: 4030 * time.Millisecond},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
