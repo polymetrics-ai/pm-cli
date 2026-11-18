@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -125,6 +126,7 @@ func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 	containers := map[string][]string{"postgres": {"true hash-postgres"}}
 
 	t.Run("a stalled hash call ends at its deadline", func(t *testing.T) {
+		requireOwnedGroupSignals(t)
 		fake := installFakeEngine(t, services, containers)
 		makeStallFIFO(t, fake, "stall")
 		previous := composeHashTimeout
@@ -140,6 +142,7 @@ func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 	})
 
 	t.Run("a cancelled caller ends the hash call", func(t *testing.T) {
+		requireOwnedGroupSignals(t)
 		fake := installFakeEngine(t, services, containers)
 		makeStallFIFO(t, fake, "stall")
 		started := makeStallFIFO(t, fake, "started")
@@ -166,6 +169,7 @@ func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 	})
 
 	t.Run("a failed hash call leaves no process of its group", func(t *testing.T) {
+		requireOwnedGroupSignals(t)
 		fake := installFakeEngine(t, services, containers)
 		makeStallFIFO(t, fake, "stall")
 		makeStallFIFO(t, fake, "ready")
@@ -182,6 +186,7 @@ func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 	})
 
 	t.Run("a successful hash call leaves no process of its group", func(t *testing.T) {
+		requireOwnedGroupSignals(t)
 		fake := installFakeEngine(t, services, containers)
 		makeStallFIFO(t, fake, "stall")
 		makeStallFIFO(t, fake, "ready")
@@ -195,6 +200,89 @@ func TestStartServicesBoundsTheHashCommand(t *testing.T) {
 		if got, want := recordedUpCalls(t, fake), []string{"up -d --wait --no-recreate postgres"}; !slices.Equal(got, want) {
 			t.Fatalf("compose up calls = %q, want %q", got, want)
 		}
+		assertHelperExited(t, fake, helperExit)
+	})
+}
+
+// requireOwnedGroupSignals replaces the group signal of the hash call for
+// one test (round 3 finding F1). At each group signal, before the real
+// signal, the process whose ID is the group ID must still exist, alive or not
+// yet reaped: kill(pgid, 0) must succeed. After a reap, the kernel can give
+// that ID to an unrelated process, and a signal to the group ID can reach an
+// unrelated group. The test must also send at least one group signal. The
+// check causes no PID reuse.
+func requireOwnedGroupSignals(t *testing.T) {
+	t.Helper()
+	previous := signalHashGroup
+	var mutex sync.Mutex
+	var signals int
+	var unowned []error
+	signalHashGroup = func(pgid int) error {
+		owned := syscall.Kill(pgid, 0)
+		mutex.Lock()
+		signals++
+		if owned != nil {
+			unowned = append(unowned, owned)
+		}
+		mutex.Unlock()
+		return previous(pgid)
+	}
+	t.Cleanup(func() {
+		signalHashGroup = previous
+		mutex.Lock()
+		defer mutex.Unlock()
+		if signals == 0 {
+			t.Error("the hash call sent no group signal")
+		}
+		for _, err := range unowned {
+			t.Errorf("a group signal went to a group ID whose process was already reaped: kill(pgid, 0) = %v", err)
+		}
+	})
+}
+
+// TestStartServicesStopsAfterAFailedHashGroupCleanup injects a failure of the
+// final group signal (round 3 finding F2). The seam sends the real signal
+// first, so no process of the group stays. startServices must return the
+// cleanup error and must not run compose up, after a successful and after a
+// failed hash call. Each wait has one time limit. No sleep, no retry.
+func TestStartServicesStopsAfterAFailedHashGroupCleanup(t *testing.T) {
+	services := map[string]string{"postgres": "hash-postgres"}
+	containers := map[string][]string{"postgres": {"true hash-postgres"}}
+	injectCleanupFailure := func(t *testing.T) {
+		previous := signalHashGroup
+		signalHashGroup = func(pgid int) error {
+			_ = previous(pgid)
+			return syscall.EINVAL
+		}
+		t.Cleanup(func() { signalHashGroup = previous })
+	}
+
+	t.Run("after a successful hash call", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		injectCleanupFailure(t)
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+
+		err := awaitStartServices(t, rt, context.Background())
+		if !errors.Is(err, syscall.EINVAL) {
+			t.Fatalf("startServices after a failed cleanup of a successful hash call = %v; want the cleanup error", err)
+		}
+		assertNoComposeCall(t, fake)
+	})
+
+	t.Run("after a failed hash call", func(t *testing.T) {
+		fake := installFakeEngine(t, services, containers)
+		makeStallFIFO(t, fake, "stall")
+		makeStallFIFO(t, fake, "ready")
+		writeTestFile(t, filepath.Join(fake, "mode"), "exit\n", 0o600)
+		helperExit := watchHelperExit(t, fake)
+		injectCleanupFailure(t)
+		rt := &runtime{root: fake, project: "pm-no-recreate-test", stdout: io.Discard, stderr: io.Discard}
+
+		err := awaitStartServices(t, rt, context.Background())
+		if !errors.Is(err, syscall.EINVAL) {
+			t.Fatalf("startServices after a failed cleanup of a failed hash call = %v; want the cleanup error too", err)
+		}
+		assertNoComposeCall(t, fake)
 		assertHelperExited(t, fake, helperExit)
 	})
 }

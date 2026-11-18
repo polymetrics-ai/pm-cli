@@ -1,6 +1,7 @@
 package stack
 
 import (
+	"bytes"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
@@ -19,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -1227,6 +1229,56 @@ var composeHashTimeout = 2 * time.Minute
 // after its leader exited or got SIGKILL.
 const composeHashWaitDelay = 5 * time.Second
 
+// signalHashGroup sends SIGKILL to the process group pgid of a hash call. A
+// developer check replaces it.
+var signalHashGroup = func(pgid int) error { return syscall.Kill(-pgid, syscall.SIGKILL) }
+
+// killHashGroup sends SIGKILL to the process group pgid of a hash call. ESRCH
+// means that no process of the group is left. Each other error is returned.
+func killHashGroup(pgid int) error {
+	if err := signalHashGroup(pgid); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return fmt.Errorf("stop the process group of the Compose hash call: %w", err)
+	}
+	return nil
+}
+
+// startHashGroupOwner starts the owner of the process group of one hash call:
+// cat, as the leader of a new process group, with a stdin pipe that only this
+// process holds. The owner reads its stdin until end of file and writes
+// nothing. The group ID is the process ID of the owner. The kernel keeps that
+// ID while the owner runs and, after it exits, until this process reaps it.
+// If pm-stack ends, the pipe closes and the owner exits.
+func startHashGroupOwner() (*exec.Cmd, io.WriteCloser, error) {
+	owner := exec.Command("cat")
+	owner.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	input, err := owner.StdinPipe()
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := owner.Start(); err != nil {
+		return nil, nil, err
+	}
+	return owner, input, nil
+}
+
+// endHashGroupOwner closes the stdin pipe of the owner and reaps it. The exit
+// by the final SIGKILL is expected. Each other exit is an error: the owner
+// exited before the final signal, or the final signal did not reach it.
+func endHashGroupOwner(owner *exec.Cmd, input io.Closer) error {
+	_ = input.Close()
+	err := owner.Wait()
+	var exit *exec.ExitError
+	if errors.As(err, &exit) {
+		if status, ok := exit.Sys().(syscall.WaitStatus); ok && status.Signaled() && status.Signal() == syscall.SIGKILL {
+			return nil
+		}
+	}
+	if err == nil {
+		err = errors.New("exit status 0")
+	}
+	return fmt.Errorf("the process group owner of the Compose hash call did not end by the final signal: %w", err)
+}
+
 // expectedServiceHashes returns the config hash that Compose computes for
 // each named service from the current configuration.
 func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration config.Configuration, services []string) (map[string]string, error) {
@@ -1234,36 +1286,55 @@ func (rt *runtime) expectedServiceHashes(ctx context.Context, configuration conf
 	// cancellation of the caller ends it first.
 	ctx, cancel := context.WithTimeout(ctx, composeHashTimeout)
 	defer cancel()
+	// The call runs in the process group of an owner process that this
+	// function starts first and reaps last. The owner is alive at the final
+	// group signal, so the group ID still belongs to this call when the
+	// signal goes out. A process that leaves the group (setsid or setpgid)
+	// does not get the signal.
+	owner, ownerInput, err := startHashGroupOwner()
+	if err != nil {
+		return nil, fmt.Errorf("start the process group owner of the Compose hash call: %w", err)
+	}
+	group := owner.Process.Pid
+	var output bytes.Buffer
 	command := exec.CommandContext(ctx, "python3",
 		rt.composeArguments(configuration, "config", "--hash", strings.Join(services, ","))...)
 	command.Dir = rt.root
 	command.Env = rt.composeEnvironment()
+	command.Stdout = &output
 	command.Stderr = rt.stderr
-	// The call and each process that it starts are one process group. When
-	// the context ends while the leader runs, SIGKILL goes to the whole group.
-	// WaitDelay bounds the wait for the output pipes after the leader exited,
-	// also when another process of the group still holds a pipe.
-	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	command.Cancel = func() error { return syscall.Kill(-command.Process.Pid, syscall.SIGKILL) }
-	command.WaitDelay = composeHashWaitDelay
-	output, err := command.Output()
-	// The call ended with a success, a failure, the deadline or a
-	// cancellation. A process of its group can still run, also after Output
-	// reaped the leader. So SIGKILL goes to the whole group on every path. A
-	// process group keeps its ID while one of its processes runs, so the
-	// signal reaches only processes of this call. ESRCH means that no process
-	// of the group is left.
-	if command.Process != nil {
-		_ = syscall.Kill(-command.Process.Pid, syscall.SIGKILL)
+	// When the context ends while the leader runs, SIGKILL goes to the whole
+	// group, the owner too. That is the final group signal of the call.
+	// WaitDelay bounds the wait for the output pipe after the leader exited,
+	// also when another process of the group still holds the pipe.
+	command.SysProcAttr = &syscall.SysProcAttr{Setpgid: true, Pgid: group}
+	var cancelled atomic.Bool
+	command.Cancel = func() error {
+		cancelled.Store(true)
+		return killHashGroup(group)
 	}
-	if err != nil {
+	command.WaitDelay = composeHashWaitDelay
+	runErr := command.Run()
+	// The call ended with a success, a failure, the deadline or a
+	// cancellation. A process of the group can still run. Without a
+	// cancellation, SIGKILL goes to the whole group now, while the owner is
+	// alive. Then the owner is reaped. A cleanup error stops the up.
+	var signalErr error
+	if !cancelled.Load() {
+		signalErr = killHashGroup(group)
+	}
+	cleanupErr := errors.Join(signalErr, endHashGroupOwner(owner, ownerInput))
+	if runErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
-			return nil, fmt.Errorf("read Compose service configuration hashes: %w: %w", ctxErr, err)
+			return nil, errors.Join(fmt.Errorf("read Compose service configuration hashes: %w: %w", ctxErr, runErr), cleanupErr)
 		}
-		return nil, fmt.Errorf("read Compose service configuration hashes: %w", err)
+		return nil, errors.Join(fmt.Errorf("read Compose service configuration hashes: %w", runErr), cleanupErr)
+	}
+	if cleanupErr != nil {
+		return nil, cleanupErr
 	}
 	hashes := make(map[string]string, len(services))
-	for _, line := range strings.Split(string(output), "\n") {
+	for _, line := range strings.Split(output.String(), "\n") {
 		fields := strings.Fields(line)
 		if len(fields) == 0 {
 			continue
