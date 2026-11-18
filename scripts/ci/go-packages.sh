@@ -19,6 +19,14 @@
 # edit here. See docs/development/ci.md.
 
 pm_stack_list=scripts/ci/stack-packages.txt
+# Deliberate fault for the #286a canary B5, only on the throwaway branch
+# agent/286a-canary-b5-3, which never merges. Only in CI (GITHUB_ACTIONS is
+# "true"), the stack list is a copy with the stale entry
+# ./internal/canary-b5-does-not-exist. The git hooks keep the real list,
+# so they can commit and push this branch.
+if [ "${GITHUB_ACTIONS:-}" = true ]; then
+  pm_stack_list=scripts/ci/canary-b5-stack-packages.txt
+fi
 pm_shard_list=scripts/ci/stack-shards.txt
 pm_gherkin_package=./tests/acceptance
 
