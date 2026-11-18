@@ -34,7 +34,7 @@ The process checks the descriptor after the `--config` and `--secrets-directory`
 
 1. be open, and not have the close-on-exec flag set at the check. As in ADR 0005, a descriptor with that flag set belongs to the process itself;
 2. be a socket of type stream in the family of the configured address: `AF_INET` for an IPv4 address, `AF_INET6` for an IPv6 address;
-3. use the TCP protocol;
+3. use the TCP protocol. On Linux, a Multipath TCP (MPTCP) socket also counts, because by default Go 1.27's `net.Listen("tcp", …)` makes one where the kernel allows MPTCP;
 4. listen for connections;
 5. have a local address equal to the configured `server.listen`. Equality means: the same family, the same IP address and the same port. The configured address has no zone, so a socket address with a scope or zone does not equal it. An IPv4 address in an `AF_INET6` socket (an IPv4-mapped address) does not equal an IPv4 configured address. A wildcard address (`0.0.0.0` or `::`) equals only the same wildcard.
 
