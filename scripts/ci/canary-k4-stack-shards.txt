@@ -1,0 +1,24 @@
+# The shards of the stack run. Each line is "<shard-id> <path>". The shard
+# IDs are 1, 2 and 3. Each stack run package (the entries of
+# stack-packages.txt without tests/acceptance and the excluded packages) is
+# in exactly one shard. The stack-N job of bdd.yml runs shard N. Shard 3 also
+# runs the Gherkin suite. go-packages.sh (pm_check_shards) checks this file in
+# the checks job and at the start of each shard. Issue #286, option C.
+1 ./internal/warehouse
+1 ./internal/store
+1 ./internal/sync
+1 ./internal/temporal
+1 ./internal/server
+1 ./internal/httpapi
+1 ./internal/testfixture
+2 ./internal/app
+2 ./internal/credentials
+2 ./internal/runtime
+3 ./internal/workflows
+3 ./tests/stack
+3 ./internal/cli
+3 ./internal/activities
+3 ./internal/api
+3 ./internal/auth
+3 ./internal/objects
+3 ./tests/acceptance
