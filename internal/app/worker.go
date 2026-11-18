@@ -60,6 +60,22 @@ func workerFailure(kind, cause error) error {
 	return &WorkerFailure{Kind: kind, Cause: cause}
 }
 
+// WorkerLeaseHeldError reports that another attempt still holds the task
+// lease of a unit, so this attempt claimed nothing and did nothing else. It
+// unwraps to store.ErrClaimLost. RetryAfter is the remaining lease time,
+// measured on the database clock from the stored lease end.
+type WorkerLeaseHeldError struct {
+	RetryAfter time.Duration
+}
+
+func (held *WorkerLeaseHeldError) Error() string {
+	return "worker task lease is held by another attempt"
+}
+
+func (held *WorkerLeaseHeldError) Unwrap() error {
+	return store.ErrClaimLost
+}
+
 type ScheduledRunAdmitter func(
 	context.Context,
 	contract.WorkflowExecution,
@@ -906,8 +922,16 @@ func claimWorkerTask(
 	expectedFence := uint64(0)
 	current, err := store.LoadLease(ctx, tx, ref)
 	if err == nil {
-		if current.ExpiresAt.After(state.now) {
-			return store.Lease{}, store.ErrClaimLost
+		// Preparation runs after loadWorkerRunState sampled state.now, and it
+		// can outlast the stored lease. The lease decision reads the database
+		// time again and uses that one sample for the expiry comparison and
+		// for the remaining lease time.
+		decidedAt, err := store.ReadAuthenticationTime(ctx, tx)
+		if err != nil {
+			return store.Lease{}, err
+		}
+		if current.ExpiresAt.After(decidedAt) {
+			return store.Lease{}, &WorkerLeaseHeldError{RetryAfter: current.ExpiresAt.Sub(decidedAt)}
 		}
 		expectedFence = current.Fence
 	} else if !errors.Is(err, store.ErrNotFound) {
