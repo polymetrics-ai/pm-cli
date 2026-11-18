@@ -3,6 +3,8 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
+	"math/rand/v2"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -280,6 +282,187 @@ func TestConcurrentBootstrapsOfOneScopeCommitOnce(t *testing.T) {
 	if !strings.Contains(rows["workspace_namespaces"][0], second.Scope.WorkspaceID) {
 		t.Fatalf("committed workspace %s is not the workspace of the committed bootstrap", rows["workspace_namespaces"][0])
 	}
+}
+
+// Check: two bootstraps of one organization in two deployments, run at the
+// same time, commit once (crrao m1). Defect: each read of the organization
+// misses the uncommitted rows of the other, nothing else conflicts, and both
+// commit. The first bootstrap writes its rows and holds its transaction open.
+// The second holds the session advisory lock "arrival" and then calls
+// pm.operator_bootstrap. A trigger of this check releases "arrival" when the
+// second inserts its bootstrap record, after its reads. The check waits once
+// for "arrival", then lets the first commit. Each wait has one time limit. No
+// sleep, no poll, no retry.
+func TestConcurrentBootstrapsOfOneOrganizationInTwoDeploymentsCommitOnce(t *testing.T) {
+	s := prepareBootstrapTestStore(t)
+	firstDeployment := "deployment-" + randomHex(t, 8)
+	secondDeployment := "deployment-" + randomHex(t, 8)
+	scope := newTestScope(t)
+	t.Cleanup(func() {
+		// Without the fix both bootstraps commit. Their records and login
+		// bindings reference the rows of the organization, so they go first.
+		cleanup, cancel := context.WithTimeout(context.Background(), bootstrapWaitLimit)
+		defer cancel()
+		if connection, err := pgx.Connect(cleanup, s.admin); err != nil {
+			t.Errorf("connect the stack administrator for cleanup: %v", err)
+		} else {
+			for _, table := range []string{"workspace_audit_entries", "bootstrap_records", "auth_bootstrap_identities"} {
+				if _, err := connection.Exec(cleanup, "DELETE FROM pm."+table+" WHERE org_id = $1", scope.OrgID); err != nil {
+					t.Errorf("remove pm.%s rows: %v", table, err)
+				}
+			}
+			_ = connection.Close(context.Background())
+		}
+		s.removeBootstrapRows(t, firstDeployment, scope.OrgID)
+		s.removeBootstrapRows(t, secondDeployment, scope.OrgID)
+	})
+	ctx, cancel := context.WithTimeout(context.Background(), 2*bootstrapWaitLimit)
+	defer cancel()
+
+	admin, err := pgx.Connect(ctx, s.admin)
+	if err != nil {
+		t.Fatalf("connect the stack administrator: %v", err)
+	}
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+	arrival := rand.Int64()
+	name := "test_bootstrap_arrival_" + randomHex(t, 8)
+	if _, err := admin.Exec(ctx, fmt.Sprintf(`CREATE FUNCTION pm.%s() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.deployment_id = %s THEN
+        PERFORM pg_advisory_unlock(%d);
+    END IF;
+    RETURN NEW;
+END
+$$`, name, quoteLiteral(secondDeployment), arrival)); err != nil {
+		t.Fatalf("create the arrival trigger function: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanup, cancel := context.WithTimeout(context.Background(), bootstrapWaitLimit)
+		defer cancel()
+		connection, err := pgx.Connect(cleanup, s.admin)
+		if err != nil {
+			t.Errorf("connect the stack administrator for the trigger cleanup: %v", err)
+			return
+		}
+		defer func() { _ = connection.Close(context.Background()) }()
+		if _, err := connection.Exec(cleanup, fmt.Sprintf("DROP TRIGGER IF EXISTS %s ON pm.bootstrap_records", name)); err != nil {
+			t.Errorf("drop the arrival trigger: %v", err)
+		}
+		if _, err := connection.Exec(cleanup, fmt.Sprintf("DROP FUNCTION IF EXISTS pm.%s()", name)); err != nil {
+			t.Errorf("drop the arrival trigger function: %v", err)
+		}
+	})
+	if _, err := admin.Exec(ctx, fmt.Sprintf(
+		"CREATE TRIGGER %s BEFORE INSERT ON pm.bootstrap_records FOR EACH ROW EXECUTE FUNCTION pm.%s()", name, name)); err != nil {
+		t.Fatalf("create the arrival trigger: %v", err)
+	}
+
+	first := newBootstrapTestRequest(t, firstDeployment, scope)
+	written := make(chan struct{})
+	release := make(chan struct{})
+	first.step = func(ctx context.Context, step bootstrapStep) error {
+		if step != bootstrapStepWritten {
+			return nil
+		}
+		close(written)
+		timer := time.NewTimer(bootstrapWaitLimit)
+		defer timer.Stop()
+		select {
+		case <-release:
+			return nil
+		case <-timer.C:
+			return errors.New("the check did not release the first bootstrap within the limit")
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	firstResult := make(chan error, 1)
+	go func() { firstResult <- Bootstrap(ctx, s.pool, first) }()
+	awaitBootstrapSignal(t, written, firstResult, "the first bootstrap did not write its rows")
+
+	second := newBootstrapTestRequest(t, secondDeployment, contract.Scope{OrgID: scope.OrgID, WorkspaceID: "workspace-" + randomHex(t, 8)})
+	armed := make(chan struct{})
+	second.step = func(ctx context.Context, step bootstrapStep) error {
+		if step != bootstrapStepChecked {
+			return nil
+		}
+		tx, ok := ScopedTransaction(ctx)
+		if !ok {
+			return errors.New("the second bootstrap has no transaction")
+		}
+		if _, err := tx.exec(ctx, "SELECT pg_advisory_lock($1)", arrival); err != nil {
+			return fmt.Errorf("take the arrival lock: %w", err)
+		}
+		close(armed)
+		return nil
+	}
+	secondResult := make(chan error, 1)
+	go func() { secondResult <- Bootstrap(ctx, s.pool, second) }()
+	awaitBootstrapSignal(t, armed, secondResult, "the second bootstrap did not take the arrival lock")
+
+	// The second bootstrap holds "arrival" until its trigger releases it, so
+	// this lock returns only after the second has read the organization and
+	// started the insert of its bootstrap record.
+	arrived := make(chan error, 1)
+	go func() {
+		_, err := admin.Exec(ctx, "SELECT pg_advisory_lock($1)", arrival)
+		arrived <- err
+	}()
+	timer := time.NewTimer(bootstrapWaitLimit)
+	defer timer.Stop()
+	select {
+	case err := <-arrived:
+		if err != nil {
+			t.Fatalf("wait for the arrival of the second bootstrap: %v", err)
+		}
+	case err := <-secondResult:
+		t.Fatalf("the second bootstrap ended before its insert: %v", err)
+	case <-timer.C:
+		t.Fatal("the second bootstrap did not reach its insert within the limit")
+	}
+	close(release)
+	firstErr := <-firstResult
+	secondErr := <-secondResult
+	if _, err := admin.Exec(ctx, "SELECT pg_advisory_unlock($1)", arrival); err != nil {
+		t.Errorf("release the arrival lock: %v", err)
+	}
+
+	if firstErr != nil {
+		t.Fatalf("first bootstrap = %v; want success", firstErr)
+	}
+	if !errors.Is(secondErr, ErrBootstrapScopeOtherInput) {
+		t.Fatalf("second bootstrap of the organization in another deployment = %v; want %v", secondErr, ErrBootstrapScopeOtherInput)
+	}
+	var records, workspaces int
+	if err := admin.QueryRow(ctx, `
+		SELECT (SELECT count(*) FROM pm.bootstrap_records WHERE org_id = $1),
+		       (SELECT count(*) FROM pm.workspace_namespaces WHERE org_id = $1)
+	`, scope.OrgID).Scan(&records, &workspaces); err != nil {
+		t.Fatalf("count the bootstraps of the organization: %v", err)
+	}
+	if records != 1 || workspaces != 1 {
+		t.Fatalf("the organization has %d bootstrap records and %d workspaces; want one of each", records, workspaces)
+	}
+}
+
+// awaitBootstrapSignal waits once, with one limit, for signal. An early end
+// of the bootstrap is a failure.
+func awaitBootstrapSignal(t *testing.T, signal <-chan struct{}, result <-chan error, failure string) {
+	t.Helper()
+	timer := time.NewTimer(bootstrapWaitLimit)
+	defer timer.Stop()
+	select {
+	case <-signal:
+	case err := <-result:
+		t.Fatalf("%s: the bootstrap ended first: %v", failure, err)
+	case <-timer.C:
+		t.Fatalf("%s within %s", failure, bootstrapWaitLimit)
+	}
+}
+
+// quoteLiteral quotes text as an SQL string literal.
+func quoteLiteral(text string) string {
+	return "'" + strings.ReplaceAll(text, "'", "''") + "'"
 }
 
 // Check: a bootstrap that fails part of the way writes nothing, and a retry
